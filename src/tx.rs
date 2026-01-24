@@ -277,7 +277,9 @@ impl<'a> RtcTx<'a, Mutate> {
             .ok_or(RtcError::UnknownSsrc(ssrc))?;
 
         stream
-            .write_rtp(pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload)
+            .write_rtp(
+                pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload,
+            )
             .map_err(RtcError::RtpWrite)?;
 
         Ok(RtcTx {

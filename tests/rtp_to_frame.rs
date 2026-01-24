@@ -22,9 +22,15 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
     let mid = "audio".into();
     let ssrc_tx: Ssrc = 1337.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+    });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;

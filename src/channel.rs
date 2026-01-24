@@ -58,7 +58,11 @@ impl<'a> Channel<'a> {
 
     /// Write data to the remote peer and indicate whether it's text or binary.
     pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
-        Ok(self.inner.rtc.sctp.write(self.sctp_stream_id, binary, buf)?)
+        Ok(self
+            .inner
+            .rtc
+            .sctp
+            .write(self.sctp_stream_id, binary, buf)?)
     }
 
     /// Get the amount of buffered data.

@@ -21,13 +21,21 @@ pub fn repeated() -> Result<(), RtcError> {
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc, None, mid, None); });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc, None, mid, None);
+    });
 
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
-    r.with_direct_api(|api| { api.expect_stream_rx(ssrc, None, mid, None); });
+    r.with_direct_api(|api| {
+        api.expect_stream_rx(ssrc, None, mid, None);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;

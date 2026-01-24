@@ -21,11 +21,17 @@ pub fn rtp_direct_mid() -> Result<(), RtcError> {
     // In this example we are using MID only (no RID) to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+    });
 
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -107,13 +113,17 @@ pub fn rtp_direct_mid() -> Result<(), RtcError> {
 
     assert!(l.media(mid).is_some());
     assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_some()));
-    l.with_direct_api(|api| { api.remove_media(mid); });
+    l.with_direct_api(|api| {
+        api.remove_media(mid);
+    });
     assert!(l.media(mid).is_none());
     assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_none()));
 
     assert!(r.media(mid).is_some());
     assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_some()));
-    r.with_direct_api(|api| { api.remove_media(mid); });
+    r.with_direct_api(|api| {
+        api.remove_media(mid);
+    });
     assert!(r.media(mid).is_none());
     assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_none()));
 

@@ -22,13 +22,21 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc, None, mid, None); });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc, None, mid, None);
+    });
 
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
-    r.with_direct_api(|api| { api.expect_stream_rx(ssrc, None, mid, None); });
+    r.with_direct_api(|api| {
+        api.expect_stream_rx(ssrc, None, mid, None);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -128,13 +136,17 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
 
     assert!(l.media(mid).is_some());
     assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_some()));
-    l.with_direct_api(|api| { api.remove_media(mid); });
+    l.with_direct_api(|api| {
+        api.remove_media(mid);
+    });
     assert!(l.media(mid).is_none());
     assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_none()));
 
     assert!(r.media(mid).is_some());
     assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_some()));
-    r.with_direct_api(|api| { api.remove_media(mid); });
+    r.with_direct_api(|api| {
+        api.remove_media(mid);
+    });
     assert!(r.media(mid).is_none());
     assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_none()));
 

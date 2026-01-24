@@ -19,7 +19,10 @@ use str0m::crypto::from_feature_flags;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::media::{KeyframeRequestKind, MediaKind};
 use str0m::net::Protocol;
-use str0m::{net::Receive, Candidate, Event, IceConnectionState, Output, Poll as TxPoll, Rtc, RtcError, RtcTx};
+use str0m::{
+    net::Receive, Candidate, Event, IceConnectionState, Output, Poll as TxPoll, Rtc, RtcError,
+    RtcTx,
+};
 
 mod util;
 
@@ -112,7 +115,10 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     // Create an SDP Answer.
     let answer = {
         let tx = rtc.begin(now).expect("begin");
-        let (answer, tx) = tx.sdp_api().accept_offer(offer).expect("offer to be accepted");
+        let (answer, tx) = tx
+            .sdp_api()
+            .accept_offer(offer)
+            .expect("offer to be accepted");
         poll_tx(tx).unwrap();
         answer
     };

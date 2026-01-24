@@ -19,10 +19,16 @@ pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {
     // In this example we are using MID only (no RID) to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+    });
 
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;

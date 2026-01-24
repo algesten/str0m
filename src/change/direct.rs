@@ -90,12 +90,16 @@ impl<'a> DirectApi<'a> {
 
     /// Sets the local ICE credentials.
     pub fn set_local_ice_credentials(&mut self, local_ice_credentials: IceCreds) {
-        self.rtc_mut().ice.set_local_credentials(local_ice_credentials);
+        self.rtc_mut()
+            .ice
+            .set_local_credentials(local_ice_credentials);
     }
 
     /// Sets the remote ICE credentials.
     pub fn set_remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
-        self.rtc_mut().ice.set_remote_credentials(remote_ice_credentials);
+        self.rtc_mut()
+            .ice
+            .set_remote_credentials(remote_ice_credentials);
     }
 
     /// Returns a reference to the local DTLS fingerprint used by this peer connection.
@@ -175,7 +179,13 @@ impl<'a> DirectApi<'a> {
     /// All streams belong to a media identified by a `mid`. This creates the media without
     /// doing any SDP dance.
     pub fn declare_media(&mut self, mid: Mid, kind: MediaKind) -> &mut Media {
-        let max_index = self.rtc_mut().session.medias.iter().map(|m| m.index()).max();
+        let max_index = self
+            .rtc_mut()
+            .session
+            .medias
+            .iter()
+            .map(|m| m.index())
+            .max();
 
         let next_index = if let Some(max_index) = max_index {
             max_index + 1
@@ -183,7 +193,11 @@ impl<'a> DirectApi<'a> {
             0
         };
 
-        let exts = self.rtc_mut().session.exts.cloned_with_type(kind.is_audio());
+        let exts = self
+            .rtc_mut()
+            .session
+            .exts
+            .cloned_with_type(kind.is_audio());
         let m = Media::from_direct_api(mid, next_index, kind, exts);
 
         self.rtc_mut().session.medias.push(m);
@@ -241,7 +255,10 @@ impl<'a> DirectApi<'a> {
     /// Obtain a recv stream by looking it up via mid/rid.
     pub fn stream_rx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamRx> {
         let midrid = MidRid(mid, rid);
-        self.rtc_mut().session.streams.stream_rx_by_midrid(midrid, true)
+        self.rtc_mut()
+            .session
+            .streams
+            .stream_rx_by_midrid(midrid, true)
     }
 
     /// Declare the intention to send data using the given SSRC.

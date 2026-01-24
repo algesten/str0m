@@ -22,9 +22,15 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
     let mid = "aud".into();
 
     let ssrc_tx: Ssrc = 42.into();
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+    });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -140,9 +146,15 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     let mid = "aud".into();
 
     let ssrc_tx: Ssrc = 42.into();
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+    });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;

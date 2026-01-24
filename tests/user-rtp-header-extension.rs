@@ -143,9 +143,10 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
             Err(_) => panic!("writer for mid"),
         };
         // Set my bespoke RTP header value.
-        let tx = writer
-            .user_extension_value(MyValue(42))
-            .write(pt, wallclock, time, data_a.clone())?;
+        let tx =
+            writer
+                .user_extension_value(MyValue(42))
+                .write(pt, wallclock, time, data_a.clone())?;
         poll_to_completion(tx)?;
 
         progress(&mut l, &mut r)?;
@@ -295,9 +296,12 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
             Err(_) => panic!("writer for mid"),
         };
         // Set my bespoke RTP header value.
-        let tx = writer
-            .user_extension_value(my_value.clone())
-            .write(pt, wallclock, time, data_a.clone())?;
+        let tx = writer.user_extension_value(my_value.clone()).write(
+            pt,
+            wallclock,
+            time,
+            data_a.clone(),
+        )?;
         poll_to_completion(tx)?;
 
         progress(&mut l, &mut r)?;

@@ -22,7 +22,9 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     // In this example we are using MID and RID to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
 
     l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, None, mid, Some(rid))
@@ -31,8 +33,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     });
 
     r.with_direct_api(|api| {
-        api.declare_media(mid, MediaKind::Audio)
-            .expect_rid_rx(rid);
+        api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid);
     });
 
     let max = l.last.max(r.last);

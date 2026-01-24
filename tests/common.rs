@@ -13,11 +13,11 @@ use str0m::crypto::CryptoProvider;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
 use str0m::net::Protocol;
-use str0m::Ice;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
 use str0m::Candidate;
+use str0m::Ice;
 use str0m::{Event, Output, Poll, Rtc, RtcError, RtcTx};
 use tracing::info_span;
 use tracing::Span;
@@ -308,7 +308,9 @@ impl TestRtc {
     ) -> Result<(), RtcError> {
         let time_now = self.last;
         let tx = self.rtc.begin(time_now)?;
-        let tx = tx.write_rtp(ssrc, pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload)?;
+        let tx = tx.write_rtp(
+            ssrc, pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload,
+        )?;
         poll_to_completion(tx)?;
         Ok(())
     }

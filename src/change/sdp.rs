@@ -39,7 +39,6 @@ impl<'a> SdpApi<'a> {
         }
     }
 
-
     /// Accept an [`SdpOffer`] from the remote peer. If this call returns successfully, the
     /// changes will have been made to the session. The resulting [`SdpAnswer`] should be
     /// sent to the remote peer.
@@ -107,7 +106,12 @@ impl<'a> SdpApi<'a> {
         apply_offer(&mut self.inner.rtc.session, offer)?;
 
         // Handle potentially new m=application line.
-        let client = self.inner.rtc.dtls.is_active().expect("DTLS active to be set");
+        let client = self
+            .inner
+            .rtc
+            .dtls
+            .is_active()
+            .expect("DTLS active to be set");
         if self.inner.rtc.session.app().is_some() {
             self.inner.rtc.init_sctp(client);
         }
@@ -281,7 +285,9 @@ impl<'a> SdpApi<'a> {
         let main_ssrc_count = simulcast.as_ref().map(|s| s.send.len()).unwrap_or(1);
 
         for _ in 0..main_ssrc_count {
-            let rtx = kind.is_video().then(|| self.inner.rtc.session.streams.new_ssrc());
+            let rtx = kind
+                .is_video()
+                .then(|| self.inner.rtc.session.streams.new_ssrc());
             ssrcs.push((self.inner.rtc.session.streams.new_ssrc(), rtx));
         }
 
@@ -1707,12 +1713,26 @@ mod test {
         poll_to_completion(tx);
 
         // invalidates pending1
-        let (_, tx) = rtc1.begin(now).expect("begin").sdp_api().accept_offer(offer2).unwrap();
+        let (_, tx) = rtc1
+            .begin(now)
+            .expect("begin")
+            .sdp_api()
+            .accept_offer(offer2)
+            .unwrap();
         poll_to_completion(tx);
-        let (answer2, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer1).unwrap();
+        let (answer2, tx) = rtc2
+            .begin(now)
+            .expect("begin")
+            .sdp_api()
+            .accept_offer(offer1)
+            .unwrap();
         poll_to_completion(tx);
 
-        let r = rtc1.begin(now).expect("begin").sdp_api().accept_answer(pending1, answer2);
+        let r = rtc1
+            .begin(now)
+            .expect("begin")
+            .sdp_api()
+            .accept_answer(pending1, answer2);
 
         assert!(matches!(r, Err(RtcError::ChangesOutOfOrder)));
     }
@@ -1761,7 +1781,12 @@ mod test {
         let (offer1, _, tx) = change1.apply().unwrap();
         poll_to_completion(tx);
 
-        let (answer, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer1).unwrap();
+        let (answer, tx) = rtc2
+            .begin(now)
+            .expect("begin")
+            .sdp_api()
+            .accept_offer(offer1)
+            .unwrap();
         poll_to_completion(tx);
 
         assert_eq!(
@@ -1803,9 +1828,19 @@ mod test {
             let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
             let (offer, pending, tx) = changes.apply().unwrap();
             poll_to_completion(tx);
-            let (answer, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer).unwrap();
+            let (answer, tx) = rtc2
+                .begin(now)
+                .expect("begin")
+                .sdp_api()
+                .accept_offer(offer)
+                .unwrap();
             poll_to_completion(tx);
-            let tx = rtc1.begin(now).expect("begin").sdp_api().accept_answer(pending, answer).unwrap();
+            let tx = rtc1
+                .begin(now)
+                .expect("begin")
+                .sdp_api()
+                .accept_answer(pending, answer)
+                .unwrap();
             poll_to_completion(tx);
 
             assert!(matches!(rtc1.media(mid).unwrap().rids_rx(), Rids::Any));
@@ -1822,9 +1857,19 @@ mod test {
             changes.set_direction(mid, Direction::Inactive);
             let (offer, pending, tx) = changes.apply().unwrap();
             poll_to_completion(tx);
-            let (answer, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer).unwrap();
+            let (answer, tx) = rtc2
+                .begin(now)
+                .expect("begin")
+                .sdp_api()
+                .accept_offer(offer)
+                .unwrap();
             poll_to_completion(tx);
-            let tx = rtc1.begin(now).expect("begin").sdp_api().accept_answer(pending, answer).unwrap();
+            let tx = rtc1
+                .begin(now)
+                .expect("begin")
+                .sdp_api()
+                .accept_answer(pending, answer)
+                .unwrap();
             poll_to_completion(tx);
 
             assert!(matches!(rtc1.media(mid).unwrap().rids_rx(), Rids::Any));

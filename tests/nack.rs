@@ -30,13 +30,17 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
 
     l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
     });
 
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
 
     r.with_direct_api(|api| {
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
@@ -65,17 +69,19 @@ pub fn loss_recovery() -> Result<(), RtcError> {
 
         // Use transaction API to write RTP
         let tx = l.rtc.begin(l.last).expect("begin");
-        let tx = tx.write_rtp(
-            ssrc,
-            pt,
-            seq_no,
-            time,
-            wallclock,
-            false,
-            exts,
-            true,
-            to_write.to_vec(),
-        ).expect("write_rtp");
+        let tx = tx
+            .write_rtp(
+                ssrc,
+                pt,
+                seq_no,
+                time,
+                wallclock,
+                false,
+                exts,
+                true,
+                to_write.to_vec(),
+            )
+            .expect("write_rtp");
         poll_to_completion(tx).expect("poll");
 
         // Disable loss near start and end to let retransmission algo stabilize
@@ -198,13 +204,17 @@ pub fn nack_delay() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
 
     l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
     });
 
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
 
     r.with_direct_api(|api| {
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
@@ -265,17 +275,19 @@ pub fn nack_delay() -> Result<(), RtcError> {
 
                 // Use transaction API to write RTP
                 let tx = l.rtc.begin(l.last).expect("begin");
-                let tx = tx.write_rtp(
-                    ssrc,
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    true,
-                    packet.to_vec(),
-                ).expect("write_rtp");
+                let tx = tx
+                    .write_rtp(
+                        ssrc,
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        true,
+                        packet.to_vec(),
+                    )
+                    .expect("write_rtp");
                 poll_to_completion(tx).expect("poll");
             }
         }

@@ -25,10 +25,16 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     // New SSRC to use after reset
     let ssrc_tx_new: Ssrc = 84.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid)); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio);
+    });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid));
+    });
 
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid); });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid);
+    });
 
     // Set initial timing
     let max = l.last.max(r.last);
@@ -121,13 +127,15 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     info!("First batch sent with SSRC: {}", ssrc_tx_initial);
 
     // Reset the SSRC with None for RTX since the stream doesn't use RTX
-    let result = l.with_direct_api(|api| api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, None).is_some());
+    let result = l.with_direct_api(|api| {
+        api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, None)
+            .is_some()
+    });
     assert!(result, "Reset should succeed with valid new SSRC");
 
     // Verify the SSRC was changed
-    let updated_ssrc = l.with_direct_api(|api| {
-        api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc()
-    });
+    let updated_ssrc =
+        l.with_direct_api(|api| api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
     assert_eq!(
         updated_ssrc, ssrc_tx_new,
         "SSRC should be updated to new value"
@@ -337,9 +345,8 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
 
     // If we don't reset the state properly on SSRC change, this will be
     // a crazy value.
-    let last_time = r.with_direct_api(|api| {
-        api.stream_rx_by_mid(mid, Some(rid)).unwrap().last_time()
-    });
+    let last_time =
+        r.with_direct_api(|api| api.stream_rx_by_mid(mid, Some(rid)).unwrap().last_time());
     assert_eq!(
         last_time,
         Some(MediaTime::new(1001000, Frequency::FORTY_EIGHT_KHZ))

@@ -29,9 +29,15 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+    });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -135,9 +141,15 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
-    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
-    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+    });
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -168,9 +180,12 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
         Ok(w) => w,
         Err(_) => panic!("writer not found for mid"),
     };
-    let tx = writer
-        .user_extension_value(vla.clone())
-        .write(pt, last, MediaTime::ZERO, vec![0xAA; 10])?;
+    let tx = writer.user_extension_value(vla.clone()).write(
+        pt,
+        last,
+        MediaTime::ZERO,
+        vec![0xAA; 10],
+    )?;
     common::poll_to_completion(tx)?;
 
     let mut vla_received = false;

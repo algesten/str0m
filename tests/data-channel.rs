@@ -261,8 +261,12 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
     }
 
     // Verify config is immediately available for locally created out-of-band channels
-    let l_config = l.channel_config(cid_l).expect("L channel config should be available");
-    let r_config = r.channel_config(cid_r).expect("R channel config should be available");
+    let l_config = l
+        .channel_config(cid_l)
+        .expect("L channel config should be available");
+    let r_config = r
+        .channel_config(cid_r)
+        .expect("R channel config should be available");
 
     assert_eq!(l_config.label, "OutOfBand Local");
     assert_eq!(r_config.label, "OutOfBand Local");

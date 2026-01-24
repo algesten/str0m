@@ -31,8 +31,7 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
     });
 
     r.with_direct_api(|api| {
-        api.declare_media(mid, MediaKind::Audio)
-            .expect_rid_rx(rid);
+        api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid);
     });
 
     let max = l.last.max(r.last);

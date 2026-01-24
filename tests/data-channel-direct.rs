@@ -76,7 +76,9 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     r.last = max;
 
     loop {
-        if l.try_write_channel(cid, false, "Hello world! ".as_bytes()).is_some() {
+        if l.try_write_channel(cid, false, "Hello world! ".as_bytes())
+            .is_some()
+        {
             // Successfully wrote to channel
         }
 

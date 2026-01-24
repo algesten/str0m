@@ -61,9 +61,12 @@ pub fn unidirectional() -> Result<(), RtcError> {
 
         let tx = l.rtc.begin(l.last).unwrap();
         let writer = tx.writer(mid).unwrap_or_else(|_| panic!("writer for mid"));
-        let tx = writer
-            .start_of_talkspurt(start_of_talk_spurt)
-            .write(pt, wallclock, time, data_a.clone())?;
+        let tx = writer.start_of_talkspurt(start_of_talk_spurt).write(
+            pt,
+            wallclock,
+            time,
+            data_a.clone(),
+        )?;
         poll_to_completion(tx)?;
         start_of_talk_spurt = false;
 

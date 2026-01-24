@@ -53,7 +53,10 @@ impl<'a> Bwe<'a> {
     /// link can sustain 4.5Mbit/s there will eventually be an
     /// [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate] with this estimate.
     pub fn set_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        self.inner.rtc.session.set_bwe_desired_bitrate(desired_bitrate);
+        self.inner
+            .rtc
+            .session
+            .set_bwe_desired_bitrate(desired_bitrate);
     }
 
     /// Reset the BWE with a new init_bitrate

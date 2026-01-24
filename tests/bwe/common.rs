@@ -110,11 +110,19 @@ impl BweTestContext {
         let ssrc_tx: Ssrc = 42.into();
         let ssrc_rtx: Ssrc = 44.into();
 
-        l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
-        l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None); });
+        l.with_direct_api(|api| {
+            api.declare_media(mid, MediaKind::Video);
+        });
+        l.with_direct_api(|api| {
+            api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+        });
 
-        r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
-        r.with_direct_api(|api| { api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None); });
+        r.with_direct_api(|api| {
+            api.declare_media(mid, MediaKind::Video);
+        });
+        r.with_direct_api(|api| {
+            api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+        });
 
         // Enable TWCC feedback on the receiver so it sends feedback to the sender
         r.with_direct_api(|api| api.enable_twcc_feedback());
