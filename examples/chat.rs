@@ -222,13 +222,15 @@ fn read_socket_input<'a>(
                 return None;
             };
 
+            let recv_time = Instant::now();
             Some((
-                Instant::now(),
+                recv_time,
                 Receive {
                     proto: Protocol::Udp,
                     source,
                     destination: socket.local_addr().unwrap(),
                     contents,
+                    timestamp: Some(recv_time),
                 },
             ))
         }

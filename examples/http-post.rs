@@ -138,6 +138,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
                     source,
                     destination: socket.local_addr().unwrap(),
                     contents: buf.as_slice().try_into()?,
+                    timestamp: Some(recv_time),
                 };
 
                 // Handle the received data

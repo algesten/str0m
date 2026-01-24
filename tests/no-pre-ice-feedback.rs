@@ -30,9 +30,9 @@ pub fn no_pre_ice_feedback() -> Result<(), RtcError> {
     // Before ICE is established, introduce a large time delta that spans at least one sender/receiver report
     // interval
     let mut t = l.last;
-    l.handle_input(str0m::Input::Timeout(t))?;
+    l.handle_timeout(t)?;
     t += Duration::from_secs(10);
-    l.handle_input(str0m::Input::Timeout(t))?;
+    l.handle_timeout(t)?;
 
     loop {
         if l.is_connected() && r.is_connected() {

@@ -4,7 +4,7 @@ use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
 use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
-use str0m::{Event, Input, Output, Rtc, RtcError};
+use str0m::{Event, Output, Rtc, RtcError};
 
 mod common;
 use common::{connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, TestRtc};
@@ -218,33 +218,54 @@ pub fn progress_with_replay(
 ) -> Result<(), RtcError> {
     let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
 
-    loop {
-        f.span
-            .in_scope(|| f.rtc.handle_input(Input::Timeout(f.last)))?;
+    // Collect transmits to replay them after the transaction
+    let mut transmits_to_replay = Vec::new();
 
-        match f.span.in_scope(|| f.rtc.poll_output())? {
+    // Use transaction API
+    let tx = f.rtc.begin(f.last);
+    let mut tx = tx.finish();
+
+    loop {
+        match f.span.in_scope(|| tx.poll()) {
             Output::Timeout(v) => {
                 let tick = f.last + Duration::from_millis(10);
                 f.last = if v == f.last { tick } else { tick.min(v) };
                 break;
             }
-            Output::Transmit(v) => {
-                let data = v.contents;
-                for _ in 0..replay {
-                    let input = Input::Receive(
-                        f.last,
-                        Receive {
-                            proto: v.proto,
-                            source: v.source,
-                            destination: v.destination,
-                            contents: (&*data).try_into().unwrap(),
-                        },
-                    );
-                    t.span.in_scope(|| t.rtc.handle_input(input)).unwrap();
-                }
+            Output::Transmit(t_handle, v) => {
+                tx = t_handle;
+                transmits_to_replay.push((v.proto, v.source, v.destination, v.contents.to_vec()));
             }
-            Output::Event(v) => {
+            Output::Event(t_handle, v) => {
+                tx = t_handle;
                 f.events.push((f.last, v));
+            }
+        }
+    }
+
+    // Now replay the transmits to t
+    for (proto, source, destination, data) in transmits_to_replay {
+        for _ in 0..replay {
+            let recv = Receive {
+                proto,
+                source,
+                destination,
+                contents: (&*data).try_into().unwrap(),
+                timestamp: Some(f.last),
+            };
+            let recv_tx = t.rtc.begin(f.last);
+            let recv_tx = t.span.in_scope(|| recv_tx.receive(f.last, recv))?;
+            // Poll this receive to timeout
+            let mut recv_tx = recv_tx;
+            loop {
+                match t.span.in_scope(|| recv_tx.poll()) {
+                    Output::Timeout(_) => break,
+                    Output::Transmit(t_handle, _) => recv_tx = t_handle,
+                    Output::Event(t_handle, v) => {
+                        recv_tx = t_handle;
+                        t.events.push((t.last, v));
+                    }
+                }
             }
         }
     }

@@ -181,8 +181,8 @@ impl From<DatagramSend> for Vec<u8> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
 /// Received incoming data.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Receive<'a> {
     /// The protocol the socket this received data originated from is using.
     pub proto: Protocol,
@@ -196,6 +196,12 @@ pub struct Receive<'a> {
     /// Parsed contents of the datagram.
     #[serde(borrow)]
     pub contents: DatagramRecv<'a>,
+
+    /// The timestamp when the data was received.
+    ///
+    /// This is used internally by str0m for timing calculations.
+    #[serde(skip)]
+    pub timestamp: Option<std::time::Instant>,
 }
 
 impl<'a> Receive<'a> {
@@ -212,7 +218,36 @@ impl<'a> Receive<'a> {
             source,
             destination,
             contents,
+            timestamp: None,
         })
+    }
+
+    /// Creates a new instance with a timestamp.
+    pub fn with_timestamp(
+        proto: Protocol,
+        source: SocketAddr,
+        destination: SocketAddr,
+        buf: &'a [u8],
+        timestamp: std::time::Instant,
+    ) -> Result<Self, NetError> {
+        let contents = DatagramRecv::try_from(buf)?;
+        Ok(Receive {
+            proto,
+            source,
+            destination,
+            contents,
+            timestamp: Some(timestamp),
+        })
+    }
+
+    /// Sets the timestamp on this receive.
+    pub fn set_timestamp(&mut self, timestamp: std::time::Instant) {
+        self.timestamp = Some(timestamp);
+    }
+
+    /// Gets the timestamp, if set.
+    pub fn timestamp(&self) -> Option<std::time::Instant> {
+        self.timestamp
     }
 }
 
@@ -320,6 +355,7 @@ impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
             source: t.source,
             destination: t.destination,
             contents: DatagramRecv::try_from(&t.contents[..])?,
+            timestamp: None,
         })
     }
 }
