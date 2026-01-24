@@ -194,15 +194,16 @@ pub struct Receive<'a> {
     /// The destination ip of the datagram.
     pub destination: SocketAddr,
 
+    /// The timestamp this data was received. This is
+    ///
+    /// used when there is a possibility of a difference between
+    /// the `Rtc::begin(now)` time and the packet receive time.
+    #[serde(with = "relative_1970")]
+    pub recv_time: Option<Instant>,
+
     /// Parsed contents of the datagram.
     #[serde(borrow)]
     pub contents: DatagramRecv<'a>,
-
-    /// The timestamp when the data was received.
-    ///
-    /// This is used internally by str0m for timing calculations.
-    #[serde(skip)]
-    pub timestamp: Option<Instant>,
 }
 
 impl<'a> Receive<'a> {
@@ -218,37 +219,27 @@ impl<'a> Receive<'a> {
             proto,
             source,
             destination,
+            recv_time: None,
             contents,
-            timestamp: None,
         })
     }
 
-    /// Creates a new instance with a timestamp.
+    /// Creates a new instance with a receive time.
     pub fn with_timestamp(
         proto: Protocol,
         source: SocketAddr,
         destination: SocketAddr,
+        recv_time: Instant,
         buf: &'a [u8],
-        timestamp: Instant,
     ) -> Result<Self, NetError> {
         let contents = DatagramRecv::try_from(buf)?;
         Ok(Receive {
             proto,
             source,
             destination,
+            recv_time: Some(recv_time),
             contents,
-            timestamp: Some(timestamp),
         })
-    }
-
-    /// Sets the timestamp on this receive.
-    pub fn set_timestamp(&mut self, timestamp: Instant) {
-        self.timestamp = Some(timestamp);
-    }
-
-    /// Gets the timestamp, if set.
-    pub fn timestamp(&self) -> Option<Instant> {
-        self.timestamp
     }
 }
 
@@ -355,8 +346,8 @@ impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
             proto: t.proto,
             source: t.source,
             destination: t.destination,
+            recv_time: None,
             contents: DatagramRecv::try_from(&t.contents[..])?,
-            timestamp: None,
         })
     }
 }
@@ -428,5 +419,28 @@ impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let x: &str = (*self).into();
         write!(f, "{}", x)
+    }
+}
+
+mod relative_1970 {
+    use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Duration, Instant, SystemTime};
+
+    use crate::util::InstantExt;
+
+    pub fn serialize<S>(instant: &Option<Instant>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let duration = instant.map(|i| i.to_unix_duration());
+        duration.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Instant>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let duration: Option<Duration> = Option::deserialize(deserializer)?;
+        Ok(duration.map(Instant::from_unix_duration))
     }
 }

@@ -60,6 +60,9 @@ pub trait InstantExt {
     /// panics if `time` goes backwards, i.e. we use this for one Instant and then an earlier Instant.
     fn to_unix_duration(&self) -> Duration;
 
+    /// Convert a Duration un unix time to an `Instant`.
+    fn from_unix_duration(unix: Duration) -> Self;
+
     /// Convert an Instant to a Duration for ntp time.
     fn to_ntp_duration(&self) -> Duration;
 
@@ -93,7 +96,7 @@ impl InstantExt for Instant {
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
         if *self < BEGINNING_OF_TIME.0 {
-            warn!("Time went backwards from beginning_of_time Instant");
+            trace!("Time went backwards from beginning_of_time Instant");
         }
 
         let duration_since_time_0 = self.duration_since(BEGINNING_OF_TIME.0);
@@ -102,6 +105,20 @@ impl InstantExt for Instant {
         system_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("clock to go forwards from unix epoch")
+    }
+
+    fn from_unix_duration(unix: Duration) -> Self {
+        // Reverse of to_unix_duration:
+        // 1. Convert unix duration to SystemTime
+        let system_time = SystemTime::UNIX_EPOCH + unix;
+
+        // 2. Get duration from our "beginning of time" SystemTime to this SystemTime
+        let duration_since_time_0 = system_time
+            .duration_since(BEGINNING_OF_TIME.1)
+            .expect("unix duration to be after beginning of time");
+
+        // 3. Add that duration to our "beginning of time" Instant
+        BEGINNING_OF_TIME.0 + duration_since_time_0
     }
 
     fn to_ntp_duration(&self) -> Duration {
@@ -113,7 +130,7 @@ impl InstantExt for Instant {
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
         if *self < BEGINNING_OF_TIME.0 {
-            warn!("Time went backwards from beginning_of_time Instant");
+            trace!("Time went backwards from beginning_of_time Instant");
         }
 
         let duration_since_time_0 = self.duration_since(BEGINNING_OF_TIME.0);
