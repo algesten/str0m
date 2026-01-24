@@ -20,12 +20,12 @@ use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::media::{KeyframeRequestKind, MediaKind};
 use str0m::net::Protocol;
 use str0m::net::Receive;
-use str0m::{Candidate, Event, IceConnectionState, Output, Poll as TxPoll, Rtc, RtcError, RtcTx};
+use str0m::{Candidate, Event, IceConnectionState, Output, Poll, Rtc, RtcError, RtcTx};
 
 mod util;
 
 /// Poll transaction until timeout, discarding events and transmits.
-fn poll_tx(mut tx: RtcTx<'_, TxPoll>) -> Result<(), RtcError> {
+fn poll_tx(mut tx: RtcTx<'_, Poll>) -> Result<(), RtcError> {
     loop {
         match tx.poll()? {
             Output::Timeout(_) => return Ok(()),
