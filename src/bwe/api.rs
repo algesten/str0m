@@ -2,7 +2,7 @@
 
 use crate::rtp_::Mid;
 use crate::tx::{RtcTx, RtcTxInner};
-use crate::{Mutate, Poll, RtcError};
+use crate::{Mutate, Poll};
 
 pub use crate::rtp_::Bitrate;
 

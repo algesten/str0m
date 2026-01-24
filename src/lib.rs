@@ -617,8 +617,7 @@
 #[macro_use]
 extern crate tracing;
 
-use bwe::{Bwe, BweKind};
-use change::{DirectApi, SdpApi};
+use bwe::BweKind;
 use rtp::RawPacket;
 use std::fmt;
 use std::net::SocketAddr;
@@ -735,11 +734,11 @@ pub mod format;
 use format::CodecConfig;
 
 pub mod channel;
-use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
+use channel::{ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
 use media::SenderFeedback;
-use media::{Direction, Media, Mid, Pt, Rid, Writer};
+use media::{Direction, Media, Mid, Pt, Rid};
 use media::{KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
 
@@ -837,7 +836,6 @@ pub struct Rtc {
     remote_fingerprint: Option<Fingerprint>,
     remote_addrs: Vec<SocketAddr>,
     send_addr: Option<SendAddr>,
-    need_init_time: bool,
     last_now: Instant,
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
@@ -1158,7 +1156,6 @@ impl Rtc {
             remote_fingerprint: None,
             remote_addrs: vec![],
             send_addr: None,
-            need_init_time: true,
             last_now: already_happened(),
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,

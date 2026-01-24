@@ -171,16 +171,19 @@ impl<'a> RtcTx<'a, Mutate> {
     /// // channel.finish() to get RtcTx<Poll>
     /// ```
     pub fn channel(self, id: ChannelId) -> Result<Channel<'a>, Self> {
-        // Look up the SCTP stream id for the channel
+        // Look up the SCTP stream id for the channel and check if it's open
         let sctp_stream_id = {
             let inner = self.inner.as_ref().expect("inner not taken");
-            inner.rtc.chan.stream_id_by_channel_id(id)
+            let Some(stream_id) = inner.rtc.chan.stream_id_by_channel_id(id) else {
+                return Err(self);
+            };
+            if !inner.rtc.sctp.is_open(stream_id) {
+                return Err(self);
+            }
+            stream_id
         };
 
-        match sctp_stream_id {
-            Some(sctp_stream_id) => Ok(Channel::new(sctp_stream_id, self)),
-            None => Err(self),
-        }
+        Ok(Channel::new(sctp_stream_id, self))
     }
 
     /// Send outgoing media data (frames) or request keyframes.
