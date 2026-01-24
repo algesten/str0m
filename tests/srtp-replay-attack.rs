@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
 use str0m::media::MediaKind;
@@ -8,6 +8,7 @@ use str0m::{Event, Output, Rtc, RtcError};
 
 mod common;
 use common::{connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, TestRtc};
+use tracing::Span;
 
 const EXPECTED_PACKETS: usize = 50;
 const REPLAY_PER_PACKET: usize = 5;
@@ -30,7 +31,6 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
     let mut write_at = l.last + Duration::from_millis(20);
@@ -48,31 +48,34 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
             time += TIME_INTERVAL;
             write_at = l.last + Duration::from_millis(20);
             let wallclock = l.start + l.duration();
-            let mut direct = l.direct_api();
-            let stream = direct.stream_tx(&ssrc).unwrap();
+
             let exts = ExtensionValues {
                 audio_level: Some(-42),
                 voice_activity: Some(false),
                 ..Default::default()
             };
 
-            stream
-                .write_rtp(
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    vec![1, 3, 3, 7],
-                )
-                .expect("clean write");
-            eprintln!("WRITE: seq_no={}", seq_no);
-            send_count += 1;
-        }
+            // Use transaction API: write_rtp returns RtcTx<Poll> that must be polled
+            let tx = l.rtc.begin(l.last);
+            let tx = l.span.in_scope(|| {
+                tx.media_writer(mid)
+                    .ok()
+                    .expect("media_writer should succeed")
+                    .write_rtp(pt, seq_no, time, wallclock, false, exts, false, vec![1, 3, 3, 7])
+            })?;
 
-        progress_with_replay(&mut l, &mut r, REPLAY_PER_PACKET)?;
+            // Poll and replay transmits to receiver
+            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            l.last = new_last;
+            l.events.extend(events);
+            send_count += 1;
+        } else {
+            // Just advance time without writing
+            let tx = l.rtc.begin(l.last).finish();
+            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            l.last = new_last;
+            l.events.extend(events);
+        }
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -90,14 +93,6 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
             }
         })
         .collect();
-
-    // Debug: print received sequence numbers
-    let seq_nos: Vec<u16> = rtp_raw_rx.iter().map(|(h, _)| h.sequence_number).collect();
-    eprintln!(
-        "RTP_MODE: Received {} packets, seq_nos: {:?}",
-        rtp_raw_rx.len(),
-        seq_nos
-    );
 
     assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS);
 
@@ -145,7 +140,6 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
     let mut write_at = l.last + Duration::from_millis(20);
@@ -163,31 +157,34 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
             time += TIME_INTERVAL;
             write_at = l.last + Duration::from_millis(20);
             let wallclock = l.start + l.duration();
-            let mut direct = l.direct_api();
-            let stream = direct.stream_tx(&ssrc).unwrap();
+
             let exts = ExtensionValues {
                 audio_level: Some(-42),
                 voice_activity: Some(false),
                 ..Default::default()
             };
 
-            stream
-                .write_rtp(
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    vec![1, 3, 3, 7],
-                )
-                .expect("clean write");
-            eprintln!("WRITE: seq_no={}", seq_no);
-            send_count += 1;
-        }
+            // Use transaction API: write_rtp returns RtcTx<Poll> that must be polled
+            let tx = l.rtc.begin(l.last);
+            let tx = l.span.in_scope(|| {
+                tx.media_writer(mid)
+                    .ok()
+                    .expect("media_writer should succeed")
+                    .write_rtp(pt, seq_no, time, wallclock, false, exts, false, vec![1, 3, 3, 7])
+            })?;
 
-        progress_with_replay(&mut l, &mut r, REPLAY_PER_PACKET)?;
+            // Poll and replay transmits to receiver
+            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            l.last = new_last;
+            l.events.extend(events);
+            send_count += 1;
+        } else {
+            // Just advance time without writing
+            let tx = l.rtc.begin(l.last).finish();
+            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            l.last = new_last;
+            l.events.extend(events);
+        }
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -206,14 +203,6 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
         })
         .collect();
 
-    // Debug: print received sequence numbers
-    let seq_nos: Vec<u16> = rtp_raw_rx.iter().map(|(h, _)| h.sequence_number).collect();
-    eprintln!(
-        "FRAME_MODE: Received {} packets, seq_nos: {:?}",
-        rtp_raw_rx.len(),
-        seq_nos
-    );
-
     assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS);
 
     let media: Vec<_> = r
@@ -231,42 +220,42 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     Ok(())
 }
 
-pub fn progress_with_replay(
-    l: &mut TestRtc,
+/// Poll a transaction to timeout, replaying transmits to the receiver.
+/// Returns the new timestamp for l and any events collected.
+fn poll_and_replay_tx<'a>(
+    span: &Span,
     r: &mut TestRtc,
+    tx: str0m::RtcTx<'a, str0m::Poll>,
+    mut last: Instant,
     replay: usize,
-) -> Result<(), RtcError> {
-    // Always poll l (sender) first to transmit its packets to r (receiver)
-    let tx = l.rtc.begin(l.last);
-    let mut tx = tx.finish();
+) -> Result<(Instant, Vec<(Instant, Event)>), RtcError> {
+    let mut tx = tx;
+    let mut events = Vec::new();
 
     loop {
-        match l.span.in_scope(|| tx.poll()) {
+        match span.in_scope(|| tx.poll()) {
             Output::Timeout(v) => {
-                let tick = l.last + Duration::from_millis(10);
-                l.last = if v == l.last { tick } else { tick.min(v) };
+                let tick = last + Duration::from_millis(10);
+                last = if v == last { tick } else { tick.min(v) };
                 break;
             }
-            Output::Transmit(t_handle, v) => {
-                tx = t_handle;
-                let data = v.contents.to_vec();
-                // Debug: try to extract RTP sequence number from transmitted packet
-                if data.len() >= 4 && (data[0] & 0xC0) == 0x80 {
-                    let seq = u16::from_be_bytes([data[2], data[3]]);
-                    eprintln!("TRANSMIT: RTP packet with seq_no={}", seq);
-                }
+            Output::Transmit(t, pkt) => {
+                tx = t;
+                let data = pkt.contents.to_vec();
+
                 // Replay the packet to the receiver
                 for _ in 0..replay {
                     let recv = Receive {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
+                        proto: pkt.proto,
+                        source: pkt.source,
+                        destination: pkt.destination,
                         contents: (&*data).try_into().unwrap(),
-                        timestamp: Some(l.last),
+                        timestamp: Some(last),
                     };
-                    let recv_tx = r.rtc.begin(l.last);
-                    let mut recv_tx = r.span.in_scope(|| recv_tx.receive(l.last, recv))?;
-                    // Poll receive to completion
+                    let recv_tx = r.rtc.begin(last);
+                    let mut recv_tx = r.span.in_scope(|| recv_tx.receive(last, recv))?;
+
+                    // Poll receiver to timeout
                     loop {
                         match r.span.in_scope(|| recv_tx.poll()) {
                             Output::Timeout(_) => break,
@@ -279,12 +268,25 @@ pub fn progress_with_replay(
                     }
                 }
             }
-            Output::Event(t_handle, v) => {
-                tx = t_handle;
-                l.events.push((l.last, v));
+            Output::Event(t, ev) => {
+                tx = t;
+                events.push((last, ev));
             }
         }
     }
 
+    Ok((last, events))
+}
+
+/// Progress without writing - just advance time and replay transmits.
+fn progress_with_replay(l: &mut TestRtc, r: &mut TestRtc, replay: usize) -> Result<(), RtcError> {
+    // Create transaction, poll, and collect results
+    let tx = l.rtc.begin(l.last).finish();
+    let span = l.span.clone();
+    let last = l.last;
+
+    let (new_last, events) = poll_and_replay_tx(&span, r, tx, last, replay)?;
+    l.last = new_last;
+    l.events.extend(events);
     Ok(())
 }

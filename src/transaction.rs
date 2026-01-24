@@ -48,8 +48,9 @@ use std::time::Instant;
 use crate::bwe::Bitrate;
 use crate::channel::ChannelId;
 use crate::media::{KeyframeRequestKind, MediaTime, Mid, Pt, Rid, Writer};
+use crate::rtp_::MidRid;
 use crate::net::Receive;
-use crate::rtp::VideoOrientation;
+use crate::rtp::{ExtensionValues, SeqNo, VideoOrientation};
 use crate::Candidate;
 use crate::Rtc;
 use crate::RtcError;
@@ -224,14 +225,10 @@ impl<'a> RtcTx<'a, Mutate> {
 
     /// Access a media writer with full configuration options.
     ///
-    /// This provides the same functionality as the old `rtc.writer(mid)` API.
+    /// This provides access to both `write()` (frame-level) and `write_rtp()` (packet-level).
     /// Returns `Err(self)` if the media doesn't exist.
     pub fn media_writer(mut self, mid: Mid) -> Result<MediaWriterTx<'a>, Self> {
         let inner_ref = self.inner.as_ref().expect("inner state");
-
-        if inner_ref.rtc.session.rtp_mode {
-            panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
-        }
 
         // Check if media exists
         if inner_ref.rtc.session.media_by_mid(mid).is_none() {
@@ -502,6 +499,10 @@ impl<'a> MediaWriterTx<'a> {
     }
 
     /// Write media data and transition to Poll state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if in RTP mode. Use `write_rtp()` for packet-level writes.
     pub fn write(
         self,
         pt: Pt,
@@ -509,6 +510,10 @@ impl<'a> MediaWriterTx<'a> {
         rtp_time: MediaTime,
         data: impl Into<Vec<u8>>,
     ) -> Result<RtcTx<'a, Poll>, RtcError> {
+        if self.rtc.session.rtp_mode {
+            panic!("write() not available in RTP mode. Use write_rtp() for packet-level writes.");
+        }
+
         // Build the writer with all configured options
         let mut writer = Writer::new(&mut self.rtc.session, self.mid);
 
@@ -529,6 +534,53 @@ impl<'a> MediaWriterTx<'a> {
         }
 
         writer.write(pt, wallclock, rtp_time, data)?;
+
+        self.rtc.do_handle_timeout(self.now)?;
+
+        Ok(RtcTx {
+            inner: Some(RtcTxInner {
+                rtc: self.rtc,
+                now: self.now,
+            }),
+            _state: PhantomData,
+        })
+    }
+
+    /// Write an RTP packet directly (RTP mode only).
+    ///
+    /// This is for use in RTP mode where you want to write raw RTP packets.
+    /// The packet is queued and will be transmitted when polling.
+    ///
+    /// # Panics
+    ///
+    /// Panics if not in RTP mode. Use `write()` for frame-level media.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_rtp(
+        self,
+        pt: Pt,
+        seq_no: SeqNo,
+        time: u32,
+        wallclock: Instant,
+        marker: bool,
+        ext_vals: ExtensionValues,
+        nackable: bool,
+        payload: Vec<u8>,
+    ) -> Result<RtcTx<'a, Poll>, RtcError> {
+        if !self.rtc.session.rtp_mode {
+            panic!("write_rtp() requires RTP mode. Use write() for frame-level media.");
+        }
+
+        let midrid = MidRid(self.mid, self.rid);
+        let stream = self
+            .rtc
+            .session
+            .streams
+            .stream_tx_by_midrid(midrid)
+            .ok_or(RtcError::NoSenderSource)?;
+
+        stream
+            .write_rtp(pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload)
+            .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
         self.rtc.do_handle_timeout(self.now)?;
 
