@@ -262,23 +262,36 @@ impl TestRtc {
                 first_time = Some(time);
             }
 
-            if is_netem {
-                if is_self {
-                    netem_to_rtc(self, time, &mut other.pending)?;
-                } else {
-                    netem_to_rtc(other, time, &mut self.pending)?;
-                }
-            } else {
-                if is_self {
-                    rtc_timeout(self, time, &mut other.pending)?;
-                } else {
-                    rtc_timeout(other, time, &mut self.pending)?;
-                }
-            }
+            progress_one(self, other, time, is_self, is_netem)?;
         }
 
         Ok(())
     }
+}
+
+fn progress_one(
+    this: &mut TestRtc,
+    other: &mut TestRtc,
+    time: Instant,
+    is_this: bool,
+    is_netem: bool,
+) -> Result<(), RtcError> {
+    if is_netem {
+        // Deliver packet from netem to rtc (no timeout processing)
+        if is_this {
+            netem_to_rtc(this, time, &mut other.pending)?;
+        } else {
+            netem_to_rtc(other, time, &mut this.pending)?;
+        }
+    } else {
+        // Process rtc timeout and poll outputs
+        if is_this {
+            rtc_timeout(this, time, &mut other.pending)?;
+        } else {
+            rtc_timeout(other, time, &mut this.pending)?;
+        }
+    }
+    Ok(())
 }
 
 /// Deliver one packet from rtc.pending to rtc. No timeout processing.
@@ -301,48 +314,22 @@ fn netem_to_rtc(
         recv_time: Some(time),
     };
 
-    // Collect outputs in temporary storage to avoid borrow issues
-    let mut events = Vec::new();
-    let timeout;
-    let forced_advance = rtc.forced_time_advance;
-    let last = rtc.last;
-
-    {
+    rtc.span.in_scope(|| {
         let tx = rtc.rtc.begin(time)?;
-        let mut tx = rtc.span.in_scope(|| tx.receive(recv))?;
-        timeout = loop {
-            match tx.poll()? {
-                Output::Timeout(v) => break v,
-                Output::Transmit(t, v) => {
-                    tx = t;
-                    transmits.push(PendingPacket {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
-                        contents: v.contents.to_vec(),
-                    });
-                }
-                Output::Event(t, v) => {
-                    tx = t;
-                    events.push(v);
-                }
-            }
-        };
-    }
+        let tx = tx.receive(recv)?;
 
-    // Update state after transaction completes
-    let tick = last + forced_advance;
-    rtc.last = if timeout == last {
-        tick
-    } else {
-        tick.min(timeout)
-    };
-    for packet in transmits {
-        other_netem.handle_input(NetemInput::Packet(time, packet));
-    }
-    for v in events {
-        rtc.events.push((rtc.last, v));
-    }
+        tx_to_timeout(
+            &rtc.span,
+            &mut rtc.last,
+            tx,
+            time,
+            other_netem,
+            rtc.forced_time_advance,
+            &mut rtc.events,
+        )?;
+
+        Ok::<_, RtcError>(())
+    })?;
 
     Ok(())
 }
@@ -353,50 +340,60 @@ fn rtc_timeout(
     time: Instant,
     other_netem: &mut Netem<PendingPacket>,
 ) -> Result<(), RtcError> {
-    // Collect outputs in temporary storage to avoid borrow issues
-    let mut transmits = Vec::new();
-    let mut events = Vec::new();
-    let timeout;
-    let forced_advance = rtc.forced_time_advance;
-    let last = rtc.last;
-
-    {
+    // Do a timeout.
+    rtc.span.in_scope(|| {
         let tx = rtc.rtc.begin(time)?;
-        let mut tx = tx.finish();
-        timeout = loop {
-            match tx.poll()? {
-                Output::Timeout(v) => break v,
-                Output::Transmit(t, v) => {
-                    tx = t;
-                    transmits.push(PendingPacket {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
-                        contents: v.contents.to_vec(),
-                    });
-                }
-                Output::Event(t, v) => {
-                    tx = t;
-                    events.push(v);
-                }
+        let tx = tx.finish();
+
+        tx_to_timeout(
+            &rtc.span,
+            &mut rtc.last,
+            tx,
+            time,
+            other_netem,
+            rtc.forced_time_advance,
+            &mut rtc.events,
+        )?;
+
+        Ok::<_, RtcError>(())
+    })?;
+
+    Ok(())
+}
+
+fn tx_to_timeout(
+    span: &Span,
+    last: &mut Instant,
+    mut tx: RtcTx<'_, Poll>,
+    time: Instant,
+    other_netem: &mut Netem<PendingPacket>,
+    forced_time_advance: Duration,
+    events: &mut Vec<(Instant, Event)>,
+) -> Result<(), RtcError> {
+    loop {
+        let next = span.in_scope(|| tx.poll())?;
+        match next {
+            Output::Timeout(v) => {
+                let tick = *last + forced_time_advance;
+                *last = if v == *last { tick } else { tick.min(v) };
+                break;
             }
-        };
+            Output::Transmit(_tx, v) => {
+                tx = _tx;
+                let packet = PendingPacket {
+                    proto: v.proto,
+                    source: v.source,
+                    destination: v.destination,
+                    contents: v.contents.to_vec(),
+                };
+                other_netem.handle_input(NetemInput::Packet(time, packet));
+            }
+            Output::Event(_tx, v) => {
+                tx = _tx;
+                events.push((*last, v));
+            }
+        }
     }
-
-    // Update state after transaction completes
-    let tick = last + forced_advance;
-    rtc.last = if timeout == last {
-        tick
-    } else {
-        tick.min(timeout)
-    };
-    for packet in transmits {
-        other_netem.handle_input(NetemInput::Packet(time, packet));
-    }
-    for v in events {
-        rtc.events.push((rtc.last, v));
-    }
-
     Ok(())
 }
 
