@@ -251,6 +251,11 @@ pub fn progress_with_replay(
             Output::Transmit(t_handle, v) => {
                 tx = t_handle;
                 let data = v.contents.to_vec();
+                // Debug: try to extract RTP sequence number from transmitted packet
+                if data.len() >= 4 && (data[0] & 0xC0) == 0x80 {
+                    let seq = u16::from_be_bytes([data[2], data[3]]);
+                    eprintln!("TRANSMIT: RTP packet with seq_no={}", seq);
+                }
                 // Replay the packet to the receiver (like original)
                 for _ in 0..replay {
                     let recv = Receive {
