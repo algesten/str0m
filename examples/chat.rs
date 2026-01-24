@@ -19,10 +19,8 @@ use str0m::crypto::from_feature_flags;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::media::{KeyframeRequestKind, MediaKind};
 use str0m::net::Protocol;
-use str0m::{
-    net::Receive, Candidate, Event, IceConnectionState, Output, Poll as TxPoll, Rtc, RtcError,
-    RtcTx,
-};
+use str0m::net::Receive;
+use str0m::{Candidate, Event, IceConnectionState, Output, Poll as TxPoll, Rtc, RtcError, RtcTx};
 
 mod util;
 
