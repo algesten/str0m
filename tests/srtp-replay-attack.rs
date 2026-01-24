@@ -92,7 +92,11 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
 
     // Debug: print received sequence numbers
     let seq_nos: Vec<u16> = rtp_raw_rx.iter().map(|(h, _)| h.sequence_number).collect();
-    eprintln!("RTP_MODE: Received {} packets, seq_nos: {:?}", rtp_raw_rx.len(), seq_nos);
+    eprintln!(
+        "RTP_MODE: Received {} packets, seq_nos: {:?}",
+        rtp_raw_rx.len(),
+        seq_nos
+    );
 
     assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS);
 
@@ -202,7 +206,11 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
 
     // Debug: print received sequence numbers
     let seq_nos: Vec<u16> = rtp_raw_rx.iter().map(|(h, _)| h.sequence_number).collect();
-    eprintln!("FRAME_MODE: Received {} packets, seq_nos: {:?}", rtp_raw_rx.len(), seq_nos);
+    eprintln!(
+        "FRAME_MODE: Received {} packets, seq_nos: {:?}",
+        rtp_raw_rx.len(),
+        seq_nos
+    );
 
     assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS);
 
