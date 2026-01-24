@@ -233,7 +233,7 @@ impl BweTestContext {
                         }
                     }
 
-                    assert!(any_ok, "No probe check passed");
+                    assert!(any_ok, "Needed a probe");
 
                     // Check does not reset event offset.
                 }

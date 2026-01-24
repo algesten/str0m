@@ -190,157 +190,6 @@ impl TestRtc {
             .unwrap()
     }
 
-    // --- Backward-compatible helper methods ---
-    // These wrap the transaction API for tests that haven't been updated
-
-    /// Execute a closure with the DirectApi.
-    /// DEPRECATED: Use `drive` with closure instead.
-    pub fn with_direct_api<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce(&mut DirectApi) -> R,
-    {
-        let tx = self.rtc.begin(self.last).unwrap();
-        let mut api = tx.direct_api();
-        let result = f(&mut api);
-        // Just poll to completion but don't deliver anywhere
-        let mut tx = api.finish();
-        loop {
-            match tx.poll().unwrap() {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
-        result
-    }
-
-    /// Write RTP packet (discards transmits - for tests that don't need delivery).
-    /// DEPRECATED: Use `drive` with `tx.write_rtp()` instead.
-    #[allow(clippy::too_many_arguments)]
-    pub fn write_rtp(
-        &mut self,
-        ssrc: str0m::rtp::Ssrc,
-        pt: str0m::media::Pt,
-        seq_no: str0m::rtp::SeqNo,
-        time: u32,
-        wallclock: Instant,
-        marker: bool,
-        exts: str0m::rtp::ExtensionValues,
-        nackable: bool,
-        payload: Vec<u8>,
-    ) -> Result<(), RtcError> {
-        let tx = self.rtc.begin(self.last)?;
-        let mut tx = tx.write_rtp(ssrc, pt, seq_no, time, wallclock, marker, exts, nackable, payload)?;
-        loop {
-            match tx.poll()? {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
-        Ok(())
-    }
-
-    /// Write media using the Writer API.
-    /// DEPRECATED: Use `drive` with `tx.writer()` instead.
-    pub fn write_media(
-        &mut self,
-        mid: str0m::media::Mid,
-        pt: str0m::media::Pt,
-        wallclock: Instant,
-        time: str0m::media::MediaTime,
-        data: Vec<u8>,
-        _marker: Option<()>,
-    ) -> Result<(), RtcError> {
-        let tx = self.rtc.begin(self.last)?;
-        let writer = match tx.writer(mid) {
-            Ok(w) => w,
-            Err(_) => panic!("Failed to get writer for mid"),
-        };
-        let mut tx = writer.write(pt, wallclock, time, data)?;
-        loop {
-            match tx.poll()? {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
-        Ok(())
-    }
-
-    /// Create an SDP offer.
-    /// DEPRECATED: Use `drive` with closure instead.
-    pub fn sdp_create_offer<F, R>(
-        &mut self,
-        f: F,
-    ) -> (str0m::change::SdpOffer, str0m::change::SdpPendingOffer, R)
-    where
-        F: FnOnce(&mut SdpApi) -> R,
-    {
-        let tx = self.rtc.begin(self.last).unwrap();
-        let mut api = tx.sdp_api();
-        let result = f(&mut api);
-        let (offer, pending, mut tx) = api.apply().unwrap();
-        loop {
-            match tx.poll().unwrap() {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
-        (offer, pending, result)
-    }
-
-    /// Accept an SDP offer.
-    /// DEPRECATED: Use `drive` with closure instead.
-    pub fn sdp_accept_offer(
-        &mut self,
-        offer: str0m::change::SdpOffer,
-    ) -> Result<str0m::change::SdpAnswer, RtcError> {
-        let tx = self.rtc.begin(self.last)?;
-        let (answer, mut tx) = tx.sdp_api().accept_offer(offer)?;
-        loop {
-            match tx.poll()? {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
-        Ok(answer)
-    }
-
-    /// Accept an SDP answer.
-    /// DEPRECATED: Use `drive` with closure instead.
-    pub fn sdp_accept_answer(
-        &mut self,
-        pending: str0m::change::SdpPendingOffer,
-        answer: str0m::change::SdpAnswer,
-    ) -> Result<(), RtcError> {
-        let tx = self.rtc.begin(self.last)?;
-        let mut tx = tx.sdp_api().accept_answer(pending, answer)?;
-        loop {
-            match tx.poll()? {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
-        Ok(())
-    }
-
-    /// Access the BWE subsystem.
-    /// DEPRECATED: Use `drive` with `tx.bwe()` instead.
-    pub fn with_bwe<F, R>(&mut self, f: F) -> R
-    where
-        F: FnOnce(&mut str0m::bwe::Bwe) -> R,
-    {
-        let tx = self.rtc.begin(self.last).unwrap();
-        let mut bwe = tx.bwe();
-        let result = f(&mut bwe);
-        let mut tx = bwe.finish();
-        loop {
-            match tx.poll().unwrap() {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
-        result
-    }
-
     /// Drive the test forward, performing an operation and running the progress loop.
     ///
     /// The closure receives an `RtcTx<Mutate>` and should return an `RtcTx<Poll>`.
@@ -350,21 +199,15 @@ impl TestRtc {
     /// 3. Runs the 4-way progress loop (self.last, other.last, self.pending, other.pending)
     ///
     /// For just progressing without an operation, use `|tx| Ok(tx.finish())`.
-    pub fn drive<F>(
-        &mut self,
-        other: &mut TestRtc,
-        f: F,
-    ) -> Result<(), RtcError>
+    pub fn drive<F>(&mut self, other: &mut TestRtc, f: F) -> Result<(), RtcError>
     where
         F: FnOnce(RtcTx<'_, Mutate>) -> Result<RtcTx<'_, Poll>, RtcError>,
     {
         // Step 1: Execute operation on self and poll to completion
         {
-            let time = self.last;
-            let forced_advance = self.forced_time_advance;
-            let mut transmits = Vec::new();
             let mut events = Vec::new();
             let timeout;
+            let time = self.last;
 
             {
                 let tx = self.rtc.begin(time)?;
@@ -374,12 +217,13 @@ impl TestRtc {
                         Output::Timeout(t) => break t,
                         Output::Transmit(t, v) => {
                             tx = t;
-                            transmits.push(PendingPacket {
+                            let packet = PendingPacket {
                                 proto: v.proto,
                                 source: v.source,
                                 destination: v.destination,
                                 contents: v.contents.to_vec(),
-                            });
+                            };
+                            other.pending.handle_input(NetemInput::Packet(time, packet));
                         }
                         Output::Event(t, v) => {
                             tx = t;
@@ -387,15 +231,6 @@ impl TestRtc {
                         }
                     }
                 };
-            }
-
-            let tick = time + forced_advance;
-            self.last = if timeout == time { tick } else { tick.min(timeout) };
-            for packet in transmits {
-                other.pending.handle_input(NetemInput::Packet(time, packet));
-            }
-            for v in events {
-                self.events.push((self.last, v));
             }
         }
 
@@ -467,7 +302,6 @@ fn netem_to_rtc(
     };
 
     // Collect outputs in temporary storage to avoid borrow issues
-    let mut transmits = Vec::new();
     let mut events = Vec::new();
     let timeout;
     let forced_advance = rtc.forced_time_advance;
@@ -851,7 +685,8 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish())).expect("clean progress");
+        l.drive(&mut r, |tx| Ok(tx.finish()))
+            .expect("clean progress");
     }
 
     (l, r)
