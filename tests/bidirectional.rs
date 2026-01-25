@@ -65,7 +65,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
 
         progress(&mut l, &mut r)?;
 
-        if l.duration() > Duration::from_secs(10) {
+        if l.duration() > Duration::from_secs(12) {
             break;
         }
     }

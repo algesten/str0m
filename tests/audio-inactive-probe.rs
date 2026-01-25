@@ -1,5 +1,5 @@
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use netem::Bitrate;
 use str0m::media::{Direction, MediaKind};
@@ -15,7 +15,9 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
     init_crypto_default();
 
     // Only sender (L) needs BWE enabled
-    let rtc1 = Rtc::builder().enable_bwe(Some(Bitrate::kbps(800))).build();
+    let rtc1 = Rtc::builder()
+        .enable_bwe(Some(Bitrate::kbps(800)))
+        .build(Instant::now());
 
     let mut l = TestRtc::new_with_rtc(Peer::Left.span(), rtc1);
     let mut r = TestRtc::new(Peer::Right);

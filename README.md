@@ -58,7 +58,7 @@ made by a remote peer, we need these steps to open the connection.
 
 ```rust
 // Instantiate a new Rtc instance.
-let mut rtc = Rtc::new();
+let mut rtc = Rtc::new(Instant::now());
 
 //  Add some ICE candidate such as a locally bound UDP port.
 let addr = "1.2.3.4:5000".parse().unwrap();
@@ -82,7 +82,7 @@ remote ANSWER to start the connection.
 
 ```rust
 // Instantiate a new Rtc instance.
-let mut rtc = Rtc::new();
+let mut rtc = Rtc::new(Instant::now());
 
 // Add some ICE candidate such as a locally bound UDP port.
 let addr = "1.2.3.4:5000".parse().unwrap();
@@ -320,11 +320,12 @@ str0m_rust_crypto::default_provider().install_process_default();
 
 ```rust
 use std::sync::Arc;
+use std::time::Instant;
 use str0m::Rtc;
 
 let rtc = Rtc::builder()
     .set_crypto_provider(Arc::new(str0m_rust_crypto::default_provider()))
-    .build();
+    .build(Instant::now());
 ```
 
 ## Project status
@@ -400,7 +401,7 @@ let rtc = Rtc::builder()
     // Enable RTP mode for this Rtc instance.
     // This disables `MediaEvent` and the `Writer::write` API.
     .set_rtp_mode(true)
-    .build();
+    .build(Instant::now());
 ```
 
 RTP mode gives us some new API points.

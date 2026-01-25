@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
 use str0m::media::MediaKind;
@@ -111,15 +111,16 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
+    let now = Instant::now();
     let rtc1 = Rtc::builder()
         .set_rtp_mode(true)
         .enable_raw_packets(true)
-        .build();
+        .build(now);
     let rtc2 = Rtc::builder()
         .enable_raw_packets(true)
         // release packet straight away
         .set_reordering_size_audio(0)
-        .build();
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 

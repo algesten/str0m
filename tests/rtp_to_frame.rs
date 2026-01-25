@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
 use str0m::media::MediaKind;
@@ -14,8 +14,9 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let rtc1 = Rtc::builder().set_rtp_mode(true).build();
-    let rtc2 = Rtc::builder().set_reordering_size_audio(0).build();
+    let now = Instant::now();
+    let rtc1 = Rtc::builder().set_rtp_mode(true).build(now);
+    let rtc2 = Rtc::builder().set_reordering_size_audio(0).build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
