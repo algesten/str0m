@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 mod common;
 use common::init_crypto_default;
 use common::init_log;
@@ -352,14 +354,15 @@ fn non_media_creator_cannot_change_inactive_to_recvonly() {
     init_log();
     init_crypto_default();
 
+    let now = Instant::now();
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
         ),
         TestRtc::new_with_rtc(
             info_span!("R"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
         ),
     );
 
@@ -387,14 +390,15 @@ fn media_creator_can_change_inactive_to_recvonly() {
     init_log();
     init_crypto_default();
 
+    let now = Instant::now();
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
         ),
         TestRtc::new_with_rtc(
             info_span!("R"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
         ),
     );
 
@@ -432,7 +436,7 @@ fn max_bundle_offer_accepted() {
             .clear_codecs()
             .enable_opus(true)
             .enable_vp8(true)
-            .build(),
+            .build(Instant::now()),
     );
 
     // This is a max-bundle offer where the video m-line has port=0
@@ -541,7 +545,7 @@ fn build_params(span: Span, params: &[PayloadParams]) -> TestRtc {
             p.spec().format,
         );
     }
-    let rtc = b.build();
+    let rtc = b.build(Instant::now());
 
     TestRtc::new_with_rtc(span, rtc)
 }
@@ -551,7 +555,7 @@ fn build_exts(span: Span, exts: ExtensionMap) -> TestRtc {
     b = b.enable_vp8(true);
     let e = b.extension_map();
     *e = exts;
-    let rtc = b.build();
+    let rtc = b.build(Instant::now());
 
     TestRtc::new_with_rtc(span, rtc)
 }

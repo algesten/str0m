@@ -198,9 +198,10 @@ impl<'a> Writer<'a> {
     /// # Example
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{Mid, KeyframeRequestKind};
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// // add candidates, do SDP negotiation
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.

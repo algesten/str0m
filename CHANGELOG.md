@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Provide start Instant in constructor (breaking) #843
   * Fix bug in dimpl resend logic (dimple 0.2.4) #842
   * Fix bug in dimpl HelloVerifyRequests (dimpl 0.2.3) #841
   * Stable RNG for tests with dimpl (dimpl 0.2.3) #841

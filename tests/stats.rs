@@ -1,5 +1,5 @@
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
@@ -18,8 +18,9 @@ pub fn stats() -> Result<(), RtcError> {
     let l_config = RtcConfig::new().set_stats_interval(Some(Duration::from_secs(10)));
     let r_config = RtcConfig::new().set_stats_interval(Some(Duration::from_secs(10)));
 
-    let mut l = TestRtc::new_with_rtc(info_span!("L"), l_config.build());
-    let mut r = TestRtc::new_with_rtc(info_span!("R"), r_config.build());
+    let now = Instant::now();
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), l_config.build(now));
+    let mut r = TestRtc::new_with_rtc(info_span!("R"), r_config.build(now));
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());

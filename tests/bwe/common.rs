@@ -3,7 +3,7 @@
 //! Common utilities for Bandwidth Estimation (BWE) integration tests.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use netem::NetemConfig;
 use str0m::_internal_test_exports::ProbeClusterConfig;
@@ -21,13 +21,15 @@ pub use test_common::*;
 
 /// Helper to create two connected peers with BWE enabled on the sender.
 pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (TestRtc, TestRtc) {
+    let start = Instant::now();
+
     // Only sender (L) needs BWE enabled
     let rtc1 = Rtc::builder()
         .set_rtp_mode(true)
         .enable_bwe(Some(initial_bitrate))
-        .build();
+        .build(start);
 
-    let rtc2 = Rtc::builder().set_rtp_mode(true).build();
+    let rtc2 = Rtc::builder().set_rtp_mode(true).build(start);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 

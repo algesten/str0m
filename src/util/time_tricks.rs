@@ -1,3 +1,4 @@
+use std::backtrace::Backtrace;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -93,6 +94,7 @@ impl InstantExt for Instant {
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
         if *self < BEGINNING_OF_TIME.0 {
+            warn!("{}", Backtrace::force_capture());
             warn!("Time went backwards from beginning_of_time Instant");
         }
 
@@ -113,6 +115,7 @@ impl InstantExt for Instant {
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
         if *self < BEGINNING_OF_TIME.0 {
+            warn!("{}", Backtrace::force_capture());
             warn!("Time went backwards from beginning_of_time Instant");
         }
 

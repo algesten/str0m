@@ -86,7 +86,7 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
         // Uncomment this to see statistics
         // .set_stats_interval(Some(Duration::from_secs(1)))
         // .set_ice_lite(true)
-        .build();
+        .build(Instant::now());
 
     // Add the shared UDP socket as a host candidate
     let candidate = Candidate::host(addr, "udp").expect("a host candidate");

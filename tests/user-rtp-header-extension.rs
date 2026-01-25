@@ -1,5 +1,5 @@
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
@@ -70,14 +70,15 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
     let user_ext = Extension::with_serializer("http://my-special-extension", MyValueSerializer);
 
     // Both L and R must have the uri + serializer configured.
+    let now = Instant::now();
     let rtc_l = Rtc::builder()
         //
         .set_extension(12, user_ext.clone())
-        .build();
+        .build(now);
     let rtc_r = Rtc::builder()
         //
         .set_extension(12, user_ext)
-        .build();
+        .build(now);
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc_l);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
@@ -211,14 +212,15 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
     let user_ext = Extension::with_serializer("http://my-special-extension", MyValueSerializer);
 
     // Both L and R must have the uri + serializer configured.
+    let now = Instant::now();
     let rtc_l = Rtc::builder()
         //
         .set_extension(12, user_ext.clone())
-        .build();
+        .build(now);
     let rtc_r = Rtc::builder()
         //
         .set_extension(12, user_ext)
-        .build();
+        .build(now);
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc_l);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);

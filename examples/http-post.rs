@@ -63,7 +63,7 @@ fn web_request(request: &Request) -> Response {
     let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
     let mut rtc = RtcConfig::new()
         // .set_ice_lite(true)
-        .build();
+        .build(Instant::now());
 
     let addr = util::select_host_address();
 

@@ -1,5 +1,5 @@
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
 use str0m::Rtc;
@@ -145,7 +145,9 @@ impl Server {
 
         // We need to lower the default reordering buffer size, or we won't make it
         // past the dropped packet.
-        let rtc_r = Rtc::builder().set_reordering_size_video(5).build();
+        let rtc_r = Rtc::builder()
+            .set_reordering_size_video(5)
+            .build(Instant::now());
 
         let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
