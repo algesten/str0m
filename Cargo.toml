@@ -41,7 +41,7 @@ pii = []
 examples = ["rouille/rustls"]
 
 _internal_dont_use_log_stats = []
-_internal_test_exports = []
+_internal_test_exports = ["str0m-proto/_internal_test_exports"]
 
 [dependencies]
 tracing = "0.1.37"
@@ -57,7 +57,7 @@ crc = ">=3.0, <3.4"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m (required dependency)
-dimpl = { version = "0.2.2", default-features = false }
+dimpl = { version = "0.2.3", default-features = false }
 
 str0m-proto = { version = "0.1.1", path = "proto" }
 

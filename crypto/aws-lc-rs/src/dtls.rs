@@ -31,7 +31,13 @@ impl DtlsProvider for AwsLcRsDtlsProvider {
         };
 
         // Create a default dimpl Config with AWS-LC-RS crypto provider
-        let config = dimpl::Config::builder()
+        let mut builder = dimpl::Config::builder();
+        if self.is_test() {
+            // We need the DTLS impl to be deterministic for the BWE tests.
+            builder = builder.dangerously_set_rng_seed(42);
+        }
+
+        let config = builder
             .build()
             .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {}", e)))?;
 

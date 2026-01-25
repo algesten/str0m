@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix bug in dimpl HelloVerifyRequests (dimpl 0.2.3) #841
+  * Stable RNG for tests with dimpl (dimpl 0.2.3) #841
   * BWE remove current_bitrate param (breaking) #838
   * BWE V2 (Probe clusters) #823
 
