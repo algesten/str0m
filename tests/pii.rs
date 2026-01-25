@@ -9,7 +9,7 @@
 mod common;
 #[cfg(feature = "pii")]
 mod pii_log_redaction {
-    use common::{connect_l_r, init_crypto_default};
+    use super::common::{connect_l_r, init_crypto_default};
     use std::collections::VecDeque;
     use std::time::Duration;
 
@@ -18,7 +18,6 @@ mod pii_log_redaction {
     use str0m::rtp::{ExtensionValues, Ssrc};
     use str0m::{Event, RtcError};
 
-    use super::*;
     use regex::Regex;
     use std::sync::Once;
     use tracing::{Event as TracingEvent, Subscriber};
@@ -101,7 +100,7 @@ mod pii_log_redaction {
         let params = l.params_opus();
         let mut ssrc_result = None;
         l.drive(&mut r, |tx| {
-            let api = tx.direct_api();
+            let mut api = tx.direct_api();
             ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
             Ok((api.finish(), ()))
         })?;
@@ -178,16 +177,52 @@ mod pii_log_redaction {
         assert_eq!(media.len(), 3);
 
         assert!(l.media(mid).is_some());
-        assert!(l.with_direct_api(|d| d.stream_tx_by_mid(mid, None).is_some()));
-        l.with_direct_api(|d| d.remove_media(mid));
+        let mut has_stream = false;
+        l.drive(&mut r, |tx| {
+            let mut api = tx.direct_api();
+            has_stream = api.stream_tx_by_mid(mid, None).is_some();
+            Ok((api.finish(), ()))
+        })?;
+        assert!(has_stream);
+
+        l.drive(&mut r, |tx| {
+            let mut api = tx.direct_api();
+            api.remove_media(mid);
+            Ok((api.finish(), ()))
+        })?;
         assert!(l.media(mid).is_none());
-        assert!(l.with_direct_api(|d| d.stream_tx_by_mid(mid, None).is_none()));
+
+        let mut has_stream = true;
+        l.drive(&mut r, |tx| {
+            let mut api = tx.direct_api();
+            has_stream = api.stream_tx_by_mid(mid, None).is_some();
+            Ok((api.finish(), ()))
+        })?;
+        assert!(!has_stream);
 
         assert!(r.media(mid).is_some());
-        assert!(r.with_direct_api(|d| d.stream_rx_by_mid(mid, None).is_some()));
-        r.with_direct_api(|d| d.remove_media(mid));
+        let mut has_stream = false;
+        r.drive(&mut l, |tx| {
+            let mut api = tx.direct_api();
+            has_stream = api.stream_rx_by_mid(mid, None).is_some();
+            Ok((api.finish(), ()))
+        })?;
+        assert!(has_stream);
+
+        r.drive(&mut l, |tx| {
+            let mut api = tx.direct_api();
+            api.remove_media(mid);
+            Ok((api.finish(), ()))
+        })?;
         assert!(r.media(mid).is_none());
-        assert!(r.with_direct_api(|d| d.stream_rx_by_mid(mid, None).is_none()));
+
+        let mut has_stream = true;
+        r.drive(&mut l, |tx| {
+            let mut api = tx.direct_api();
+            has_stream = api.stream_rx_by_mid(mid, None).is_some();
+            Ok((api.finish(), ()))
+        })?;
+        assert!(!has_stream);
 
         Ok(())
     }
