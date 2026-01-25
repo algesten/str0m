@@ -1116,7 +1116,7 @@ impl IceAgent {
         let mut any_pruned = false;
         self.candidate_pairs.retain(|p| {
             let keep = if self.ice_lite {
-                p.has_recent_remote_binding_request(now)
+                p.is_ice_lite_alive(now)
             } else {
                 p.is_still_possible(now, &self.timing_config)
             };

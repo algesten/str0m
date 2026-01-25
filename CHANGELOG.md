@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix incorrectly purged ice-lite pairs #832
   * Provide start Instant in constructor (breaking) #843
   * Fix bug in dimpl resend logic (dimple 0.2.4) #842
   * Fix bug in dimpl HelloVerifyRequests (dimpl 0.2.3) #841
