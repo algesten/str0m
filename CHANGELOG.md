@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Cap amount SCTP (data channels) buffer #831
   * Fix incorrectly purged ice-lite pairs #832
   * Provide start Instant in constructor (breaking) #843
   * Fix bug in dimpl resend logic (dimple 0.2.4) #842

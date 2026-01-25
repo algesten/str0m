@@ -91,9 +91,14 @@ pub fn data_channel_flood() -> Result<(), RtcError> {
 
     r.set_netem(NetemConfig::new().latency(Duration::from_millis(1000)));
 
+    let mut count = 0;
+
     for _ in 0..10_000 {
         let mut chan = l.channel(cid).unwrap();
-        chan.write(true, &[0u8; 1400]).expect("to write string");
+        let did_write = chan.write(true, &[0u8; 1400]).expect("to write string");
+        if did_write {
+            count += 1;
+        }
         progress(&mut l, &mut r)?;
     }
 
@@ -104,7 +109,7 @@ pub fn data_channel_flood() -> Result<(), RtcError> {
             break;
         }
     }
-    assert!(r.events.len() > 80);
+    assert!(count > 9000, "Too few events: {}", count);
 
     Ok(())
 }
