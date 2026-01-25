@@ -407,8 +407,8 @@ impl<'a> SdpApi<'a> {
     /// pending ICE restart.
     ///
     /// The local ICE candidates can be kept as is, or be cleared out, in which case new ice
-    /// candidates must be added via `tx.ice().add_local_candidate()` before connectivity can be
-    /// re-established.
+    /// candidates must be added via [`Rtc::add_local_candidate()`][crate::Rtc::add_local_candidate]
+    /// before connectivity can be re-established.
     ///
     /// Returns the new ICE credentials that will be used going forward.
     pub fn ice_restart(&mut self, keep_local_candidates: bool) -> IceCreds {

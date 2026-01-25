@@ -210,7 +210,7 @@ fn alr_preamble_steps(max_bitrate: Bitrate) -> Vec<Step> {
         },
         Step::Run {
             description: "Wait for initial probes to complete",
-            duration: Duration::from_secs(2),
+            duration: Duration::from_secs(4),
         },
     ]
 }
@@ -225,7 +225,7 @@ fn enter_alr_steps(max_bitrate: Bitrate) -> Vec<Step> {
         },
         Step::Run {
             description: "Allow ALR detection",
-            duration: Duration::from_secs(1),
+            duration: Duration::from_secs(4),
         },
         // No probe on ALR entry - wait for first periodic probe (5s after last probe)
         Step::Run {

@@ -644,7 +644,7 @@ use dtls::Dtls;
 mod ice_;
 use ice_::IceAgent;
 use ice_::IceAgentEvent;
-pub use ice_::{Candidate, CandidateBuilder, CandidateKind, Ice, IceConnectionState, IceCreds};
+pub use ice_::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
 
 #[path = "config.rs"]
 mod config_mod;
@@ -1208,6 +1208,61 @@ impl Rtc {
             debug!("Set alive=false");
             self.alive = false;
         }
+    }
+
+    /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
+    /// use for communicating with the peer.
+    ///
+    /// If the candidate is accepted by the `Rtc` instance, it will return `Some` with a reference
+    /// to it. You should then signal this candidate to the remote peer.
+    ///
+    /// This library has no built-in discovery of local network addresses on the host
+    /// or NATed addresses via a STUN server or TURN server. The user of the library
+    /// is expected to add new local candidates as they are discovered.
+    ///
+    /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
+    /// however advisable to add at least one local candidate before starting the instance.
+    ///
+    /// ```
+    /// # #[cfg(feature = "openssl")] {
+    /// # use str0m::{Rtc, Candidate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let a = "127.0.0.1:5000".parse().unwrap();
+    /// let c = Candidate::host(a, "udp").unwrap();
+    ///
+    /// rtc.add_local_candidate(c);
+    /// # }
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
+    pub fn add_local_candidate(&mut self, c: Candidate) -> Option<&Candidate> {
+        self.ice.add_local_candidate(c)
+    }
+
+    /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
+    ///
+    /// For SDP API: Remote candidates are typically added via
+    /// receiving a remote SDP offer or answer.
+    ///
+    /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
+    /// that are "trickled" from the other side.
+    ///
+    /// ```
+    /// # #[cfg(feature = "openssl")] {
+    /// # use str0m::{Rtc, Candidate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let a = "1.2.3.4:5000".parse().unwrap();
+    /// let c = Candidate::host(a, "udp").unwrap();
+    ///
+    /// rtc.add_remote_candidate(c);
+    /// }
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
+    pub fn add_remote_candidate(&mut self, c: Candidate) {
+        self.ice.add_remote_candidate(c)
     }
 
     pub(crate) fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {

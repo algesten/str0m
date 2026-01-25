@@ -140,7 +140,7 @@ pub struct Transmit {
     ///     - a [SEND indication](https://www.rfc-editor.org/rfc/rfc8656#name-send-and-data-methods)
     ///
     /// `str0m` learns about the source address using [`Candidate`][crate::Candidate] that are added using
-    /// `tx.ice().add_local_candidate()` (via the transaction API).
+    /// [`Rtc::add_local_candidate()`][crate::Rtc::add_local_candidate].
     ///
     /// The different candidate types are:
     ///
@@ -159,7 +159,7 @@ pub struct Transmit {
     /// The destination address this datagram should be sent to.
     ///
     /// This will be one of the [`Candidate`][crate::Candidate] provided explicitly using
-    /// `tx.ice().add_remote_candidate()` (via the transaction API) or via SDP negotiation.
+    /// [`Rtc::add_remote_candidate()`][crate::Rtc::add_remote_candidate] or via SDP negotiation.
     pub destination: SocketAddr,
 
     /// Contents of the datagram.

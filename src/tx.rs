@@ -8,7 +8,6 @@ use std::time::Instant;
 use crate::bwe::Bwe;
 use crate::change::{DirectApi, SdpApi};
 use crate::channel::{Channel, ChannelId};
-use crate::ice_::Ice;
 use crate::media::{Mid, Writer};
 use crate::net::Receive;
 use crate::rtp::{ExtensionValues, SeqNo, Ssrc};
@@ -96,11 +95,6 @@ impl<'a> RtcTx<'a, Mutate> {
             inner: Some(inner),
             _state: PhantomData,
         }
-    }
-
-    /// ICE operations.
-    pub fn ice(self) -> Ice<'a> {
-        Ice::new(self)
     }
 
     /// Make changes to the Rtc session via SDP.
@@ -420,18 +414,6 @@ mod tests {
         let tx = rtc.begin(Instant::now()).expect("begin");
         let _tx = tx.finish(); // Transitions to Poll but doesn't poll to completion
                                // Drop without polling - should panic
-    }
-
-    #[test]
-    #[should_panic(expected = "RtcTx dropped without polling")]
-    fn test_panic_after_ice_finish() {
-        crate::init_crypto_default();
-
-        let mut rtc = Rtc::new();
-        let tx = rtc.begin(Instant::now()).expect("begin");
-        let ice_tx = tx.ice();
-        let _tx = ice_tx.finish(); // Returns Poll state but not polled
-                                   // Should panic on drop
     }
 
     #[test]

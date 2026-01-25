@@ -102,13 +102,9 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
 
     // Add the shared UDP socket as a host candidate
     let candidate = Candidate::host(addr, "udp").expect("a host candidate");
-    let now = Instant::now();
+    rtc.add_local_candidate(candidate);
 
-    {
-        let mut ice = rtc.begin(now).expect("begin").ice();
-        ice.add_local_candidate(candidate).unwrap();
-        poll_tx(ice.finish()).unwrap();
-    }
+    let now = Instant::now();
 
     // Create an SDP Answer.
     let answer = {

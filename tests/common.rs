@@ -17,7 +17,6 @@ use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
 use str0m::Candidate;
-use str0m::Ice;
 use str0m::{Event, Mutate, Output, Poll, Rtc, RtcError, RtcTx};
 use tracing::info_span;
 use tracing::Span;
@@ -127,21 +126,10 @@ impl TestRtc {
     }
 
     pub fn add_host_candidate(&mut self, socket: SocketAddr) -> Candidate {
-        let time = self.last;
-        let tx = self.rtc.begin(time).unwrap();
-        let mut ice = tx.ice();
-        let candidate = ice
-            .add_local_candidate(Candidate::host(socket, "udp").unwrap())
-            .unwrap()
-            .clone();
-        // ICE operations don't generate transmits, just poll to completion
-        let mut tx = ice.finish();
-        loop {
-            match tx.poll().unwrap() {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) | Output::Event(t, _) => tx = t,
-            }
-        }
+        let candidate = Candidate::host(socket, "udp").unwrap();
+        self.rtc
+            .add_local_candidate(candidate.clone())
+            .expect("add_local_candidate");
         candidate
     }
 
@@ -547,22 +535,14 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
 
-    // Add candidates via Ice API
-    l.drive(&mut r, |tx| {
-        let mut ice = tx.ice();
-        ice.add_local_candidate(host1.clone());
-        ice.add_remote_candidate(host2.clone());
-        Ok((ice.finish(), ()))
-    })
-    .unwrap();
+    l.rtc.add_local_candidate(host1.clone());
+    l.rtc.add_remote_candidate(host2.clone());
 
-    r.drive(&mut l, |tx| {
-        let mut ice = tx.ice();
-        ice.add_local_candidate(host2);
-        ice.add_remote_candidate(host1);
-        Ok((ice.finish(), ()))
-    })
-    .unwrap();
+    r.rtc.add_local_candidate(host2);
+    r.rtc.add_remote_candidate(host1);
+
+    l.drive(&mut r, |tx| Ok((tx.finish(), ()))).unwrap();
+    r.drive(&mut l, |tx| Ok((tx.finish(), ()))).unwrap();
 
     // Exchange DTLS fingerprints via DirectApi
     let finger_l = l

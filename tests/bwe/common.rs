@@ -41,6 +41,8 @@ pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (
     // The resolution must be smaller than the fastest send rate we want to test.
     l.set_forced_time_advance(Duration::from_micros(100));
     r.set_forced_time_advance(Duration::from_micros(100));
+    l.set_progress_duration(Duration::ZERO);
+    r.set_progress_duration(Duration::ZERO);
 
     // Normalize time after DTLS connection to make tests deterministic across backends
     // This ensures all crypto backends start from the same simulated time
@@ -343,13 +345,11 @@ impl BweTestContext {
                 did_send = true;
 
                 // Progress time after each packet
-                l.set_progress_duration(Duration::from_millis(5));
                 l.drive(r, |tx| Ok((tx.finish(), ())))?;
             }
 
             if !did_send {
                 // Progress time if no packets sent
-                l.set_progress_duration(Duration::from_millis(5));
                 l.drive(r, |tx| Ok((tx.finish(), ())))?;
             }
         }

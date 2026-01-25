@@ -193,14 +193,8 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
         fp
     };
 
-    // Add local candidate via ice API
     let local_candidate = Candidate::host(local_addr, "udp")?;
-    {
-        let tx = rtc.begin(Instant::now())?;
-        let mut ice = tx.ice();
-        ice.add_local_candidate(local_candidate);
-        poll_simple(ice.finish())?;
-    }
+    rtc.add_local_candidate(local_candidate);
 
     Ok((rtc, ice_creds, fingerprint))
 }
@@ -214,14 +208,8 @@ fn configure_rtc(
     remote_ice_pwd: String,
     remote_fingerprint: String,
 ) -> Result<(), RtcError> {
-    // Add remote candidate via ice API
     let remote_candidate = Candidate::host(remote_addr, "udp")?;
-    {
-        let tx = rtc.begin(Instant::now())?;
-        let mut ice = tx.ice();
-        ice.add_remote_candidate(remote_candidate);
-        poll_simple(ice.finish())?;
-    }
+    rtc.add_remote_candidate(remote_candidate);
 
     // Configure via direct API
     {
