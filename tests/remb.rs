@@ -31,13 +31,13 @@ pub fn remb() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     //wait for srtp success
     let settle_time = l.duration() + Duration::from_millis(20);
     loop {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > settle_time {
             break;
@@ -49,12 +49,12 @@ pub fn remb() -> Result<(), RtcError> {
         api.stream_rx_by_mid(mid, None)
             .expect("Should has rx")
             .request_remb(Bitrate::bps(123456));
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let settle_time = l.duration() + Duration::from_millis(20);
     loop {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > settle_time {
             break;

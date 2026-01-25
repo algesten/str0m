@@ -26,14 +26,14 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
         api.declare_stream_tx(ssrc, None, mid, None);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
         api.expect_stream_rx(ssrc, None, mid, None);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let max = l.last.max(r.last);
@@ -45,7 +45,7 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc_val = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc_val.unwrap();
     assert_eq!(params.spec().codec, Codec::Opus);
@@ -83,7 +83,7 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
                 };
 
                 l.drive(&mut r, |tx| {
-                    tx.write_rtp(
+                    let tx = tx.write_rtp(
                         ssrc,
                         pt,
                         seq_no,
@@ -93,13 +93,14 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
                         exts,
                         false,
                         packet.to_vec(),
-                    )
+                    )?;
+                    Ok((tx, ()))
                 })
                 .expect("clean write");
             }
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
@@ -145,19 +146,19 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_tx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(has_stream);
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.remove_media(mid);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(l.media(mid).is_none());
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_tx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(!has_stream);
 
@@ -165,19 +166,19 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_rx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(has_stream);
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.remove_media(mid);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(r.media(mid).is_none());
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_rx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(!has_stream);
 

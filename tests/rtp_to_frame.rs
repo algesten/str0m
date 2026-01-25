@@ -26,13 +26,13 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let max = l.last.max(r.last);
@@ -44,7 +44,7 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc.unwrap();
     assert_eq!(params.spec().codec, Codec::Opus);
@@ -84,7 +84,7 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
                 let marker = *seq_no % 2 == 0; // set marker bit on every second packet
 
                 l.drive(&mut r, |tx| {
-                    tx.write_rtp(
+                    let tx = tx.write_rtp(
                         ssrc,
                         pt,
                         seq_no,
@@ -94,13 +94,14 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
                         exts,
                         false,
                         packet.to_vec(),
-                    )
+                    )?;
+                    Ok((tx, ()))
                 })
                 .expect("clean write");
             }
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;

@@ -163,7 +163,7 @@ impl Server {
             if l.is_connected() || r.is_connected() {
                 break;
             }
-            l.drive(&mut r, |tx| Ok(tx.finish()))?;
+            l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
         }
 
         let max = l.last.max(r.last);
@@ -182,7 +182,7 @@ impl Server {
         l.drive(&mut r, |tx| {
             let mut api = tx.direct_api();
             ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-            Ok(api.finish())
+            Ok((api.finish(), ()))
         })?;
         let ssrc = ssrc.unwrap();
 
@@ -194,7 +194,7 @@ impl Server {
 
             // Keep RTC time progressed to be "in sync" with the test data.
             while (l.last - max) < relative {
-                l.drive(&mut r, |tx| Ok(tx.finish()))?;
+                l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
             }
 
             let absolute = max + relative;
@@ -232,7 +232,7 @@ impl Server {
                 }
             }
 
-            l.drive(&mut r, |tx| Ok(tx.finish()))?;
+            l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
             if let Some(duration) = self.timeout {
                 if l.duration() > duration {
@@ -242,7 +242,7 @@ impl Server {
         }
 
         // Drain any remaining packets from the pacer
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         let events = r
             .events

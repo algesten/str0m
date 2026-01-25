@@ -95,7 +95,7 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
         let (o, p, tx) = change.apply().unwrap();
         offer = Some(o);
         pending = Some(p);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let mid = mid.unwrap();
     let offer = offer.unwrap();
@@ -109,11 +109,14 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer_parsed)?;
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let answer = answer.unwrap();
 
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     // Verify that the extension is negotiated.
     let ext_l = l.media(mid).unwrap().remote_extmap();
@@ -132,7 +135,7 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -156,12 +159,13 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
                 Err(_) => panic!("writer for mid"),
             };
             // Set my bespoke RTP header value.
-            writer
+            let tx = writer
                 .user_extension_value(MyValue(42))
-                .write(pt, wallclock, time, data)
+                .write(pt, wallclock, time, data)?;
+            Ok((tx, ()))
         })?;
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(3) {
             break;
@@ -262,7 +266,7 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
         let (o, p, tx) = change.apply().unwrap();
         offer = Some(o);
         pending = Some(p);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let mid = mid.unwrap();
     let offer = offer.unwrap();
@@ -272,11 +276,14 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer)?;
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let answer = answer.unwrap();
 
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     // Verify that the extension is negotiated.
     let ext_l = l.media(mid).unwrap().remote_extmap();
@@ -295,7 +302,7 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -321,12 +328,13 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
                 Err(_) => panic!("writer for mid"),
             };
             // Set my bespoke RTP header value.
-            writer
+            let tx = writer
                 .user_extension_value(val)
-                .write(pt, wallclock, time, data)
+                .write(pt, wallclock, time, data)?;
+            Ok((tx, ()))
         })?;
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(3) {
             break;

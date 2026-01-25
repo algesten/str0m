@@ -21,65 +21,53 @@ pub fn ice_restart() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let mut offer = None;
-    let mut pending = None;
-    l.drive(&mut r, |tx| {
+    let (offer, pending) = l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
         let _ = change.add_channel("My little channel".into());
         let (o, p, tx) = change.apply().unwrap();
-        offer = Some(o);
-        pending = Some(p);
-        Ok(tx)
+        Ok((tx, (o, p)))
     })?;
-    let offer = offer.unwrap();
-    let pending = pending.unwrap();
     println!("L Initial Offer: {}", offer);
 
-    let mut answer = None;
-    r.drive(&mut l, |tx| {
+    let answer = r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
-        answer = Some(a);
-        Ok(tx)
+        Ok((tx, a))
     })?;
-    let answer = answer.unwrap();
     println!("R Initial answer: {}", answer);
 
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     loop {
         if l.is_connected() && r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let l_creds = l._local_ice_creds();
     let r_creds = r._local_ice_creds();
 
-    let mut offer = None;
-    let mut pending = None;
-    r.drive(&mut l, |tx| {
+    let (offer, pending) = r.drive(&mut l, |tx| {
         let mut change = tx.sdp_api();
         change.ice_restart(true);
         let (o, p, tx) = change.apply().expect("Should be able to apply changes");
-        offer = Some(o);
-        pending = Some(p);
-        Ok(tx)
+        Ok((tx, (o, p)))
     })?;
-    let offer = offer.unwrap();
-    let pending = pending.unwrap();
     println!("R Offer: {}", offer);
 
-    let mut answer = None;
-    l.drive(&mut r, |tx| {
+    let answer = l.drive(&mut r, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
-        answer = Some(a);
-        Ok(tx)
+        Ok((tx, a))
     })?;
-    let answer = answer.unwrap();
     println!("L Answer: {}", answer);
 
-    r.drive(&mut l, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    r.drive(&mut l, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     assert!(!l.rtc.is_connected());
     assert!(!r.rtc.is_connected());
@@ -93,7 +81,7 @@ pub fn ice_restart() -> Result<(), RtcError> {
             break;
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     assert_ne!(

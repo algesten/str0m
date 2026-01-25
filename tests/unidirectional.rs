@@ -32,7 +32,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
         let (o, p, tx) = change.apply().unwrap();
         offer = Some(o);
         pending = Some(p);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let mid = mid.unwrap();
     let offer = offer.unwrap();
@@ -42,17 +42,20 @@ pub fn unidirectional() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let answer = answer.unwrap();
 
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -72,12 +75,13 @@ pub fn unidirectional() -> Result<(), RtcError> {
 
         l.drive(&mut r, |tx| {
             let writer = tx.writer(mid).expect("writer");
-            writer.start_of_talkspurt(start_of_talk_spurt).write(
+            let tx = writer.start_of_talkspurt(start_of_talk_spurt).write(
                 pt,
                 wallclock,
                 time,
                 data_a.clone(),
-            )
+            )?;
+            Ok((tx, ()))
         })?;
         start_of_talk_spurt = false;
 

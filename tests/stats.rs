@@ -32,7 +32,7 @@ pub fn stats() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -54,9 +54,11 @@ pub fn stats() -> Result<(), RtcError> {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
             l.drive(&mut r, |tx| {
-                tx.writer(mid)
+                let tx = tx
+                    .writer(mid)
                     .unwrap()
-                    .write(pt, wallclock, time, data_a.clone())
+                    .write(pt, wallclock, time, data_a.clone())?;
+                Ok((tx, ()))
             })?;
         }
 
@@ -64,13 +66,15 @@ pub fn stats() -> Result<(), RtcError> {
             let wallclock = r.start + r.duration();
             let time = l.duration().into();
             r.drive(&mut l, |tx| {
-                tx.writer(mid)
+                let tx = tx
+                    .writer(mid)
                     .unwrap()
-                    .write(pt, wallclock, time, data_b.clone())
+                    .write(pt, wallclock, time, data_b.clone())?;
+                Ok((tx, ()))
             })?;
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(25) {
             break;

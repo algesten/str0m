@@ -85,13 +85,13 @@ mod pii_log_redaction {
             let mut api = tx.direct_api();
             api.declare_media(mid, MediaKind::Audio);
             api.declare_stream_tx(ssrc_tx, None, mid, None);
-            Ok(api.finish())
+            Ok((api.finish(), ()))
         })?;
 
         r.drive(&mut l, |tx| {
             let mut api = tx.direct_api();
             api.declare_media(mid, MediaKind::Audio);
-            Ok(api.finish())
+            Ok((api.finish(), ()))
         })?;
 
         let max = l.last.max(r.last);
@@ -103,7 +103,7 @@ mod pii_log_redaction {
         l.drive(&mut r, |tx| {
             let api = tx.direct_api();
             ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-            Ok(api.finish())
+            Ok((api.finish(), ()))
         })?;
         let ssrc = ssrc_result.unwrap();
         assert_eq!(params.spec().codec, Codec::Opus);
@@ -140,7 +140,7 @@ mod pii_log_redaction {
                     };
 
                     l.drive(&mut r, |tx| {
-                        tx.write_rtp(
+                        let tx = tx.write_rtp(
                             ssrc,
                             pt,
                             seq_no,
@@ -150,12 +150,13 @@ mod pii_log_redaction {
                             exts,
                             false,
                             packet.to_vec(),
-                        )
+                        )?;
+                        Ok((tx, ()))
                     })?;
                 }
             }
 
-            l.drive(&mut r, |tx| Ok(tx.finish()))?;
+            l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
             if l.duration() > Duration::from_secs(10) {
                 break;

@@ -33,7 +33,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -57,7 +57,8 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
 
         l.drive(&mut r, |tx| {
             let writer = tx.writer(mid).expect("writer");
-            writer.write(pt, wallclock, time, data_a.clone())
+            let tx = writer.write(pt, wallclock, time, data_a.clone())?;
+            Ok((tx, ()))
         })?;
     }
 
@@ -85,7 +86,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     let pause_end = l.last + pause_duration;
     while l.last < pause_end {
         // Just handle timeouts without sending any packets
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     info!(
@@ -99,7 +100,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     let pause_check_timeout = Duration::from_millis(500);
 
     while !seen_paused && l.last < pause_check_start + pause_check_timeout {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         // Check for pause event
         for (_, event) in &r.events {
@@ -136,12 +137,13 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
 
     l.drive(&mut r, |tx| {
         let writer = tx.writer(mid).expect("writer");
-        writer.write(pt, wallclock, time, data_a.clone())
+        let tx = writer.write(pt, wallclock, time, data_a.clone())?;
+        Ok((tx, ()))
     })?;
 
     // Process the packet and a few more cycles to ensure it's received
     for _ in 0..10 {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     // We're looking for evidence that:

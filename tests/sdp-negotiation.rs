@@ -134,7 +134,7 @@ pub fn answer_no_match() {
         let (o, p, tx) = change.apply().unwrap();
         offer = Some(o);
         pending = Some(p);
-        Ok(tx)
+        Ok((tx, ()))
     })
     .unwrap();
     let offer = offer.unwrap();
@@ -145,7 +145,7 @@ pub fn answer_no_match() {
     r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })
     .unwrap();
     let answer = answer.unwrap();
@@ -166,8 +166,11 @@ pub fn answer_no_match() {
     );
 
     // L accepts the answer
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))
-        .unwrap();
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })
+    .unwrap();
 
     let mid = l._mids()[0];
 
@@ -221,7 +224,7 @@ pub fn answer_different_pt_to_offer() {
         change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
         let (o, _pending, tx) = change.apply().unwrap();
         offer = Some(o);
-        Ok(tx)
+        Ok((tx, ()))
     })
     .unwrap();
     let offer = offer.unwrap();
@@ -255,7 +258,7 @@ pub fn answer_different_pt_to_offer() {
     l.drive(&mut r, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })
     .unwrap();
     let answer = answer.unwrap();
@@ -507,7 +510,7 @@ fn max_bundle_offer_accepted() {
     r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).expect("should accept");
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })
     .unwrap();
     let answer = answer.unwrap();

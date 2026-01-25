@@ -29,7 +29,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         let (o, p, tx) = change.apply().unwrap();
         offer = Some(o);
         pending = Some(p);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let mid = mid.unwrap();
     let offer = offer.unwrap();
@@ -40,18 +40,21 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let answer = answer.unwrap();
 
     // L accepts the answer
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -71,7 +74,8 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
             let time = l.duration().into();
             l.drive(&mut r, |tx| {
                 let writer = tx.writer(mid).expect("writer");
-                writer.write(pt, wallclock, time, data_a.clone())
+                let tx = writer.write(pt, wallclock, time, data_a.clone())?;
+                Ok((tx, ()))
             })?;
         }
 
@@ -80,7 +84,8 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
             let time = l.duration().into();
             r.drive(&mut l, |tx| {
                 let writer = tx.writer(mid).expect("writer");
-                writer.write(pt, wallclock, time, data_b.clone())
+                let tx = writer.write(pt, wallclock, time, data_b.clone())?;
+                Ok((tx, ()))
             })?;
         }
 

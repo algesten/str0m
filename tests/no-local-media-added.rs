@@ -22,19 +22,19 @@ pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let max = l.last.max(r.last);
@@ -45,7 +45,7 @@ pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let found_local = l
@@ -76,36 +76,30 @@ pub fn sdp_no_media_added_event() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // Create offer from L
-    let mut offer = None;
-    let mut pending = None;
-    l.drive(&mut r, |tx| {
+    let (offer, pending) = l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
         change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
         let (o, p, tx) = change.apply().unwrap();
-        offer = Some(o);
-        pending = Some(p);
-        Ok(tx)
+        Ok((tx, (o, p)))
     })?;
-    let offer = offer.unwrap();
-    let pending = pending.unwrap();
 
     // R accepts the offer
-    let mut answer = None;
-    r.drive(&mut l, |tx| {
+    let answer = r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer)?;
-        answer = Some(a);
-        Ok(tx)
+        Ok((tx, a))
     })?;
-    let answer = answer.unwrap();
 
     // L accepts the answer
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let found_local = l

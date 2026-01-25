@@ -25,7 +25,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     l.drive(&mut r, |tx| {
@@ -33,13 +33,13 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
         api.declare_stream_tx(ssrc_tx, None, mid, Some(rid))
             // disable RTX cache by setting 0
             .set_rtx_cache(0, Duration::ZERO, Some(0.15));
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let max = l.last.max(r.last);
@@ -51,7 +51,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc.unwrap();
     assert_eq!(params.spec().codec, Codec::Vp8);
@@ -90,14 +90,15 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
 
                 let packet = packet.to_vec();
                 l.drive(&mut r, |tx| {
-                    tx.write_rtp(
+                    let tx = tx.write_rtp(
                         ssrc, pt, seq_no, time, wallclock, false, exts, false, packet,
-                    )
+                    )?;
+                    Ok((tx, ()))
                 })?;
             }
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
@@ -123,14 +124,14 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_tx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(has_stream);
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.remove_media(mid);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(l.media(mid).is_none());
 
@@ -138,7 +139,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_tx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(!has_stream);
 
@@ -147,14 +148,14 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_rx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(has_stream);
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.remove_media(mid);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(r.media(mid).is_none());
 
@@ -162,7 +163,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         has_stream = api.stream_rx_by_mid(mid, None).is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(!has_stream);
 

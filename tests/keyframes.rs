@@ -29,7 +29,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -43,7 +43,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc.unwrap();
 
@@ -52,13 +52,13 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            l.drive(&mut r, |tx| Ok(tx.finish()))?;
+            l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
         }
 
         let absolute = max + relative;
 
         l.drive(&mut r, |tx| {
-            tx.write_rtp(
+            let tx = tx.write_rtp(
                 ssrc,
                 pt,
                 header.sequence_number(None),
@@ -68,11 +68,12 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
                 header.ext_vals.clone(),
                 true,
                 payload,
-            )
+            )?;
+            Ok((tx, ()))
         })
         .unwrap();
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -124,7 +125,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -138,7 +139,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc.unwrap();
 
@@ -147,13 +148,13 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            l.drive(&mut r, |tx| Ok(tx.finish()))?;
+            l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
         }
 
         let absolute = max + relative;
 
         l.drive(&mut r, |tx| {
-            tx.write_rtp(
+            let tx = tx.write_rtp(
                 ssrc,
                 pt,
                 header.sequence_number(None),
@@ -163,11 +164,12 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
                 header.ext_vals.clone(),
                 true,
                 payload,
-            )
+            )?;
+            Ok((tx, ()))
         })
         .unwrap();
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -220,7 +222,7 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        let _ = l.drive(&mut r, |tx| Ok(tx.finish()));
+        let _ = l.drive(&mut r, |tx| Ok((tx.finish(), ())));
     }
 
     let max = l.last.max(r.last);
@@ -234,7 +236,7 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc.unwrap();
 
@@ -243,13 +245,13 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            let _ = l.drive(&mut r, |tx| Ok(tx.finish()));
+            let _ = l.drive(&mut r, |tx| Ok((tx.finish(), ())));
         }
 
         let absolute = max + relative;
 
         l.drive(&mut r, |tx| {
-            tx.write_rtp(
+            let tx = tx.write_rtp(
                 ssrc,
                 pt,
                 header.sequence_number(None),
@@ -259,11 +261,12 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
                 header.ext_vals.clone(),
                 true,
                 payload,
-            )
+            )?;
+            Ok((tx, ()))
         })
         .unwrap();
 
-        let _ = l.drive(&mut r, |tx| Ok(tx.finish()));
+        let _ = l.drive(&mut r, |tx| Ok((tx.finish(), ())));
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -319,7 +322,7 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -333,7 +336,7 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc.unwrap();
 
@@ -342,13 +345,13 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            l.drive(&mut r, |tx| Ok(tx.finish()))?;
+            l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
         }
 
         let absolute = max + relative;
 
         l.drive(&mut r, |tx| {
-            tx.write_rtp(
+            let tx = tx.write_rtp(
                 ssrc,
                 pt,
                 header.sequence_number(None),
@@ -358,11 +361,12 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
                 header.ext_vals.clone(),
                 true,
                 payload,
-            )
+            )?;
+            Ok((tx, ()))
         })
         .unwrap();
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(5) {
             break;

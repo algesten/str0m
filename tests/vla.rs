@@ -33,13 +33,13 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let max = l.last.max(r.last);
@@ -52,7 +52,7 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc_result.unwrap();
 
@@ -78,7 +78,7 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
 
     let last = l.last;
     l.drive(&mut r, |tx| {
-        tx.write_rtp(
+        let tx = tx.write_rtp(
             ssrc,
             pt,
             (1000_u64).into(),
@@ -88,12 +88,13 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
             exts,
             false,
             vec![0xAA; 10],
-        )
+        )?;
+        Ok((tx, ()))
     })?;
 
     let mut vla_received = false;
     for _ in 0..100 {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         for (_, event) in &r.events {
             if let Event::RtpPacket(packet) = event {
@@ -155,13 +156,13 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let max = l.last.max(r.last);
@@ -189,14 +190,18 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
 
     l.drive(&mut r, |tx| {
         let writer = tx.writer(mid).expect("writer");
-        writer
-            .user_extension_value(vla.clone())
-            .write(pt, last, MediaTime::ZERO, vec![0xAA; 10])
+        let tx = writer.user_extension_value(vla.clone()).write(
+            pt,
+            last,
+            MediaTime::ZERO,
+            vec![0xAA; 10],
+        )?;
+        Ok((tx, ()))
     })?;
 
     let mut vla_received = false;
     for _ in 0..100 {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         for (_, event) in &r.events {
             if let Event::MediaData(data) = event {

@@ -30,7 +30,7 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
         let (o, p, tx) = change.apply().unwrap();
         offer = Some(o);
         pending = Some(p);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let mid = mid.unwrap();
     let offer = offer.unwrap();
@@ -49,18 +49,21 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let answer = answer.unwrap();
 
     // R accepts the answer
-    r.drive(&mut l, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    r.drive(&mut l, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -79,7 +82,8 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
 
         l.drive(&mut r, |tx| {
             let writer = tx.writer(mid).expect("writer");
-            writer.write(pt, wallclock, time, data_a.clone())
+            let tx = writer.write(pt, wallclock, time, data_a.clone())?;
+            Ok((tx, ()))
         })?;
 
         if l.duration() > Duration::from_secs(10) {

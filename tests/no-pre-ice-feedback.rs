@@ -30,14 +30,14 @@ pub fn no_pre_ice_feedback() -> Result<(), RtcError> {
     // Before ICE is established, introduce a large time delta that spans at least one sender/receiver report
     // interval. Advance time using the transaction API.
     l.last += Duration::from_secs(10);
-    l.drive(&mut r, |tx| Ok(tx.finish()))?;
+    l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
     loop {
         if l.is_connected() && r.is_connected() {
             break;
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     for (_, event) in l.events.iter() {

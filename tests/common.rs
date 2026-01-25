@@ -410,39 +410,32 @@ where
     F: FnMut(&mut SdpApi) -> R,
 {
     // Create offer
-    let mut offer = None;
-    let mut pending = None;
-    let mut result = None;
-    offerer
+    let (offer, pending, result) = offerer
         .drive(answerer, |tx| {
             let mut change = tx.sdp_api();
-            result = Some(do_change(&mut change));
+            let result = do_change(&mut change);
             let (o, p, tx) = change.apply().unwrap();
-            offer = Some(o);
-            pending = Some(p);
-            Ok(tx)
+            Ok((tx, (o, p, result)))
         })
         .unwrap();
-    let offer = offer.unwrap();
-    let pending = pending.unwrap();
 
     // Accept offer and create answer
-    let mut answer = None;
-    answerer
+    let answer = answerer
         .drive(offerer, |tx| {
             let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
-            answer = Some(a);
-            Ok(tx)
+            Ok((tx, a))
         })
         .unwrap();
-    let answer = answer.unwrap();
 
     // Accept answer
     offerer
-        .drive(answerer, |tx| tx.sdp_api().accept_answer(pending, answer))
+        .drive(answerer, |tx| {
+            let tx = tx.sdp_api().accept_answer(pending, answer)?;
+            Ok((tx, ()))
+        })
         .unwrap();
 
-    result.unwrap()
+    result
 }
 
 /// Simple poll to completion without netem.
@@ -559,7 +552,7 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
         let mut ice = tx.ice();
         ice.add_local_candidate(host1.clone());
         ice.add_remote_candidate(host2.clone());
-        Ok(ice.finish())
+        Ok((ice.finish(), ()))
     })
     .unwrap();
 
@@ -567,73 +560,69 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
         let mut ice = tx.ice();
         ice.add_local_candidate(host2);
         ice.add_remote_candidate(host1);
-        Ok(ice.finish())
+        Ok((ice.finish(), ()))
     })
     .unwrap();
 
     // Exchange DTLS fingerprints via DirectApi
-    let mut finger_l = None;
-    l.drive(&mut r, |tx| {
-        let api = tx.direct_api();
-        finger_l = Some(api.local_dtls_fingerprint().clone());
-        Ok(api.finish())
-    })
-    .unwrap();
-    let finger_l = finger_l.unwrap();
+    let finger_l = l
+        .drive(&mut r, |tx| {
+            let api = tx.direct_api();
+            let fp = api.local_dtls_fingerprint().clone();
+            Ok((api.finish(), fp))
+        })
+        .unwrap();
 
-    let mut finger_r = None;
-    r.drive(&mut l, |tx| {
-        let api = tx.direct_api();
-        finger_r = Some(api.local_dtls_fingerprint().clone());
-        Ok(api.finish())
-    })
-    .unwrap();
-    let finger_r = finger_r.unwrap();
+    let finger_r = r
+        .drive(&mut l, |tx| {
+            let api = tx.direct_api();
+            let fp = api.local_dtls_fingerprint().clone();
+            Ok((api.finish(), fp))
+        })
+        .unwrap();
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_fingerprint(finger_r);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_fingerprint(finger_l);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
     // Exchange ICE credentials
-    let mut creds_l = None;
-    l.drive(&mut r, |tx| {
-        let api = tx.direct_api();
-        creds_l = Some(api.local_ice_credentials());
-        Ok(api.finish())
-    })
-    .unwrap();
-    let creds_l = creds_l.unwrap();
+    let creds_l = l
+        .drive(&mut r, |tx| {
+            let api = tx.direct_api();
+            let creds = api.local_ice_credentials();
+            Ok((api.finish(), creds))
+        })
+        .unwrap();
 
-    let mut creds_r = None;
-    r.drive(&mut l, |tx| {
-        let api = tx.direct_api();
-        creds_r = Some(api.local_ice_credentials());
-        Ok(api.finish())
-    })
-    .unwrap();
-    let creds_r = creds_r.unwrap();
+    let creds_r = r
+        .drive(&mut l, |tx| {
+            let api = tx.direct_api();
+            let creds = api.local_ice_credentials();
+            Ok((api.finish(), creds))
+        })
+        .unwrap();
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_ice_credentials(creds_r);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_ice_credentials(creds_l);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
@@ -641,14 +630,14 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.set_ice_controlling(true);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.set_ice_controlling(false);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
@@ -656,28 +645,28 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.start_dtls(true).unwrap();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.start_dtls(false).unwrap();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.start_sctp(true);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.start_sctp(false);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })
     .unwrap();
 
@@ -686,7 +675,7 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))
             .expect("clean progress");
     }
 

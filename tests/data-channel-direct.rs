@@ -26,14 +26,14 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
         let mut ice = tx.ice();
         ice.add_local_candidate(host1.clone()).unwrap();
         ice.add_remote_candidate(host2.clone());
-        Ok(ice.finish())
+        Ok((ice.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut ice = tx.ice();
         ice.add_local_candidate(host2).unwrap();
         ice.add_remote_candidate(host1);
-        Ok(ice.finish())
+        Ok((ice.finish(), ()))
     })?;
 
     // Exchange DTLS fingerprints
@@ -41,7 +41,7 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let api = tx.direct_api();
         finger_l = Some(api.local_dtls_fingerprint().clone());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let finger_l = finger_l.unwrap();
 
@@ -49,20 +49,20 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let api = tx.direct_api();
         finger_r = Some(api.local_dtls_fingerprint().clone());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let finger_r = finger_r.unwrap();
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_fingerprint(finger_r);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_fingerprint(finger_l);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     // Exchange ICE credentials
@@ -70,7 +70,7 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let api = tx.direct_api();
         creds_l = Some(api.local_ice_credentials());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let creds_l = creds_l.unwrap();
 
@@ -78,58 +78,58 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let api = tx.direct_api();
         creds_r = Some(api.local_ice_credentials());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let creds_r = creds_r.unwrap();
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_ice_credentials(creds_r);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.set_remote_ice_credentials(creds_l);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     // Set controlling/controlled roles
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.set_ice_controlling(true);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.set_ice_controlling(false);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     // Start DTLS and SCTP
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.start_dtls(true).unwrap();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.start_dtls(false).unwrap();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.start_sctp(true);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.start_sctp(false);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let config = ChannelConfig {
@@ -142,21 +142,21 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         cid = Some(api.create_data_channel(config.clone()));
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let cid = cid.unwrap();
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.create_data_channel(config);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -168,12 +168,12 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
         l.drive(&mut r, |tx| match tx.channel(cid) {
             Ok(mut chan) => {
                 let _ = chan.write(false, "Hello world! ".as_bytes());
-                Ok(chan.finish())
+                Ok((chan.finish(), ()))
             }
-            Err(tx) => Ok(tx.finish()),
+            Err(tx) => Ok((tx.finish(), ())),
         })?;
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
@@ -184,13 +184,13 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| match tx.channel(cid) {
         Ok(mut chan) => {
             chan.close();
-            Ok(chan.finish())
+            Ok((chan.finish(), ()))
         }
-        Err(tx) => Ok(tx.finish()),
+        Err(tx) => Ok((tx.finish(), ())),
     })?;
 
     loop {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(12) {
             break;

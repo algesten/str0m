@@ -34,7 +34,7 @@ pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (
     l.drive(&mut r, |tx| {
         let mut bwe = tx.bwe();
         bwe.set_desired_bitrate(desired_bitrate);
-        Ok(bwe.finish())
+        Ok((bwe.finish(), ()))
     })
     .unwrap();
 
@@ -119,7 +119,7 @@ impl BweTestContext {
             let mut api = tx.direct_api();
             api.declare_media(mid, MediaKind::Video);
             api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
-            Ok(api.finish())
+            Ok((api.finish(), ()))
         })
         .unwrap();
 
@@ -129,7 +129,7 @@ impl BweTestContext {
             api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
             // Enable TWCC feedback on the receiver so it sends feedback to the sender
             api.enable_twcc_feedback();
-            Ok(api.finish())
+            Ok((api.finish(), ()))
         })
         .unwrap();
 
@@ -142,14 +142,13 @@ impl BweTestContext {
         assert_eq!(params.spec().codec, Codec::Vp8);
         let pt = params.pt();
 
-        let mut ssrc = None;
-        l.drive(r, |tx| {
-            let mut api = tx.direct_api();
-            ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
-            Ok(api.finish())
-        })
-        .unwrap();
-        let ssrc = ssrc.unwrap();
+        let ssrc = l
+            .drive(r, |tx| {
+                let mut api = tx.direct_api();
+                let ssrc = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
+                Ok((api.finish(), ssrc))
+            })
+            .unwrap();
 
         Self {
             ssrc,
@@ -190,7 +189,7 @@ impl BweTestContext {
                     l.drive(r, |tx| {
                         let mut bwe = tx.bwe();
                         bwe.set_desired_bitrate(*desired_bitrate);
-                        Ok(bwe.finish())
+                        Ok((bwe.finish(), ()))
                     })?;
                     self.set_media_send_rate(*media_send_rate);
                     event_offset = l.events.len();
@@ -325,7 +324,7 @@ impl BweTestContext {
                 // Write packet without advancing time
                 l.set_progress_duration(Duration::ZERO);
                 l.drive(r, |tx| {
-                    tx.write_rtp(
+                    let tx = tx.write_rtp(
                         ssrc,
                         pt,
                         seq_no,
@@ -335,7 +334,8 @@ impl BweTestContext {
                         exts,
                         true,
                         vec![0u8; packet_size],
-                    )
+                    )?;
+                    Ok((tx, ()))
                 })?;
 
                 self.seq_no += 1;
@@ -344,13 +344,13 @@ impl BweTestContext {
 
                 // Progress time after each packet
                 l.set_progress_duration(Duration::from_millis(5));
-                l.drive(r, |tx| Ok(tx.finish()))?;
+                l.drive(r, |tx| Ok((tx.finish(), ())))?;
             }
 
             if !did_send {
                 // Progress time if no packets sent
                 l.set_progress_duration(Duration::from_millis(5));
-                l.drive(r, |tx| Ok(tx.finish()))?;
+                l.drive(r, |tx| Ok((tx.finish(), ())))?;
             }
         }
 

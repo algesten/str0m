@@ -43,14 +43,14 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
         api.stream_tx(&ssrc_tx)
             .unwrap()
             .set_rtx_cache(1024, Duration::from_secs(3), Some(0.2));
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     let max = l.last.max(r.last);
@@ -67,13 +67,13 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data
         while (l.last - max) < relative {
-            l.drive(&mut r, |tx| Ok(tx.finish()))?;
+            l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
         }
 
         let absolute = max + relative;
 
         l.drive(&mut r, |tx| {
-            tx.write_rtp(
+            let tx = tx.write_rtp(
                 ssrc_tx,
                 pt,
                 header.sequence_number(None),
@@ -83,7 +83,8 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
                 Default::default(), // Don't use pcap ext_vals - wrong extension mapping
                 true,
                 payload,
-            )
+            )?;
+            Ok((tx, ()))
         })?;
 
         if l.duration() > Duration::from_secs(10) {
@@ -94,7 +95,7 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
     // Let retransmissions complete (also subject to loss)
     let settle_time = l.duration() + Duration::from_secs(2);
     while l.duration() < settle_time {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     // Count received RTP packets

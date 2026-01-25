@@ -30,7 +30,7 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
         let (o, p, tx) = change.apply().unwrap();
         offer = Some(o);
         pending = Some(p);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let offer = offer.unwrap();
     let pending = pending.unwrap();
@@ -40,18 +40,21 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
         answer = Some(a);
-        Ok(tx)
+        Ok((tx, ()))
     })?;
     let answer = answer.unwrap();
 
     // L accepts the answer
-    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
+    l.drive(&mut r, |tx| {
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        Ok((tx, ()))
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -59,7 +62,7 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     r.last = max;
 
     loop {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(120) {
             break;

@@ -29,13 +29,13 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
         api.declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid));
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid);
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
 
     // Set initial timing
@@ -48,7 +48,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         ssrc = Some(api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     let ssrc = ssrc.unwrap();
     assert_eq!(
@@ -106,7 +106,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                 };
 
                 l.drive(&mut r, |tx| {
-                    tx.write_rtp(
+                    let tx = tx.write_rtp(
                         ssrc_tx_initial,
                         pt,
                         seq_no,
@@ -116,13 +116,14 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                         exts,
                         false,
                         packet.to_vec(),
-                    )
+                    )?;
+                    Ok((tx, ()))
                 })
                 .expect("clean write with initial SSRC");
             }
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if first_batch.is_empty() && first_counts.is_empty() {
             break;
@@ -131,7 +132,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
 
     // Run a bit longer to ensure first batch of packets arrive
     for _ in 0..20 {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     info!("First batch sent with SSRC: {}", ssrc_tx_initial);
@@ -143,7 +144,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
         result = api
             .reset_stream_tx(mid, Some(rid), ssrc_tx_new, None)
             .is_some();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert!(result, "Reset should succeed with valid new SSRC");
 
@@ -152,7 +153,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         updated_ssrc = Some(api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert_eq!(
         updated_ssrc.unwrap(),
@@ -164,7 +165,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     let pause_duration = Duration::from_millis(2000);
     let pause_end = l.last + pause_duration;
     while l.last < pause_end {
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     info!(
@@ -222,7 +223,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                 );
 
                 l.drive(&mut r, |tx| {
-                    tx.write_rtp(
+                    let tx = tx.write_rtp(
                         ssrc_tx_new,
                         pt,
                         seq_no,
@@ -232,18 +233,19 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                         exts,
                         false,
                         packet.to_vec(),
-                    )
+                    )?;
+                    Ok((tx, ()))
                 })
                 .expect("clean write with new SSRC");
             }
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if second_batch.is_empty() && second_counts.is_empty() {
             // Run a bit longer to ensure packets arrive
             for _ in 0..20 {
-                l.drive(&mut r, |tx| Ok(tx.finish()))?;
+                l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
             }
             break;
         }
@@ -370,7 +372,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         last_time = api.stream_rx_by_mid(mid, Some(rid)).unwrap().last_time();
-        Ok(api.finish())
+        Ok((api.finish(), ()))
     })?;
     assert_eq!(
         last_time,

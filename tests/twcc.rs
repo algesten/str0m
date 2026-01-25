@@ -32,7 +32,7 @@ pub fn twcc() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
     }
 
     let max = l.last.max(r.last);
@@ -50,13 +50,15 @@ pub fn twcc() -> Result<(), RtcError> {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
             l.drive(&mut r, |tx| {
-                tx.writer(mid)
+                let tx = tx
+                    .writer(mid)
                     .unwrap()
-                    .write(pt, wallclock, time, data_a.to_vec())
+                    .write(pt, wallclock, time, data_a.to_vec())?;
+                Ok((tx, ()))
             })?;
         }
 
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| Ok((tx.finish(), ())))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
