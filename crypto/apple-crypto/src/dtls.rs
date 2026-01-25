@@ -324,7 +324,13 @@ impl DtlsProvider for AppleCryptoDtlsProvider {
         };
 
         // Create a dimpl Config with Apple CommonCrypto crypto provider
-        let config = Config::builder()
+        let mut builder = Config::builder();
+        if self.is_test() {
+            // We need the DTLS impl to be deterministic for the BWE tests.
+            builder = builder.dangerously_set_rng_seed(42);
+        }
+
+        let config = builder
             .with_crypto_provider(crate::dimpl_provider::default_provider())
             .build()
             .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {e}")))?;
