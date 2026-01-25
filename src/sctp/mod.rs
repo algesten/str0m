@@ -360,12 +360,24 @@ impl RtcSctp {
         rec.state == StreamEntryState::Open
     }
 
+    // TODO: fix sctp-proto so we don't need &mut here.
     pub fn available(&mut self) -> usize {
         let Some(assoc) = &mut self.assoc else {
             return 0;
         };
 
-        let total = Self::total_buffered(assoc, &self.entries);
+        // The amount currently buffered.
+        let total: usize = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                assoc
+                    .stream(e.id)
+                    .ok()
+                    .and_then(|s| s.buffered_amount().ok())
+            })
+            .sum();
+
         MAX_BUFFERED_ACROSS_STREAMS - total
     }
 
@@ -404,18 +416,6 @@ impl RtcSctp {
         };
 
         Ok(stream.write_with_ppi(buf, ppi)?)
-    }
-
-    fn total_buffered(assoc: &mut Association, entries: &[StreamEntry]) -> usize {
-        entries
-            .iter()
-            .filter_map(|e| {
-                assoc
-                    .stream(e.id)
-                    .ok()
-                    .and_then(|s| s.buffered_amount().ok())
-            })
-            .sum()
     }
 
     pub fn buffered_amount(&mut self, id: u16) -> usize {
