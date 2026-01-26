@@ -83,9 +83,10 @@ pub struct H265Packetizer {
     vps_nalu: Option<Vec<u8>>,
     sps_nalu: Option<Vec<u8>>,
     pps_nalu: Option<Vec<u8>>,
-    // Reusable packet buffer - stack allocated for zero-allocation hot path.
+    // Reusable packet buffer - heap allocated once, reused for zero-allocation hot path.
     // This is reused on every fragment, avoiding N allocations per frame.
-    pkt_buf: ArrayVec<u8, MAX_PACKET_SIZE>,
+    // Using Vec instead of ArrayVec since MAX_PACKET_SIZE (1200) is too large for stack.
+    pkt_buf: Vec<u8>,
     // DONL (Decoding Order Number) tracking.
     // When enabled (Some), tracks the 16-bit DONL value to include in RTP packets.
     // DONL is used when sprop-max-don-diff > 0 (RFC 7798 §7.1).
@@ -115,14 +116,16 @@ impl H265Packetizer {
     /// * `nal_units` - Slice of NAL units to aggregate.
     /// * `donl` - Optional DONL value for the first aggregation unit.
     /// * `buf` - Reusable buffer to write the AP packet into (will be cleared).
+    /// * `max_size` - Maximum buffer size (MTU constraint).
     ///
     /// # Returns
-    /// `true` if AP was built successfully, `false` if it exceeded buffer capacity.
+    /// `true` if AP was built successfully, `false` if it exceeded max_size.
     fn build_ap_packet(
         template_nalu: &[u8],
         nal_units: &[&[u8]],
         donl: Option<u16>,
-        buf: &mut ArrayVec<u8, MAX_PACKET_SIZE>,
+        buf: &mut Vec<u8>,
+        max_size: usize,
     ) -> bool {
         buf.clear();
 
@@ -133,18 +136,11 @@ impl H265Packetizer {
         let ap_u16 = (orig_u16 & !TYPE_MASK) | ((H265NALU_AGGREGATION_PACKET_TYPE as u16) << 9);
         let ap_hdr = ap_u16.to_be_bytes();
 
-        if buf.try_extend_from_slice(&ap_hdr).is_err() {
-            return false;
-        }
+        buf.extend_from_slice(&ap_hdr);
 
         // Write DONL for first aggregation unit if present (RFC 7798 §4.4.2)
         if let Some(donl_value) = donl {
-            if buf
-                .try_extend_from_slice(&donl_value.to_be_bytes())
-                .is_err()
-            {
-                return false;
-            }
+            buf.extend_from_slice(&donl_value.to_be_bytes());
         }
 
         // Append each NAL unit with its 16-bit size prefix.
@@ -153,17 +149,13 @@ impl H265Packetizer {
             // Write DOND (Decoding Order Number Difference) for 2nd+ units.
             // DOND is always 0 in our case since we emit in order.
             if donl.is_some() && i > 0 {
-                if buf.try_push(0).is_err() {
-                    return false;
-                }
+                buf.push(0);
             }
-            if buf
-                .try_extend_from_slice(&(nal_unit.len() as u16).to_be_bytes())
-                .is_err()
-            {
-                return false;
-            }
-            if buf.try_extend_from_slice(nal_unit).is_err() {
+            buf.extend_from_slice(&(nal_unit.len() as u16).to_be_bytes());
+            buf.extend_from_slice(nal_unit);
+
+            // Check if we exceeded max size
+            if buf.len() > max_size {
                 return false;
             }
         }
@@ -188,7 +180,7 @@ impl H265Packetizer {
     fn build_paci_packet(
         inner_nalu: &[u8],
         phes: &[u8],
-        buf: &mut ArrayVec<u8, MAX_PACKET_SIZE>,
+        buf: &mut Vec<u8>,
     ) -> Result<(), PacketError> {
         if phes.len() > H265PACI_MAX_PHES_SIZE {
             return Err(PacketError::ErrH265PACIPHESTooLong);
@@ -207,7 +199,7 @@ impl H265Packetizer {
             inner_header.tid(),
         );
         let paci_hdr = paci_payload_header.0.to_be_bytes();
-        let _ = buf.try_extend_from_slice(&paci_hdr);
+        buf.extend_from_slice(&paci_hdr);
 
         // Build PACI header fields: A | cType | phssize | F0 F1 F2 | Y
         // A = F bit from inner NALU
@@ -220,16 +212,16 @@ impl H265Packetizer {
         let f0 = if phes.len() >= 3 { 1u16 << 3 } else { 0 };
         // F1, F2, Y reserved (must be 0)
         let paci_fields = a | ctype | phssize | f0;
-        let _ = buf.try_extend_from_slice(&paci_fields.to_be_bytes());
+        buf.extend_from_slice(&paci_fields.to_be_bytes());
 
         // Append PHES if present
         if !phes.is_empty() {
-            let _ = buf.try_extend_from_slice(phes);
+            buf.extend_from_slice(phes);
         }
 
         // Append inner NAL unit payload (without its 2-byte header)
         if inner_nalu.len() > H265NALU_HEADER_SIZE {
-            let _ = buf.try_extend_from_slice(&inner_nalu[H265NALU_HEADER_SIZE..]);
+            buf.extend_from_slice(&inner_nalu[H265NALU_HEADER_SIZE..]);
         }
 
         Ok(())
@@ -315,13 +307,14 @@ impl H265Packetizer {
 
             let nal_units = &nal_units_arr[..count];
 
-            // Build the AP packet using reusable buffer (no allocation).
-            // Returns false if AP exceeds buffer capacity.
-            let ap_built = Self::build_ap_packet(nalu, nal_units, self.donl, &mut self.pkt_buf);
+            // Build the AP packet using reusable buffer.
+            // Returns false if AP exceeds MTU.
+            let ap_built =
+                Self::build_ap_packet(nalu, nal_units, self.donl, &mut self.pkt_buf, mtu);
 
-            if ap_built && self.pkt_buf.len() <= mtu {
+            if ap_built {
                 // AP fits in MTU, emit it.
-                out.push(self.pkt_buf.to_vec());
+                out.push(self.pkt_buf.clone());
                 // Increment DONL for the AP packet if enabled
                 self.increment_donl();
             } else {
@@ -350,31 +343,12 @@ impl H265Packetizer {
             if let Some(donl_value) = self.donl {
                 self.pkt_buf.clear();
                 // Write NAL header (2 bytes), DONL (2 bytes), then payload
-                if self
-                    .pkt_buf
-                    .try_extend_from_slice(&nalu[..H265NALU_HEADER_SIZE])
-                    .is_err()
-                    || self
-                        .pkt_buf
-                        .try_extend_from_slice(&donl_value.to_be_bytes())
-                        .is_err()
-                    || self
-                        .pkt_buf
-                        .try_extend_from_slice(&nalu[H265NALU_HEADER_SIZE..])
-                        .is_err()
-                {
-                    // Buffer capacity exceeded — drop packet rather than send corrupted RTP.
-                    // This should not happen with MAX_PACKET_SIZE=1200 and typical NAL units.
-                    warn!(
-                        "H.265 single NAL packet with DONL exceeds buffer capacity \
-                     (nalu_len={}, mtu={}, buf_capacity={})",
-                        nalu.len(),
-                        mtu,
-                        MAX_PACKET_SIZE
-                    );
-                    return;
-                }
-                out.push(self.pkt_buf.to_vec());
+                self.pkt_buf
+                    .extend_from_slice(&nalu[..H265NALU_HEADER_SIZE]);
+                self.pkt_buf.extend_from_slice(&donl_value.to_be_bytes());
+                self.pkt_buf
+                    .extend_from_slice(&nalu[H265NALU_HEADER_SIZE..]);
+                out.push(self.pkt_buf.clone());
                 self.increment_donl();
             } else {
                 out.push(nalu.to_vec());
@@ -425,27 +399,17 @@ impl H265Packetizer {
             let fu_hdr = H265FragmentationUnitHeader::new(first, end, original_type);
 
             self.pkt_buf.clear();
-
-            if self.pkt_buf.try_extend_from_slice(&fu_indicator).is_err()
-                || self.pkt_buf.try_push(fu_hdr.0).is_err()
-                || (first
-                    && donl_bytes
-                        .as_ref()
-                        .map_or(false, |b| self.pkt_buf.try_extend_from_slice(b).is_err()))
-                || self
-                    .pkt_buf
-                    .try_extend_from_slice(&payload[offset..offset + take])
-                    .is_err()
-            {
-                warn!(
-                    "H.265 FU packet exceeds buffer capacity (fragment_size={}, \
-                     requested_mtu={}, effective_mtu={}, buf_capacity={}, first={})",
-                    take, mtu, effective_mtu, MAX_PACKET_SIZE, first
-                );
-                return;
+            self.pkt_buf.extend_from_slice(&fu_indicator);
+            self.pkt_buf.push(fu_hdr.0);
+            if first {
+                if let Some(ref b) = donl_bytes {
+                    self.pkt_buf.extend_from_slice(b);
+                }
             }
+            self.pkt_buf
+                .extend_from_slice(&payload[offset..offset + take]);
 
-            out.push(self.pkt_buf.to_vec());
+            out.push(self.pkt_buf.clone());
             offset += take;
         }
 
@@ -1214,10 +1178,10 @@ impl H265PACIPacket {
     pub fn packetize(
         inner_nalu: &[u8],
         phes: &[u8],
-        buf: &mut ArrayVec<u8, MAX_PACKET_SIZE>,
+        buf: &mut Vec<u8>,
     ) -> Result<Vec<u8>, PacketError> {
         H265Packetizer::build_paci_packet(inner_nalu, phes, buf)?;
-        Ok(buf.to_vec())
+        Ok(buf.clone())
     }
 }
 
@@ -2690,7 +2654,7 @@ mod test {
             {
                 let inner_nalu = vec![0x26, 0x01, 0xab, 0xcd, 0xef]; // Type 19 (IDR_W_RADL)
                 let phes: &[u8] = &[];
-                let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+                let mut buf = Vec::new();
 
                 let packet = H265PACIPacket::packetize(&inner_nalu, phes, &mut buf)?;
 
@@ -2715,7 +2679,7 @@ mod test {
             {
                 let inner_nalu = vec![0x02, 0x01, 0xff, 0xee, 0xdd];
                 let phes = vec![0xaa];
-                let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+                let mut buf = Vec::new();
 
                 let packet = H265PACIPacket::packetize(&inner_nalu, &phes, &mut buf)?;
 
@@ -2733,7 +2697,7 @@ mod test {
             {
                 let inner_nalu = vec![0x04, 0x01, 0x11, 0x22, 0x33];
                 let phes = vec![0xca, 0xfe, 0x80]; // TSCI data
-                let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+                let mut buf = Vec::new();
 
                 let packet = H265PACIPacket::packetize(&inner_nalu, &phes, &mut buf)?;
 
@@ -2751,7 +2715,7 @@ mod test {
             {
                 let inner_nalu = vec![0x80, 0x01, 0xaa]; // F bit set
                 let phes: &[u8] = &[];
-                let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+                let mut buf = Vec::new();
 
                 let packet = H265PACIPacket::packetize(&inner_nalu, phes, &mut buf)?;
 
@@ -2768,7 +2732,7 @@ mod test {
             {
                 let inner_nalu = vec![0x02, 0x01, 0xaa];
                 let phes = vec![0u8; 32]; // 32 bytes - too long
-                let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+                let mut buf = Vec::new();
 
                 let result = H265PACIPacket::packetize(&inner_nalu, &phes, &mut buf);
                 assert!(result.is_err());
@@ -2779,7 +2743,7 @@ mod test {
             {
                 let inner_nalu = vec![0x12, 0xff, 0x12, 0x34]; // Type 9, layer_id=31, tid=7
                 let phes = vec![0x11, 0x22];
-                let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+                let mut buf = Vec::new();
 
                 let packet = H265PACIPacket::packetize(&inner_nalu, &phes, &mut buf)?;
 
@@ -2799,7 +2763,7 @@ mod test {
             {
                 let inner_nalu = vec![0x02, 0x01, 0xaa]; // Header + 1 byte payload
                 let phes: &[u8] = &[];
-                let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+                let mut buf = Vec::new();
 
                 let packet = H265PACIPacket::packetize(&inner_nalu, phes, &mut buf)?;
 
@@ -2827,7 +2791,7 @@ mod test {
                 0x85, // S=1, E=0, RES=0x05
             ];
 
-            let mut buf = ArrayVec::<u8, MAX_PACKET_SIZE>::new();
+            let mut buf = Vec::new();
             let packet = H265PACIPacket::packetize(&inner_nalu, &tsci_bytes, &mut buf)?;
 
             // Depacketize
@@ -4548,23 +4512,23 @@ mod test {
             Ok(())
         }
 
-        /// Test single NAL with DONL that would exceed buffer capacity.
-        /// Verifies that buffer overflow is prevented and logged (packet dropped).
+        /// Test single NAL with DONL produces correct packet.
+        /// Verifies that large single NAL units with DONL are handled correctly.
         #[test]
-        fn test_h265_single_nal_donl_buffer_overflow() -> Result<()> {
+        fn test_h265_single_nal_with_donl_large() -> Result<()> {
             let mut packetizer = H265Packetizer::default();
             packetizer.with_donl(true);
 
-            // Create a NAL that fits MTU but would overflow MAX_PACKET_SIZE with DONL
-            // MAX_PACKET_SIZE = 1200, so NAL of 1199 bytes + 2 DONL = 1201 > 1200
+            // Create a large NAL that fits MTU
             let mut large_nalu = vec![0x02, 0x01];
             large_nalu.extend(vec![0xEE; 1197]); // Total 1199 bytes
 
             let packets = packetizer.packetize(1500, &large_nalu)?;
 
-            // Should produce no packets (overflow prevented, packet dropped)
-            // The warn! macro would have been triggered
-            assert!(packets.is_empty(), "Should drop packet on buffer overflow");
+            // With Vec buffer, large packets within MTU are produced successfully
+            assert_eq!(packets.len(), 1);
+            // Packet should have NAL header (2) + DONL (2) + payload (1197)
+            assert_eq!(packets[0].len(), 1199 + 2); // Original + DONL
 
             Ok(())
         }

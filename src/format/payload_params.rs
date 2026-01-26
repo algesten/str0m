@@ -414,13 +414,11 @@ impl PayloadParams {
     pub(crate) fn match_h265_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
         // If both sides have full H.265 PTL, do strict matching.
         // If one side only has profile-id (stored in profile_id field), match on profile only.
-        let c0_has_ptl = c0.format.h265_profile_tier_level.is_some();
-        let c1_has_ptl = c1.format.h265_profile_tier_level.is_some();
-
-        if c0_has_ptl && c1_has_ptl {
+        if let (Some(c0_ptl), Some(c1_ptl)) = (
+            c0.format.h265_profile_tier_level,
+            c1.format.h265_profile_tier_level,
+        ) {
             // Both have full PTL - strict matching
-            let c0_ptl = c0.format.h265_profile_tier_level.unwrap();
-            let c1_ptl = c1.format.h265_profile_tier_level.unwrap();
 
             // Profiles must match exactly.
             if c0_ptl.profile() != c1_ptl.profile() {
@@ -448,32 +446,21 @@ impl PayloadParams {
 
         // At least one side has only profile-id (not full PTL).
         // Match on profile only, using FALLBACK for missing values.
-        let c0_ptl = c0
+
+        // Get profile from PTL if present, otherwise from profile_id field
+        let c0_profile = c0
             .format
             .h265_profile_tier_level
-            .unwrap_or(H265ProfileTierLevel::FALLBACK);
+            .map(|ptl| ptl.profile().to_id())
+            .or_else(|| c0.format.profile_id.map(|p| p as u8))
+            .unwrap_or(H265ProfileTierLevel::FALLBACK.profile().to_id());
 
-        let c1_ptl = c1
+        let c1_profile = c1
             .format
             .h265_profile_tier_level
-            .unwrap_or(H265ProfileTierLevel::FALLBACK);
-
-        // Check profile-id field as well (Chrome may use this for H.265)
-        let c0_profile = if c0_has_ptl {
-            c0_ptl.profile().to_id()
-        } else {
-            c0.format
-                .profile_id
-                .unwrap_or(c0_ptl.profile().to_id() as u32) as u8
-        };
-
-        let c1_profile = if c1_has_ptl {
-            c1_ptl.profile().to_id()
-        } else {
-            c1.format
-                .profile_id
-                .unwrap_or(c1_ptl.profile().to_id() as u32) as u8
-        };
+            .map(|ptl| ptl.profile().to_id())
+            .or_else(|| c1.format.profile_id.map(|p| p as u8))
+            .unwrap_or(H265ProfileTierLevel::FALLBACK.profile().to_id());
 
         // Profiles must match
         if c0_profile != c1_profile {

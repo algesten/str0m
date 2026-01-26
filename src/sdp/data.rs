@@ -1,6 +1,7 @@
 #![allow(clippy::single_match)]
 
 use combine::EasyParser;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::{self};
 use std::ops::Deref;
@@ -11,6 +12,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::io::Id;
+use crate::packet::H265ProfileTierLevel;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::{Candidate, IceCreds, VERSION};
 
@@ -958,9 +960,6 @@ impl FormatParam {
     /// Parse multiple format parameters from key-value pairs.
     /// Handles H.265 special case where three params combine into one composite.
     pub fn parse_pairs(pairs: Vec<(String, String)>) -> Vec<FormatParam> {
-        use crate::packet::H265ProfileTierLevel;
-        use std::collections::HashMap;
-
         // Check if this looks like H.265 by presence of tier-flag or level-id.
         let is_h265 = pairs
             .iter()

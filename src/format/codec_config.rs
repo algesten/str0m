@@ -276,7 +276,6 @@ impl CodecConfig {
         self.add_h265(PT_H265, Some(PT_H265_RTX), 1, 0, 156); // Main, Main tier, Level 5.2
     }
 
->>>>>>> 23c63b8 ([H265] Add H.265 packetizer.)
     /// Add a default VP9 payload type.
     pub fn enable_vp9(&mut self, enabled: bool) {
         self.params.retain(|c| c.spec.codec != Codec::Vp9);
