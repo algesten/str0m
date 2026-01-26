@@ -2240,8 +2240,9 @@ mod test {
                     }),
                     ..Default::default()
                 },
-                // “Forgiving tail” behavior (with_donl=true):
-                // Trailing single DOND byte is read, then payload.len()<2 => BREAK, but since we already parsed one unit, OK.
+                // "Forgiving tail" behavior (with_donl=true):
+                // Trailing single DOND byte is read, then payload.len()<2 => BREAK, but
+                // since we already parsed one unit, OK.
                 TestType {
                     raw: &[
                         0x60, 0x01, // AP payload header (Type=48)
