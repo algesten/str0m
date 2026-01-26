@@ -77,7 +77,7 @@ pub static ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 /// Safe maximum RTP payload for real-world WebRTC (avoids IP fragmentation).
 const MAX_PACKET_SIZE: usize = 1200;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct H265Packetizer {
     // Parameter sets: heap-allocated but set once per stream (cold path).
     vps_nalu: Option<Vec<u8>>,
@@ -92,6 +92,19 @@ pub struct H265Packetizer {
     // DONL is used when sprop-max-don-diff > 0 (RFC 7798 §7.1).
     // https://datatracker.ietf.org/doc/html/rfc7798#section-7.1
     donl: Option<u16>,
+}
+
+impl Default for H265Packetizer {
+    fn default() -> Self {
+        Self {
+            vps_nalu: None,
+            sps_nalu: None,
+            pps_nalu: None,
+            // Pre-allocate to avoid reallocations during hot path
+            pkt_buf: Vec::with_capacity(MAX_PACKET_SIZE),
+            donl: None,
+        }
+    }
 }
 
 impl H265Packetizer {
@@ -424,7 +437,14 @@ impl Packetizer for H265Packetizer {
             return Ok(vec![]);
         }
 
-        let mut packets = Vec::new();
+        // Pre-allocate with estimated capacity to avoid reallocations.
+        // Estimate: payload_size / (mtu - overhead) + extra for parameter sets.
+        let estimated_packets = payload
+            .len()
+            .checked_div(mtu.saturating_sub(3))
+            .unwrap_or(1)
+            .saturating_add(4);
+        let mut packets = Vec::with_capacity(estimated_packets);
 
         // If no Annex-B start codes are present, treat as a single NAL unit.
         let (mut next_start, mut next_len) = Self::next_start_code(payload, 0);
@@ -1328,11 +1348,15 @@ impl Depacketizer for H265Depacketizer {
 
             if fu_header.s() {
                 // Start of fragmented NAL unit.
-                if self.fu_buffer.is_some() {
-                    // Incomplete previous FU, discard it.
-                    self.fu_buffer = None;
+                // Reuse existing buffer to avoid allocation on every FU start.
+                match &mut self.fu_buffer {
+                    Some(buf) => buf.clear(),
+                    None => {
+                        // First FU ever - allocate with typical max NAL size.
+                        // 128KB covers most 4K frames.
+                        self.fu_buffer = Some(Vec::with_capacity(128 * 1024));
+                    }
                 }
-                self.fu_buffer = Some(Vec::new());
             }
 
             if let Some(ref mut buf) = self.fu_buffer {
@@ -1341,7 +1365,8 @@ impl Depacketizer for H265Depacketizer {
 
             if fu_header.e() {
                 // End of fragmented NAL unit - reconstruct original NAL.
-                if let Some(fu_payload) = self.fu_buffer.take() {
+                // Borrow buffer instead of take() to preserve allocation for reuse.
+                if let Some(ref fu_payload) = self.fu_buffer {
                     // Rebuild original NAL unit header from FU header.
                     const TYPE_MASK: u16 = 0b0111111 << 9; // bits 14..9
                     let payload_hdr_u16 = u16::from_be_bytes([packet[0], packet[1]]);
@@ -1361,8 +1386,10 @@ impl Depacketizer for H265Depacketizer {
                     // Emit Annex-B start code + original NAL header + payload.
                     out.extend_from_slice(ANNEXB_NALUSTART_CODE);
                     out.extend_from_slice(&orig_hdr);
-                    out.extend_from_slice(&fu_payload);
+                    out.extend_from_slice(fu_payload);
                 }
+                // Note: We don't clear fu_buffer here - it will be cleared on next FU start.
+                // This preserves the allocation for reuse.
             }
 
             self.payload = H265Payload::H265FragmentationUnitPacket(decoded);
