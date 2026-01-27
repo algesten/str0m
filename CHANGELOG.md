@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Constant stream timeout check #845
   * H265 Packetizer/Depacketizer #822
   * Cap amount SCTP (data channels) buffer #831
   * Fix incorrectly purged ice-lite pairs #832

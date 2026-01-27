@@ -43,7 +43,12 @@ impl SendQueue {
     }
 
     pub fn need_timeout(&self) -> bool {
-        self.queue.iter().any(|p| p.timestamp == not_happening())
+        // Packets are timestamped contiguously from the front,
+        // so checking the tail summarizes the entire queue's state.
+        self.queue
+            .back()
+            .map(|p| p.timestamp == not_happening())
+            .unwrap_or_default()
     }
 
     pub fn peek(&mut self) -> Option<&mut RtpPacket> {
@@ -272,6 +277,55 @@ mod test {
         );
 
         assert!(queue.pop(Instant::now()).is_some());
+    }
+
+    #[test]
+    fn untimed_packets_are_contiguous_at_tail() {
+        let mut queue = SendQueue::new();
+        let start = Instant::now();
+
+        queue.push(RtpPacket {
+            seq_no: 0.into(),
+            time: MediaTime::from_90khz(10),
+            header: RtpHeader::default(),
+            payload: vec![0; 10],
+            timestamp: start,
+            last_sender_info: None,
+            nackable: true,
+        });
+        queue.push(RtpPacket {
+            seq_no: 1.into(),
+            time: MediaTime::from_90khz(20),
+            header: RtpHeader::default(),
+            payload: vec![1; 10],
+            timestamp: start,
+            last_sender_info: None,
+            nackable: true,
+        });
+        queue.push(RtpPacket {
+            seq_no: 2.into(),
+            time: MediaTime::from_90khz(20),
+            header: RtpHeader::default(),
+            payload: vec![1; 10],
+            timestamp: start,
+            last_sender_info: None,
+            nackable: true,
+        });
+
+        assert!(
+            queue.queue.iter().all(|q| q.timestamp == not_happening()),
+            "expect every new packet's timestamp to start with the sentinel value"
+        );
+        assert!(queue.need_timeout());
+
+        let now = start + Duration::from_millis(10);
+        queue.handle_timeout(now);
+
+        assert!(
+            queue.queue.iter().all(|q| q.timestamp != not_happening()),
+            "expect handle_timeout to have timestamped every packet"
+        );
+        assert!(!queue.need_timeout());
     }
 
     #[test]
