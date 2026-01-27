@@ -1,6 +1,6 @@
 [package]
 name = "str0m-proto"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Martin Algesten <martin@algesten.se>"]
 description = "Internal crate for str0m. Not intended for direct use."
 license = "MIT OR Apache-2.0"
