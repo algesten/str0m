@@ -4731,7 +4731,7 @@ mod test {
             let paci_packet: Vec<u8> = vec![
                 0x64, 0x01, // PayloadHdr: Type=50 (PACI), TID=1
                 0x00, 0x00, // PACI header fields: A=0, cType=0, PHSsize=0
-                0xAB,       // Single byte payload (less than H265NALU_HEADER_SIZE)
+                0xAB, // Single byte payload (less than H265NALU_HEADER_SIZE)
             ];
 
             let mut depacketizer = H265Depacketizer::default();
