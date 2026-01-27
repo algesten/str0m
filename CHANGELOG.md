@@ -1,5 +1,6 @@
 # Unreleased
 
+  * H265 Packetizer/Depacketizer #822
   * Cap amount SCTP (data channels) buffer #831
   * Fix incorrectly purged ice-lite pairs #832
   * Provide start Instant in constructor (breaking) #843

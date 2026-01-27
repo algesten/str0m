@@ -2035,7 +2035,7 @@ mod test {
     #[test]
     fn event_is_reasonably_sized() {
         let n = std::mem::size_of::<Event>();
-        assert!(n < 450);
+        assert!(n < 470); // Increased from 450 to accommodate H.265 profile/tier/level fields
     }
 }
 

@@ -1,6 +1,7 @@
 #![allow(clippy::single_match)]
 
 use combine::EasyParser;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::{self};
 use std::ops::Deref;
@@ -11,6 +12,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::io::Id;
+use crate::packet::H265ProfileTierLevel;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::{Candidate, IceCreds, VERSION};
 
@@ -919,6 +921,9 @@ pub enum FormatParam {
     /// AV1 tier
     Tier(u8),
 
+    /// H.265/HEVC profile, tier, and level.
+    H265ProfileTierLevel(crate::packet::H265ProfileTierLevel),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -951,6 +956,40 @@ impl FormatParam {
             Unknown
         })
     }
+
+    /// Parse multiple format parameters from key-value pairs.
+    /// Handles H.265 special case where three params combine into one composite.
+    pub fn parse_pairs(pairs: Vec<(String, String)>) -> Vec<FormatParam> {
+        // Check if this looks like H.265 by presence of tier-flag or level-id.
+        let is_h265 = pairs
+            .iter()
+            .any(|(k, _)| k == "tier-flag" || k == "level-id");
+
+        if is_h265 {
+            // For H.265, build composite ProfileTierLevel.
+            let map: HashMap<String, String> = pairs.into_iter().collect();
+
+            let mut result = vec![];
+            if let Some(ptl) = H265ProfileTierLevel::from_fmtp(&map) {
+                result.push(FormatParam::H265ProfileTierLevel(ptl));
+            }
+
+            // Include non-H.265-PTL parameters.
+            for (k, v) in map.iter() {
+                if k != "profile-id" && k != "tier-flag" && k != "level-id" {
+                    result.push(FormatParam::parse(k, v));
+                }
+            }
+
+            result
+        } else {
+            // Standard parsing for non-H.265 codecs.
+            pairs
+                .into_iter()
+                .map(|(k, v)| FormatParam::parse(&k, &v))
+                .collect()
+        }
+    }
 }
 
 impl fmt::Display for FormatParam {
@@ -969,6 +1008,15 @@ impl fmt::Display for FormatParam {
             Profile(v) => write!(f, "profile={}", v),
             LevelIdx(v) => write!(f, "level-idx={}", *v),
             Tier(v) => write!(f, "tier={}", v),
+            H265ProfileTierLevel(ptl) => {
+                write!(
+                    f,
+                    "profile-id={};tier-flag={};level-id={}",
+                    ptl.profile_id(),
+                    ptl.tier_flag(),
+                    ptl.level_id()
+                )
+            }
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }
@@ -1306,6 +1354,10 @@ impl fmt::Display for MediaAttribute {
             }
             RtcpFb { pt, value } => write!(f, "a=rtcp-fb:{pt} {value}\r\n")?,
             Fmtp { pt, values } => {
+                if values.is_empty() {
+                    // Skip empty fmtp lines - they're invalid SDP
+                    return Ok(());
+                }
                 write!(f, "a=fmtp:{pt} ")?;
                 for (idx, v) in values.iter().enumerate() {
                     if idx + 1 < values.len() {
@@ -1660,5 +1712,26 @@ mod test {
         assert!(!sdp.media_lines[0].disabled, "audio has port=9");
         assert!(sdp.media_lines[1].disabled, "video has port=0");
         assert!(sdp.media_lines[2].disabled, "application has port=0");
+    }
+
+    #[test]
+    fn h265_fmtp_round_trip() {
+        use crate::packet::H265ProfileTierLevel;
+
+        // Test that H.265 fmtp params round-trip correctly
+        let ptl = H265ProfileTierLevel::new(1, 0, 93).unwrap(); // Main, Main tier, Level 3.1
+
+        let f = FormatParams {
+            h265_profile_tier_level: Some(ptl),
+            ..Default::default()
+        };
+
+        // Serialize to string
+        let fmtp_str = f.to_string();
+        assert_eq!(fmtp_str, "profile-id=1;tier-flag=0;level-id=93");
+
+        // Parse back
+        let parsed = FormatParams::parse_line(&fmtp_str);
+        assert_eq!(parsed.h265_profile_tier_level, Some(ptl));
     }
 }

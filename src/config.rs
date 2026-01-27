@@ -250,6 +250,14 @@ impl RtcConfig {
         self
     }
 
+    /// Enable H265 video codec.
+    ///
+    /// Enabled by default.
+    pub fn enable_h265(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_h265(enabled);
+        self
+    }
+
     /// Enable VP9 video codec.
     ///
     /// Enabled by default.

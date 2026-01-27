@@ -33,6 +33,12 @@ pub(crate) const PT_AV1: Pt = Pt::new_with_value(45);
 /// Default payload type for AV1 RTX.
 pub(crate) const PT_AV1_RTX: Pt = Pt::new_with_value(46);
 
+/// Default payload type for H265.
+pub(crate) const PT_H265: Pt = Pt::new_with_value(102);
+
+/// Default payload type for H265 RTX.
+pub(crate) const PT_H265_RTX: Pt = Pt::new_with_value(103);
+
 /// Default payload type for Opus.
 pub(crate) const PT_OPUS: Pt = Pt::new_with_value(111);
 
@@ -62,6 +68,7 @@ impl CodecConfig {
 
         c.enable_vp8(true);
         c.enable_h264(true);
+        c.enable_h265(true);
         c.enable_vp9(true);
         c.enable_av1(true);
 
@@ -132,6 +139,33 @@ impl CodecConfig {
                 level_asymmetry_allowed: Some(true),
                 packetization_mode: if packetization_mode { Some(1) } else { Some(0) },
                 profile_level_id: Some(profile_level_id),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Convenience for adding a h265 payload type.
+    pub fn add_h265(
+        &mut self,
+        pt: Pt,
+        resend: Option<Pt>,
+        profile_id: u8,
+        tier_flag: u8,
+        level_id: u8,
+    ) {
+        use crate::packet::H265ProfileTierLevel;
+
+        let ptl = H265ProfileTierLevel::new(profile_id, tier_flag, level_id)
+            .unwrap_or(H265ProfileTierLevel::FALLBACK);
+
+        self.add_config(
+            pt,
+            resend,
+            Codec::H265,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams {
+                h265_profile_tier_level: Some(ptl),
                 ..Default::default()
             },
         )
@@ -224,6 +258,22 @@ impl CodecConfig {
         for p in PARAMS {
             self.add_h264(p.0.into(), Some(p.1.into()), p.2, p.3)
         }
+    }
+
+    /// Add a default H265 payload type.
+    /// This enables H265 as a video codec (clock rate 90kHz) with default RTX payload type.
+    /// Note: H265 is still considered an experimental/hidden codec in parts of the public API,
+    /// but it is supported internally for packetization/depacketization.
+    pub fn enable_h265(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::H265);
+        if !enabled {
+            return;
+        }
+
+        // Start with single default configuration
+        // Profile/tier/level negotiation will happen via SDP fmtp parameters
+        // Using Level 5.2 (level_id=156) to support modern browsers like Chrome
+        self.add_h265(PT_H265, Some(PT_H265_RTX), 1, 0, 156); // Main, Main tier, Level 5.2
     }
 
     /// Add a default VP9 payload type.
@@ -430,6 +480,7 @@ impl Codec {
             PCMA => Some(PT_PCMA),
             Vp8 => Some(PT_VP8),
             Vp9 => Some(PT_VP9),
+            H265 => Some(PT_H265),
             _ => None,
         }
     }

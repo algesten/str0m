@@ -605,10 +605,7 @@ where
     let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
         .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
-    let fmtp_param = sep_by1(
-        key_val().map(|(k, v)| FormatParam::parse(&k, &v)),
-        token(';'),
-    );
+    let fmtp_param = sep_by1(key_val(), token(';')).map(FormatParam::parse_pairs);
 
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1
