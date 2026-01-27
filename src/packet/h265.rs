@@ -1327,7 +1327,7 @@ impl Depacketizer for H265Depacketizer {
             out.extend_from_slice(&decoded.payload());
 
             // Check if this is a keyframe.
-            if !decoded.payload().is_empty() {
+            if decoded.payload().len() >= H265NALU_HEADER_SIZE {
                 let payload_hdr = H265NALUHeader::new(decoded.payload()[0], decoded.payload()[1]);
                 let is_keyframe = if let CodecExtra::H265(e) = codec_extra {
                     payload_hdr.is_irap() | e.is_keyframe
@@ -4718,6 +4718,33 @@ mod test {
                     assert_eq!(ap_header.nalu_type(), H265NALU_AGGREGATION_PACKET_TYPE);
                 }
             }
+
+            Ok(())
+        }
+
+        /// Regression test for PACI packet with payload smaller than H265NALU_HEADER_SIZE.
+        /// Previously this would panic with "index out of bounds" when accessing payload[1].
+        #[test]
+        fn test_paci_short_payload_no_panic() -> Result<()> {
+            // Create a PACI packet with a single-byte payload
+            // Type 50 = PACI packet
+            let paci_packet: Vec<u8> = vec![
+                0x64, 0x01, // PayloadHdr: Type=50 (PACI), TID=1
+                0x00, 0x00, // PACI header fields: A=0, cType=0, PHSsize=0
+                0xAB,       // Single byte payload (less than H265NALU_HEADER_SIZE)
+            ];
+
+            let mut depacketizer = H265Depacketizer::default();
+            let mut out = Vec::new();
+            let mut extra = CodecExtra::None;
+
+            // This should NOT panic - the fix checks payload.len() >= H265NALU_HEADER_SIZE
+            let result = depacketizer.depacketize(&paci_packet, &mut out, &mut extra);
+            assert!(result.is_ok());
+
+            // Output should contain the PACI payload with Annex-B start code
+            assert!(out.starts_with(ANNEXB_NALUSTART_CODE));
+            assert_eq!(out.len(), ANNEXB_NALUSTART_CODE.len() + 1); // start code + 1 byte payload
 
             Ok(())
         }
