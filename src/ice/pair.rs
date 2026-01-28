@@ -375,6 +375,17 @@ impl CandidatePair {
     ///
     /// Returns `false` if the candidate has failed.
     pub fn is_still_possible(&self, now: Instant, timing_config: &StunTiming) -> bool {
+        // If we've recently received a binding request from the remote peer, the pair
+        // is still viable even if our own binding requests aren't getting responses.
+        // This handles the case where the remote peer is still sending us requests
+        // (indicating connectivity) but may not be responding to our requests due to
+        // asymmetric behavior in some browser versions (e.g., Chrome v144+).
+        if let Some(t) = self.remote_binding_request_time {
+            if now - t < RECENT_BINDING_REQUEST {
+                return true;
+            }
+        }
+
         let attempts = self.binding_attempts.len();
         let unanswered = self.unanswered().map(|b| b.0).unwrap_or(0);
 
