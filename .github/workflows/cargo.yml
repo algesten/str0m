@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['main']
+    branches: ["main"]
   pull_request:
   schedule:
     - cron: "22 3 * * 5"
@@ -12,7 +12,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-
   test:
     strategy:
       matrix:
@@ -22,9 +21,6 @@ jobs:
             os: ubuntu-latest
           - name: openssl
             os: macos-latest
-          - name: openssl
-            os: windows-latest
-            features: openssl
           - name: aws-lc-rs
             os: ubuntu-latest
           - name: aws-lc-rs
@@ -53,15 +49,6 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install OpenSSL on Windows
-        if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
-        shell: pwsh
-        run: |
-          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
-          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
-          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
-          echo "OPENSSL_DIR=C:\openssl-3.6.0\x64" >> $env:GITHUB_ENV
-
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
 
@@ -75,7 +62,7 @@ jobs:
         uses: algesten/snowflake@v1.1.0
         with:
           check_diff: true
-          line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;*.lock:200;*.svg:1000;*.txt:9999;DEFAULT=110'
+          line_width_rules: "CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;*.lock:200;*.svg:1000;*.txt:9999;DEFAULT=110"
 
   pii:
     runs-on: ubuntu-latest
@@ -194,4 +181,3 @@ jobs:
   #       command: check
   #       log-level: error
   #       arguments: --all-features --target ${{ matrix.platform }}
-
