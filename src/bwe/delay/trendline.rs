@@ -271,7 +271,7 @@ impl TrendlineEstimator {
             return;
         }
 
-        debug!("TrendLineEstimator: Setting hypothesis to {new_hypothesis}");
+        trace!("TrendLineEstimator: Setting hypothesis to {new_hypothesis}");
         self.hypothesis = new_hypothesis;
     }
 }

@@ -97,9 +97,10 @@ impl AlrDetector {
                 if ratio > self.start_budget_level_ratio {
                     // Enter ALR: budget accumulated because we're not sending much
                     self.state = AlrState::InAlr(now);
-                    debug!(
+                    trace!(
                         "ALR: Entered ALR state (ratio={:.3} > threshold={:.3})",
-                        ratio, self.start_budget_level_ratio
+                        ratio,
+                        self.start_budget_level_ratio
                     );
                 }
             }
@@ -107,9 +108,10 @@ impl AlrDetector {
                 if ratio < self.stop_budget_level_ratio {
                     // Exit ALR: budget depleted because we're sending more
                     self.state = AlrState::NotInAlr;
-                    debug!(
+                    trace!(
                         "ALR: Exited ALR state (ratio={:.3} < threshold={:.3})",
-                        ratio, self.stop_budget_level_ratio
+                        ratio,
+                        self.stop_budget_level_ratio
                     );
                 }
             }
