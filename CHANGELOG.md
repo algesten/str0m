@@ -1,5 +1,7 @@
 # Unreleased
 
+# 0.16.1
+
   * Fix ICE disconnections with Chrome v144+ when not using ICE Lite #846
   * Downgrade noisy BWE logs #847
   * Fix H265 PACI depacketizer panic on short payload #849
