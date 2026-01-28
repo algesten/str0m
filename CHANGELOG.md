@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix H265 PACI depacketizer panic on short payload #849
+
 # 0.16.0
 
   * Constant stream timeout check #845
