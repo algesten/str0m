@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Downgrade noisy BWE logs #847
   * Fix H265 PACI depacketizer panic on short payload #849
 
 # 0.16.0
