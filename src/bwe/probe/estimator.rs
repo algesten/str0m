@@ -184,7 +184,7 @@ impl ProbeEstimator {
                 // Already logged in calculate_bitrate() during update().
             } else {
                 // Log the final rejection reason for the probe.
-                debug!(%result, "Probe result");
+                trace!(%result, "Probe result");
             }
 
             false
@@ -258,7 +258,7 @@ impl ProbeEstimatorState {
         };
 
         // Log the estimates continuously during the probe.
-        debug!(%result, "Probe result");
+        trace!(%result, "Probe result");
         log_probe_bitrate_estimate!(bitrate.as_f64());
 
         Some((self.config, bitrate))

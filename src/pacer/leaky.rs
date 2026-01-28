@@ -194,7 +194,7 @@ impl LeakyBucketPacer {
     /// The pacer will pace at the probe's target bitrate and track packets sent.
     /// Probes are queued and executed sequentially.
     pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig) {
-        debug!(?config, "Probe start");
+        trace!(?config, "Probe start");
         self.probe_queue.push_back(ProbeClusterState::new(config));
     }
 
