@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Silence noisy BWE logs #847
+
 # 0.16.0
 
   * Constant stream timeout check #845
