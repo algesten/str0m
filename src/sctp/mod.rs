@@ -24,6 +24,12 @@ pub use error::SctpError;
 /// Bytes that can be buffered inside str0m across all streams.
 const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
 
+/// Maximum message size we advertise in SDP (what we can receive)
+pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
+
+/// Default max message size if remote doesn't advertise
+pub const DEFAULT_REMOTE_MAX_MESSAGE_SIZE: u32 = 64 * 1024;
+
 pub(crate) struct RtcSctp {
     state: RtcSctpState,
     endpoint: Endpoint,
@@ -233,7 +239,12 @@ impl RtcSctp {
         // DTLS above MTU 1200: 1277
         // Let's try 1120, see if we can avoid warnings.
         config.max_payload_size(1120);
-        let server_config = ServerConfig::default();
+        let mut server_config = ServerConfig::default();
+
+        server_config.transport = Arc::new(
+            TransportConfig::default().with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
+        );
+
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
         let fake_addr = "1.1.1.1:5000".parse().unwrap();
 
@@ -266,7 +277,8 @@ impl RtcSctp {
             // and SCTP should not give up until ICE gives up.
             let transport = TransportConfig::default()
                 .with_max_init_retransmits(None)
-                .with_max_data_retransmits(None);
+                .with_max_data_retransmits(None)
+                .with_max_receive_message_size(DEFAULT_REMOTE_MAX_MESSAGE_SIZE);
 
             let config = ClientConfig {
                 transport: Arc::new(transport),

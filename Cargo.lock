@@ -1589,8 +1589,7 @@ dependencies = [
 [[package]]
 name = "sctp-proto"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57239be45f014795255107f85dfe3503791711e77c4995f936caf89a2afe0c16"
+source = "git+https://github.com/haikoschol/sctp-proto?branch=max-receive-message-size#4d24dc5480b6fa6e91d50cdac22954ca2f6e5444"
 dependencies = [
  "bytes",
  "crc",
