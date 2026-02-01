@@ -279,10 +279,15 @@ fn ice_stun_timeout_initial_rto() -> Result<(), RtcError> {
     let custom_rto = Duration::from_millis(50);
     let mut config = RtcConfig::new();
     config.set_initial_stun_rto(custom_rto);
-    let rtc = config.build(Instant::now());
+    let start = Instant::now();
+    let rtc = config.build(start);
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
     let mut r = TestRtc::new(Peer::Right);
+
+    // Sync TestRtc time with Rtc creation time
+    l.start = start;
+    l.last = start;
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -297,11 +302,6 @@ fn ice_stun_timeout_initial_rto() -> Result<(), RtcError> {
     let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
     l.span
         .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
-
-    // Sync time after SDP exchange
-    let max = l.last.max(r.last);
-    l.last = max;
-    r.last = max;
 
     // Track transmit times from L only (don't deliver to R, so L will retransmit)
     let mut transmit_times: Vec<Instant> = Vec::new();
@@ -369,10 +369,15 @@ fn ice_stun_timeout_max_rto() -> Result<(), RtcError> {
     let mut config = RtcConfig::new();
     config.set_initial_stun_rto(initial_rto);
     config.set_max_stun_rto(max_rto);
-    let rtc = config.build(Instant::now());
+    let start = Instant::now();
+    let rtc = config.build(start);
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
     let mut r = TestRtc::new(Peer::Right);
+
+    // Sync TestRtc time with Rtc creation time
+    l.start = start;
+    l.last = start;
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -386,11 +391,6 @@ fn ice_stun_timeout_max_rto() -> Result<(), RtcError> {
     let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
     l.span
         .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
-
-    // Sync time after SDP exchange
-    let max = l.last.max(r.last);
-    l.last = max;
-    r.last = max;
 
     // Track transmit times from L only (don't deliver to R)
     let mut transmit_times: Vec<Instant> = Vec::new();
