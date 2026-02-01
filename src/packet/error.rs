@@ -11,19 +11,10 @@ pub enum PacketError {
     ErrH265CorruptedPacket,
     ErrInvalidH265PacketType,
     ErrH265PACIPHESTooLong,
-    InvalidMtu(MtuErrorKind),
     StapASizeLargerThanBuffer(usize, usize),
     NaluTypeIsNotHandled(u8),
     ErrVP9CorruptedPacket,
     ErrAv1CorruptedPacket,
-}
-
-/// Reasons an MTU was rejected by a packetizer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MtuErrorKind {
-    Zero,
-    TooSmall { mtu: usize, min: usize },
-    TooLarge { mtu: usize, max: usize },
 }
 
 impl fmt::Display for PacketError {
@@ -37,15 +28,6 @@ impl fmt::Display for PacketError {
             PacketError::ErrH265PACIPHESTooLong => {
                 write!(f, "H265 PACI PHES field exceeds maximum size of 31 bytes")
             }
-            PacketError::InvalidMtu(kind) => match kind {
-                MtuErrorKind::Zero => write!(f, "Invalid MTU: zero."),
-                MtuErrorKind::TooSmall { mtu, min } => {
-                    write!(f, "Invalid MTU: too small (mtu={}, min={}).", mtu, min)
-                }
-                MtuErrorKind::TooLarge { mtu, max } => {
-                    write!(f, "Invalid MTU: too large (mtu={}, max={}).", mtu, max)
-                }
-            },
             PacketError::StapASizeLargerThanBuffer(size, buffer) => write!(
                 f,
                 "H264 StapA size larger than buffer: {} > {}",

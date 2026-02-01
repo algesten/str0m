@@ -1,7 +1,6 @@
 #![allow(clippy::all)]
 #![allow(unused)]
 
-use super::error::MtuErrorKind;
 use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 use arrayvec::ArrayVec;
 use tracing::warn;
@@ -446,27 +445,28 @@ impl Packetizer for H265Packetizer {
             return Ok(vec![]);
         }
 
-        if mtu == 0 {
-            return Err(PacketError::InvalidMtu(MtuErrorKind::Zero));
-        }
-
-        if mtu > MAX_PACKET_SIZE {
-            return Err(PacketError::InvalidMtu(MtuErrorKind::TooLarge {
-                mtu,
-                max: MAX_PACKET_SIZE,
-            }));
-        }
-
-        if mtu < MIN_MTU {
-            warn!(
-                "MTU {} too small for H.265 fragmentation (min {})",
-                mtu, MIN_MTU
-            );
-            return Err(PacketError::InvalidMtu(MtuErrorKind::TooSmall {
-                mtu,
-                min: MIN_MTU,
-            }));
-        }
+        // Validate and log MTU issues.
+        let mtu = match mtu {
+            0 => {
+                warn!("MTU is 0, cannot packetize H.265 - this indicates a programming bug");
+                return Ok(vec![]);
+            }
+            mtu if mtu > MAX_PACKET_SIZE => {
+                warn!(
+                    "MTU {} exceeds MAX_PACKET_SIZE {}, clamping to {}",
+                    mtu, MAX_PACKET_SIZE, MAX_PACKET_SIZE
+                );
+                MAX_PACKET_SIZE
+            }
+            mtu if mtu < MIN_MTU => {
+                warn!(
+                    "MTU {} too small for H.265 fragmentation (min {}) - cannot fragment",
+                    mtu, MIN_MTU
+                );
+                return Ok(vec![]);
+            }
+            mtu => mtu, // Valid MTU, use as-is
+        };
 
         // Pre-allocate with estimated capacity to avoid reallocations.
         // Estimate: payload_size / (mtu - overhead) + extra for parameter sets.
@@ -4452,8 +4452,10 @@ mod test {
             let mut packetizer = H265Packetizer::default();
             let nalu = vec![0x02, 0x01, 0xAA, 0xBB, 0xCC];
 
-            let err = packetizer.packetize(0, &nalu).unwrap_err();
-            assert_eq!(err, PacketError::InvalidMtu(MtuErrorKind::Zero));
+            let packets = packetizer.packetize(0, &nalu)?;
+
+            // Zero MTU should result in no packets being created
+            assert!(packets.is_empty(), "Zero MTU should produce no packets");
 
             Ok(())
         }
@@ -4488,13 +4490,11 @@ mod test {
 
             // FU overhead is 3 bytes (2 FU indicator + 1 FU header)
             // MTU = 2 is smaller than overhead, should produce no packets
-            let err = packetizer.packetize(2, &large_nalu).unwrap_err();
-            assert_eq!(
-                err,
-                PacketError::InvalidMtu(MtuErrorKind::TooSmall {
-                    mtu: 2,
-                    min: MIN_MTU
-                })
+            let packets = packetizer.packetize(2, &large_nalu)?;
+
+            assert!(
+                packets.is_empty(),
+                "MTU smaller than FU overhead should produce no packets"
             );
 
             Ok(())
@@ -4511,13 +4511,11 @@ mod test {
             large_nalu.extend(vec![0xBB; 200]);
 
             // FU overhead is 3 bytes, no room for payload
-            let err = packetizer.packetize(3, &large_nalu).unwrap_err();
-            assert_eq!(
-                err,
-                PacketError::InvalidMtu(MtuErrorKind::TooSmall {
-                    mtu: 3,
-                    min: MIN_MTU
-                })
+            let packets = packetizer.packetize(3, &large_nalu)?;
+
+            assert!(
+                packets.is_empty(),
+                "MTU equal to FU overhead (no payload room) should produce no packets"
             );
 
             Ok(())
@@ -4556,14 +4554,19 @@ mod test {
             large_nalu.extend(vec![0xDD; 3000]);
 
             // Request MTU=2000, but should be clamped to MAX_PACKET_SIZE=1200
-            let err = packetizer.packetize(2000, &large_nalu).unwrap_err();
-            assert_eq!(
-                err,
-                PacketError::InvalidMtu(MtuErrorKind::TooLarge {
-                    mtu: 2000,
-                    max: MAX_PACKET_SIZE
-                })
-            );
+            let packets = packetizer.packetize(2000, &large_nalu)?;
+
+            assert!(!packets.is_empty(), "Should produce FU packets");
+
+            // All packets should fit within MAX_PACKET_SIZE (1200)
+            for (i, packet) in packets.iter().enumerate() {
+                assert!(
+                    packet.len() <= 1200,
+                    "Packet {} size {} exceeds MAX_PACKET_SIZE (1200)",
+                    i,
+                    packet.len()
+                );
+            }
 
             Ok(())
         }
