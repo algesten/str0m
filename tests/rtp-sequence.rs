@@ -8,9 +8,8 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
-use common::{
-    connect_l_r_with_rtc, init_crypto_default, init_log, negotiate, progress, Peer, TestRtc,
-};
+use common::{connect_l_r_with_rtc, init_crypto_default};
+use common::{init_log, negotiate, progress, Peer, TestRtc};
 
 /// Test handling of packets crossing the u16 sequence number boundary (65535 -> 0).
 #[test]
