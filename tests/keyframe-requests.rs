@@ -2,73 +2,15 @@
 
 use std::net::Ipv4Addr;
 
-use str0m::format::Codec;
 use str0m::media::{Direction, KeyframeRequestKind, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
 use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
 
-/// Test sending PLI (Picture Loss Indication) request.
+/// Test PLI (Picture Loss Indication) request is sent and received.
 #[test]
-fn keyframe_request_pli_send() -> Result<(), RtcError> {
-    init_log();
-    init_crypto_default();
-
-    let mut l = TestRtc::new(Peer::Left);
-    let mut r = TestRtc::new(Peer::Right);
-
-    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
-    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
-
-    // L sends video to R
-    let mid = negotiate(&mut l, &mut r, |change| {
-        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None)
-    });
-
-    loop {
-        if l.is_connected() && r.is_connected() {
-            break;
-        }
-        progress(&mut l, &mut r)?;
-    }
-
-    let max = l.last.max(r.last);
-    l.last = max;
-    r.last = max;
-
-    // Send some video data from L first
-    let params = l.params_vp8();
-    assert_eq!(params.spec().codec, Codec::Vp8);
-    let pt = params.pt();
-
-    for i in 0..10 {
-        let wallclock = l.start + l.duration();
-        let time = l.duration().into();
-        l.writer(mid)
-            .unwrap()
-            .write(pt, wallclock, time, vec![0x10, 0x00, 0x00, i as u8])?;
-        progress(&mut l, &mut r)?;
-    }
-
-    // R requests a keyframe via PLI
-    if let Some(mut writer) = r.writer(mid) {
-        if writer.is_request_keyframe_possible(KeyframeRequestKind::Pli) {
-            writer.request_keyframe(None, KeyframeRequestKind::Pli)?;
-        }
-    }
-
-    // Progress to send the PLI
-    for _ in 0..50 {
-        progress(&mut l, &mut r)?;
-    }
-
-    Ok(())
-}
-
-/// Test receiving and handling PLI request event.
-#[test]
-fn keyframe_request_pli_receive() -> Result<(), RtcError> {
+fn keyframe_request_pli() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
@@ -141,63 +83,9 @@ fn keyframe_request_pli_receive() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test sending FIR (Full Intra Request).
+/// Test FIR (Full Intra Request) is sent and received.
 #[test]
-fn keyframe_request_fir_send() -> Result<(), RtcError> {
-    init_log();
-    init_crypto_default();
-
-    let mut l = TestRtc::new(Peer::Left);
-    let mut r = TestRtc::new(Peer::Right);
-
-    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
-    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
-
-    let mid = negotiate(&mut l, &mut r, |change| {
-        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None)
-    });
-
-    loop {
-        if l.is_connected() && r.is_connected() {
-            break;
-        }
-        progress(&mut l, &mut r)?;
-    }
-
-    let max = l.last.max(r.last);
-    l.last = max;
-    r.last = max;
-
-    // Send video from L
-    let params = l.params_vp8();
-    let pt = params.pt();
-
-    for i in 0..10 {
-        let wallclock = l.start + l.duration();
-        let time = l.duration().into();
-        l.writer(mid)
-            .unwrap()
-            .write(pt, wallclock, time, vec![0x10, 0x00, 0x00, i as u8])?;
-        progress(&mut l, &mut r)?;
-    }
-
-    // R requests a keyframe via FIR
-    if let Some(mut writer) = r.writer(mid) {
-        if writer.is_request_keyframe_possible(KeyframeRequestKind::Fir) {
-            writer.request_keyframe(None, KeyframeRequestKind::Fir)?;
-        }
-    }
-
-    for _ in 0..50 {
-        progress(&mut l, &mut r)?;
-    }
-
-    Ok(())
-}
-
-/// Test receiving FIR request event.
-#[test]
-fn keyframe_request_fir_receive() -> Result<(), RtcError> {
+fn keyframe_request_fir() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 

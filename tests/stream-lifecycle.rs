@@ -209,8 +209,9 @@ fn stream_direction_change_sendonly() -> Result<(), RtcError> {
     }
 
     assert_eq!(l.media(mid).unwrap().direction(), Direction::SendRecv);
+    assert_eq!(r.media(mid).unwrap().direction(), Direction::SendRecv);
 
-    // Change to SendOnly
+    // Change L to SendOnly
     negotiate(&mut l, &mut r, |change| {
         change.set_direction(mid, Direction::SendOnly);
     });
@@ -219,6 +220,11 @@ fn stream_direction_change_sendonly() -> Result<(), RtcError> {
         l.media(mid).unwrap().direction(),
         Direction::SendOnly,
         "L should be SendOnly"
+    );
+    assert_eq!(
+        r.media(mid).unwrap().direction(),
+        Direction::RecvOnly,
+        "R should be RecvOnly (opposite of L's SendOnly)"
     );
 
     Ok(())
@@ -247,7 +253,10 @@ fn stream_direction_change_recvonly() -> Result<(), RtcError> {
         progress(&mut l, &mut r)?;
     }
 
-    // Change to RecvOnly
+    assert_eq!(l.media(mid).unwrap().direction(), Direction::SendRecv);
+    assert_eq!(r.media(mid).unwrap().direction(), Direction::SendRecv);
+
+    // Change L to RecvOnly
     negotiate(&mut l, &mut r, |change| {
         change.set_direction(mid, Direction::RecvOnly);
     });
@@ -256,6 +265,11 @@ fn stream_direction_change_recvonly() -> Result<(), RtcError> {
         l.media(mid).unwrap().direction(),
         Direction::RecvOnly,
         "L should be RecvOnly"
+    );
+    assert_eq!(
+        r.media(mid).unwrap().direction(),
+        Direction::SendOnly,
+        "R should be SendOnly (opposite of L's RecvOnly)"
     );
 
     Ok(())
@@ -284,7 +298,10 @@ fn stream_direction_change_inactive() -> Result<(), RtcError> {
         progress(&mut l, &mut r)?;
     }
 
-    // Change to Inactive
+    assert_eq!(l.media(mid).unwrap().direction(), Direction::SendRecv);
+    assert_eq!(r.media(mid).unwrap().direction(), Direction::SendRecv);
+
+    // Change L to Inactive
     negotiate(&mut l, &mut r, |change| {
         change.set_direction(mid, Direction::Inactive);
     });
@@ -293,6 +310,11 @@ fn stream_direction_change_inactive() -> Result<(), RtcError> {
         l.media(mid).unwrap().direction(),
         Direction::Inactive,
         "L should be Inactive"
+    );
+    assert_eq!(
+        r.media(mid).unwrap().direction(),
+        Direction::Inactive,
+        "R should be Inactive (both sides inactive)"
     );
 
     Ok(())
