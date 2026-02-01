@@ -467,10 +467,15 @@ fn ice_stun_max_retransmits() -> Result<(), RtcError> {
     config.set_max_stun_retransmits(max_retransmits);
     config.set_initial_stun_rto(Duration::from_millis(20));
     config.set_max_stun_rto(Duration::from_millis(40));
-    let rtc = config.build(Instant::now());
+    let start = Instant::now();
+    let rtc = config.build(start);
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
     let mut r = TestRtc::new(Peer::Right);
+
+    // Sync TestRtc time with Rtc creation time
+    l.start = start;
+    l.last = start;
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -484,11 +489,6 @@ fn ice_stun_max_retransmits() -> Result<(), RtcError> {
     let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
     l.span
         .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
-
-    // Sync time after SDP exchange
-    let max = l.last.max(r.last);
-    l.last = max;
-    r.last = max;
 
     // Count transmissions from L (without delivering to R)
     let mut transmit_count = 0;
