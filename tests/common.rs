@@ -376,7 +376,7 @@ impl DerefMut for TestRtc {
 pub fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"));
 
     static START: Once = Once::new();
 
