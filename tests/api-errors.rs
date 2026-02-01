@@ -255,10 +255,7 @@ fn api_connected_event() -> Result<(), RtcError> {
     }
 
     // Check that we received Connected event
-    let connected = l
-        .events
-        .iter()
-        .any(|(_, e)| matches!(e, Event::Connected));
+    let connected = l.events.iter().any(|(_, e)| matches!(e, Event::Connected));
 
     assert!(connected, "Should have received Connected event");
 

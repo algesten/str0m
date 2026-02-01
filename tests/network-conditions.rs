@@ -115,7 +115,11 @@ fn network_packet_loss() -> Result<(), RtcError> {
     r.last = max;
 
     // Apply 10% packet loss to receiver
-    r.set_netem(NetemConfig::new().loss(RandomLoss::new(Probability::new(0.1))).seed(42));
+    r.set_netem(
+        NetemConfig::new()
+            .loss(RandomLoss::new(Probability::new(0.1)))
+            .seed(42),
+    );
 
     let params = l.params_opus();
     let pt = params.pt();

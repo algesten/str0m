@@ -10,48 +10,6 @@ use tracing::info_span;
 mod common;
 use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
 
-/// Test that connections work when fingerprint verification is disabled.
-#[test]
-fn dtls_fingerprint_verification_disabled() -> Result<(), RtcError> {
-    init_log();
-    init_crypto_default();
-
-    let rtc_l = RtcConfig::new()
-        .set_fingerprint_verification(false)
-        .build(Instant::now());
-    let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc_l);
-
-    let rtc_r = RtcConfig::new()
-        .set_fingerprint_verification(false)
-        .build(Instant::now());
-    let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
-
-    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
-    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
-
-    let (offer, pending) = l.span.in_scope(|| {
-        let mut change = l.rtc.sdp_api();
-        let _ = change.add_channel("test".into());
-        change.apply().unwrap()
-    });
-
-    let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
-    l.span
-        .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
-
-    loop {
-        if l.is_connected() && r.is_connected() {
-            break;
-        }
-        if l.duration() > Duration::from_secs(5) {
-            panic!("Failed to connect with fingerprint verification disabled");
-        }
-        progress(&mut l, &mut r)?;
-    }
-
-    Ok(())
-}
-
 /// Test certificate fingerprint format and uniqueness.
 #[test]
 fn dtls_certificate_fingerprint_format() -> Result<(), RtcError> {

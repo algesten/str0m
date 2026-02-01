@@ -16,11 +16,38 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let rtc = RtcConfig::new()
+    // Verify config builder correctly sets and retrieves values
+    let config = RtcConfig::new()
         .set_reordering_size_audio(20)
-        .set_reordering_size_video(50)
-        .build(Instant::now());
+        .set_reordering_size_video(50);
 
+    // Verify the config has correct values before building
+    assert_eq!(
+        config.reordering_size_audio(),
+        20,
+        "Audio reordering size should be 20"
+    );
+    assert_eq!(
+        config.reordering_size_video(),
+        50,
+        "Video reordering size should be 50"
+    );
+
+    // Verify default values are different
+    let default_config = RtcConfig::new();
+    assert_eq!(
+        default_config.reordering_size_audio(),
+        15,
+        "Default audio reordering should be 15"
+    );
+    assert_eq!(
+        default_config.reordering_size_video(),
+        30,
+        "Default video reordering should be 30"
+    );
+
+    // Build and verify the Rtc works with custom config
+    let rtc = config.build(Instant::now());
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
     let mut r = TestRtc::new(Peer::Right);
 
@@ -41,12 +68,12 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
         progress(&mut l, &mut r)?;
     }
 
-    // Verify connection works with custom reordering sizes
+    // Send and receive data to verify the config doesn't break functionality
     let params = l.params_opus();
     let pt = params.pt();
     let data = vec![1_u8; 80];
 
-    for _ in 0..10 {
+    for _ in 0..20 {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
         l.writer(mid)
@@ -54,6 +81,19 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
             .write(pt, wallclock, time, data.clone())?;
         progress(&mut l, &mut r)?;
     }
+
+    // Verify data was received
+    let received_count = r
+        .events
+        .iter()
+        .filter(|(_, e)| matches!(e, Event::MediaData(_)))
+        .count();
+
+    assert!(
+        received_count > 10,
+        "Should receive media data with custom reordering config, got {}",
+        received_count
+    );
 
     Ok(())
 }
@@ -265,45 +305,79 @@ fn config_stats_disabled() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test set_fingerprint_verification(false).
+/// Test set_fingerprint_verification(false) allows connection with wrong fingerprint.
 #[test]
 fn config_fingerprint_verification_disabled() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let rtc = RtcConfig::new()
-        .set_fingerprint_verification(false)
-        .build(Instant::now());
+    use str0m::crypto::Fingerprint;
+    use str0m::Candidate;
 
-    let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
+    // Create RTCs with fingerprint verification DISABLED
+    let rtc_l = RtcConfig::new()
+        .set_fingerprint_verification(false)
+        .set_rtp_mode(true)
+        .build(Instant::now());
 
     let rtc_r = RtcConfig::new()
         .set_fingerprint_verification(false)
+        .set_rtp_mode(true)
         .build(Instant::now());
+
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc_l);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
-    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
-    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+    // Set up candidates
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
+    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
+    l.add_local_candidate(host1.clone()).unwrap();
+    l.add_remote_candidate(host2.clone());
+    r.add_local_candidate(host2).unwrap();
+    r.add_remote_candidate(host1);
 
-    let (offer, pending) = l.span.in_scope(|| {
-        let mut change = l.rtc.sdp_api();
-        let _ = change.add_channel("test".into());
-        change.apply().unwrap()
-    });
+    // Create CORRUPTED fingerprints (all zeros - definitely wrong)
+    let corrupted_fingerprint = Fingerprint {
+        hash_func: "sha-256".to_string(),
+        bytes: vec![0u8; 32], // Wrong fingerprint!
+    };
 
-    let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
-    l.span
-        .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
+    // Set the WRONG fingerprints as remote (this would fail with verification enabled)
+    l.direct_api()
+        .set_remote_fingerprint(corrupted_fingerprint.clone());
+    r.direct_api().set_remote_fingerprint(corrupted_fingerprint);
 
+    // Exchange ICE credentials
+    let creds_l = l.direct_api().local_ice_credentials();
+    let creds_r = r.direct_api().local_ice_credentials();
+    l.direct_api().set_remote_ice_credentials(creds_r);
+    r.direct_api().set_remote_ice_credentials(creds_l);
+
+    l.direct_api().set_ice_controlling(true);
+    r.direct_api().set_ice_controlling(false);
+
+    // Start DTLS - this should succeed despite wrong fingerprints
+    // because verification is disabled
+    l.direct_api().start_dtls(true).unwrap();
+    r.direct_api().start_dtls(false).unwrap();
+
+    l.direct_api().start_sctp(true);
+    r.direct_api().start_sctp(false);
+
+    // Connection should succeed despite corrupted fingerprints
     loop {
         if l.is_connected() && r.is_connected() {
             break;
         }
         if l.duration() > Duration::from_secs(5) {
-            panic!("Failed to connect with fingerprint verification disabled");
+            panic!("Failed to connect - fingerprint verification should be disabled");
         }
         progress(&mut l, &mut r)?;
     }
+
+    // Verify we actually connected
+    assert!(l.is_connected(), "L should be connected");
+    assert!(r.is_connected(), "R should be connected");
 
     Ok(())
 }
@@ -358,11 +432,38 @@ fn config_send_buffer_sizes() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let rtc = RtcConfig::new()
+    // Verify config builder correctly sets and retrieves values
+    let config = RtcConfig::new()
         .set_send_buffer_audio(100)
-        .set_send_buffer_video(2000)
-        .build(Instant::now());
+        .set_send_buffer_video(2000);
 
+    // Verify the config has correct values before building
+    assert_eq!(
+        config.send_buffer_audio(),
+        100,
+        "Audio send buffer should be 100"
+    );
+    assert_eq!(
+        config.send_buffer_video(),
+        2000,
+        "Video send buffer should be 2000"
+    );
+
+    // Verify default values are different
+    let default_config = RtcConfig::new();
+    assert_eq!(
+        default_config.send_buffer_audio(),
+        50,
+        "Default audio send buffer should be 50"
+    );
+    assert_eq!(
+        default_config.send_buffer_video(),
+        1000,
+        "Default video send buffer should be 1000"
+    );
+
+    // Build and verify the Rtc works with custom config
+    let rtc = config.build(Instant::now());
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
     let mut r = TestRtc::new(Peer::Right);
 
@@ -383,12 +484,12 @@ fn config_send_buffer_sizes() -> Result<(), RtcError> {
         progress(&mut l, &mut r)?;
     }
 
-    // Connection should work with custom send buffer sizes
+    // Send and receive data to verify the config doesn't break functionality
     let params = l.params_opus();
     let pt = params.pt();
     let data = vec![1_u8; 80];
 
-    for _ in 0..10 {
+    for _ in 0..20 {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
         l.writer(mid)
@@ -396,6 +497,19 @@ fn config_send_buffer_sizes() -> Result<(), RtcError> {
             .write(pt, wallclock, time, data.clone())?;
         progress(&mut l, &mut r)?;
     }
+
+    // Verify data was received
+    let received_count = r
+        .events
+        .iter()
+        .filter(|(_, e)| matches!(e, Event::MediaData(_)))
+        .count();
+
+    assert!(
+        received_count > 10,
+        "Should receive media data with custom send buffer config, got {}",
+        received_count
+    );
 
     Ok(())
 }
