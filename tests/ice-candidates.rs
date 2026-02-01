@@ -298,6 +298,11 @@ fn ice_stun_timeout_initial_rto() -> Result<(), RtcError> {
     l.span
         .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
 
+    // Sync time after SDP exchange
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
     // Track transmit times from L only (don't deliver to R, so L will retransmit)
     let mut transmit_times: Vec<Instant> = Vec::new();
 
@@ -381,6 +386,11 @@ fn ice_stun_timeout_max_rto() -> Result<(), RtcError> {
     let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
     l.span
         .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
+
+    // Sync time after SDP exchange
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
 
     // Track transmit times from L only (don't deliver to R)
     let mut transmit_times: Vec<Instant> = Vec::new();
@@ -474,6 +484,11 @@ fn ice_stun_max_retransmits() -> Result<(), RtcError> {
     let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
     l.span
         .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
+
+    // Sync time after SDP exchange
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
 
     // Count transmissions from L (without delivering to R)
     let mut transmit_count = 0;
