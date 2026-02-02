@@ -75,7 +75,7 @@ const SRTP_PROFILES: [u16; 3] = [
 
 #[repr(C)]
 struct SrtpProtectionProfilesBuffer {
-    profiles_byte_len: u16, // Byte len of profiles field.
+    profiles_byte_len: u16,
     profiles: [u16; SRTP_PROFILES.len()],
 }
 const SRTP_PROTECTION_PROFILES_BUFFER_INSTANCE: SrtpProtectionProfilesBuffer =
