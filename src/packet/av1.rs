@@ -148,7 +148,7 @@ impl Av1Packetizer {
 
                 let payload_offset =
                     obu_offset.saturating_sub(if obu.has_extension() { 2 } else { 1 });
-                let payload_size = obu.payload.len() - obu_offset;
+                let payload_size = obu.payload.len() - payload_offset;
 
                 if !obu.payload.is_empty() && payload_size > 0 {
                     rtp_payload[pos..pos + payload_size].copy_from_slice(
@@ -547,7 +547,7 @@ impl Packet {
 pub fn leb_128_size(mut value: usize) -> usize {
     let mut size = 0;
 
-    while value > 0x80 {
+    while value >= 0x80 {
         size += 1;
         value >>= 7;
     }
@@ -1050,5 +1050,140 @@ mod test {
         assert_eq!(out[2], 0x01);
         assert_eq!(out[3 + 10], 0x10);
         assert_eq!(out[3 + 32 + 20], 0x20);
+    }
+
+    // Regression tests for leb_128_size boundary values.
+    // The bug was `value > 0x80` instead of `value >= 0x80`.
+    // LEB128 encodes 7 bits per byte, so values >= 128 need 2 bytes,
+    // values >= 16384 need 3 bytes, etc.
+
+    #[test]
+    fn leb128_size_boundary_at_128() {
+        // 127 fits in 1 byte (7 bits), 128 needs 2 bytes
+        assert_eq!(leb_128_size(0), 1);
+        assert_eq!(leb_128_size(1), 1);
+        assert_eq!(leb_128_size(127), 1);
+        assert_eq!(leb_128_size(128), 2); // was incorrectly 1 before fix
+        assert_eq!(leb_128_size(129), 2);
+        assert_eq!(leb_128_size(255), 2);
+    }
+
+    #[test]
+    fn leb128_size_boundary_at_16384() {
+        // 16383 fits in 2 bytes (14 bits), 16384 needs 3 bytes
+        assert_eq!(leb_128_size(16383), 2);
+        assert_eq!(leb_128_size(16384), 3); // was incorrectly 2 before fix
+        assert_eq!(leb_128_size(16385), 3);
+    }
+
+    #[test]
+    fn leb128_size_boundary_at_2097152() {
+        // 2097151 fits in 3 bytes (21 bits), 2097152 needs 4 bytes
+        assert_eq!(leb_128_size(2097151), 3);
+        assert_eq!(leb_128_size(2097152), 4); // was incorrectly 3 before fix
+    }
+
+    // Regression test: packetize an OBU with exactly 128 bytes of payload.
+    // This triggers the leb_128_size boundary (128 needs 2-byte LEB128).
+    // Before the fix, leb_128_size(128) returned 1 instead of 2, causing
+    // the output buffer to be 1 byte too small → panic on slice indexing.
+    #[test]
+    fn packetize_obu_with_128_byte_payload_no_panic() {
+        // Build a raw OBU: header (0x32 = frame, size present) + LEB128 size (0x80, 0x01 = 128) + 128 bytes payload
+        let mut payload = Vec::with_capacity(3 + 128);
+        payload.push(0x32); // OBU header: frame type, size present
+        payload.push(0x80); // LEB128 size byte 1: 128
+        payload.push(0x01); // LEB128 size byte 2
+        payload.extend(vec![0xAB; 128]); // 128 bytes of payload
+
+        let mut packetizer = Av1Packetizer::default();
+        let result = packetizer.packetize(1200, &payload);
+        assert!(result.is_ok());
+        let packets = result.unwrap();
+        assert!(!packets.is_empty());
+    }
+
+    // Regression test: packetize an OBU that requires fragmentation across
+    // multiple RTP packets, with exactly 128 bytes of payload.
+    // This exercises both the leb_128_size fix (buffer allocation) and
+    // the payload_offset fix (correct data in continuation fragments).
+    #[test]
+    fn packetize_128_byte_obu_fragmented_correctly() {
+        // OBU: header + LEB128(128) + 128 bytes payload
+        let mut payload = Vec::with_capacity(3 + 128);
+        payload.push(0x32); // frame type, size present
+        payload.push(0x80); // LEB128: 128
+        payload.push(0x01);
+        for i in 0u8..128 {
+            payload.push(i); // distinguishable payload bytes
+        }
+
+        let mut packetizer = Av1Packetizer::default();
+        // MTU of 50 forces fragmentation into multiple packets
+        let result = packetizer.packetize(50, &payload);
+        assert!(result.is_ok());
+        let packets = result.unwrap();
+        assert!(packets.len() >= 3, "128-byte OBU with MTU 50 should produce at least 3 packets");
+
+        // Verify round-trip: depacketize all packets and check payload integrity
+        let mut out = Vec::new();
+        let mut codec_extra = CodecExtra::None;
+        let mut depacketizer = Av1Depacketizer::default();
+        for pkt in &packets {
+            let r = depacketizer.depacketize(pkt, &mut out, &mut codec_extra);
+            assert!(r.is_ok(), "depacketize failed: {:?}", r);
+        }
+        // Output should be: OBU header (with size bit) + LEB128 size + payload
+        // Find the payload portion and verify it matches
+        assert!(out.len() >= 128, "round-tripped output too short: {} bytes", out.len());
+        // The payload bytes should appear in order at the end
+        let payload_start = out.len() - 128;
+        for i in 0u8..128 {
+            assert_eq!(
+                out[payload_start + i as usize], i,
+                "payload byte {} mismatch after round-trip", i
+            );
+        }
+    }
+
+    // Regression test for the payload_offset bug in continuation fragments.
+    // When an OBU with extension header spans multiple packets, the second
+    // fragment used `obu_offset` instead of `payload_offset` to compute the
+    // remaining payload size, causing incorrect data or panics.
+    #[test]
+    fn packetize_obu_with_extension_fragmented_round_trip() {
+        // OBU with extension: header=0x36 (frame type + extension + size present),
+        // ext_header=0x10, LEB128 size, then payload
+        let mut raw = Vec::with_capacity(4 + 200);
+        raw.push(0x36); // OBU header: frame, extension present, size present
+        raw.push(0x10); // extension header
+        raw.push(0xC8); // LEB128 size: 200
+        raw.push(0x01);
+        for i in 0u8..200 {
+            raw.push(i);
+        }
+
+        let mut packetizer = Av1Packetizer::default();
+        let result = packetizer.packetize(40, &raw);
+        assert!(result.is_ok());
+        let packets = result.unwrap();
+        assert!(packets.len() >= 5, "200-byte OBU with MTU 40 should produce multiple packets");
+
+        // Round-trip through depacketizer
+        let mut out = Vec::new();
+        let mut codec_extra = CodecExtra::None;
+        let mut depacketizer = Av1Depacketizer::default();
+        for pkt in &packets {
+            depacketizer.depacketize(pkt, &mut out, &mut codec_extra).unwrap();
+        }
+
+        // Verify the 200-byte payload is intact
+        let payload_start = out.len() - 200;
+        for i in 0u8..200 {
+            assert_eq!(
+                out[payload_start + i as usize], i,
+                "extension OBU payload byte {} corrupted after round-trip", i
+            );
+        }
     }
 }
