@@ -3,9 +3,8 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use str0m::RtcConfig;
+use str0m::Rtc;
 use str0m::RtcError;
-use tracing::info_span;
 
 mod common;
 use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
@@ -17,11 +16,8 @@ fn dtls_certificate_fingerprint_format() -> Result<(), RtcError> {
     init_crypto_default();
 
     // Create two instances and verify they have different certificates
-    let rtc1 = RtcConfig::new().build(Instant::now());
-    let rtc2 = RtcConfig::new().build(Instant::now());
-
-    let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc1);
-    let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc2);
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -53,22 +49,16 @@ fn dtls_certificate_rotation() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    // Create first connection
-    let rtc1a = RtcConfig::new().build(Instant::now());
-    let rtc1b = RtcConfig::new().build(Instant::now());
-
-    let mut l1 = TestRtc::new_with_rtc(info_span!("L1"), rtc1a);
-    let mut r1 = TestRtc::new_with_rtc(info_span!("R1"), rtc1b);
+    // Create first connection using L/R peers (respects L_CRYPTO/R_CRYPTO env vars)
+    let mut l1 = TestRtc::new(Peer::Left);
+    let mut r1 = TestRtc::new(Peer::Right);
 
     let finger1_l = l1.direct_api().local_dtls_fingerprint().clone();
     let finger1_r = r1.direct_api().local_dtls_fingerprint().clone();
 
     // Create second connection with new certificates
-    let rtc2a = RtcConfig::new().build(Instant::now());
-    let rtc2b = RtcConfig::new().build(Instant::now());
-
-    let mut l2 = TestRtc::new_with_rtc(info_span!("L2"), rtc2a);
-    let mut r2 = TestRtc::new_with_rtc(info_span!("R2"), rtc2b);
+    let mut l2 = TestRtc::new(Peer::Left);
+    let mut r2 = TestRtc::new(Peer::Right);
 
     let finger2_l = l2.direct_api().local_dtls_fingerprint().clone();
     let finger2_r = r2.direct_api().local_dtls_fingerprint().clone();
@@ -90,9 +80,12 @@ fn dtls_with_ice_lite() -> Result<(), RtcError> {
 
     let mut l = TestRtc::new(Peer::Left);
 
-    // R is ice-lite (typically server-side)
-    let rtc_r = RtcConfig::new().set_ice_lite(true).build(Instant::now());
-    let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
+    // R is ice-lite (typically server-side), but still use Peer::Right crypto provider
+    let mut rtc_r_builder = Rtc::builder().set_ice_lite(true);
+    if let Some(crypto) = Peer::Right.crypto_provider() {
+        rtc_r_builder = rtc_r_builder.set_crypto_provider(crypto);
+    }
+    let mut r = TestRtc::new_with_rtc(Peer::Right.span(), rtc_r_builder.build(Instant::now()));
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -126,14 +119,19 @@ fn dtls_pregenerated_certificate() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    // Generate a certificate
-    let provider = str0m::crypto::from_feature_flags();
+    // Generate a certificate using Peer::Left's crypto provider if set
+    let provider = Peer::Left
+        .crypto_provider()
+        .unwrap_or_else(|| std::sync::Arc::new(str0m::crypto::from_feature_flags()));
     let cert = provider.dtls_provider.generate_certificate().unwrap();
 
-    // Use the pregenerated certificate
-    let rtc = RtcConfig::new().set_dtls_cert(cert).build(Instant::now());
+    // Use the pregenerated certificate with the same crypto provider
+    let mut rtc_l_builder = Rtc::builder().set_dtls_cert(cert);
+    if let Some(crypto) = Peer::Left.crypto_provider() {
+        rtc_l_builder = rtc_l_builder.set_crypto_provider(crypto);
+    }
 
-    let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
+    let mut l = TestRtc::new_with_rtc(Peer::Left.span(), rtc_l_builder.build(Instant::now()));
     let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
@@ -168,19 +166,23 @@ fn dtls_pregenerated_certificate_same_fingerprint() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    // Generate a certificate
-    let provider = str0m::crypto::from_feature_flags();
+    // Generate a certificate using Peer::Left's crypto provider if set
+    let provider = Peer::Left
+        .crypto_provider()
+        .unwrap_or_else(|| std::sync::Arc::new(str0m::crypto::from_feature_flags()));
     let cert = provider.dtls_provider.generate_certificate().unwrap();
     let cert_clone = cert.clone();
 
     // Create two instances with the same certificate
-    let rtc1 = RtcConfig::new().set_dtls_cert(cert).build(Instant::now());
-    let rtc2 = RtcConfig::new()
-        .set_dtls_cert(cert_clone)
-        .build(Instant::now());
+    let mut rtc1_builder = Rtc::builder().set_dtls_cert(cert);
+    let mut rtc2_builder = Rtc::builder().set_dtls_cert(cert_clone);
+    if let Some(crypto) = Peer::Left.crypto_provider() {
+        rtc1_builder = rtc1_builder.set_crypto_provider(crypto.clone());
+        rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
+    }
 
-    let mut l1 = TestRtc::new_with_rtc(info_span!("L1"), rtc1);
-    let mut l2 = TestRtc::new_with_rtc(info_span!("L2"), rtc2);
+    let mut l1 = TestRtc::new_with_rtc(Peer::Left.span(), rtc1_builder.build(Instant::now()));
+    let mut l2 = TestRtc::new_with_rtc(Peer::Left.span(), rtc2_builder.build(Instant::now()));
 
     let finger1 = l1.direct_api().local_dtls_fingerprint().clone();
     let finger2 = l2.direct_api().local_dtls_fingerprint().clone();
