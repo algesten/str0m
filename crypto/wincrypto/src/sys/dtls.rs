@@ -68,12 +68,12 @@ use windows::Win32::Security::Cryptography::CERT_CONTEXT;
 
 #[repr(C)]
 struct SrtpProtectionProfilesBuffer {
-    count: u16,
+    count: u16,         // Byte len (should be 6, assuming profiles is 3 in len)
     profiles: [u16; 3], // Big-Endian Encoded values.
 }
 const SRTP_PROTECTION_PROFILES_BUFFER_INSTANCE: SrtpProtectionProfilesBuffer =
     SrtpProtectionProfilesBuffer {
-        count: 4,
+        count: 6,
         // These are encoded as BE, since SChannel seemingly copies this buffer verbatim.
         profiles: [
             u16::to_be(0x0008), /* SRTP_AES256_GCM (RFC7714 Sec 14.2) */
