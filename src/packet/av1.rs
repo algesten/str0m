@@ -1089,7 +1089,8 @@ mod test {
     // the output buffer to be 1 byte too small → panic on slice indexing.
     #[test]
     fn packetize_obu_with_128_byte_payload_no_panic() {
-        // Build a raw OBU: header (0x32 = frame, size present) + LEB128 size (0x80, 0x01 = 128) + 128 bytes payload
+        // Build a raw OBU: header (0x32 = frame, size present)
+        // + LEB128 size (0x80, 0x01 = 128) + 128 bytes payload
         let mut payload = Vec::with_capacity(3 + 128);
         payload.push(0x32); // OBU header: frame type, size present
         payload.push(0x80); // LEB128 size byte 1: 128
@@ -1123,7 +1124,10 @@ mod test {
         let result = packetizer.packetize(50, &payload);
         assert!(result.is_ok());
         let packets = result.unwrap();
-        assert!(packets.len() >= 3, "128-byte OBU with MTU 50 should produce at least 3 packets");
+        assert!(
+            packets.len() >= 3,
+            "128-byte OBU with MTU 50 should produce at least 3 packets"
+        );
 
         // Verify round-trip: depacketize all packets and check payload integrity
         let mut out = Vec::new();
@@ -1135,13 +1139,19 @@ mod test {
         }
         // Output should be: OBU header (with size bit) + LEB128 size + payload
         // Find the payload portion and verify it matches
-        assert!(out.len() >= 128, "round-tripped output too short: {} bytes", out.len());
+        assert!(
+            out.len() >= 128,
+            "round-tripped output too short: {} bytes",
+            out.len()
+        );
         // The payload bytes should appear in order at the end
         let payload_start = out.len() - 128;
         for i in 0u8..128 {
             assert_eq!(
-                out[payload_start + i as usize], i,
-                "payload byte {} mismatch after round-trip", i
+                out[payload_start + i as usize],
+                i,
+                "payload byte {} mismatch after round-trip",
+                i
             );
         }
     }
@@ -1167,22 +1177,29 @@ mod test {
         let result = packetizer.packetize(40, &raw);
         assert!(result.is_ok());
         let packets = result.unwrap();
-        assert!(packets.len() >= 5, "200-byte OBU with MTU 40 should produce multiple packets");
+        assert!(
+            packets.len() >= 5,
+            "200-byte OBU with MTU 40 should produce multiple packets"
+        );
 
         // Round-trip through depacketizer
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
         for pkt in &packets {
-            depacketizer.depacketize(pkt, &mut out, &mut codec_extra).unwrap();
+            depacketizer
+                .depacketize(pkt, &mut out, &mut codec_extra)
+                .unwrap();
         }
 
         // Verify the 200-byte payload is intact
         let payload_start = out.len() - 200;
         for i in 0u8..200 {
             assert_eq!(
-                out[payload_start + i as usize], i,
-                "extension OBU payload byte {} corrupted after round-trip", i
+                out[payload_start + i as usize],
+                i,
+                "extension OBU payload byte {} corrupted after round-trip",
+                i
             );
         }
     }
