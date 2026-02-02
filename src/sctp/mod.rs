@@ -40,6 +40,7 @@ pub(crate) struct RtcSctp {
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
     client: bool,
+    remote_max_message_size: Option<u32>,
 }
 
 /// This is okay because there is no way for a user of Rtc to interact with the Sctp subsystem
@@ -242,7 +243,7 @@ impl RtcSctp {
         let mut server_config = ServerConfig::default();
 
         server_config.transport = Arc::new(
-            TransportConfig::default().with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
+            TransportConfig::default().with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE),
         );
 
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
@@ -258,6 +259,7 @@ impl RtcSctp {
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
             client: false,
+            remote_max_message_size: None,
         }
     }
 
@@ -279,6 +281,7 @@ impl RtcSctp {
                 .with_max_init_retransmits(None)
                 .with_max_data_retransmits(None)
                 .with_max_receive_message_size(DEFAULT_REMOTE_MAX_MESSAGE_SIZE);
+            // Note: send limit set later after SDP negotiation
 
             let config = ClientConfig {
                 transport: Arc::new(transport),
@@ -802,6 +805,22 @@ impl RtcSctp {
             .iter()
             .find(|s| s.id == sctp_stream_id)
             .and_then(|s| s.config.as_ref())
+    }
+
+    /// Set the remote peer's max-message-size (from SDP)
+    /// This limits how large messages we can send
+    pub fn set_remote_max_message_size(&mut self, size: u32) {
+        self.remote_max_message_size = Some(size);
+        if let Some(assoc) = &mut self.assoc {
+            assoc.set_max_send_message_size(size);
+        }
+    }
+
+    /// Get the remote peer's max-message-size (from SDP negotiation)
+    /// Returns None if not yet negotiated
+    #[cfg(test)]
+    pub(crate) fn remote_max_message_size(&self) -> Option<u32> {
+        self.remote_max_message_size
     }
 }
 

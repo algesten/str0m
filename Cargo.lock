@@ -1589,7 +1589,7 @@ dependencies = [
 [[package]]
 name = "sctp-proto"
 version = "0.7.0"
-source = "git+https://github.com/haikoschol/sctp-proto?branch=max-receive-message-size#4d24dc5480b6fa6e91d50cdac22954ca2f6e5444"
+source = "git+https://github.com/haikoschol/sctp-proto?branch=max-receive-message-size#d2fd466de46696045b11c195bc574c9f5bc6d1d3"
 dependencies = [
  "bytes",
  "crc",
