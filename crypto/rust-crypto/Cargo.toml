@@ -1,6 +1,6 @@
 [package]
 name = "str0m-rust-crypto"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Martin Algesten <martin@algesten.se>"]
 description = "Pure Rust crypto backend for str0m WebRTC"
 license = "MIT OR Apache-2.0"
@@ -12,8 +12,8 @@ edition = "2021"
 rust-version = "1.81.0"
 
 [dependencies]
-str0m-proto = { version = "0.1.1", path = "../../proto" }
-dimpl = { version = "0.2.1", default-features = false, features = ["rust-crypto", "rcgen"] }
+str0m-proto = { version = "0.1.2", path = "../../proto" }
+dimpl = { version = "0.2.4", default-features = false, features = ["rust-crypto", "rcgen"] }
 
 hmac = { version = "0.12.1" }
 aes-gcm = { version = "0.10" }

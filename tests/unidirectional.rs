@@ -16,6 +16,9 @@ pub fn unidirectional() -> Result<(), RtcError> {
     let mut l = TestRtc::new(Peer::Left);
     let mut r = TestRtc::new(Peer::Right);
 
+    l.set_forced_time_advance(Duration::from_millis(1));
+    r.set_forced_time_advance(Duration::from_millis(1));
+
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 

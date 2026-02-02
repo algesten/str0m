@@ -17,12 +17,12 @@ jobs:
     name: Windows - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
     runs-on: windows-latest
     timeout-minutes: 15
-    
+
     strategy:
       fail-fast: false
       matrix:
-        l_crypto: ["rust-crypto", "aws", "wincrypto", "openssl"]
-        r_crypto: ["rust-crypto", "aws", "wincrypto", "openssl"]
+        l_crypto: ["rust-crypto", "aws", "wincrypto"]
+        r_crypto: ["rust-crypto", "aws", "wincrypto"]
 
     steps:
       - uses: actions/checkout@v4
@@ -36,25 +36,17 @@ jobs:
         with:
           key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}
 
-      - name: Install OpenSSL on Windows
-        shell: pwsh
-        run: |
-          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
-          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
-          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
-          echo "OPENSSL_DIR=C:\openssl-3.6.0\x64" >> $env:GITHUB_ENV
-
       - name: Test L:${{ matrix.l_crypto }} <-> R:${{ matrix.r_crypto }}
         env:
           L_CRYPTO: ${{ matrix.l_crypto }}
           R_CRYPTO: ${{ matrix.r_crypto }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto,openssl --lib --bins --tests
+        run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto --lib --bins --tests
 
   linux-crypto-test:
     name: Linux - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -83,7 +75,7 @@ jobs:
     name: macOS - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
     runs-on: macos-latest
     timeout-minutes: 15
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +105,7 @@ jobs:
     name: ${{ matrix.platform.name }} - Build & Test
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 30
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -125,7 +117,7 @@ jobs:
           - name: Windows ARM64
             os: windows-11-arm
             target: aarch64-pc-windows-msvc
-            features: rust-crypto,aws-lc-rs,wincrypto,openssl
+            features: rust-crypto,aws-lc-rs,wincrypto
           - name: macOS Intel
             os: macos-15-intel
             target: x86_64-apple-darwin
@@ -151,17 +143,12 @@ jobs:
         with:
           key: ${{ matrix.platform.target }}
 
-      - name: Install OpenSSL on Windows
-        if: matrix.platform.os == 'windows-11-arm'
-        shell: pwsh
-        run: |
-          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
-          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
-          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
-          echo "OPENSSL_DIR=C:\openssl-3.6.0\arm64" >> $env:GITHUB_ENV
-
       - name: Build ${{ matrix.platform.name }}
         run: cargo +${{steps.toolchain.outputs.name}} build --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
+
+      - name: Set Swift library path for macOS Intel
+        if: matrix.platform.os == 'macos-15-intel'
+        run: echo "DYLD_LIBRARY_PATH=/usr/lib/swift${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" >> $GITHUB_ENV
 
       - name: Test ${{ matrix.platform.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --release --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }} --lib --bins --tests
@@ -171,7 +158,7 @@ jobs:
     name: ${{ matrix.platform.name }} - Build Only
     runs-on: ${{ matrix.platform.os }}
     timeout-minutes: 30
-    
+
     strategy:
       fail-fast: false
       matrix:
@@ -221,4 +208,3 @@ jobs:
 
       - name: Build ${{ matrix.platform.name }}
         run: cargo +${{steps.toolchain.outputs.name}} build --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
-

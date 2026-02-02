@@ -1,11 +1,35 @@
 # Unreleased
 
+# 0.16.1
+
+  * Fix two AV1 packetizer panics #854
+  * Fix ICE disconnections with Chrome v144+ when not using ICE Lite #846
+  * Downgrade noisy BWE logs #847
+  * Fix H265 PACI depacketizer panic on short payload #849
+
+# 0.16.0
+
+  * Constant stream timeout check #845
+  * H265 Packetizer/Depacketizer #822
+  * Cap amount SCTP (data channels) buffer #831
+  * Fix incorrectly purged ice-lite pairs #832
+  * Provide start Instant in constructor (breaking) #843
+  * Fix bug in dimpl resend logic (dimple 0.2.4) #842
+  * Fix bug in dimpl HelloVerifyRequests (dimpl 0.2.3) #841
+  * Stable RNG for tests with dimpl (dimpl 0.2.3) #841
+  * BWE remove current_bitrate param (breaking) #838
+  * BWE V2 (Probe clusters) #823
+
+0.15.0
+
+  * MediaData::is_keyframe() helper #805
   * Handle tcptype ICE candidates #797
   * New API for building ICE Candidates (breaking) #797
   * AV1 Packetizer/Depacketizer #819
   * Surface Sender Info as Event (breaking) #820
   * Improve performance on apple crypto #818 #821
   * Crypto compliance tests #817
+  * Fix HMAC P_hash implementation for Apple Crypto #824
   * Update Apple Crypto crate to use CryptoKit #813
 
 0.14.3

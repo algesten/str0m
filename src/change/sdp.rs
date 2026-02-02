@@ -50,13 +50,14 @@ impl<'a> SdpApi<'a> {
     /// or if `a=group` doesn't match the number of m-lines.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::change::{SdpOffer};
     /// // obtain offer from remote peer.
     /// let json_offer: &[u8] = todo!();
     /// let offer: SdpOffer = serde_json::from_slice(json_offer).unwrap();
     ///
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     /// let answer = rtc.sdp_api().accept_offer(offer).unwrap();
     ///
     /// // send json_answer to remote peer.
@@ -121,10 +122,11 @@ impl<'a> SdpApi<'a> {
     /// [`SdpApi::accept_offer()`] before using this pending instance.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaKind, Direction};
     /// # use str0m::change::SdpAnswer;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let mut changes = rtc.sdp_api();
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
@@ -194,8 +196,9 @@ impl<'a> SdpApi<'a> {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let mut changes = rtc.sdp_api();
     /// assert!(!changes.has_changes());
@@ -221,8 +224,9 @@ impl<'a> SdpApi<'a> {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let mut changes = rtc.sdp_api();
     ///
@@ -336,8 +340,9 @@ impl<'a> SdpApi<'a> {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let mut changes = rtc.sdp_api();
     ///
@@ -357,8 +362,9 @@ impl<'a> SdpApi<'a> {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::{channel::{ChannelConfig, Reliability}, Rtc};
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let mut changes = rtc.sdp_api();
     ///
@@ -423,8 +429,9 @@ impl<'a> SdpApi<'a> {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let changes = rtc.sdp_api();
     /// assert!(changes.apply().is_none());
@@ -463,9 +470,10 @@ impl<'a> SdpApi<'a> {
     /// ## Example
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::media::{Direction, MediaKind};
     /// # use str0m::Rtc;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     /// let mut changes = rtc.sdp_api();
     /// changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
     /// let (_offer, pending) = changes.apply().unwrap();
@@ -491,10 +499,11 @@ impl<'a> SdpApi<'a> {
 /// change is as simple as dropping this instance.
 ///
 /// ```no_run
+/// # use std::time::Instant;
 /// # use str0m::Rtc;
 /// # use str0m::media::{MediaKind, Direction};
 /// # use str0m::change::SdpAnswer;
-/// let mut rtc = Rtc::new();
+/// let mut rtc = Rtc::new(Instant::now());
 ///
 /// let mut changes = rtc.sdp_api();
 /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
@@ -1620,6 +1629,8 @@ impl Change {
 
 #[cfg(test)]
 mod test {
+    use std::time::Instant;
+
     use sdp::RestrictionId;
     use sdp::SimulcastLayer as SdpSimulcastLayer;
 
@@ -1648,8 +1659,9 @@ mod test {
     fn test_out_of_order_error() {
         crate::init_crypto_default();
 
-        let mut rtc1 = Rtc::new();
-        let mut rtc2 = Rtc::new();
+        let now = Instant::now();
+        let mut rtc1 = Rtc::new(now);
+        let mut rtc2 = Rtc::new(now);
 
         let mut change1 = rtc1.sdp_api();
         change1.add_channel("ch1".into());
@@ -1672,7 +1684,7 @@ mod test {
     fn sdp_api_merge_works() {
         crate::init_crypto_default();
 
-        let mut rtc = Rtc::new();
+        let mut rtc = Rtc::new(Instant::now());
         let mut changes = rtc.sdp_api();
         changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
         let (offer, pending) = changes.apply().unwrap();
@@ -1690,17 +1702,18 @@ mod test {
     fn test_rtp_payload_priority() {
         crate::init_crypto_default();
 
+        let now = Instant::now();
         let mut rtc1 = Rtc::builder()
             .clear_codecs()
             .enable_h264(true)
             .enable_vp8(true)
             .enable_vp9(true)
-            .build();
+            .build(now);
         let mut rtc2 = Rtc::builder()
             .clear_codecs()
             .enable_vp8(true)
             .enable_h264(true)
-            .build();
+            .build(now);
 
         let mut change1 = rtc1.sdp_api();
         change1.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
@@ -1736,8 +1749,9 @@ mod test {
     fn non_simulcast_rids() {
         crate::init_crypto_default();
 
-        let mut rtc1 = Rtc::new();
-        let mut rtc2 = Rtc::new();
+        let now = Instant::now();
+        let mut rtc1 = Rtc::new(now);
+        let mut rtc2 = Rtc::new(now);
 
         // Test initial media creation
         let mid = {
@@ -1774,7 +1788,7 @@ mod test {
     fn simulcast_ssrc_allocation() {
         crate::init_crypto_default();
 
-        let mut rtc1 = Rtc::new();
+        let mut rtc1 = Rtc::new(Instant::now());
 
         let mut simulcast = Simulcast::new();
 
@@ -1862,7 +1876,7 @@ mod test {
     fn simulcast_attributes() {
         crate::init_crypto_default();
 
-        let mut rtc1 = Rtc::new();
+        let mut rtc1 = Rtc::new(Instant::now());
 
         let mut simulcast = Simulcast::new();
 

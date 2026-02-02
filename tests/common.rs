@@ -76,14 +76,16 @@ pub struct TestRtc {
     pub last: Instant,
     pub events: Vec<(Instant, Event)>,
     pub pending: Netem<PendingPacket>,
+    pub forced_time_advance: Duration,
 }
 
 impl TestRtc {
     pub fn new(peer: Peer) -> Self {
+        let now = Instant::now();
         let rtc = if let Some(crypto) = peer.crypto_provider() {
-            Rtc::builder().set_crypto_provider(crypto).build()
+            Rtc::builder().set_crypto_provider(crypto).build(now)
         } else {
-            Rtc::new()
+            Rtc::new(now)
         };
 
         Self::new_with_rtc(peer.span(), rtc)
@@ -98,7 +100,15 @@ impl TestRtc {
             last: now,
             events: vec![],
             pending: Netem::new(NetemConfig::new()),
+            forced_time_advance: Duration::from_millis(10),
         }
+    }
+
+    /// Set the forced time advance duration when RTC returns v==rtc.last.
+    /// This prevents the test from getting stuck when RTC has no pending timeouts.
+    /// Should be set to the packet interval for the target bitrate (e.g., 0.2ms for 50 Mbps).
+    pub fn set_forced_time_advance(&mut self, duration: Duration) {
+        self.forced_time_advance = duration;
     }
 
     /// Configure network emulation for incoming traffic to this RTC.
@@ -155,6 +165,14 @@ impl TestRtc {
         self.rtc
             .codec_config()
             .find(|p| p.spec().codec == Codec::Av1)
+            .cloned()
+            .unwrap()
+    }
+
+    pub fn params_h265(&self) -> PayloadParams {
+        self.rtc
+            .codec_config()
+            .find(|p| p.spec().codec == Codec::H265)
             .cloned()
             .unwrap()
     }
@@ -283,9 +301,11 @@ fn rtc_poll_to_timeout(
     other_netem: &mut Netem<PendingPacket>,
 ) -> Result<(), RtcError> {
     loop {
-        match rtc.span.in_scope(|| rtc.rtc.poll_output())? {
+        let next = rtc.span.in_scope(|| rtc.rtc.poll_output())?;
+        // println!("next: {:?}", next);
+        match next {
             Output::Timeout(v) => {
-                let tick = rtc.last + Duration::from_millis(10);
+                let tick = rtc.last + rtc.forced_time_advance;
                 rtc.last = if v == rtc.last { tick } else { tick.min(v) };
                 break;
             }
@@ -356,7 +376,7 @@ impl DerefMut for TestRtc {
 pub fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"));
 
     static START: Once = Once::new();
 
@@ -426,7 +446,8 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
         rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
     }
 
-    connect_l_r_with_rtc(rtc1_builder.build(), rtc2_builder.build())
+    let now = Instant::now();
+    connect_l_r_with_rtc(rtc1_builder.build(now), rtc2_builder.build(now))
 }
 
 pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
@@ -491,6 +512,10 @@ pub fn h264_data() -> PcapData {
 
 pub fn av1_data() -> PcapData {
     load_pcap_data(include_bytes!("data/av1.pcap"))
+}
+
+pub fn h265_data() -> PcapData {
+    load_pcap_data(include_bytes!("data/h265.pcap"))
 }
 
 pub fn load_pcap_data(data: &[u8]) -> PcapData {

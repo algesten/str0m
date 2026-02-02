@@ -1,0 +1,112 @@
+digraph BWE_DataFlow {
+    rankdir=LR;
+    node [shape=box, style=rounded];
+
+    // External inputs/outputs
+    TWCC [label="TWCC Feedback\n(from remote)", shape=ellipse, style=filled, fillcolor=lightblue];
+    Application [label="Application", shape=ellipse, style=filled, fillcolor=lightblue];
+    Network [label="Network\n(packets out)", shape=ellipse, style=filled, fillcolor=lightblue];
+
+    // Main orchestrator
+    SSBE [label="SendSide\nBandwidth\nEstimator", style="filled,rounded", fillcolor=gold];
+
+    // Delay-based path
+    DC [label="Delay\nController", style=filled, fillcolor=lightcoral];
+    AGA [label="Arrival Group\nAccumulator", style=filled, fillcolor=lightyellow];
+    TE [label="Trendline\nEstimator", style=filled, fillcolor=lightyellow];
+    RC [label="Rate Control\n(AIMD)", style=filled, fillcolor=lightyellow];
+
+    // Throughput measurement
+    ABE [label="Acked Bitrate\nEstimator", style=filled, fillcolor=lightcyan];
+
+    // Loss-based path
+    LC [label="Loss\nController", style=filled, fillcolor=lightpink];
+
+    // Probe system
+    PC [label="Probe\nControl", style=filled, fillcolor=plum];
+    PE [label="Probe\nEstimator", style=filled, fillcolor=plum];
+
+    // ALR system
+    ALR [label="ALR\nDetector", style=filled, fillcolor=wheat];
+    LCE [label="Link Capacity\nEstimator", style=filled, fillcolor=wheat];
+
+    // Pacer system
+    Pacer [label="Pacer\n(LeakyBucket +\nProbeClusterState)", style=filled, fillcolor=palegreen];
+    PacerCtrl [label="Pacer\nControl", style=filled, fillcolor=palegreen];
+
+    // Data flows
+    TWCC -> SSBE [label="TwccSendRecord[]"];
+    TWCC -> ABE [label="acked packets"];
+
+    SSBE -> Application [label="bandwidth estimate", color=blue, penwidth=2];
+    SSBE -> PacerCtrl [label="estimate"];
+
+    // Delay controller internal flow
+    DC -> AGA [label="acked packets"];
+    AGA -> TE [label="InterGroupDelayDelta"];
+    TE -> RC [label="BandwidthUsage\n(overuse/normal/underuse)"];
+    RC -> DC [label="estimated bitrate"];
+
+    // Delay controller to main
+    DC -> SSBE [label="delay estimate", color=red, penwidth=2];
+
+    // Acked bitrate flows
+    ABE -> DC [label="instantaneous\nbitrate"];
+    ABE -> LC [label="instantaneous\nbitrate"];
+
+    // Loss controller
+    LC -> SSBE [label="loss estimate", color=red, penwidth=2];
+    TWCC -> LC [label="packet results"];
+
+    // Probe system flows
+    PC -> SSBE [label="ProbeClusterConfig"];
+    SSBE -> PE [label="start probe\n(ProbeClusterConfig)", color=purple];
+    SSBE -> Pacer [label="start probe\n(ProbeClusterConfig)", color=purple];
+    Pacer -> SSBE [label="probe complete\n(cluster_id)", color=purple];
+    TWCC -> PE [label="TwccSendRecord[]\n(filtered by cluster)", color=purple];
+    PE -> SSBE [label="ProbeResult", color=purple, penwidth=2];
+    SSBE -> DC [label="probe result"];
+
+    // ALR system flows
+    ALR -> PC [label="ALR state\n(start time)"];
+    ALR -> LC [label="ALR state\n(start time)"];
+    SSBE -> ALR [label="media sent"];
+    PE -> LCE [label="ALR probe results", color=orange];
+    LCE -> LC [label="capacity estimate", color=orange, penwidth=2];
+
+    // Pacer control
+    PacerCtrl -> Pacer [label="pacing_rate\npadding_rate"];
+
+    // Pacer output
+    Pacer -> Network [label="paced packets\n(with cluster ID)", color=blue, penwidth=2];
+
+    // Grouping for visual clarity
+    subgraph cluster_delay {
+        label="Delay-Based Estimation";
+        style=dashed;
+        color=darkred;
+        DC; AGA; TE; RC;
+    }
+
+    subgraph cluster_probe {
+        label="Probe System";
+        style=dashed;
+        color=purple;
+        PC; PE;
+    }
+
+    subgraph cluster_pacer {
+        label="Pacing System";
+        style=dashed;
+        color=darkgreen;
+        Pacer; PacerCtrl;
+    }
+
+    subgraph cluster_alr {
+        label="ALR System";
+        style=dashed;
+        color=orange;
+        ALR; LCE;
+    }
+}
+

@@ -8,7 +8,7 @@ const MAX_NUM_OBUS_TO_OMTI_SIZE: usize = 3;
 
 /// AV1 information describing the depacketized / packetized data
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct AV1CodecExtra {
+pub struct Av1CodecExtra {
     /// Flag which indicates that within [`MediaData`], there is an individual frame
     /// containing complete and independent visual information. This frame serves
     /// as a reference point for other frames in the video sequence.
@@ -19,11 +19,11 @@ pub struct AV1CodecExtra {
 
 /// AV1 packetizer
 #[derive(Default, Debug)]
-pub struct AV1Packetizer {
+pub struct Av1Packetizer {
     packets: Vec<Packet>,
 }
 
-impl AV1Packetizer {
+impl Av1Packetizer {
     fn emit(&mut self, mtu: usize, obus: Vec<Obu>, payloads: &mut Vec<Vec<u8>>) {
         if obus.is_empty() {
             return;
@@ -148,7 +148,7 @@ impl AV1Packetizer {
 
                 let payload_offset =
                     obu_offset.saturating_sub(if obu.has_extension() { 2 } else { 1 });
-                let payload_size = obu.payload.len() - obu_offset;
+                let payload_size = obu.payload.len() - payload_offset;
 
                 if !obu.payload.is_empty() && payload_size > 0 {
                     rtp_payload[pos..pos + payload_size].copy_from_slice(
@@ -257,7 +257,7 @@ impl AV1Packetizer {
     }
 }
 
-impl Packetizer for AV1Packetizer {
+impl Packetizer for Av1Packetizer {
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
         if payload.is_empty() || mtu <= AGGREGATION_HEADER_SIZE {
             return Ok(vec![]);
@@ -277,7 +277,7 @@ impl Packetizer for AV1Packetizer {
 
 /// AV1 Depacketizer
 #[derive(Default, Debug)]
-pub struct AV1Depacketizer {
+pub struct Av1Depacketizer {
     /// current obu payload
     obu_buffer: Vec<u8>,
 
@@ -297,7 +297,7 @@ pub struct AV1Depacketizer {
     obu_count: u8,
 }
 
-impl AV1Depacketizer {
+impl Av1Depacketizer {
     fn parse_aggregation_header(&mut self, agg_header: u8) {
         // TODO: store these values as mask
         self.z = agg_header & (1 << 7) != 0;
@@ -307,7 +307,7 @@ impl AV1Depacketizer {
     }
 }
 
-impl Depacketizer for AV1Depacketizer {
+impl Depacketizer for Av1Depacketizer {
     fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
         Some(packets_size)
     }
@@ -318,6 +318,10 @@ impl Depacketizer for AV1Depacketizer {
         out: &mut Vec<u8>,
         codec_extra: &mut super::CodecExtra,
     ) -> Result<(), PacketError> {
+        if packet.is_empty() {
+            return Err(PacketError::ErrShortPacket);
+        }
+
         let mut reader = (packet, 0);
 
         self.parse_aggregation_header(packet[0]);
@@ -334,14 +338,14 @@ impl Depacketizer for AV1Depacketizer {
         // as it cannot start with a fragment of the previous packet
         let mut is_keyframe = matches!(
             *codec_extra,
-            CodecExtra::AV1(AV1CodecExtra { is_keyframe: true })
+            CodecExtra::Av1(Av1CodecExtra { is_keyframe: true })
         );
         if self.n {
             is_keyframe = true;
             self.obu_length = 0;
             self.obu_buffer.clear();
         }
-        *codec_extra = CodecExtra::AV1(AV1CodecExtra { is_keyframe });
+        *codec_extra = CodecExtra::Av1(Av1CodecExtra { is_keyframe });
 
         let mut obu_idx = 0;
         while reader.remaining() > 0 {
@@ -352,7 +356,7 @@ impl Depacketizer for AV1Depacketizer {
             let fragment_obu_length = if self.obu_count == 0 || !is_last_obu {
                 let len = reader
                     .get_variant()
-                    .ok_or(PacketError::ErrAV1CorruptedPacket)?;
+                    .ok_or(PacketError::ErrAv1CorruptedPacket)?;
 
                 if self.obu_count == 0 && len == reader.remaining_bytes() {
                     is_last_obu = true;
@@ -365,12 +369,12 @@ impl Depacketizer for AV1Depacketizer {
 
             // Safety checks
             if fragment_obu_length == 0 {
-                return Err(PacketError::ErrAV1CorruptedPacket);
+                return Err(PacketError::ErrAv1CorruptedPacket);
             }
             if reader.get_offset() > packet.len()
                 || fragment_obu_length > packet.len() - reader.get_offset()
             {
-                return Err(PacketError::ErrAV1CorruptedPacket);
+                return Err(PacketError::ErrAv1CorruptedPacket);
             }
 
             if is_first_obu && self.z {
@@ -424,7 +428,7 @@ impl Depacketizer for AV1Depacketizer {
 
             // finally payload
             if self.obu_length > self.obu_buffer.len() {
-                return Err(PacketError::ErrAV1CorruptedPacket);
+                return Err(PacketError::ErrAv1CorruptedPacket);
             }
             let start_idx = self.obu_buffer.len() - self.obu_length;
             out.extend_from_slice(&self.obu_buffer[start_idx..start_idx + self.obu_length]);
@@ -543,7 +547,7 @@ impl Packet {
 pub fn leb_128_size(mut value: usize) -> usize {
     let mut size = 0;
 
-    while value > 0x80 {
+    while value >= 0x80 {
         size += 1;
         value >>= 7;
     }
@@ -570,26 +574,26 @@ fn parse_obus(payload: &[u8]) -> Result<Vec<Obu>, PacketError> {
 
     while reader.remaining() > 0 {
         let mut obu = Obu {
-            header: reader.get_u8().ok_or(PacketError::ErrAV1CorruptedPacket)?,
+            header: reader.get_u8().ok_or(PacketError::ErrAv1CorruptedPacket)?,
             ..Default::default()
         };
         obu.size += 1;
 
         if obu.has_extension() {
-            obu.ext_header = reader.get_u8().ok_or(PacketError::ErrAV1CorruptedPacket)?;
+            obu.ext_header = reader.get_u8().ok_or(PacketError::ErrAv1CorruptedPacket)?;
             obu.size += 1;
         }
 
         if obu.has_size() {
             let obu_size = reader
                 .get_variant()
-                .ok_or(PacketError::ErrAV1CorruptedPacket)?;
+                .ok_or(PacketError::ErrAv1CorruptedPacket)?;
             if obu_size > reader.remaining() {
-                return Err(PacketError::ErrAV1CorruptedPacket);
+                return Err(PacketError::ErrAv1CorruptedPacket);
             }
             obu.payload = reader
                 .get_bytes(obu_size)
-                .ok_or(PacketError::ErrAV1CorruptedPacket)?;
+                .ok_or(PacketError::ErrAv1CorruptedPacket)?;
         } else {
             obu.payload = reader.get_remaining();
         }
@@ -613,7 +617,7 @@ mod test {
     #[test]
     fn packetize_one_frame_type_obu_without_size() {
         let payload = &[0x30, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(1200, payload);
 
@@ -627,7 +631,7 @@ mod test {
     #[test]
     fn packetize_one_frame_type_obu_without_size_with_extension() {
         let payload = &[0x34, 0x28, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(1200, payload);
 
@@ -641,7 +645,7 @@ mod test {
     #[test]
     fn packetize_one_frame_type_obu_remove_size_field_without_extension() {
         let payload = &[0x32, 0x07, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(1200, payload);
 
@@ -655,7 +659,7 @@ mod test {
     #[test]
     fn packetize_one_frame_type_obu_remove_size_field_with_extension() {
         let payload = &[0x36, 0x28, 0x07, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(1200, payload);
 
@@ -673,7 +677,7 @@ mod test {
             0x2a, 0x04, 0x0b, 0x0c, 0x0d, 0x0e, // metadata
             0x32, 0x06, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, // frame
         ];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(1200, payload);
 
@@ -695,7 +699,7 @@ mod test {
             0x1a, 0x03, 0x15, 0x16, 0x17, // frame
             0x22, 0x06, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, // tile group
         ];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(1200, payload);
 
@@ -718,7 +722,7 @@ mod test {
             0x1a, 0x03, 0x15, 0x16, 0x17, // frame
             0x22, 0x06, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, // tile group
         ];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(1200, payload);
 
@@ -738,7 +742,7 @@ mod test {
             0x1e, 0x28, 0x01, 0x15, // frame
             0x26, 0x28, 0x04, 0x0b, 0x0c, 0x0d, 0x0e, // tile group
         ];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(6, payload);
 
@@ -760,7 +764,7 @@ mod test {
         let payload = &[
             0x32, 0x09, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
         ];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(8, payload);
 
@@ -779,7 +783,7 @@ mod test {
         let mut payload: Vec<u8> = vec![0x32, 0xB0, 0x09]; // obu header and leb128 encoded size
         payload.extend(vec![27u8; 1200]); // obu payload
 
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(100, &payload);
 
@@ -793,7 +797,7 @@ mod test {
             0x0a, 0x02, 0x0b, 0x0c, // sequence header
             0x32, 0x09, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, // frame
         ];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(8, payload);
 
@@ -812,7 +816,7 @@ mod test {
         let payload = &[
             0x32, 0x09, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13,
         ];
-        let mut packetizer = AV1Packetizer::default();
+        let mut packetizer = Av1Packetizer::default();
 
         let result = packetizer.packetize(10, payload);
 
@@ -832,7 +836,7 @@ mod test {
         let paylod = &[0x10, 0x30, 0x14, 0x1e, 0x28];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(paylod, &mut out, &mut codec_extra);
 
@@ -845,7 +849,7 @@ mod test {
         let paylod = &[0x10, 0x32, 0x03, 0x14, 0x1e, 0x28];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(paylod, &mut out, &mut codec_extra);
 
@@ -858,7 +862,7 @@ mod test {
         let paylod = &[0x10, 0x34, 0x48, 0x14, 0x1e, 0x28];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(paylod, &mut out, &mut codec_extra);
 
@@ -871,7 +875,7 @@ mod test {
         let paylod = &[0x10, 0x36, 0x48, 0x03, 0x14, 0x1e, 0x28];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(paylod, &mut out, &mut codec_extra);
 
@@ -884,7 +888,7 @@ mod test {
         let paylod = &[0x20, 0x02, 0x08, 0x0a, 0x30, 0x14];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(paylod, &mut out, &mut codec_extra);
 
@@ -898,7 +902,7 @@ mod test {
         let payload2 = &[0x90, 0x28];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(payload1, &mut out, &mut codec_extra);
         assert!(result.is_ok());
@@ -914,7 +918,7 @@ mod test {
         let payload2 = &[0x90, 0x28];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(payload1, &mut out, &mut codec_extra);
         assert!(result.is_ok());
@@ -933,7 +937,7 @@ mod test {
         let payload2 = &[0x90, 0x46, 0x50, 0x5a];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(payload1, &mut out, &mut codec_extra);
         assert!(result.is_ok());
@@ -957,7 +961,7 @@ mod test {
         let payload4 = &[0x90, 0x12];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(payload1, &mut out, &mut codec_extra);
         assert!(result.is_ok());
@@ -981,7 +985,7 @@ mod test {
         let payload4 = &[0x90, 0x21, 0x22, 0x23, 0x24];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         let result = depacketizer.depacketize(payload1, &mut out, &mut codec_extra);
         assert!(result.is_ok());
@@ -1005,7 +1009,7 @@ mod test {
         let mut payload = [0; 131];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         payload[0] = 0b0000_0000; // aggregation header
         payload[1] = 0x80; // leb128 encoded size of 128 bytes
@@ -1026,7 +1030,7 @@ mod test {
         let mut payload2 = [0; 98];
         let mut out = Vec::new();
         let mut codec_extra = CodecExtra::None;
-        let mut depacketizer = AV1Depacketizer::default();
+        let mut depacketizer = Av1Depacketizer::default();
 
         payload1[0] = 0b0100_0000; // aggregation header
         payload1[1] = 33; // payload size
@@ -1046,5 +1050,157 @@ mod test {
         assert_eq!(out[2], 0x01);
         assert_eq!(out[3 + 10], 0x10);
         assert_eq!(out[3 + 32 + 20], 0x20);
+    }
+
+    // Regression tests for leb_128_size boundary values.
+    // The bug was `value > 0x80` instead of `value >= 0x80`.
+    // LEB128 encodes 7 bits per byte, so values >= 128 need 2 bytes,
+    // values >= 16384 need 3 bytes, etc.
+
+    #[test]
+    fn leb128_size_boundary_at_128() {
+        // 127 fits in 1 byte (7 bits), 128 needs 2 bytes
+        assert_eq!(leb_128_size(0), 1);
+        assert_eq!(leb_128_size(1), 1);
+        assert_eq!(leb_128_size(127), 1);
+        assert_eq!(leb_128_size(128), 2); // was incorrectly 1 before fix
+        assert_eq!(leb_128_size(129), 2);
+        assert_eq!(leb_128_size(255), 2);
+    }
+
+    #[test]
+    fn leb128_size_boundary_at_16384() {
+        // 16383 fits in 2 bytes (14 bits), 16384 needs 3 bytes
+        assert_eq!(leb_128_size(16383), 2);
+        assert_eq!(leb_128_size(16384), 3); // was incorrectly 2 before fix
+        assert_eq!(leb_128_size(16385), 3);
+    }
+
+    #[test]
+    fn leb128_size_boundary_at_2097152() {
+        // 2097151 fits in 3 bytes (21 bits), 2097152 needs 4 bytes
+        assert_eq!(leb_128_size(2097151), 3);
+        assert_eq!(leb_128_size(2097152), 4); // was incorrectly 3 before fix
+    }
+
+    // Regression test: packetize an OBU with exactly 128 bytes of payload.
+    // This triggers the leb_128_size boundary (128 needs 2-byte LEB128).
+    // Before the fix, leb_128_size(128) returned 1 instead of 2, causing
+    // the output buffer to be 1 byte too small → panic on slice indexing.
+    #[test]
+    fn packetize_obu_with_128_byte_payload_no_panic() {
+        // Build a raw OBU: header (0x32 = frame, size present)
+        // + LEB128 size (0x80, 0x01 = 128) + 128 bytes payload
+        let mut payload = Vec::with_capacity(3 + 128);
+        payload.push(0x32); // OBU header: frame type, size present
+        payload.push(0x80); // LEB128 size byte 1: 128
+        payload.push(0x01); // LEB128 size byte 2
+        payload.extend(vec![0xAB; 128]); // 128 bytes of payload
+
+        let mut packetizer = Av1Packetizer::default();
+        let result = packetizer.packetize(1200, &payload);
+        assert!(result.is_ok());
+        let packets = result.unwrap();
+        assert!(!packets.is_empty());
+    }
+
+    // Regression test: packetize an OBU that requires fragmentation across
+    // multiple RTP packets, with exactly 128 bytes of payload.
+    // This exercises both the leb_128_size fix (buffer allocation) and
+    // the payload_offset fix (correct data in continuation fragments).
+    #[test]
+    fn packetize_128_byte_obu_fragmented_correctly() {
+        // OBU: header + LEB128(128) + 128 bytes payload
+        let mut payload = Vec::with_capacity(3 + 128);
+        payload.push(0x32); // frame type, size present
+        payload.push(0x80); // LEB128: 128
+        payload.push(0x01);
+        for i in 0u8..128 {
+            payload.push(i); // distinguishable payload bytes
+        }
+
+        let mut packetizer = Av1Packetizer::default();
+        // MTU of 50 forces fragmentation into multiple packets
+        let result = packetizer.packetize(50, &payload);
+        assert!(result.is_ok());
+        let packets = result.unwrap();
+        assert!(
+            packets.len() >= 3,
+            "128-byte OBU with MTU 50 should produce at least 3 packets"
+        );
+
+        // Verify round-trip: depacketize all packets and check payload integrity
+        let mut out = Vec::new();
+        let mut codec_extra = CodecExtra::None;
+        let mut depacketizer = Av1Depacketizer::default();
+        for pkt in &packets {
+            let r = depacketizer.depacketize(pkt, &mut out, &mut codec_extra);
+            assert!(r.is_ok(), "depacketize failed: {:?}", r);
+        }
+        // Output should be: OBU header (with size bit) + LEB128 size + payload
+        // Find the payload portion and verify it matches
+        assert!(
+            out.len() >= 128,
+            "round-tripped output too short: {} bytes",
+            out.len()
+        );
+        // The payload bytes should appear in order at the end
+        let payload_start = out.len() - 128;
+        for i in 0u8..128 {
+            assert_eq!(
+                out[payload_start + i as usize],
+                i,
+                "payload byte {} mismatch after round-trip",
+                i
+            );
+        }
+    }
+
+    // Regression test for the payload_offset bug in continuation fragments.
+    // When an OBU with extension header spans multiple packets, the second
+    // fragment used `obu_offset` instead of `payload_offset` to compute the
+    // remaining payload size, causing incorrect data or panics.
+    #[test]
+    fn packetize_obu_with_extension_fragmented_round_trip() {
+        // OBU with extension: header=0x36 (frame type + extension + size present),
+        // ext_header=0x10, LEB128 size, then payload
+        let mut raw = Vec::with_capacity(4 + 200);
+        raw.push(0x36); // OBU header: frame, extension present, size present
+        raw.push(0x10); // extension header
+        raw.push(0xC8); // LEB128 size: 200
+        raw.push(0x01);
+        for i in 0u8..200 {
+            raw.push(i);
+        }
+
+        let mut packetizer = Av1Packetizer::default();
+        let result = packetizer.packetize(40, &raw);
+        assert!(result.is_ok());
+        let packets = result.unwrap();
+        assert!(
+            packets.len() >= 5,
+            "200-byte OBU with MTU 40 should produce multiple packets"
+        );
+
+        // Round-trip through depacketizer
+        let mut out = Vec::new();
+        let mut codec_extra = CodecExtra::None;
+        let mut depacketizer = Av1Depacketizer::default();
+        for pkt in &packets {
+            depacketizer
+                .depacketize(pkt, &mut out, &mut codec_extra)
+                .unwrap();
+        }
+
+        // Verify the 200-byte payload is intact
+        let payload_start = out.len() - 200;
+        for i in 0u8..200 {
+            assert_eq!(
+                out[payload_start + i as usize],
+                i,
+                "extension OBU payload byte {} corrupted after round-trip",
+                i
+            );
+        }
     }
 }

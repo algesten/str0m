@@ -114,7 +114,7 @@ impl DepacketizingBuffer {
             CodecDepacketizer::Vp9(_) => Contiguity::Vp9(Vp9Contiguity::new()),
             CodecDepacketizer::H264(_)
             | CodecDepacketizer::H265(_)
-            | CodecDepacketizer::AV1(_)
+            | CodecDepacketizer::Av1(_)
             | CodecDepacketizer::Boxed(_)
             | CodecDepacketizer::Opus(_)
             | CodecDepacketizer::G711(_)

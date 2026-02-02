@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.14.3"
+version = "0.16.1"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -41,14 +41,15 @@ pii = []
 examples = ["rouille/rustls"]
 
 _internal_dont_use_log_stats = []
-_internal_test_exports = []
+_internal_test_exports = ["str0m-proto/_internal_test_exports"]
 
 [dependencies]
 tracing = "0.1.37"
 fastrand = "2.0.1"
-sctp-proto = "0.6.0"
+sctp-proto = "0.7.0"
 combine = "4.6.6"
 subtle = "2.0.0"
+arrayvec = "0.7.6"
 
 # STUN
 # Pin crc to avoid 3.4 which requires rustc 1.83
@@ -56,17 +57,17 @@ crc = ">=3.0, <3.4"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m (required dependency)
-dimpl = { version = "0.2.1", default-features = false }
+dimpl = { version = "0.2.4", default-features = false }
 
-str0m-proto = { version = "0.1.1", path = "proto" }
+str0m-proto = { version = "0.1.2", path = "proto" }
 
 # Crypto providers
-str0m-aws-lc-rs = { version = "0.1.1", path = "crypto/aws-lc-rs", optional = true }
-str0m-rust-crypto = { version = "0.1.1", path = "crypto/rust-crypto", optional = true }
+str0m-aws-lc-rs = { version = "0.1.2", path = "crypto/aws-lc-rs", optional = true }
+str0m-rust-crypto = { version = "0.1.2", path = "crypto/rust-crypto", optional = true }
 str0m-openssl = { version = "0.1.2", path = "crypto/openssl", optional = true }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-str0m-apple-crypto = { version = "0.1.1", path = "crypto/apple-crypto", optional = true }
+str0m-apple-crypto = { version = "0.1.4", path = "crypto/apple-crypto", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Windows Crypto (CNG + SChannel)
@@ -74,7 +75,7 @@ str0m-wincrypto = { version = "0.3.2", path = "crypto/wincrypto", optional = tru
 
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }
-str0m-rust-crypto = { version = "0.1.1", path = "crypto/rust-crypto" }
+str0m-rust-crypto = { version = "0.1.2", path = "crypto/rust-crypto" }
 netem = { package = "str0m-netem", version = "0.1.1", path = "netem" }
 
 serde_json = "1.0"

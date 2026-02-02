@@ -1,5 +1,5 @@
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind, MediaTime};
@@ -19,7 +19,9 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     let mut r = TestRtc::new(Peer::Right);
 
     // Enable raw packets to trace the RTP headers
-    r.rtc = str0m::Rtc::builder().enable_raw_packets(true).build();
+    r.rtc = str0m::Rtc::builder()
+        .enable_raw_packets(true)
+        .build(Instant::now());
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());

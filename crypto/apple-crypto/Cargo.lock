@@ -99,9 +99,9 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.2.1"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a27d8e2d24b0147f64aec4e9f662ae152eaa1209805da3b63e2533e658204a3d"
+checksum = "cc08e641e661b5b2e6c232ca5a86543c107b38a4aabaa799d28b58ab533be6c6"
 dependencies = [
  "arrayvec",
  "der",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-apple-crypto"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "apple-cryptokit-rs",
  "core-foundation",
@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64ct",
  "dimpl",

@@ -182,7 +182,7 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
     if !is_client {
         rtc_config = rtc_config.set_ice_lite(true);
     }
-    let mut rtc = rtc_config.build();
+    let mut rtc = rtc_config.build(Instant::now());
 
     // Get DTLS fingerprint
     let fingerprint = rtc.direct_api().local_dtls_fingerprint().to_string();

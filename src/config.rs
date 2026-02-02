@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::config::DtlsCert;
 use crate::crypto::CryptoProvider;
@@ -12,11 +12,12 @@ use crate::Rtc;
 ///
 /// ```
 /// # #[cfg(feature = "openssl")] {
+/// use std::time::Instant;
 /// use str0m::RtcConfig;
 ///
 /// let rtc = RtcConfig::new()
 ///     .set_ice_lite(true)
-///     .build();
+///     .build(Instant::now());
 /// # }
 /// ```
 ///
@@ -46,7 +47,6 @@ pub struct RtcConfig {
 #[derive(Debug, Clone)]
 pub(crate) struct BweConfig {
     pub(crate) initial_bitrate: Bitrate,
-    pub(crate) enable_loss_controller: bool,
 }
 
 impl RtcConfig {
@@ -195,13 +195,14 @@ impl RtcConfig {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::RtcConfig;
     /// // For the session to use only OPUS and VP8.
     /// let mut rtc = RtcConfig::default()
     ///     .clear_codecs()
     ///     .enable_opus(true)
     ///     .enable_vp8(true)
-    ///     .build();
+    ///     .build(Instant::now());
     /// # }
     /// ```
     pub fn clear_codecs(mut self) -> Self {
@@ -246,6 +247,14 @@ impl RtcConfig {
     /// Enabled by default.
     pub fn enable_h264(mut self, enabled: bool) -> Self {
         self.codec_config.enable_h264(enabled);
+        self
+    }
+
+    /// Enable H265 video codec.
+    ///
+    /// Enabled by default.
+    pub fn enable_h265(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_h265(enabled);
         self
     }
 
@@ -349,16 +358,6 @@ impl RtcConfig {
             None => {
                 self.bwe_config = None;
             }
-        }
-
-        self
-    }
-
-    /// Enable the experimental loss based BWE subsystem.
-    /// Defaults to disabled for now, will be enabled by default in the future.
-    pub fn enable_experimental_loss_based_bwe(mut self, enabled: bool) -> Self {
-        if let Some(c) = &mut self.bwe_config {
-            c.enable_loss_controller = enabled;
         }
 
         self
@@ -542,17 +541,14 @@ impl RtcConfig {
     }
 
     /// Create a [`Rtc`] from the configuration.
-    pub fn build(self) -> Rtc {
-        Rtc::new_from_config(self).expect("Failed to create Rtc from config")
+    pub fn build(self, start: Instant) -> Rtc {
+        Rtc::new_from_config(self, start).expect("Failed to create Rtc from config")
     }
 }
 
 impl BweConfig {
     fn new(initial_bitrate: Bitrate) -> Self {
-        Self {
-            initial_bitrate,
-            enable_loss_controller: false,
-        }
+        Self { initial_bitrate }
     }
 }
 

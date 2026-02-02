@@ -11,9 +11,11 @@ pub(crate) use pii::Pii;
 pub(crate) mod value_history;
 
 mod time_tricks;
-pub(crate) use time_tricks::{
-    already_happened, epoch_to_beginning, not_happening, InstantExt, SystemTimeExt,
-};
+pub(crate) use time_tricks::{already_happened, epoch_to_beginning};
+pub(crate) use time_tricks::{not_happening, InstantExt, SystemTimeExt};
+
+mod average;
+pub(crate) use average::MovingAverage;
 
 pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;

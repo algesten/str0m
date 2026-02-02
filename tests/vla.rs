@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use str0m::media::{MediaKind, MediaTime};
 use str0m::rtp::vla::{ResolutionAndFramerate, Serializer as VlaSerializer};
 use str0m::rtp::vla::{SimulcastStreamAllocation, SpatialLayerAllocation};
@@ -15,14 +17,15 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
 
     let vla_ext = Extension::with_serializer(VLA_URI, VlaSerializer);
 
+    let now = Instant::now();
     let rtc_l = Rtc::builder()
         .set_rtp_mode(true)
         .set_extension(14, vla_ext.clone())
-        .build();
+        .build(now);
     let rtc_r = Rtc::builder()
         .set_rtp_mode(true)
         .set_extension(14, vla_ext)
-        .build();
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);
 
@@ -129,8 +132,9 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
 
     let vla_ext = Extension::with_serializer(VLA_URI, VlaSerializer);
 
-    let rtc_l = Rtc::builder().set_extension(14, vla_ext.clone()).build();
-    let rtc_r = Rtc::builder().set_extension(14, vla_ext).build();
+    let now = Instant::now();
+    let rtc_l = Rtc::builder().set_extension(14, vla_ext.clone()).build(now);
+    let rtc_r = Rtc::builder().set_extension(14, vla_ext).build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);
 

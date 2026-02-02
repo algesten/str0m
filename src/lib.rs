@@ -55,9 +55,10 @@
 //! made by a remote peer, we need these steps to open the connection.
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use str0m::{Rtc, Candidate};
 //! // Instantiate a new Rtc instance.
-//! let mut rtc = Rtc::new();
+//! let mut rtc = Rtc::new(Instant::now());
 //!
 //! //  Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
@@ -80,10 +81,11 @@
 //! remote ANSWER to start the connection.
 //!
 //! ```no_run
+//! # use std::time::Instant;
 //! # use str0m::{Rtc, Candidate};
 //! # use str0m::media::{MediaKind, Direction};
 //! // Instantiate a new Rtc instance.
-//! let mut rtc = Rtc::new();
+//! let mut rtc = Rtc::new(Instant::now());
 //!
 //! // Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
@@ -121,7 +123,7 @@
 //! # use std::io::ErrorKind;
 //! # use std::net::UdpSocket;
 //! # use std::time::Instant;
-//! # let rtc = Rtc::new();
+//! # let rtc = Rtc::new(Instant::now());
 //! // Buffer for reading incoming UDP packets.
 //! let mut buf = vec![0; 2000];
 //!
@@ -330,11 +332,12 @@
 //!
 //! ```no_run
 //! use std::sync::Arc;
+//! use std::time::Instant;
 //! use str0m::Rtc;
 //!
 //! let rtc = Rtc::builder()
 //!     .set_crypto_provider(Arc::new(str0m_rust_crypto::default_provider()))
-//!     .build();
+//!     .build(Instant::now());
 //! ```
 //!
 //! # Project status
@@ -407,12 +410,13 @@
 //!
 //! ```
 //! # #[cfg(feature = "openssl")] {
+//! # use std::time::Instant;
 //! # use str0m::Rtc;
 //! let rtc = Rtc::builder()
 //!     // Enable RTP mode for this Rtc instance.
 //!     // This disables `MediaEvent` and the `Writer::write` API.
 //!     .set_rtp_mode(true)
-//!     .build();
+//!     .build(Instant::now());
 //! # }
 //! ```
 //!
@@ -736,7 +740,15 @@ pub mod rtp {
     }
 }
 
-pub mod bwe;
+pub(crate) mod pacer;
+
+#[path = "bwe/mod.rs"]
+pub(crate) mod bwe_;
+
+/// Bandwidth estimation.
+pub mod bwe {
+    pub use crate::bwe_::api::*;
+}
 
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
@@ -758,7 +770,7 @@ use media::{MediaAdded, MediaChanged, MediaData};
 pub mod change;
 
 mod util;
-use util::{already_happened, not_happening, Soonest};
+use util::{not_happening, Soonest};
 
 mod session;
 use session::Session;
@@ -786,8 +798,9 @@ pub use error::RtcError;
 /// ## Usage
 ///
 /// ```no_run
+/// # use std::time::Instant;
 /// # use str0m::{Rtc, Output, Input};
-/// let mut rtc = Rtc::new();
+/// let mut rtc = Rtc::new(Instant::now());
 ///
 /// loop {
 ///     let timeout = match rtc.poll_output().unwrap() {
@@ -938,6 +951,12 @@ pub enum Event {
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
     RawPacket(Box<RawPacket>),
+
+    /// For internal testing only.
+    ///
+    /// The probe cluster config when a probe fires.
+    #[cfg(feature = "_internal_test_exports")]
+    Probe(crate::bwe_::ProbeClusterConfig),
 }
 
 impl Event {
@@ -975,8 +994,13 @@ pub enum Output {
     Event(Event),
 }
 
+pub use crate::pacer::PacerReason;
+
 /// The reason for the next [`Output::Timeout`].
+///
+/// This enum is not considered stable API and may change in minor revisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Reason {
     /// No timeout scheduled.
     ///
@@ -1040,16 +1064,17 @@ pub enum Reason {
     /// Written media data needs packetizing. This is not used in RTP mode.
     Packetize,
 
-    /// Paced sending of RTP packets (if BWE is enabled).
-    ///
-    /// The pacer ensures bigger RTP chunks, like keyframes, are not sent as a burst,
-    /// but sent smoothly.
-    Pacing,
+    /// Pacer doing things.
+    Pacer(PacerReason),
 
-    /// Bandwidth estimation update (if enabled).
-    ///
-    /// Calculations regarding sender bandwidth using incoming TWCC.
-    Bwe,
+    /// The delay controller of the BWE subsystem.
+    BweDelayControl,
+
+    /// The probe controller of the BWE subsystem.
+    BweProbeControl,
+
+    /// The probe estimator of the BWE subsystem.
+    BweProbeEstimator,
 }
 
 impl Rtc {
@@ -1059,31 +1084,33 @@ impl Rtc {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// use std::time::Instant;
     /// use str0m::Rtc;
     ///
-    /// let rtc = Rtc::new();
+    /// let rtc = Rtc::new(Instant::now());
     /// # }
     /// ```
-    pub fn new() -> Self {
+    pub fn new(start: Instant) -> Self {
         let config = RtcConfig::default();
-        Self::new_from_config(config).expect("Failed to create Rtc from default config")
+        Self::new_from_config(config, start).expect("Failed to create Rtc from default config")
     }
 
     /// Creates a config builder that configures an [`Rtc`] instance.
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// let rtc = Rtc::builder()
     ///     .set_ice_lite(true)
-    ///     .build();
+    ///     .build(Instant::now());
     /// # }
     /// ```
     pub fn builder() -> RtcConfig {
         RtcConfig::new()
     }
 
-    pub(crate) fn new_from_config(config: RtcConfig) -> Result<Self, RtcError> {
+    pub(crate) fn new_from_config(config: RtcConfig, start: Instant) -> Result<Self, RtcError> {
         let crypto_provider = config
             .crypto_provider
             .clone()
@@ -1144,7 +1171,7 @@ impl Rtc {
             remote_addrs: vec![],
             send_addr: None,
             need_init_time: true,
-            last_now: already_happened(),
+            last_now: start,
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             change_counter: 0,
@@ -1164,8 +1191,9 @@ impl Rtc {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// assert!(rtc.is_alive());
     ///
@@ -1184,8 +1212,9 @@ impl Rtc {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// rtc.disconnect();
     /// assert!(!rtc.is_alive());
@@ -1213,8 +1242,9 @@ impl Rtc {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::{Rtc, Candidate};
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let a = "127.0.0.1:5000".parse().unwrap();
     /// let c = Candidate::host(a, "udp").unwrap();
@@ -1238,8 +1268,9 @@ impl Rtc {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::{Rtc, Candidate};
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let a = "1.2.3.4:5000".parse().unwrap();
     /// let c = Candidate::host(a, "udp").unwrap();
@@ -1263,10 +1294,11 @@ impl Rtc {
     /// Make changes to the Rtc session via SDP.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaKind, Direction};
     /// # use str0m::change::SdpAnswer;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let mut changes = rtc.sdp_api();
     /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
@@ -1296,10 +1328,11 @@ impl Rtc {
     /// Returns `None` if the direction isn't sending (`sendrecv` or `sendonly`).
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaData, Mid};
     /// # use str0m::format::PayloadParams;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// // add candidates, do SDP negotiation
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
@@ -1404,7 +1437,9 @@ impl Rtc {
                 | Event::SenderFeedback(_)
                 | Event::MediaEgressStats(_)
                 | Event::MediaIngressStats(_)
-                | Event::PeerStats(_) => {
+                | Event::PeerStats(_)
+                | Event::ChannelBufferedAmountLow(_)
+                | Event::EgressBitrateEstimate(_) => {
                     trace!("{:?}", e)
                 }
                 _ => debug!("{:?}", e),
@@ -1660,7 +1695,8 @@ impl Rtc {
     /// ```
     /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, Input, Output, Reason};
-    /// let mut rtc = Rtc::new();
+    /// # use std::time::Instant;
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let output = rtc.poll_output().unwrap();
     ///
@@ -1689,9 +1725,11 @@ impl Rtc {
     /// The first found instance would be given the input via [`Rtc::handle_input()`].
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::{Rtc, Input};
     /// // A vec holding the managed rtc instances. One instance per remote peer.
-    /// let mut rtcs = vec![Rtc::new(), Rtc::new(), Rtc::new()];
+    /// let now = Instant::now();
+    /// let mut rtcs = vec![Rtc::new(now), Rtc::new(now), Rtc::new(now)];
     ///
     /// // Configure instances with local ice candidates etc.
     ///
@@ -1751,7 +1789,7 @@ impl Rtc {
     /// ```no_run
     /// # use str0m::{Rtc, Input};
     /// # use std::time::Instant;
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// loop {
     ///     let timeout: Instant = todo!(); // rtc.poll_output() until we get a timeout.
@@ -1791,6 +1829,11 @@ impl Rtc {
     fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         self.init_time(now);
 
+        // Prevent time from going backwards.
+        if now < self.last_now {
+            return Ok(());
+        }
+
         self.last_now = now;
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
@@ -1818,11 +1861,8 @@ impl Rtc {
         Ok(())
     }
 
-    fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
-        self.init_time(now);
-
+    fn do_handle_receive(&mut self, recv_time: Instant, r: net::Receive) -> Result<(), RtcError> {
         trace!("IN {:?}", r);
-        self.last_now = now;
         use DatagramRecvInner::*;
 
         let bytes_rx = match r.contents.inner {
@@ -1841,11 +1881,11 @@ impl Rtc {
                     destination: r.destination,
                     message: stun,
                 };
-                self.ice.handle_packet(now, packet);
+                self.ice.handle_packet(recv_time, packet);
             }
             Dtls(dtls) => self.dtls.handle_receive(dtls)?,
-            Rtp(rtp) => self.session.handle_rtp_receive(now, rtp),
-            Rtcp(rtcp) => self.session.handle_rtcp_receive(now, rtcp),
+            Rtp(rtp) => self.session.handle_rtp_receive(recv_time, rtp),
+            Rtcp(rtcp) => self.session.handle_rtcp_receive(recv_time, rtcp),
         }
 
         Ok(())
@@ -1859,8 +1899,9 @@ impl Rtc {
     /// Incoming channel data is via the [`Event::ChannelData`] event.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::{Rtc, channel::ChannelId};
-    /// let mut rtc = Rtc::new();
+    /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// let cid: ChannelId = todo!(); // obtain channel id from Event::ChannelOpen
     /// let channel = rtc.channel(cid).unwrap();
@@ -1981,20 +2022,20 @@ mod test {
     fn rtc_is_send() {
         fn is_send<T: Send>(_t: T) {}
         fn is_sync<T: Sync>(_t: T) {}
-        is_send(Rtc::new());
-        is_sync(Rtc::new());
+        is_send(Rtc::new(Instant::now()));
+        is_sync(Rtc::new(Instant::now()));
     }
 
     #[test]
     fn rtc_is_unwind_safe() {
         fn is_unwind_safe<T: UnwindSafe>(_t: T) {}
-        is_unwind_safe(Rtc::new());
+        is_unwind_safe(Rtc::new(Instant::now()));
     }
 
     #[test]
     fn event_is_reasonably_sized() {
         let n = std::mem::size_of::<Event>();
-        assert!(n < 450);
+        assert!(n < 470); // Increased from 450 to accommodate H.265 profile/tier/level fields
     }
 }
 
