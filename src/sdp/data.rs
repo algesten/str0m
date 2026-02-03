@@ -1498,7 +1498,8 @@ mod test {
         o=mozilla...THIS_IS_SDPARTA-99.0 7710052215259647220 2 IN IP4 0.0.0.0\r\n\
         s=-\r\n\
         t=0 0\r\n\
-        a=fingerprint:sha-256 A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:7E:D4:0E:68:58:93:45:EC:99:F2:91:F7:19:72:E7:BB\r\n\
+        a=fingerprint:sha-256 A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:\
+7E:D4:0E:68:58:93:45:EC:99:F2:91:F7:19:72:E7:BB\r\n\
         a=group:BUNDLE 0 hxI i1X mxk B3D kNI nbB xIZ bKm Hkn\r\n\
         a=ice-options:trickle\r\n\
         a=msid-semantic:WMS *\r\n\
@@ -1514,7 +1515,10 @@ mod test {
             match sdp {
                 Err(SdpError::ParseError(out)) => {
                     assert!(out.starts_with(&"Parse error at ".to_string()));
-                    assert!(out.contains(&"Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: 1".to_string()));
+                    assert!(out.contains(
+                        &"Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: 1"
+                            .to_string()
+                    ));
                 }
                 _ => panic!(),
             }
@@ -1541,14 +1545,24 @@ mod test {
                     typ: MediaType::Audio,
                     disabled: false,
                     proto: Proto::Srtp,
-                    pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126].into_iter().map(Pt::from).collect(),
+                    pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126]
+                        .into_iter()
+                        .map(Pt::from)
+                        .collect(),
                     bw: None,
                     attrs: vec![
                         MediaAttribute::Rtcp("9 IN IP4 0.0.0.0".into()),
                         MediaAttribute::IceUfrag("S5hk".into()),
                         MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
                         MediaAttribute::IceOptions("trickle".into()),
-                        MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
+                        MediaAttribute::Fingerprint(Fingerprint {
+                            hash_func: "sha-256".into(),
+                            bytes: vec![
+                                140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128,
+                                168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115,
+                                70, 96, 32, 220,
+                            ],
+                        }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("0".into()),
                         MediaAttribute::ExtMap{ id: 1, ext: Extension::AudioLevel },
@@ -1558,15 +1572,46 @@ mod test {
                         MediaAttribute::ExtMap{ id: 5, ext: Extension::RtpStreamId },
                         MediaAttribute::ExtMap{ id: 6, ext: Extension::RepairedRtpStreamId },
                         MediaAttribute::SendRecv,
-                        MediaAttribute::Msid(Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }),
+                        MediaAttribute::Msid(Msid {
+                            stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(),
+                            track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into(),
+                        }),
                         MediaAttribute::RtcpMux,
-                        MediaAttribute::RtpMap { pt: 111.into(), value: RtpMap {  codec: "opus".into(), clock_rate: Frequency::FORTY_EIGHT_KHZ, channels: Some(2) }},
+                        MediaAttribute::RtpMap {
+                            pt: 111.into(),
+                            value: RtpMap {
+                                codec: "opus".into(),
+                                clock_rate: Frequency::FORTY_EIGHT_KHZ,
+                                channels: Some(2),
+                            },
+                        },
                         MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },
-                        MediaAttribute::Fmtp { pt: 111.into(), values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)] },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }],
+                        MediaAttribute::Fmtp {
+                            pt: 111.into(),
+                            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "cname".into(),
+                            value: "xeXs3aE9AOBn00yJ".into(),
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "msid".into(),
+                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1"
+                                .into(),
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "mslabel".into(),
+                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(),
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "label".into(),
+                            value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into(),
+                        },
+                    ],
                 },
                 MediaLine {
                     typ: MediaType::Video,
@@ -1579,7 +1624,14 @@ mod test {
                         MediaAttribute::IceUfrag("S5hk".into()),
                         MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
                         MediaAttribute::IceOptions("trickle".into()),
-                        MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
+                        MediaAttribute::Fingerprint(Fingerprint {
+                            hash_func: "sha-256".into(),
+                            bytes: vec![
+                                140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128,
+                                168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115,
+                                70, 96, 32, 220,
+                            ],
+                        }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("1".into()),
                         MediaAttribute::ExtMap{ id: 14, ext: Extension::TransmissionTimeOffset },
@@ -1594,17 +1646,41 @@ mod test {
                         MediaAttribute::ExtMap{ id: 10, ext: Extension::RtpStreamId },
                         MediaAttribute::ExtMap{ id: 11, ext: Extension::RepairedRtpStreamId },
                         MediaAttribute::SendRecv,
-                        MediaAttribute::Msid(Msid { stream_id: "-".into(), track_id: "4018fd65-ac50-4861-89a4-1f2cc35bbb5e".into() }),
+                        MediaAttribute::Msid(Msid {
+                            stream_id: "-".into(),
+                            track_id: "4018fd65-ac50-4861-89a4-1f2cc35bbb5e".into(),
+                        }),
                         MediaAttribute::RtcpMux,
                         MediaAttribute::RtcpRsize,
-                        MediaAttribute::RtpMap { pt: 45.into(), value: RtpMap {  codec: Codec::Av1, clock_rate: Frequency::NINETY_KHZ, channels: None }},
+                        MediaAttribute::RtpMap {
+                            pt: 45.into(),
+                            value: RtpMap {
+                                codec: Codec::Av1,
+                                clock_rate: Frequency::NINETY_KHZ,
+                                channels: None,
+                            },
+                        },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "goog-remb".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "transport-cc".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "ccm fir".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "nack".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "nack pli".into() },
-                        MediaAttribute::Fmtp { pt: 45.into(), values: vec![FormatParam::LevelIdx(5), FormatParam::Profile(0), FormatParam::Tier(0)] },
-                        MediaAttribute::RtpMap { pt: 46.into(), value: RtpMap {  codec: Codec::Rtx, clock_rate: Frequency::NINETY_KHZ, channels: None } },
+                        MediaAttribute::Fmtp {
+                            pt: 45.into(),
+                            values: vec![
+                                FormatParam::LevelIdx(5),
+                                FormatParam::Profile(0),
+                                FormatParam::Tier(0),
+                            ],
+                        },
+                        MediaAttribute::RtpMap {
+                            pt: 46.into(),
+                            value: RtpMap {
+                                codec: Codec::Rtx,
+                                clock_rate: Frequency::NINETY_KHZ,
+                                channels: None,
+                            },
+                        },
                         MediaAttribute::Fmtp { pt: 46.into(), values: vec![FormatParam::Apt(45.into())] }
                     ],
                 }
@@ -1622,7 +1698,8 @@ mod test {
             a=ice-ufrag:S5hk\r\n\
             a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
             a=ice-options:trickle\r\n\
-            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:\
+5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
             a=setup:actpass\r\n\
             a=mid:0\r\n\
             a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n\
@@ -1638,7 +1715,8 @@ mod test {
             a=rtcp-fb:111 transport-cc\r\n\
             a=fmtp:111 minptime=10;useinbandfec=1\r\n\
             a=ssrc:3948621874 cname:xeXs3aE9AOBn00yJ\r\n\
-            a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
+            a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK \
+f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=ssrc:3948621874 mslabel:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK\r\n\
             a=ssrc:3948621874 label:f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             m=video 9 UDP/TLS/RTP/SAVPF 45 46\r\n\
@@ -1647,7 +1725,8 @@ mod test {
             a=ice-ufrag:S5hk\r\n\
             a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
             a=ice-options:trickle\r\n\
-            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:\
+5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
             a=setup:actpass\r\n\
             a=mid:1\r\n\
             a=extmap:14 urn:ietf:params:rtp-hdrext:toffset\r\n\
@@ -1913,7 +1992,8 @@ mod test {
             let av1_params = FormatParam::parse_pairs(av1_pairs);
 
             // Should NOT have H265ProfileTierLevel
-            // (AV1 uses different param names: profile vs profile-id, tier vs tier-flag, level-idx vs level-id)
+            // (AV1 uses different param names: profile vs profile-id,
+            // tier vs tier-flag, level-idx vs level-id)
             assert!(!av1_params
                 .iter()
                 .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
