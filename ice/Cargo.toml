@@ -21,6 +21,7 @@ pii = []
 tracing = "0.1.37"
 fastrand = "2.0.1"
 subtle = "2.0.0"
+combine = "4.6.6"
 serde = { version = "1.0.152", features = ["derive"] }
 crc = ">=3.0, <3.4"
 str0m-proto = { version = "0.1.2", path = "../proto" }

@@ -1,6 +1,6 @@
 use crate::error::IceError;
 use crate::io::{Protocol, TcpType};
-use crate::sdp::parse_candidate;
+use combine::Parser;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::hash_map::DefaultHasher;
@@ -195,8 +195,7 @@ impl Candidate {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[doc(hidden)] // Private API.
-    pub fn parsed(
+    pub(crate) fn parsed(
         foundation: String,
         component_id: u16,
         proto: Protocol,
@@ -321,7 +320,10 @@ impl Candidate {
 
     /// Creates a new ICE candidate from a string.
     pub fn from_sdp_string(s: &str) -> Result<Self, IceError> {
-        parse_candidate(s).map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
+        crate::sdp::candidate()
+            .parse(s)
+            .map(|(c, _)| c)
+            .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
     }
 
     /// Creates a peer reflexive ICE candidate.

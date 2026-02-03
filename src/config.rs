@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 use crate::config::DtlsCert;
 use crate::crypto::CryptoProvider;
 use crate::format::CodecConfig;
-use crate::ice::IceCreds;
 use crate::rtp_::{Bitrate, Extension, ExtensionMap};
 use crate::Rtc;
+use str0m_ice::IceCreds;
 
 /// Customized config for creating an [`Rtc`] instance.
 ///

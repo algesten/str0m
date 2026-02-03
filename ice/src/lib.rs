@@ -63,3 +63,6 @@ pub use preference::default_local_preference;
 pub use stun::{
     Class as StunClass, Method as StunMethod, StunMessage, StunMessageBuilder, TransId,
 };
+
+#[doc(hidden)]
+pub use sdp::candidate;
