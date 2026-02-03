@@ -679,18 +679,6 @@ pub mod config {
     pub use super::crypto::{CryptoProvider, Fingerprint};
 }
 
-/// Low level ICE access.
-// The ICE API is not necessary to interact with directly for "regular"
-// use of str0m. This is exported for other libraries that want to
-// reuse str0m's ICE implementation. In the future we might turn this
-// into a separate crate.
-#[doc(hidden)]
-pub mod ice {
-    pub use str0m_ice::{default_local_preference, LocalPreference};
-    pub use str0m_ice::{IceAgent, IceAgentEvent, IceCreds};
-    pub use str0m_ice::{StunMessage, StunMessageBuilder, StunPacket, TransId};
-}
-
 mod io;
 use io::DatagramRecvInner;
 
