@@ -58,7 +58,7 @@ pub use agent::{
 };
 pub use candidate::{Candidate, CandidateBuilder, CandidateKind};
 pub use error::{IceError, NetError, StunError};
-pub use io::{IceReceive, StunPacket};
+pub use io::StunPacket;
 pub use preference::default_local_preference;
 pub use stun::{
     Class as StunClass, Method as StunMethod, StunMessage, StunMessageBuilder, TransId,

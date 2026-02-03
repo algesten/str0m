@@ -152,36 +152,3 @@ impl fmt::Debug for Transmit {
             .finish()
     }
 }
-
-/// Received incoming data.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Receive {
-    /// The protocol the socket this received data originated from is using.
-    pub proto: Protocol,
-
-    /// The socket this received data originated from.
-    pub source: SocketAddr,
-
-    /// The destination ip of the datagram.
-    pub destination: SocketAddr,
-
-    /// Contents of the datagram.
-    pub contents: Vec<u8>,
-}
-
-impl Receive {
-    /// Creates a new instance.
-    pub fn new(
-        proto: Protocol,
-        source: SocketAddr,
-        destination: SocketAddr,
-        contents: Vec<u8>,
-    ) -> Self {
-        Receive {
-            proto,
-            source,
-            destination,
-            contents,
-        }
-    }
-}
