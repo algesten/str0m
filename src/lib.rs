@@ -665,11 +665,9 @@ use crate::crypto::{from_feature_flags, CryptoProvider};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
 
-#[path = "ice/mod.rs"]
-mod ice_;
-use ice_::IceAgent;
-use ice_::IceAgentEvent;
-pub use ice_::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
+// Re-export from str0m-ice crate
+pub use str0m_ice::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
+use str0m_ice::{IceAgent, IceAgentEvent};
 
 #[path = "config.rs"]
 mod config_mod;
@@ -679,19 +677,6 @@ pub use config_mod::RtcConfig;
 pub mod config {
     pub use super::crypto::dtls::{DtlsCert, KeyingMaterial};
     pub use super::crypto::{CryptoProvider, Fingerprint};
-}
-
-/// Low level ICE access.
-// The ICE API is not necessary to interact with directly for "regular"
-// use of str0m. This is exported for other libraries that want to
-// reuse str0m's ICE implementation. In the future we might turn this
-// into a separate crate.
-#[doc(hidden)]
-pub mod ice {
-    pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{default_local_preference, LocalPreference};
-    pub use crate::ice_::{IceAgent, IceAgentEvent};
-    pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
 mod io;
@@ -786,7 +771,8 @@ pub mod error;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use crate::io::{DatagramRecv, DatagramSend, Protocol, Receive, TcpType, Transmit};
+    pub use crate::io::{DatagramRecv, Protocol, Receive, TcpType};
+    pub use str0m_proto::{DatagramSend, Transmit};
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");

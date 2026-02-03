@@ -4,7 +4,6 @@ use std::str::from_utf8;
 
 use serde::{Deserialize, Serialize};
 
-use crate::io::Id;
 use crate::util::NonCryptographicRng;
 
 macro_rules! str_id {
@@ -12,7 +11,7 @@ macro_rules! str_id {
         impl $id {
             /// Creates a new random id.
             pub fn new() -> $id {
-                let mut arr = Id::<$num>::random().into_array();
+                let mut arr = str0m_proto::Id::<$num>::random().into_array();
                 for i in $new_len..$num {
                     arr[i] = b' ';
                 }

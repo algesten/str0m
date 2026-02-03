@@ -2,11 +2,13 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::io::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
-use crate::Candidate;
-use crate::Pii;
+use tracing::{debug, trace};
 
-use super::CandidateKind;
+use crate::stun::{StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
+use crate::Candidate;
+use str0m_proto::{Id, Pii};
+
+use crate::candidate::CandidateKind;
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
 const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);

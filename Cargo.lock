@@ -1786,6 +1786,7 @@ dependencies = [
  "serde_json",
  "str0m-apple-crypto",
  "str0m-aws-lc-rs",
+ "str0m-ice",
  "str0m-netem",
  "str0m-openssl",
  "str0m-proto",
@@ -1824,6 +1825,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "str0m-ice"
+version = "0.1.0"
+dependencies = [
+ "combine",
+ "crc",
+ "fastrand",
+ "serde",
+ "str0m-proto",
+ "subtle",
+ "tracing",
+]
+
+[[package]]
 name = "str0m-netem"
 version = "0.1.1"
 dependencies = [
@@ -1848,7 +1862,9 @@ version = "0.1.2"
 dependencies = [
  "base64ct",
  "dimpl",
+ "fastrand",
  "openssl",
+ "serde",
  "subtle",
 ]
 

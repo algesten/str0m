@@ -3,12 +3,13 @@ use std::io;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::time::Instant;
 
+use str0m_proto::DatagramSend;
+
 use crate::crypto::dtls::{DtlsCert, DtlsOutput};
 use crate::crypto::dtls::{DtlsInstance, DtlsProvider};
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
 use crate::crypto::{CryptoError, DtlsError};
-use crate::io::DatagramSend;
 use crate::util::already_happened;
 
 /// Encapsulation of DTLS.

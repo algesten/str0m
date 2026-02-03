@@ -112,9 +112,4 @@ impl NonCryptographicRng {
     pub fn u64() -> u64 {
         fastrand::u64(..)
     }
-
-    #[inline(always)]
-    pub fn f32() -> f32 {
-        fastrand::f32()
-    }
 }

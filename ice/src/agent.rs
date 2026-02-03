@@ -6,17 +6,19 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tracing::{debug, trace, warn};
 
-use crate::crypto::Sha1HmacProvider;
-use crate::ice_::preference::default_local_preference;
-use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
+use crate::io::Transmit;
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
-use crate::io::{Transmit, DATAGRAM_MTU};
-use crate::util::{NonCryptographicRng, Pii};
+use crate::preference::default_local_preference;
+use crate::stun::{Class, Method, StunTiming};
 
-use super::candidate::{Candidate, CandidateKind};
-use super::pair::{CandidatePair, CheckState, PairId};
+use str0m_proto::crypto::Sha1HmacProvider;
+use str0m_proto::{Id, NonCryptographicRng, Pii, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+
+use crate::candidate::{Candidate, CandidateKind};
+use crate::pair::{CandidatePair, CheckState, PairId};
 
 /// Handles the ICE protocol for a given peer.
 ///
@@ -970,13 +972,13 @@ impl IceAgent {
         let method = message.method();
         let class = message.class();
         match (method, class) {
-            (StunMethod::Binding, StunClass::Indication) => {
+            (Method::Binding, Class::Indication) => {
                 // https://datatracker.ietf.org/doc/html/rfc8489#section-6.3.2
                 // An Indication can be safely ignored, its purpose is to refresh NATs in the
                 // network path. Some clients MAY omit USERNAME attribute.
                 false
             }
-            (StunMethod::Binding, StunClass::Request) => {
+            (Method::Binding, Class::Request) => {
                 // The username for the credential is formed by concatenating the
                 // username fragment provided by the peer with the username fragment of
                 // the ICE agent sending the request, separated by a colon (":").
@@ -1006,7 +1008,7 @@ impl IceAgent {
 
                 do_integrity_check(true)
             }
-            (StunMethod::Binding, StunClass::Success | StunClass::Failure) => {
+            (Method::Binding, Class::Success | Class::Failure) => {
                 let belongs_to_a_candidate_pair = self
                     .candidate_pairs
                     .iter()
@@ -1019,23 +1021,23 @@ impl IceAgent {
 
                 do_integrity_check(false)
             }
-            (StunMethod::Binding, StunClass::Unknown) => {
+            (Method::Binding, Class::Unknown) => {
                 // Without a known class, it's impossible to know how to validate the message
                 trace!("Message rejected, unknown STUN class");
                 false
             }
-            (StunMethod::Unknown, _) => {
+            (Method::Unknown, _) => {
                 // Without a known method, it's impossible to know how to validate the message
                 trace!("Message rejected, unknown STUN method");
                 false
             }
             (
-                StunMethod::Allocate
-                | StunMethod::Refresh
-                | StunMethod::Send
-                | StunMethod::Data
-                | StunMethod::CreatePermission
-                | StunMethod::ChannelBind,
+                Method::Allocate
+                | Method::Refresh
+                | Method::Send
+                | Method::Data
+                | Method::CreatePermission
+                | Method::ChannelBind,
                 _,
             ) => {
                 // Unexpected TURN related message

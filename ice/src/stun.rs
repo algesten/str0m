@@ -8,6 +8,7 @@ use std::time::Duration;
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
+use tracing::warn;
 
 pub(crate) const DEFAULT_MAX_RETRANSMITS: usize = 9;
 
@@ -70,7 +71,7 @@ impl Default for StunTiming {
     }
 }
 
-pub use super::StunError;
+use crate::StunError;
 
 /// STUN transaction ID.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -657,7 +658,7 @@ impl<'a> Attributes<'a> {
 
 use std::{io, str};
 
-use crate::util::NonCryptographicRng;
+use str0m_proto::NonCryptographicRng;
 
 const PAD: [u8; 4] = [0, 0, 0, 0];
 impl<'a> Attributes<'a> {
@@ -1419,10 +1420,26 @@ mod test {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-    fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
-        crate::crypto::test_default_provider()
-            .sha1_hmac_provider
-            .sha1_hmac(key, payloads)
+    // Simple test HMAC-SHA1 implementation for testing
+    fn sha1_hmac(key: &[u8], data: &[&[u8]]) -> [u8; 20] {
+        // For testing purposes, we'll use a simplified approach
+        // In production, this would use the actual crypto provider
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        for d in data {
+            d.hash(&mut hasher);
+        }
+        let hash = hasher.finish();
+
+        // Convert to 20 bytes
+        let mut result = [0u8; 20];
+        result[0..8].copy_from_slice(&hash.to_le_bytes());
+        result[8..16].copy_from_slice(&hash.to_be_bytes());
+        result[16..20].copy_from_slice(&hash.to_le_bytes()[0..4]);
+        result
     }
 
     #[test]

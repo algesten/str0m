@@ -1,6 +1,6 @@
-use super::IceError;
+use crate::error::IceError;
 use crate::io::{Protocol, TcpType};
-use crate::sdp::parse_candidate;
+use combine::Parser;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::hash_map::DefaultHasher;
@@ -320,7 +320,10 @@ impl Candidate {
 
     /// Creates a new ICE candidate from a string.
     pub fn from_sdp_string(s: &str) -> Result<Self, IceError> {
-        parse_candidate(s).map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
+        crate::sdp::candidate()
+            .parse(s)
+            .map(|(c, _)| c)
+            .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
     }
 
     /// Creates a peer reflexive ICE candidate.
@@ -533,15 +536,18 @@ impl Candidate {
         self.discarded
     }
 
-    pub(crate) fn set_ufrag(&mut self, ufrag: &str) {
+    #[doc(hidden)] // Private API.
+    pub fn set_ufrag(&mut self, ufrag: &str) {
         self.ufrag = Some(ufrag.into());
     }
 
-    pub(crate) fn ufrag(&self) -> Option<&str> {
+    #[doc(hidden)] // Private API.
+    pub fn ufrag(&self) -> Option<&str> {
         self.ufrag.as_deref()
     }
 
-    pub(crate) fn clear_ufrag(&mut self) {
+    #[doc(hidden)] // Private API.
+    pub fn clear_ufrag(&mut self) {
         self.ufrag = None;
     }
 

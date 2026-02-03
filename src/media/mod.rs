@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
-use crate::io::{Id, DATAGRAM_MTU};
+use crate::io::DATAGRAM_MTU;
 use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
@@ -23,6 +23,7 @@ mod event;
 pub use event::*;
 
 mod writer;
+use str0m_proto::Id;
 pub use writer::Writer;
 
 pub use crate::packet::MediaKind;

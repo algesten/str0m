@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
+use str0m_proto::DatagramSend;
+
 use crate::bwe::BweKind;
 use crate::bwe_::Bwe;
 use crate::config::KeyingMaterial;
@@ -8,7 +10,7 @@ use crate::crypto::dtls::SrtpProfile;
 use crate::crypto::CryptoProvider;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};

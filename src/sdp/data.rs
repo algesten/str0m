@@ -5,13 +5,13 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::{self};
 use std::ops::Deref;
+use str0m_proto::Id;
 
 use crate::crypto::Fingerprint;
 use crate::format::Codec;
 use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
-use crate::io::Id;
 use crate::packet::H265ProfileTierLevel;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::{Candidate, IceCreds, VERSION};

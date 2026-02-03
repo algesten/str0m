@@ -60,6 +60,7 @@ serde = { version = "1.0.152", features = ["derive"] }
 dimpl = { version = "0.2.4", default-features = false }
 
 str0m-proto = { version = "0.1.2", path = "proto" }
+str0m-ice = { version = "0.1.0", path = "ice" }
 
 # Crypto providers
 str0m-aws-lc-rs = { version = "0.1.2", path = "crypto/aws-lc-rs", optional = true }
