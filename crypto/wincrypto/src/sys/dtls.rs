@@ -66,20 +66,22 @@ use windows::Win32::Security::Authentication::Identity::UNISP_NAME_W;
 use windows::Win32::Security::Credentials::SecHandle;
 use windows::Win32::Security::Cryptography::CERT_CONTEXT;
 
+// These are encoded as BE, since SChannel seemingly copies this buffer verbatim.
+const SRTP_PROFILES: [u16; 3] = [
+    u16::to_be(0x0008), /* SRTP_AES256_GCM (RFC7714 Sec 14.2) */
+    u16::to_be(0x0007), /* SRTP_AES128_GCM (RFC7714 Sec 14.2) */
+    u16::to_be(0x0001), /* SRTP_AES128_CM_SHA1_80 (RFC5764 Section 4.1.2) */
+];
+
 #[repr(C)]
 struct SrtpProtectionProfilesBuffer {
-    count: u16,
-    profiles: [u16; 3], // Big-Endian Encoded values.
+    profiles_byte_len: u16,
+    profiles: [u16; SRTP_PROFILES.len()],
 }
 const SRTP_PROTECTION_PROFILES_BUFFER_INSTANCE: SrtpProtectionProfilesBuffer =
     SrtpProtectionProfilesBuffer {
-        count: 4,
-        // These are encoded as BE, since SChannel seemingly copies this buffer verbatim.
-        profiles: [
-            u16::to_be(0x0008), /* SRTP_AES256_GCM (RFC7714 Sec 14.2) */
-            u16::to_be(0x0007), /* SRTP_AES128_GCM (RFC7714 Sec 14.2) */
-            u16::to_be(0x0001), /* SRTP_AES128_CM_SHA1_80 (RFC5764 Section 4.1.2) */
-        ],
+        profiles_byte_len: (SRTP_PROFILES.len() * std::mem::size_of::<u16>()) as u16,
+        profiles: SRTP_PROFILES,
     };
 const SRTP_PROTECTION_PROFILES_SECBUFFER: SecBuffer = SecBuffer {
     cbBuffer: std::mem::size_of::<SrtpProtectionProfilesBuffer>() as u32,
