@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tracing::warn;
 
-pub const DEFAULT_MAX_RETRANSMITS: usize = 9;
+pub(crate) const DEFAULT_MAX_RETRANSMITS: usize = 9;
 
 #[derive(Debug)] // Purposely not `Clone` / `Copy` to ensure we always use the latest one everywhere.
 pub struct StunTiming {
@@ -71,6 +71,8 @@ impl Default for StunTiming {
     }
 }
 
+use crate::StunError;
+
 /// STUN transaction ID.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransId([u8; 12]);
@@ -114,7 +116,7 @@ pub struct StunMessage<'a> {
 
 impl<'a> StunMessage<'a> {
     /// Parse a STUN message from a slice of bytes.
-    pub fn parse(buf: &'a [u8]) -> Result<StunMessage<'a>, StunError> {
+    pub fn parse(buf: &[u8]) -> Result<StunMessage, StunError> {
         if buf.len() < 4 {
             return Err(StunError::Parse("Buffer too short".into()));
         }
@@ -472,7 +474,7 @@ impl<'a> StunMessage<'a> {
 const MAGIC: &[u8] = &[0x21, 0x12, 0xA4, 0x42];
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Class {
+pub(crate) enum Class {
     Request,
     Indication,
     Success,
@@ -505,7 +507,7 @@ impl Class {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Method {
+pub(crate) enum Method {
     Binding,
     // TURN specific
     Allocate,
@@ -656,10 +658,7 @@ impl<'a> Attributes<'a> {
 
 use std::{io, str};
 
-use crate::StunError;
 use str0m_proto::NonCryptographicRng;
-
-pub use crate::id::Id;
 
 const PAD: [u8; 4] = [0, 0, 0, 0];
 impl<'a> Attributes<'a> {

@@ -1,7 +1,3 @@
-//! Simple SDP candidate parser for ICE
-//!
-//! This module provides basic SDP candidate parsing functionality needed by the ICE implementation.
-
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr as _;
 

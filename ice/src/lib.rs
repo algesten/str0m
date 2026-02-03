@@ -60,9 +60,7 @@ pub use candidate::{Candidate, CandidateBuilder, CandidateKind};
 pub use error::{IceError, NetError, StunError};
 pub use io::StunPacket;
 pub use preference::default_local_preference;
-pub use stun::{
-    Class as StunClass, Method as StunMethod, StunMessage, StunMessageBuilder, TransId,
-};
+pub use stun::{StunMessage, StunMessageBuilder, TransId};
 
 #[doc(hidden)]
 pub use sdp::candidate;
