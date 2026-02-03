@@ -7,24 +7,13 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::stun::{StunMessage, TransId};
 use crate::NetError;
-// Re-export from our internal modules
-pub use crate::stun::{StunMessage, StunMessageBuilder, TransId};
-
-// Re-export from str0m-proto
 pub use str0m_proto::{Protocol, TcpType, Transmit};
 
-/// Max UDP packet size
-#[allow(dead_code)]
-pub(crate) const DATAGRAM_MAX_PACKET_SIZE: usize = 2000;
-
-/// Max expected RTP header over, with full extensions etc.
-#[allow(dead_code)]
-pub const MAX_RTP_OVERHEAD: usize = 80;
-
 #[derive(Debug, Serialize, Deserialize)]
-/// Received incoming data.
-pub struct Receive<'a> {
+/// Received incoming data for ICE.
+pub struct IceReceive<'a> {
     /// The protocol the socket this received data originated from is using.
     pub proto: Protocol,
 
@@ -39,7 +28,7 @@ pub struct Receive<'a> {
     pub contents: DatagramRecv<'a>,
 }
 
-impl<'a> Receive<'a> {
+impl<'a> IceReceive<'a> {
     /// Creates a new instance by trying to parse the contents of `buf`.
     pub fn new(
         proto: Protocol,
@@ -48,7 +37,7 @@ impl<'a> Receive<'a> {
         buf: &'a [u8],
     ) -> Result<Self, NetError> {
         let contents = DatagramRecv::try_from(buf)?;
-        Ok(Receive {
+        Ok(IceReceive {
             proto,
             source,
             destination,
@@ -152,11 +141,11 @@ impl<'a> TryFrom<&'a [u8]> for MultiplexKind {
     }
 }
 
-impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
+impl<'a> TryFrom<&'a Transmit> for IceReceive<'a> {
     type Error = NetError;
 
     fn try_from(t: &'a Transmit) -> Result<Self, Self::Error> {
-        Ok(Receive {
+        Ok(IceReceive {
             proto: t.proto,
             source: t.source,
             destination: t.destination,
