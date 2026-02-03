@@ -1,8 +1,5 @@
 //! Strategy that amends the [`Rtc`] via SDP OFFER/ANSWER negotiation.
 
-use std::fmt;
-use std::ops::{Deref, DerefMut};
-
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
@@ -20,6 +17,9 @@ use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
 use crate::{Candidate, IceCreds};
+use std::fmt;
+use std::ops::{Deref, DerefMut};
+use std::slice::Iter;
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::{Streams, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
@@ -99,13 +99,15 @@ impl<'a> SdpApi<'a> {
         // Ensure setup=active/passive is corresponding remote and init dtls.
         init_dtls(self.rtc, &offer)?;
 
+        let remote_max_message_size = extract_max_message_size(offer.media_lines.iter());
+
         // Modify session with offer
         apply_offer(&mut self.rtc, offer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+            self.rtc.init_sctp(client, remote_max_message_size);
         }
 
         let params = AsSdpParams::new(self.rtc, None);
@@ -174,13 +176,15 @@ impl<'a> SdpApi<'a> {
         // Split out new channels, since that is not handled by the Session.
         let new_channels = pending.changes.take_new_channels();
 
+        let remote_max_message_size = extract_max_message_size(answer.media_lines.iter());
+
         // Modify session with answer
         apply_answer(&mut self.rtc, pending.changes, answer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+            self.rtc.init_sctp(client, remote_max_message_size);
         }
 
         for (id, config) in new_channels {
@@ -813,13 +817,6 @@ fn apply_offer(rtc: &mut Rtc, offer: SdpOffer) -> Result<(), RtcError> {
 
     ensure_stream_tx(session);
 
-    // Extract remote's max-message-size from application m-line
-    if let Some(app_line) = offer.media_lines.iter().find(|m| m.typ.is_channel()) {
-        if let Some(max_size) = app_line.max_message_size() {
-            rtc.sctp.set_remote_max_message_size(max_size as u32);
-        }
-    }
-
     Ok(())
 }
 
@@ -843,13 +840,6 @@ fn apply_answer(rtc: &mut Rtc, pending: Changes, answer: SdpAnswer) -> Result<()
     add_pending_changes(session, pending);
 
     ensure_stream_tx(session);
-
-    // Extract remote's max-message-size from application m-line
-    if let Some(app_line) = answer.media_lines.iter().find(|m| m.typ.is_channel()) {
-        if let Some(max_size) = app_line.max_message_size() {
-            rtc.sctp.set_remote_max_message_size(max_size as u32);
-        }
-    }
 
     Ok(())
 }
@@ -1237,6 +1227,16 @@ fn update_media(
         let suppress_nack = repair_ssrc.is_none();
         streams.expect_stream_rx(i.ssrc, repair_ssrc, midrid, suppress_nack);
     }
+}
+
+fn extract_max_message_size(mut media_lines: Iter<MediaLine>) -> Option<u32> {
+    if let Some(app_line) = media_lines.find(|m| m.typ.is_channel()) {
+        if let Some(max_size) = app_line.max_message_size() {
+            return Some(max_size as u32);
+        }
+    }
+
+    None
 }
 
 trait AsSdpMediaLine {
@@ -2128,7 +2128,7 @@ mod test {
         // Verify that rtc2's SCTP send limit is set to the custom value from rtc1's offer
         assert_eq!(
             rtc2.sctp.remote_max_message_size(),
-            Some(custom_max_size1),
+            custom_max_size1,
             "rtc2 should have remote max message size set to rtc1's advertised value"
         );
 
@@ -2149,7 +2149,7 @@ mod test {
 
         assert_eq!(
             rtc1.sctp.remote_max_message_size(),
-            Some(custom_max_size2),
+            custom_max_size2,
             "rtc1 should have remote max message size set to rtc2's advertised value"
         );
     }

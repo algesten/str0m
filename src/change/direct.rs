@@ -98,7 +98,7 @@ impl<'a> DirectApi<'a> {
 
     /// Start the SCTP over DTLS.
     pub fn start_sctp(&mut self, client: bool) {
-        self.rtc.init_sctp(client)
+        self.rtc.init_sctp(client, None)
     }
 
     /// Create a new data channel.
