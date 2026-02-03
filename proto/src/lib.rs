@@ -10,3 +10,9 @@ mod bandwidth;
 pub use bandwidth::{Bitrate, DataSize};
 
 pub mod crypto;
+
+pub mod net;
+pub use net::{Protocol, TcpType, Transmit};
+
+pub mod util;
+pub use util::{NonCryptographicRng, Pii};

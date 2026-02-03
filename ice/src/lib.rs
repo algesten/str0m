@@ -44,17 +44,20 @@ mod io;
 mod pair;
 mod preference;
 mod sdp;
-mod util;
 
 pub mod stun;
+
+// Re-export common types from str0m-proto
+pub use str0m_proto::{NonCryptographicRng, Pii, Protocol, TcpType, Transmit};
+
+// Re-export crypto traits from str0m-proto
+pub use str0m_proto::crypto::Sha1HmacProvider;
 
 pub use agent::{
     IceAgent, IceAgentEvent, IceAgentStats, IceConnectionState, IceCreds, LocalPreference,
 };
 pub use candidate::{Candidate, CandidateBuilder, CandidateKind};
 pub use error::{IceError, NetError, StunError};
-pub use io::{
-    Protocol, Receive, StunMessage, StunMessageBuilder, StunPacket, TcpType, TransId, Transmit,
-};
+pub use io::{Receive, StunMessage, StunMessageBuilder, StunPacket, TransId};
 pub use preference::default_local_preference;
 pub use stun::{Class as StunClass, Method as StunMethod};

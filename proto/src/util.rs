@@ -1,10 +1,10 @@
-//! Utility functions and types for the ICE implementation.
+//! Utility types shared across str0m crates.
 
 use std::fmt;
 
 /// A wrapper type for personally identifiable information (PII) that redacts
 /// the inner value when formatting in debug/display mode (unless the "pii" feature is enabled).
-pub(crate) struct Pii<T>(pub T);
+pub struct Pii<T>(pub T);
 
 impl<T: fmt::Debug> fmt::Debug for Pii<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -33,7 +33,7 @@ impl<T: fmt::Display> fmt::Display for Pii<T> {
 }
 
 /// Non-cryptographic random number generator using fastrand.
-pub(crate) struct NonCryptographicRng;
+pub struct NonCryptographicRng;
 
 impl NonCryptographicRng {
     #[inline(always)]
@@ -59,6 +59,7 @@ impl NonCryptographicRng {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn f32() -> f32 {
         fastrand::f32()
     }

@@ -1861,7 +1861,9 @@ version = "0.1.2"
 dependencies = [
  "base64ct",
  "dimpl",
+ "fastrand",
  "openssl",
+ "serde",
  "subtle",
 ]
 

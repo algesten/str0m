@@ -656,8 +656,8 @@ impl<'a> Attributes<'a> {
 
 use std::{io, str};
 
-use crate::util::NonCryptographicRng;
 use crate::StunError;
+use str0m_proto::NonCryptographicRng;
 
 pub use crate::id::Id;
 

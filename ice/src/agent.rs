@@ -13,11 +13,10 @@ use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
 use crate::preference::default_local_preference;
 use crate::stun::{Id, StunTiming};
-use crate::util::{NonCryptographicRng, Pii};
 use crate::{StunClass, StunMethod};
 
 use str0m_proto::crypto::Sha1HmacProvider;
-use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+use str0m_proto::{NonCryptographicRng, Pii, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
 use crate::candidate::{Candidate, CandidateKind};
 use crate::pair::{CandidatePair, CheckState, PairId};

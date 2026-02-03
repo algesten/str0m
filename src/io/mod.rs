@@ -9,7 +9,10 @@ use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 
 // Re-export types from str0m-ice
-pub use str0m_ice::{NetError, Protocol, StunMessage, StunPacket, TcpType};
+pub use str0m_ice::{NetError, StunMessage, StunPacket};
+
+// Re-export types from str0m-proto
+pub use str0m_proto::{Protocol, TcpType};
 
 // We need our own Receive type that wraps our DatagramRecv
 #[derive(Debug, Serialize, Deserialize)]
@@ -45,6 +48,8 @@ pub const MAX_RTP_OVERHEAD: usize = 80;
 use std::ops::Deref;
 
 /// An instruction to send an outgoing packet.
+///
+/// This wraps the proto Transmit type but uses DatagramSend for contents.
 #[derive(Serialize, Deserialize)]
 pub struct Transmit {
     /// Protocol the transmission should use.

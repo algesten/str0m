@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 use tracing::{debug, trace};
 
 use crate::stun::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
-use crate::util::Pii;
 use crate::Candidate;
+use str0m_proto::Pii;
 
 use crate::candidate::CandidateKind;
 

@@ -15,6 +15,9 @@ rust-version = "1.81.0"
 default = []
 openssl = ["dep:openssl"]
 
+# Redacts personally identifiable information (PII) from logs
+pii = []
+
 # When we are running in test mode
 _internal_test_exports = []
 
@@ -26,6 +29,12 @@ dimpl = { version = "0.2.4", default-features = false }
 base64ct = ">=1.0, <1.8"
 
 subtle = "2.0.0"
+
+# For network types
+serde = { version = "1.0.152", features = ["derive"] }
+
+# For NonCryptographicRng
+fastrand = "2.0.1"
 
 # For openssl errors
 openssl = { version = "0.10.70", optional = true }
