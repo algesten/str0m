@@ -203,17 +203,6 @@ where
     ))
 }
 
-/// Parse a candidate string into a [Candidate].
-///
-/// Does not parse an `a=` prefix or trailing newline.
-#[allow(dead_code)]
-pub fn parse_candidate(s: &str) -> Result<Candidate, SdpError> {
-    candidate()
-        .parse(s)
-        .map(|(c, _)| c)
-        .map_err(|e| SdpError::ParseError(e.to_string()))
-}
-
 /// Parser for candidate, without attribute prefix (a=).
 fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
 where

@@ -195,6 +195,7 @@ impl Candidate {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[doc(hidden)] // Private API.
     pub fn parsed(
         foundation: String,
         component_id: u16,
@@ -370,6 +371,7 @@ impl Candidate {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn test_peer_rflx(
         addr: SocketAddr,
         base: SocketAddr,
