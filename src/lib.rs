@@ -1614,13 +1614,7 @@ impl Rtc {
         }
 
         if let Some(v) = self.ice.poll_transmit() {
-            let t = io::Transmit {
-                proto: v.proto,
-                source: v.source,
-                destination: v.destination,
-                contents: io::DatagramSend::from(v.contents),
-            };
-            return Ok(Output::Transmit(t));
+            return Ok(Output::Transmit(v));
         }
 
         if let Some(send) = &self.send_addr {
