@@ -77,8 +77,8 @@ impl Bwe {
         result
     }
 
-    pub fn start_probe(&mut self, config: ProbeClusterConfig) {
-        self.bwe.start_probe(config);
+    pub fn start_probe(&mut self, config: ProbeClusterConfig, now: Instant) -> bool {
+        self.bwe.start_probe(config, now)
     }
 
     pub fn end_probe(&mut self, now: Instant, cluster_id: TwccClusterId) {
@@ -387,8 +387,9 @@ impl SendSideBandwidthEstimator {
     ///
     /// This should be called when the pacer starts sending a probe cluster,
     /// to tell the estimator which cluster to watch for in TWCC feedback.
-    pub fn start_probe(&mut self, config: ProbeClusterConfig) {
-        self.probe_estimator.probe_start(config);
+    /// Returns `true` if the probe was started, `false` if rejected.
+    pub fn start_probe(&mut self, config: ProbeClusterConfig, now: Instant) -> bool {
+        self.probe_estimator.probe_start(config, now)
     }
 
     /// End a probe cluster and mark it for cleanup.

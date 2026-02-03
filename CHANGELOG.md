@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix probe estimator panic when probes accumulate #857
   * Improve H265 test coverage and organization #853
 
 # 0.16.1
