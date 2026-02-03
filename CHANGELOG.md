@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Improve H265 test coverage and organization #853
+
 # 0.16.1
 
   * Fix two AV1 packetizer panics #854

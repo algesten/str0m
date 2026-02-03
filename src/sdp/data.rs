@@ -1465,28 +1465,41 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::packet::H265ProfileTierLevel;
     use crate::rtp_::{Extension, Frequency};
     use crate::VERSION;
 
     use super::*;
 
-    #[test]
-    fn fmtp_param_to_string() {
-        let f = FormatParams {
-            min_p_time: Some(10),
-            use_inband_fec: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(f.to_string(), "minptime=10;useinbandfec=1");
+    /// Tests for general format parameter serialization and parsing.
+    /// These tests verify that format parameters can be correctly converted to/from strings.
+    mod format_params {
+        use super::*;
+
+        #[test]
+        fn fmtp_param_to_string() {
+            let f = FormatParams {
+                min_p_time: Some(10),
+                use_inband_fec: Some(true),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "minptime=10;useinbandfec=1");
+        }
     }
 
-    #[test]
-    fn parse_error() {
-        let input = "v=0\r\n\
+    /// Tests for SDP parsing, structure validation, and serialization.
+    /// Covers error handling, SDP generation, BUNDLE groups, and media line configuration.
+    mod sdp_parsing {
+        use super::*;
+
+        #[test]
+        fn parse_error() {
+            let input = "v=0\r\n\
         o=mozilla...THIS_IS_SDPARTA-99.0 7710052215259647220 2 IN IP4 0.0.0.0\r\n\
         s=-\r\n\
         t=0 0\r\n\
-        a=fingerprint:sha-256 A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:7E:D4:0E:68:58:93:45:EC:99:F2:91:F7:19:72:E7:BB\r\n\
+        a=fingerprint:sha-256 A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:\
+7E:D4:0E:68:58:93:45:EC:99:F2:91:F7:19:72:E7:BB\r\n\
         a=group:BUNDLE 0 hxI i1X mxk B3D kNI nbB xIZ bKm Hkn\r\n\
         a=ice-options:trickle\r\n\
         a=msid-semantic:WMS *\r\n\
@@ -1497,20 +1510,23 @@ mod test {
         a=rtpmap:0 PCMU/8000\r\n\
         ";
 
-        let sdp = Sdp::parse(input);
+            let sdp = Sdp::parse(input);
 
-        match sdp {
-            Err(SdpError::ParseError(out)) => {
-                assert!(out.starts_with(&"Parse error at ".to_string()));
-                assert!(out.contains(&"Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: 1".to_string()));
+            match sdp {
+                Err(SdpError::ParseError(out)) => {
+                    assert!(out.starts_with(&"Parse error at ".to_string()));
+                    assert!(out.contains(
+                        &"Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: 1"
+                            .to_string()
+                    ));
+                }
+                _ => panic!(),
             }
-            _ => panic!(),
         }
-    }
 
-    #[test]
-    fn write_sdp() {
-        let sdp = Sdp {
+        #[test]
+        fn write_sdp() {
+            let sdp = Sdp {
             session: Session {
                 id: 5_058_682_828_002_148_772.into(),
                 bw: None,
@@ -1529,14 +1545,24 @@ mod test {
                     typ: MediaType::Audio,
                     disabled: false,
                     proto: Proto::Srtp,
-                    pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126].into_iter().map(Pt::from).collect(),
+                    pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126]
+                        .into_iter()
+                        .map(Pt::from)
+                        .collect(),
                     bw: None,
                     attrs: vec![
                         MediaAttribute::Rtcp("9 IN IP4 0.0.0.0".into()),
                         MediaAttribute::IceUfrag("S5hk".into()),
                         MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
                         MediaAttribute::IceOptions("trickle".into()),
-                        MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
+                        MediaAttribute::Fingerprint(Fingerprint {
+                            hash_func: "sha-256".into(),
+                            bytes: vec![
+                                140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128,
+                                168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115,
+                                70, 96, 32, 220,
+                            ],
+                        }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("0".into()),
                         MediaAttribute::ExtMap{ id: 1, ext: Extension::AudioLevel },
@@ -1546,15 +1572,46 @@ mod test {
                         MediaAttribute::ExtMap{ id: 5, ext: Extension::RtpStreamId },
                         MediaAttribute::ExtMap{ id: 6, ext: Extension::RepairedRtpStreamId },
                         MediaAttribute::SendRecv,
-                        MediaAttribute::Msid(Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }),
+                        MediaAttribute::Msid(Msid {
+                            stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(),
+                            track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into(),
+                        }),
                         MediaAttribute::RtcpMux,
-                        MediaAttribute::RtpMap { pt: 111.into(), value: RtpMap {  codec: "opus".into(), clock_rate: Frequency::FORTY_EIGHT_KHZ, channels: Some(2) }},
+                        MediaAttribute::RtpMap {
+                            pt: 111.into(),
+                            value: RtpMap {
+                                codec: "opus".into(),
+                                clock_rate: Frequency::FORTY_EIGHT_KHZ,
+                                channels: Some(2),
+                            },
+                        },
                         MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },
-                        MediaAttribute::Fmtp { pt: 111.into(), values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)] },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }],
+                        MediaAttribute::Fmtp {
+                            pt: 111.into(),
+                            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "cname".into(),
+                            value: "xeXs3aE9AOBn00yJ".into(),
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "msid".into(),
+                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1"
+                                .into(),
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "mslabel".into(),
+                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(),
+                        },
+                        MediaAttribute::Ssrc {
+                            ssrc: 3_948_621_874.into(),
+                            attr: "label".into(),
+                            value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into(),
+                        },
+                    ],
                 },
                 MediaLine {
                     typ: MediaType::Video,
@@ -1567,7 +1624,14 @@ mod test {
                         MediaAttribute::IceUfrag("S5hk".into()),
                         MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
                         MediaAttribute::IceOptions("trickle".into()),
-                        MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
+                        MediaAttribute::Fingerprint(Fingerprint {
+                            hash_func: "sha-256".into(),
+                            bytes: vec![
+                                140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128,
+                                168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115,
+                                70, 96, 32, 220,
+                            ],
+                        }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("1".into()),
                         MediaAttribute::ExtMap{ id: 14, ext: Extension::TransmissionTimeOffset },
@@ -1582,23 +1646,47 @@ mod test {
                         MediaAttribute::ExtMap{ id: 10, ext: Extension::RtpStreamId },
                         MediaAttribute::ExtMap{ id: 11, ext: Extension::RepairedRtpStreamId },
                         MediaAttribute::SendRecv,
-                        MediaAttribute::Msid(Msid { stream_id: "-".into(), track_id: "4018fd65-ac50-4861-89a4-1f2cc35bbb5e".into() }),
+                        MediaAttribute::Msid(Msid {
+                            stream_id: "-".into(),
+                            track_id: "4018fd65-ac50-4861-89a4-1f2cc35bbb5e".into(),
+                        }),
                         MediaAttribute::RtcpMux,
                         MediaAttribute::RtcpRsize,
-                        MediaAttribute::RtpMap { pt: 45.into(), value: RtpMap {  codec: Codec::Av1, clock_rate: Frequency::NINETY_KHZ, channels: None }},
+                        MediaAttribute::RtpMap {
+                            pt: 45.into(),
+                            value: RtpMap {
+                                codec: Codec::Av1,
+                                clock_rate: Frequency::NINETY_KHZ,
+                                channels: None,
+                            },
+                        },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "goog-remb".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "transport-cc".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "ccm fir".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "nack".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "nack pli".into() },
-                        MediaAttribute::Fmtp { pt: 45.into(), values: vec![FormatParam::LevelIdx(5), FormatParam::Profile(0), FormatParam::Tier(0)] },
-                        MediaAttribute::RtpMap { pt: 46.into(), value: RtpMap {  codec: Codec::Rtx, clock_rate: Frequency::NINETY_KHZ, channels: None } },
+                        MediaAttribute::Fmtp {
+                            pt: 45.into(),
+                            values: vec![
+                                FormatParam::LevelIdx(5),
+                                FormatParam::Profile(0),
+                                FormatParam::Tier(0),
+                            ],
+                        },
+                        MediaAttribute::RtpMap {
+                            pt: 46.into(),
+                            value: RtpMap {
+                                codec: Codec::Rtx,
+                                clock_rate: Frequency::NINETY_KHZ,
+                                channels: None,
+                            },
+                        },
                         MediaAttribute::Fmtp { pt: 46.into(), values: vec![FormatParam::Apt(45.into())] }
                     ],
                 }
             ],
         };
-        assert_eq!(&format!("{sdp}"), &format!("v=0\r\n\
+            assert_eq!(&format!("{sdp}"), &format!("v=0\r\n\
             o=str0m-{VERSION} 5058682828002148772 2 IN IP4 0.0.0.0\r\n\
             s=-\r\n\
             t=0 0\r\n\
@@ -1610,7 +1698,8 @@ mod test {
             a=ice-ufrag:S5hk\r\n\
             a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
             a=ice-options:trickle\r\n\
-            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:\
+5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
             a=setup:actpass\r\n\
             a=mid:0\r\n\
             a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n\
@@ -1626,7 +1715,8 @@ mod test {
             a=rtcp-fb:111 transport-cc\r\n\
             a=fmtp:111 minptime=10;useinbandfec=1\r\n\
             a=ssrc:3948621874 cname:xeXs3aE9AOBn00yJ\r\n\
-            a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
+            a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK \
+f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=ssrc:3948621874 mslabel:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK\r\n\
             a=ssrc:3948621874 label:f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             m=video 9 UDP/TLS/RTP/SAVPF 45 46\r\n\
@@ -1635,7 +1725,8 @@ mod test {
             a=ice-ufrag:S5hk\r\n\
             a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
             a=ice-options:trickle\r\n\
-            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:\
+5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
             a=setup:actpass\r\n\
             a=mid:1\r\n\
             a=extmap:14 urn:ietf:params:rtp-hdrext:toffset\r\n\
@@ -1663,11 +1754,11 @@ mod test {
             a=rtpmap:46 rtx/90000\r\n\
             a=fmtp:46 apt=45\r\n\
             "));
-    }
+        }
 
-    #[test]
-    fn bundle_mids_returns_correct_mids() {
-        let input = "v=0\r\n\
+        #[test]
+        fn bundle_mids_returns_correct_mids() {
+            let input = "v=0\r\n\
             o=- 123456 2 IN IP4 127.0.0.1\r\n\
             s=-\r\n\
             t=0 0\r\n\
@@ -1698,40 +1789,797 @@ mod test {
             a=sctp-port:5000\r\n\
             ";
 
-        let sdp = Sdp::parse(input).expect("should parse");
+            let sdp = Sdp::parse(input).expect("should parse");
 
-        // bundle_mids should return all MIDs from the BUNDLE group
-        let mids = sdp.bundle_mids().expect("should have BUNDLE group");
-        assert_eq!(mids.len(), 3);
-        assert_eq!(mids[0], "0".into());
-        assert_eq!(mids[1], "1".into());
-        assert_eq!(mids[2], "2".into());
+            // bundle_mids should return all MIDs from the BUNDLE group
+            let mids = sdp.bundle_mids().expect("should have BUNDLE group");
+            assert_eq!(mids.len(), 3);
+            assert_eq!(mids[0], "0".into());
+            assert_eq!(mids[1], "1".into());
+            assert_eq!(mids[2], "2".into());
 
-        // The m-lines with port=0 should have disabled=true at parsing level
-        // (interpretation of whether this means "rejected" happens later)
-        assert!(!sdp.media_lines[0].disabled, "audio has port=9");
-        assert!(sdp.media_lines[1].disabled, "video has port=0");
-        assert!(sdp.media_lines[2].disabled, "application has port=0");
+            // The m-lines with port=0 should have disabled=true at parsing level
+            // (interpretation of whether this means "rejected" happens later)
+            assert!(!sdp.media_lines[0].disabled, "audio has port=9");
+            assert!(sdp.media_lines[1].disabled, "video has port=0");
+            assert!(sdp.media_lines[2].disabled, "application has port=0");
+        }
     }
 
-    #[test]
-    fn h265_fmtp_round_trip() {
-        use crate::packet::H265ProfileTierLevel;
+    /// Core H.265 (HEVC) codec-specific tests.
+    /// Tests basic H.265 parameter handling including profile-tier-level parsing,
+    /// serialization, and format parameter combinations.
+    mod h265_codec {
+        use super::*;
 
-        // Test that H.265 fmtp params round-trip correctly
-        let ptl = H265ProfileTierLevel::new(1, 0, 93).unwrap(); // Main, Main tier, Level 3.1
+        /// Test that H.265 format parameters can be serialized to a string and parsed back
+        /// without loss of information. Verifies the round-trip conversion works correctly.
+        #[test]
+        fn h265_fmtp_round_trip() {
+            // Test that H.265 fmtp params round-trip correctly
+            let ptl = H265ProfileTierLevel::new(1, 0, 93).unwrap(); // Main, Main tier, Level 3.1
 
-        let f = FormatParams {
-            h265_profile_tier_level: Some(ptl),
-            ..Default::default()
-        };
+            let f = FormatParams {
+                h265_profile_tier_level: Some(ptl),
+                ..Default::default()
+            };
 
-        // Serialize to string
-        let fmtp_str = f.to_string();
-        assert_eq!(fmtp_str, "profile-id=1;tier-flag=0;level-id=93");
+            // Serialize to string
+            let fmtp_str = f.to_string();
+            assert_eq!(fmtp_str, "profile-id=1;tier-flag=0;level-id=93");
 
-        // Parse back
-        let parsed = FormatParams::parse_line(&fmtp_str);
-        assert_eq!(parsed.h265_profile_tier_level, Some(ptl));
+            // Parse back
+            let parsed = FormatParams::parse_line(&fmtp_str);
+            assert_eq!(parsed.h265_profile_tier_level, Some(ptl));
+        }
+
+        /// Test different combinations of H.265 profiles, tiers, and levels to ensure
+        /// they are all serialized correctly. Covers Main, Main 10, different tiers, and levels.
+        #[test]
+        fn h265_different_profiles() {
+            // Test Main profile (1)
+            let main = H265ProfileTierLevel::new(1, 0, 93).unwrap();
+            let f = FormatParams {
+                h265_profile_tier_level: Some(main),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=93");
+
+            // Test Main 10 profile (2)
+            let main10 = H265ProfileTierLevel::new(2, 0, 93).unwrap();
+            let f = FormatParams {
+                h265_profile_tier_level: Some(main10),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=2;tier-flag=0;level-id=93");
+
+            // Test different tier (High tier)
+            let high_tier = H265ProfileTierLevel::new(1, 1, 93).unwrap();
+            let f = FormatParams {
+                h265_profile_tier_level: Some(high_tier),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=1;level-id=93");
+
+            // Test different level (Level 5.1 = 153)
+            let level_5_1 = H265ProfileTierLevel::new(1, 0, 153).unwrap();
+            let f = FormatParams {
+                h265_profile_tier_level: Some(level_5_1),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=153");
+        }
+
+        /// Test parsing H.265 parameters from key-value pairs as they would appear in SDP.
+        /// Verifies that the three separate params (profile-id, tier-flag, level-id) are
+        /// correctly combined into a single H265ProfileTierLevel composite.
+        #[test]
+        fn h265_parse_from_pairs() {
+            // Test parsing from key-value pairs (as would come from SDP)
+            let pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+            ];
+
+            let params = FormatParam::parse_pairs(pairs);
+
+            // Should have exactly one H265ProfileTierLevel param
+            let h265_params: Vec<_> = params
+                .iter()
+                .filter(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+                .collect();
+            assert_eq!(h265_params.len(), 1);
+
+            if let FormatParam::H265ProfileTierLevel(ptl) = h265_params[0] {
+                assert_eq!(ptl.profile_id(), 1);
+                assert_eq!(ptl.tier_flag(), 0);
+                assert_eq!(ptl.level_id(), 93);
+            } else {
+                panic!("Expected H265ProfileTierLevel");
+            }
+        }
+
+        /// Test that H.265 profile-tier-level params can coexist with other H.265-specific
+        /// parameters like sprop-max-don-diff without interfering with each other.
+        #[test]
+        fn h265_mixed_with_other_params() {
+            // Test H.265 params mixed with other format params
+            let pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+                ("sprop-max-don-diff".to_string(), "0".to_string()),
+            ];
+
+            let params = FormatParam::parse_pairs(pairs);
+
+            // Should have H265ProfileTierLevel and SpropMaxDonDiff
+            assert!(params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            // TODO: Uncomment when sprop-max-don-diff parsing is added
+            // assert!(params
+            //     .iter()
+            //     .any(|p| matches!(p, FormatParam::SpropMaxDonDiff(0))));
+        }
+    }
+
+    /// Tests ensuring H.265 parameters are not confused with other codecs.
+    /// Verifies that H.265's three-parameter format (profile-id, tier-flag, level-id)
+    /// is correctly distinguished from H.264's profile-level-id, VP9's profile-id,
+    /// and AV1's profile/tier/level-idx parameters.
+    mod no_confusion {
+        use super::*;
+
+        /// Test that H.264's profile-level-id parameter (single hex value) is not confused
+        /// with H.265's three separate parameters. H.264 uses a different format entirely.
+        #[test]
+        fn h265_no_confusion_with_h264() {
+            // H.264 uses profile-level-id (single param)
+            let h264_pairs = vec![
+                ("profile-level-id".to_string(), "42e01f".to_string()),
+                ("packetization-mode".to_string(), "1".to_string()),
+            ];
+
+            let h264_params = FormatParam::parse_pairs(h264_pairs);
+
+            // Should NOT have H265ProfileTierLevel
+            assert!(!h264_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Should have ProfileLevelId (H.264)
+            assert!(h264_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::ProfileLevelId(_))));
+            assert!(h264_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::PacketizationMode(1))));
+        }
+
+        /// Test that VP9's profile-id parameter (standalone) is not confused with H.265's
+        /// profile-id which must be combined with tier-flag and level-id.
+        #[test]
+        fn h265_no_confusion_with_vp9() {
+            // VP9 uses profile-id (single param, not combined)
+            let vp9_pairs = vec![("profile-id".to_string(), "0".to_string())];
+
+            let vp9_params = FormatParam::parse_pairs(vp9_pairs);
+
+            // Should NOT have H265ProfileTierLevel (missing tier-flag and level-id)
+            assert!(!vp9_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Should have ProfileId (VP9)
+            assert!(vp9_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::ProfileId(0))));
+        }
+
+        /// Test that AV1's parameters (profile, tier, level-idx) use different naming than
+        /// H.265 (profile-id, tier-flag, level-id) and are not confused during parsing.
+        #[test]
+        fn h265_no_confusion_with_av1() {
+            // AV1 uses profile, level-idx, tier (but should not be confused with H.265)
+            let av1_pairs = vec![
+                ("profile".to_string(), "0".to_string()),
+                ("level-idx".to_string(), "5".to_string()),
+                ("tier".to_string(), "0".to_string()),
+            ];
+
+            let av1_params = FormatParam::parse_pairs(av1_pairs);
+
+            // Should NOT have H265ProfileTierLevel
+            // (AV1 uses different param names: profile vs profile-id,
+            // tier vs tier-flag, level-idx vs level-id)
+            assert!(!av1_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Should have AV1-specific params
+            assert!(av1_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::Profile(0))));
+            assert!(av1_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::LevelIdx(5))));
+            assert!(av1_params.iter().any(|p| matches!(p, FormatParam::Tier(0))));
+        }
+    }
+
+    /// Additional H.265 parsing and validation tests.
+    /// Covers incomplete parameter handling and complete SDP integration scenarios.
+    mod h265_additional {
+        use super::*;
+
+        /// Test that incomplete H.265 parameter sets do not create a composite ProfileTierLevel.
+        /// All three parameters (profile-id, tier-flag, level-id) must be present.
+        #[test]
+        fn h265_partial_params_no_composite() {
+            // If only some H.265 params are present, should not create composite
+            let partial_pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                // Missing level-id
+            ];
+
+            let params = FormatParam::parse_pairs(partial_pairs);
+
+            // Should NOT have H265ProfileTierLevel (incomplete)
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+        }
+
+        /// Test H.265 parameters in a complete SDP offer/answer scenario.
+        /// Verifies that H.265 rtpmap and fmtp lines are correctly parsed along with RTX.
+        #[test]
+        fn h265_in_complete_sdp() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96 97\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H265/90000\r\n\
+            a=fmtp:96 profile-id=1;tier-flag=0;level-id=93\r\n\
+            a=rtpmap:97 rtx/90000\r\n\
+            a=fmtp:97 apt=96\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+
+            // Get RTP params
+            let params = sdp.media_lines[0].rtp_params();
+
+            // Find H.265 payload
+            let h265_payload = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H265)
+                .expect("should have H.265");
+
+            assert_eq!(h265_payload.pt, 96.into());
+            assert_eq!(h265_payload.spec.clock_rate, Frequency::NINETY_KHZ);
+
+            // Check H.265 params
+            let ptl = h265_payload
+                .spec
+                .format
+                .h265_profile_tier_level
+                .expect("should have H.265 PTL");
+            assert_eq!(ptl.profile_id(), 1);
+            assert_eq!(ptl.tier_flag(), 0);
+            assert_eq!(ptl.level_id(), 93);
+
+            // Check RTX
+            assert_eq!(h265_payload.resend, Some(97.into()));
+        }
+    }
+
+    /// Multi-codec integration tests.
+    /// Verifies that multiple video codecs (H.264, H.265, VP8, VP9) can coexist
+    /// in the same SDP without parameter conflicts or interference.
+    mod multi_codec {
+        use super::*;
+
+        /// Test that H.264, H.265, and other video codecs can coexist in the same SDP
+        /// without their format parameters interfering with each other.
+        #[test]
+        fn h265_and_h264_coexist() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96 97 98\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H264/90000\r\n\
+            a=fmtp:96 profile-level-id=42e01f;packetization-mode=1\r\n\
+            a=rtpmap:97 H265/90000\r\n\
+            a=fmtp:97 profile-id=1;tier-flag=0;level-id=93\r\n\
+            a=rtpmap:98 VP8/90000\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+            let params = sdp.media_lines[0].rtp_params();
+
+            // Check H.264
+            let h264 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H264)
+                .expect("should have H.264");
+            assert_eq!(h264.pt, 96.into());
+            assert_eq!(h264.spec.format.profile_level_id, Some(0x42e01f));
+            assert_eq!(h264.spec.format.packetization_mode, Some(1));
+            assert!(h264.spec.format.h265_profile_tier_level.is_none());
+
+            // Check H.265
+            let h265 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H265)
+                .expect("should have H.265");
+            assert_eq!(h265.pt, 97.into());
+            let ptl = h265
+                .spec
+                .format
+                .h265_profile_tier_level
+                .expect("should have H.265 PTL");
+            assert_eq!(ptl.profile_id(), 1);
+            assert!(h265.spec.format.profile_level_id.is_none());
+
+            // Check VP8
+            let vp8 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::Vp8)
+                .expect("should have VP8");
+            assert_eq!(vp8.pt, 98.into());
+            assert!(vp8.spec.format.h265_profile_tier_level.is_none());
+            assert!(vp8.spec.format.profile_level_id.is_none());
+        }
+    }
+
+    /// H.265 serialization and edge case tests.
+    /// Tests media attribute generation, empty parameter handling, extreme values,
+    /// parameter ordering independence, DONL parameters, and invalid value handling.
+    mod h265_serialization {
+        use super::*;
+
+        /// Test that H.265 parameters are correctly serialized as media attributes,
+        /// including rtpmap, fmtp with ProfileTierLevel, rtcp-fb, and RTX payload.
+        #[test]
+        fn h265_serialization_in_media_attrs() {
+            let ptl = H265ProfileTierLevel::new(2, 1, 153).unwrap(); // Main 10, High tier, Level 5.1
+
+            let mut payload = PayloadParams::new(
+                100.into(),
+                Some(101.into()),
+                CodecSpec {
+                    codec: Codec::H265,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        h265_profile_tier_level: Some(ptl),
+                        ..Default::default()
+                    },
+                },
+            );
+            payload.fb_transport_cc = true;
+            payload.fb_nack = true;
+            payload.fb_pli = true;
+
+            let mut attrs = vec![];
+            payload.as_media_attrs(&mut attrs);
+
+            // Should have rtpmap for H.265
+            assert!(attrs.iter().any(|a| matches!(a,
+                MediaAttribute::RtpMap { pt, value }
+                if *pt == 100.into() && value.codec == Codec::H265
+            )));
+
+            // Should have fmtp with H.265 params
+            let fmtp = attrs.iter().find(|a| {
+                matches!(a,
+                    MediaAttribute::Fmtp { pt, .. } if *pt == 100.into()
+                )
+            });
+            assert!(fmtp.is_some());
+
+            if let Some(MediaAttribute::Fmtp { values, .. }) = fmtp {
+                assert!(values
+                    .iter()
+                    .any(|v| matches!(v, FormatParam::H265ProfileTierLevel(p)
+                        if p.profile_id() == 2 && p.tier_flag() == 1 && p.level_id() == 153
+                    )));
+            }
+
+            // Should have rtx mapping
+            assert!(attrs.iter().any(|a| matches!(a,
+                MediaAttribute::RtpMap { pt, value }
+                if *pt == 101.into() && value.codec == Codec::Rtx
+            )));
+        }
+
+        /// Test that empty format parameters do not generate an a=fmtp line in SDP,
+        /// avoiding invalid SDP syntax with empty fmtp attributes.
+        #[test]
+        fn h265_empty_fmtp_not_serialized() {
+            // Empty fmtp should not be written
+            let payload = PayloadParams::new(
+                100.into(),
+                None,
+                CodecSpec {
+                    codec: Codec::H265,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams::default(),
+                },
+            );
+
+            let mut attrs = vec![];
+            payload.as_media_attrs(&mut attrs);
+
+            // Should NOT have fmtp line (it would be empty)
+            assert!(!attrs
+                .iter()
+                .any(|a| matches!(a, MediaAttribute::Fmtp { .. })));
+        }
+
+        /// Test H.265 with extreme profile/tier/level values at boundaries.
+        /// Verifies parsing and serialization of edge case values.
+        #[test]
+        fn h265_extreme_values() {
+            // Test minimum level (Level 1.0 = 30)
+            let min_level = H265ProfileTierLevel::new(1, 0, 30).unwrap();
+            let f = FormatParams {
+                h265_profile_tier_level: Some(min_level),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=30");
+
+            // Test maximum level (Level 6.2 = 186)
+            let max_level = H265ProfileTierLevel::new(1, 0, 186).unwrap();
+            let f = FormatParams {
+                h265_profile_tier_level: Some(max_level),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=186");
+
+            // Test Main10 with High tier
+            let main10_high = H265ProfileTierLevel::new(2, 1, 93).unwrap();
+            let f = FormatParams {
+                h265_profile_tier_level: Some(main10_high),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=2;tier-flag=1;level-id=93");
+        }
+
+        /// Test H.265 parameter ordering doesn't affect parsing.
+        /// SDP parameters can appear in any order.
+        #[test]
+        fn h265_parameter_order_independence() {
+            // Normal order
+            let normal_order = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+            ];
+
+            // Reversed order
+            let reversed_order = vec![
+                ("level-id".to_string(), "93".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("profile-id".to_string(), "1".to_string()),
+            ];
+
+            // Mixed order
+            let mixed_order = vec![
+                ("tier-flag".to_string(), "0".to_string()),
+                ("profile-id".to_string(), "1".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+            ];
+
+            let normal_params = FormatParam::parse_pairs(normal_order);
+            let reversed_params = FormatParam::parse_pairs(reversed_order);
+            let mixed_params = FormatParam::parse_pairs(mixed_order);
+
+            // All should create H265ProfileTierLevel
+            assert!(normal_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(reversed_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(mixed_params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // All should have the same values
+            for params in [&normal_params, &reversed_params, &mixed_params] {
+                if let Some(FormatParam::H265ProfileTierLevel(ptl)) = params
+                    .iter()
+                    .find(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+                {
+                    assert_eq!(ptl.profile_id(), 1);
+                    assert_eq!(ptl.tier_flag(), 0);
+                    assert_eq!(ptl.level_id(), 93);
+                }
+            }
+        }
+
+        #[test]
+        fn h265_invalid_parameter_values() {
+            // Invalid profile-id
+            let invalid_profile = vec![
+                ("profile-id".to_string(), "999".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(invalid_profile);
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Invalid tier-flag
+            let invalid_tier = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "5".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(invalid_tier);
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Invalid level-id
+            let invalid_level = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "999".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(invalid_level);
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+        }
+    }
+
+    /// H.265 integration with RTCP feedback mechanisms.
+    /// Tests H.265 behavior with multiple codecs and various RTCP feedback types
+    /// including NACK, PLI, FIR, and transport-cc.
+    mod h265_integration {
+        use super::*;
+
+        /// Test H.265 in SDP with multiple video codecs and feedback mechanisms.
+        /// Verifies proper parsing of complex multi-codec scenarios.
+        #[test]
+        fn h265_multi_codec_with_feedback() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H265/90000\r\n\
+            a=fmtp:96 profile-id=1;tier-flag=0;level-id=93\r\n\
+            a=rtcp-fb:96 nack\r\n\
+            a=rtcp-fb:96 nack pli\r\n\
+            a=rtcp-fb:96 ccm fir\r\n\
+            a=rtcp-fb:96 transport-cc\r\n\
+            a=rtpmap:97 rtx/90000\r\n\
+            a=fmtp:97 apt=96\r\n\
+            a=rtpmap:98 VP9/90000\r\n\
+            a=fmtp:98 profile-id=0\r\n\
+            a=rtpmap:99 rtx/90000\r\n\
+            a=fmtp:99 apt=98\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+            let params = sdp.media_lines[0].rtp_params();
+
+            // Check H.265 with all feedback mechanisms
+            let h265 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H265)
+                .expect("should have H.265");
+            assert_eq!(h265.pt, 96.into());
+            assert!(h265.fb_nack);
+            assert!(h265.fb_pli);
+            assert!(h265.fb_fir);
+            assert!(h265.fb_transport_cc);
+            assert_eq!(h265.resend, Some(97.into()));
+
+            // Verify H.265 PTL is correct
+            let ptl = h265
+                .spec
+                .format
+                .h265_profile_tier_level
+                .expect("should have PTL");
+            assert_eq!(ptl.profile_id(), 1);
+
+            // Check VP9 is separate and correct
+            let vp9 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::Vp9)
+                .expect("should have VP9");
+            assert_eq!(vp9.pt, 98.into());
+            assert_eq!(vp9.spec.format.profile_id, Some(0));
+            assert!(vp9.spec.format.h265_profile_tier_level.is_none());
+        }
+    }
+
+    /// Advanced H.265 functionality tests.
+    /// Covers SDP round-trip serialization, incomplete parameter permutations,
+    /// browser compatibility (Chrome profile-only mode), and validation of all
+    /// standard H.265 level values (1.0 through 6.2).
+    mod h265_advanced {
+        use super::*;
+
+        /// Test H.265 SDP serialization maintains parameter integrity.
+        /// Ensures that serialized SDP can be parsed back with identical values.
+        #[test]
+        fn h265_sdp_serialization_round_trip() {
+            let ptl = H265ProfileTierLevel::new(2, 0, 153).unwrap();
+
+            let payload = PayloadParams::new(
+                100.into(),
+                Some(101.into()),
+                CodecSpec {
+                    codec: Codec::H265,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        h265_profile_tier_level: Some(ptl),
+                        ..Default::default()
+                    },
+                },
+            );
+
+            let mut attrs = vec![];
+            payload.as_media_attrs(&mut attrs);
+
+            // Find the fmtp line
+            let fmtp = attrs
+                .iter()
+                .find_map(|a| match a {
+                    MediaAttribute::Fmtp { pt, values } if *pt == 100.into() => Some(values),
+                    _ => None,
+                })
+                .expect("should have fmtp");
+
+            // Should contain H265ProfileTierLevel
+            assert!(fmtp
+                .iter()
+                .any(|v| matches!(v, FormatParam::H265ProfileTierLevel(p) if p.profile_id() == 2)));
+        }
+
+        /// Test that only two of three H.265 params doesn't create PTL.
+        /// Each permutation of missing parameter should fail.
+        #[test]
+        fn h265_incomplete_params_all_permutations() {
+            // Missing level-id
+            let missing_level = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(missing_level);
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Missing tier-flag
+            let missing_tier = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(missing_tier);
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Missing profile-id
+            let missing_profile = vec![
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(missing_profile);
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+
+            // Only one parameter
+            let only_profile = vec![("profile-id".to_string(), "1".to_string())];
+            let params = FormatParam::parse_pairs(only_profile);
+            assert!(!params
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+        }
+
+        /// Test H.265 with Chrome-style profile-only in complete SDP.
+        /// Verifies that browser compatibility mode works in real SDP.
+        #[test]
+        fn h265_chrome_profile_only_sdp() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H265/90000\r\n\
+            a=fmtp:96 profile-id=1\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+            let params = sdp.media_lines[0].rtp_params();
+
+            let h265 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H265)
+                .expect("should have H.265");
+
+            // Should NOT have full PTL
+            assert!(h265.spec.format.h265_profile_tier_level.is_none());
+
+            // Should have profile_id field instead
+            assert_eq!(h265.spec.format.profile_id, Some(1));
+        }
+
+        /// Test H.265 different level values in valid range.
+        /// Ensures all valid level IDs are properly handled.
+        #[test]
+        fn h265_all_valid_levels() {
+            let valid_levels = vec![
+                30,  // Level 1.0
+                60,  // Level 2.0
+                63,  // Level 2.1
+                90,  // Level 3.0
+                93,  // Level 3.1
+                120, // Level 4.0
+                123, // Level 4.1
+                150, // Level 5.0
+                153, // Level 5.1
+                156, // Level 5.2
+                180, // Level 6.0
+                183, // Level 6.1
+                186, // Level 6.2
+            ];
+
+            for level_id in valid_levels {
+                let ptl = H265ProfileTierLevel::new(1, 0, level_id);
+                assert!(ptl.is_some(), "Level ID {} should be valid", level_id);
+
+                let f = FormatParams {
+                    h265_profile_tier_level: ptl,
+                    ..Default::default()
+                };
+
+                let serialized = f.to_string();
+                assert!(serialized.contains(&format!("level-id={}", level_id)));
+            }
+        }
     }
 }

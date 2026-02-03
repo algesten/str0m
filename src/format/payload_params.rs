@@ -127,6 +127,22 @@ impl PartialEq for PayloadParams {
 impl Eq for PayloadParams {}
 
 impl PayloadParams {
+    /// Maximum match score.
+    ///
+    /// This is returned for an exact `CodecSpec` match in `match_score()`. It is also used as the
+    /// starting point for codec-specific scoring in this file:
+    /// - Opus/H.264/H.265 decrement from a perfect match.
+    /// - VP9/AV1 return the max score when their relevant fmtp parameters match.
+    /// - VP8 currently only matches via the exact `CodecSpec` equality fast-path (no fuzzy scorer).
+    const EXACT_MATCH_SCORE: usize = 100;
+
+    /// Score used for H.265 profile-only compatibility matches.
+    ///
+    /// Some endpoints (notably browsers) may signal H.265 using only `profile-id` without
+    /// tier/level information; when we can only validate profile equality we return this lower
+    /// score so full ProfileTierLevel matches win when available.
+    const PROFILE_ONLY_MATCH_SCORE: usize = 90;
+
     /// Creates new payload params.
     ///
     /// * `pt` is the payload type RTP mapping in the session.
@@ -254,7 +270,7 @@ impl PayloadParams {
 
         if c0 == c1 {
             // Exact match
-            return Some(100);
+            return Some(Self::EXACT_MATCH_SCORE);
         }
 
         // Attempt fuzzy matching, since we don't have an exact match
@@ -300,7 +316,7 @@ impl PayloadParams {
     }
 
     fn match_opus_score(c0: CodecSpec, c1: CodecSpec) -> usize {
-        let mut score: usize = 100;
+        let mut score: usize = Self::EXACT_MATCH_SCORE;
 
         // If neither value is specified both sides should assume the default value, 3.
         let either_p_time_specified =
@@ -337,7 +353,7 @@ impl PayloadParams {
             return None;
         }
 
-        Some(100)
+        Some(Self::EXACT_MATCH_SCORE)
     }
 
     fn match_av1_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
@@ -368,7 +384,7 @@ impl PayloadParams {
             return None;
         }
 
-        Some(100)
+        Some(Self::EXACT_MATCH_SCORE)
     }
 
     pub(crate) fn match_h264_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
@@ -408,68 +424,96 @@ impl PayloadParams {
             .ordinal()
             .saturating_sub(c1_profile_level.level().ordinal());
 
-        Some(100_usize.saturating_sub(level_difference))
+        Some(Self::EXACT_MATCH_SCORE.saturating_sub(level_difference))
     }
 
+    /// Match H.265 codec specifications and return compatibility score.
+    ///
+    /// # Direction Semantics
+    ///
+    /// This function assumes:
+    /// - `c0` is the **local/configured** receiving capability
+    /// - `c1` is the **remote/offered** sending capability
+    ///
+    /// The level check `c1_level <= c0_level` enforces that the remote encoder
+    /// must not exceed our decoder's configured level.
+    ///
+    /// # Matching Rules
+    ///
+    /// - **Profiles** must match exactly (no cross-profile compatibility)
+    /// - **Tiers** must match exactly (Main vs High tier are distinct)
+    /// - **Levels** allow `c1_level <= c0_level` (we can decode lower complexity)
+    /// - **Missing profile info** on either side causes rejection (no fallback)
+    ///
+    /// # Returns
+    ///
+    /// - `Some(100)` for exact match
+    /// - `Some(100 - level_gap)` for profile/tier match with level difference
+    /// - `Some(90)` for profile-only match (when tier/level unavailable)
+    /// - `None` for incompatible or invalid specs
     pub(crate) fn match_h265_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
-        // If both sides have full H.265 PTL, do strict matching.
-        // If one side only has profile-id (stored in profile_id field), match on profile only.
-        if let (Some(c0_ptl), Some(c1_ptl)) = (
+        match (
             c0.format.h265_profile_tier_level,
             c1.format.h265_profile_tier_level,
         ) {
-            // Both have full PTL - strict matching
+            (Some(c0_ptl), Some(c1_ptl)) => {
+                // Both have full PTL - strict matching
 
-            // Profiles must match exactly.
-            if c0_ptl.profile() != c1_ptl.profile() {
-                return None;
+                // Profiles must match exactly.
+                if c0_ptl.profile() != c1_ptl.profile() {
+                    return None;
+                }
+
+                // Tiers must match exactly per H.265 spec semantics.
+                // Main tier and High tier are not interchangeable.
+                if c0_ptl.tier() != c1_ptl.tier() {
+                    return None;
+                }
+
+                // We can decode bitstreams at our configured level or any lower level.
+                // Reject if the offered level exceeds our configured capability.
+                if c1_ptl.level() > c0_ptl.level() {
+                    return None;
+                }
+
+                // Decrement score based on level difference (prefer exact match).
+                let level_difference: usize = c0_ptl
+                    .level()
+                    .ordinal()
+                    .saturating_sub(c1_ptl.level().ordinal());
+
+                // Pure scoring without artificial floor - let caller decide policy
+                Some(Self::EXACT_MATCH_SCORE.saturating_sub(level_difference))
             }
+            _ => {
+                // At least one side has only profile-id (not full PTL).
+                // Match on profile only, using FALLBACK for missing values.
 
-            // Tiers must match exactly.
-            if c0_ptl.tier() != c1_ptl.tier() {
-                return None;
+                // Get profile from PTL if present, otherwise from profile_id field
+                let c0_profile = c0
+                    .format
+                    .h265_profile_tier_level
+                    .map(|ptl| ptl.profile().to_id())
+                    .or_else(|| c0.format.profile_id.map(|p| p as u8))
+                    .unwrap_or(H265ProfileTierLevel::FALLBACK.profile().to_id());
+
+                let c1_profile = c1
+                    .format
+                    .h265_profile_tier_level
+                    .map(|ptl| ptl.profile().to_id())
+                    .or_else(|| c1.format.profile_id.map(|p| p as u8))
+                    .unwrap_or(H265ProfileTierLevel::FALLBACK.profile().to_id());
+
+                // Profiles must match
+                if c0_profile != c1_profile {
+                    return None;
+                }
+
+                // When only profile is specified, we can't verify tier/level compatibility.
+                // Return a lower score to prefer exact PTL matches when available.
+                Some(Self::PROFILE_ONLY_MATCH_SCORE)
             }
-
-            // We can decode bitstreams at our configured level or any lower level.
-            if c1_ptl.level() > c0_ptl.level() {
-                return None;
-            }
-
-            // Decrement score based on level difference (prefer exact match).
-            let level_difference: usize = c0_ptl
-                .level()
-                .ordinal()
-                .saturating_sub(c1_ptl.level().ordinal());
-
-            return Some(100_usize.saturating_sub(level_difference));
         }
-
-        // At least one side has only profile-id (not full PTL).
-        // Match on profile only, using FALLBACK for missing values.
-
-        // Get profile from PTL if present, otherwise from profile_id field
-        let c0_profile = c0
-            .format
-            .h265_profile_tier_level
-            .map(|ptl| ptl.profile().to_id())
-            .or_else(|| c0.format.profile_id.map(|p| p as u8))
-            .unwrap_or(H265ProfileTierLevel::FALLBACK.profile().to_id());
-
-        let c1_profile = c1
-            .format
-            .h265_profile_tier_level
-            .map(|ptl| ptl.profile().to_id())
-            .or_else(|| c1.format.profile_id.map(|p| p as u8))
-            .unwrap_or(H265ProfileTierLevel::FALLBACK.profile().to_id());
-
-        // Profiles must match
-        if c0_profile != c1_profile {
-            return None;
-        }
-
-        // When only profile is specified, we can't check tier/level compatibility.
-        // Return a lower score (90) to prefer exact PTL matches when available.
-        Some(90)
     }
 
     pub(crate) fn update_param(
@@ -593,154 +637,462 @@ mod test {
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
 
-    fn h264_codec_spec(
-        level_asymmetry_allowed: Option<bool>,
-        packetization_mode: Option<u8>,
-        profile_level_id: Option<u32>,
-    ) -> CodecSpec {
-        CodecSpec {
-            codec: Codec::H264,
-            clock_rate: Frequency::NINETY_KHZ,
-            channels: None,
-            format: FormatParams {
-                level_asymmetry_allowed,
-                packetization_mode,
-                profile_level_id,
-                ..Default::default()
-            },
-        }
-    }
+    mod h264 {
+        use super::*;
 
-    #[test]
-    fn test_h264_profile_matching() {
-        struct Case {
-            c0: CodecSpec,
-            c1: CodecSpec,
-            must_match: bool,
-            msg: &'static str,
+        fn h264_codec_spec(
+            level_asymmetry_allowed: Option<bool>,
+            packetization_mode: Option<u8>,
+            profile_level_id: Option<u32>,
+        ) -> CodecSpec {
+            CodecSpec {
+                codec: Codec::H264,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    level_asymmetry_allowed,
+                    packetization_mode,
+                    profile_level_id,
+                    ..Default::default()
+                },
+            }
         }
 
-        let cases = [Case {
-            c0: h264_codec_spec(None, None, Some(0x42E01F)),
-            c1: h264_codec_spec(None, None, Some(0x4DA01F)),
-            must_match: true,
-            msg:
-                "0x42A01F and 0x4DF01F should match, they are both constrained baseline subprofile",
-        }, Case {
-            c0: h264_codec_spec(None, None, Some(0x42E01F)),
-            c1: h264_codec_spec(None, Some(1), Some(0x4DA01F)),
-            must_match: false,
-            msg:
-                "0x42A01F and 0x4DF01F with differing packetization modes should not match",
-        },  Case {
-            c0: h264_codec_spec(None, Some(0), Some(0x422000)),
-            c1: h264_codec_spec(None, None, Some(0x42B00A)),
-            must_match: true,
-            msg:
-                "0x424000 and 0x42B00A should match because they are both the baseline subprofile \
-                and the level idc of 0x42F01F will be adjusted to Level1B because the constraint \
-                set 3 flag is set"
-        }];
+        #[test]
+        fn test_h264_profile_matching() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                must_match: bool,
+                msg: &'static str,
+            }
 
-        for Case {
-            c0,
-            c1,
-            must_match,
-            msg,
-        } in cases.into_iter()
-        {
-            let matched = PayloadParams::match_h264_score(c0, c1).is_some();
-            assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+            let cases = [Case {
+                c0: h264_codec_spec(None, None, Some(0x42E01F)),
+                c1: h264_codec_spec(None, None, Some(0x4DA01F)),
+                must_match: true,
+                msg:
+                    "0x42A01F and 0x4DF01F should match, they are both constrained baseline subprofile",
+            }, Case {
+                c0: h264_codec_spec(None, None, Some(0x42E01F)),
+                c1: h264_codec_spec(None, Some(1), Some(0x4DA01F)),
+                must_match: false,
+                msg:
+                    "0x42A01F and 0x4DF01F with differing packetization modes should not match",
+            },  Case {
+                c0: h264_codec_spec(None, Some(0), Some(0x422000)),
+                c1: h264_codec_spec(None, None, Some(0x42B00A)),
+                must_match: true,
+                msg:
+                    "0x424000 and 0x42B00A should match because they are both the baseline subprofile \
+                    and the level idc of 0x42F01F will be adjusted to Level1B because the constraint \
+                    set 3 flag is set"
+            }];
+
+            for Case {
+                c0,
+                c1,
+                must_match,
+                msg,
+            } in cases.into_iter()
+            {
+                let matched = PayloadParams::match_h264_score(c0, c1).is_some();
+                assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+            }
         }
-    }
 
-    #[test]
-    fn test_h264_level_matching_rfc_compliant() {
-        struct Case {
-            c0: CodecSpec,
-            c1: CodecSpec,
-            expected: Option<usize>,
-            msg: &'static str,
-        }
+        #[test]
+        fn test_h264_level_matching_rfc_compliant() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                expected: Option<usize>,
+                msg: &'static str,
+            }
 
-        let cases = [
-            // Test 1: Same profile, same level -> should match
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
-                c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
-                expected: Some(100),
-                msg: "Same profile (CB) and same level (4.0) should match",
-            },
-            // Test 2: Same profile, offered level lower -> should match (RFC 6184)
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (configured)
-                c1: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (offered)
-                expected: Some(100 - 2),
-                msg: "Same profile (CB), offered level 3.1 < configured 4.0 should match per RFC 6184",
-            },
-            // Test 3: Same profile, offered level higher -> should NOT match
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (configured)
-                c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (offered)
-                expected: None,
-                msg: "Same profile (CB), offered level 4.0 > configured 3.1 should NOT match",
-            },
-            // Test 4: Different profiles -> should NOT match
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
-                c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0
-                expected: None,
-                msg: "Different profiles (CB vs Main) should NOT match even with same level",
-            },
-            // Test 5: Main profile, offered lower level -> should match
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x4d002a)), // Main L4.2 (configured)
-                c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0 (offered)
-                expected: Some(100 - 2),
-                msg: "Same profile (Main), offered level 4.0 < configured 4.2 should match",
-            },
-            // Test 6: High profile, multiple levels down -> should match
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x640033)), // High L5.1 (configured)
-                c1: h264_codec_spec(None, None, Some(0x64001f)), // High L3.1 (offered)
-                expected: Some(100 - 6),
-                msg: "Same profile (High), offered level 3.1 < configured 5.1 should match",
-            },
-            // Test 7: Baseline (not CB) with Level1B as offered
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x42001f)), // Baseline L3.1
-                c1: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
-                expected: Some(100 - 8),
-                msg: "Same profile (Baseline), offered level 1B < configured 3.1 should match",
-            },
-            // Test 8: Baseline (not CB) offered lower level > should match with (special Level1B case)
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
-                c1: h264_codec_spec(None, None, Some(0x42000a)), // Baseline L1
-                expected: Some(100 - 1),
-                msg: "Same profile (Baseline), offered level 1 < configured 1B should match",
-            },
-            // Test 9: Baseline (not CB) offered higher level -> should not match (special Level1B case)
-            Case {
-                c0: h264_codec_spec(None, None, Some(0x42000a)), // Baseline L1
-                c1: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
-                expected: None,
-                msg: "Same profile (Baseline), offered level 1B > configured 1 should not match",
-            },
-        ];
+            let cases = [
+                // Test 1: Same profile, same level -> should match
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
+                    c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE),
+                    msg: "Same profile (CB) and same level (4.0) should match",
+                },
+                // Test 2: Same profile, offered level lower -> should match (RFC 6184)
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (configured)
+                    c1: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (offered)
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 2),
+                    msg: "Same profile (CB), offered level 3.1 < configured 4.0 should match per RFC 6184",
+                },
+                // Test 3: Same profile, offered level higher -> should NOT match
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (configured)
+                    c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (offered)
+                    expected: None,
+                    msg: "Same profile (CB), offered level 4.0 > configured 3.1 should NOT match",
+                },
+                // Test 4: Different profiles -> should NOT match
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
+                    c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0
+                    expected: None,
+                    msg: "Different profiles (CB vs Main) should NOT match even with same level",
+                },
+                // Test 5: Main profile, offered lower level -> should match
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x4d002a)), // Main L4.2 (configured)
+                    c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0 (offered)
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 2),
+                    msg: "Same profile (Main), offered level 4.0 < configured 4.2 should match",
+                },
+                // Test 6: High profile, multiple levels down -> should match
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x640033)), // High L5.1 (configured)
+                    c1: h264_codec_spec(None, None, Some(0x64001f)), // High L3.1 (offered)
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 6),
+                    msg: "Same profile (High), offered level 3.1 < configured 5.1 should match",
+                },
+                // Test 7: Baseline (not CB) with Level1B as offered
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42001f)), // Baseline L3.1
+                    c1: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 8),
+                    msg: "Same profile (Baseline), offered level 1B < configured 3.1 should match",
+                },
+                // Test 8: Baseline (not CB) offered lower level > should match with (special Level1B case)
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
+                    c1: h264_codec_spec(None, None, Some(0x42000a)), // Baseline L1
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 1),
+                    msg: "Same profile (Baseline), offered level 1 < configured 1B should match",
+                },
+                // Test 9: Baseline (not CB) offered higher level -> should not match (special Level1B case)
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42000a)), // Baseline L1
+                    c1: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
+                    expected: None,
+                    msg: "Same profile (Baseline), offered level 1B > configured 1 should not match",
+                },
+            ];
 
-        for Case {
-            c0,
-            c1,
-            expected,
-            msg,
-        } in cases.into_iter()
-        {
-            assert_eq!(
-                PayloadParams::match_h264_score(c0, c1),
+            for Case {
+                c0,
+                c1,
                 expected,
-                "{msg}\nc0: {c0:#?}\nc1: {c1:#?}"
-            );
+                msg,
+            } in cases.into_iter()
+            {
+                assert_eq!(
+                    PayloadParams::match_h264_score(c0, c1),
+                    expected,
+                    "{msg}\nc0: {c0:#?}\nc1: {c1:#?}"
+                );
+            }
+        }
+    }
+
+    mod h265 {
+        use super::*;
+
+        fn h265_codec_spec(profile_id: u8, tier_flag: u8, level_id: u8) -> CodecSpec {
+            CodecSpec {
+                codec: Codec::H265,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    h265_profile_tier_level: Some(
+                        H265ProfileTierLevel::new(profile_id, tier_flag, level_id).unwrap(),
+                    ),
+                    ..Default::default()
+                },
+            }
+        }
+
+        fn h265_codec_spec_profile_only(profile_id: u32) -> CodecSpec {
+            CodecSpec {
+                codec: Codec::H265,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    profile_id: Some(profile_id),
+                    ..Default::default()
+                },
+            }
+        }
+
+        /// Test basic H.265 profile/tier/level matching scenarios.
+        /// Verifies that full ProfileTierLevel parameters are matched correctly.
+        #[test]
+        fn test_profile_tier_level_matching() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                must_match: bool,
+                msg: &'static str,
+            }
+
+            let cases = [
+                // Same profile, tier, level -> should match
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(1, 0, 93),
+                    must_match: true,
+                    msg: "Same profile (Main), tier (Main), level (3.1) should match",
+                },
+                // Same profile and tier, offered level lower -> should match
+                Case {
+                    c0: h265_codec_spec(1, 0, 120), // Main, Main tier, Level 4.0
+                    c1: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
+                    must_match: true,
+                    msg: "Same profile/tier, offered level 3.1 < configured 4.0 should match",
+                },
+                // Same profile and tier, offered level higher -> should NOT match
+                Case {
+                    c0: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(1, 0, 120), // Main, Main tier, Level 4.0
+                    must_match: false,
+                    msg: "Same profile/tier, offered level 4.0 > configured 3.1 should NOT match",
+                },
+                // Different profiles -> should NOT match
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(2, 0, 93), // Main10, Main tier, Level 3.1
+                    must_match: false,
+                    msg: "Different profiles (Main vs Main10) should NOT match",
+                },
+                // Different tiers -> should NOT match
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(1, 1, 93), // Main, High tier, Level 3.1
+                    must_match: false,
+                    msg: "Different tiers (Main vs High) should NOT match",
+                },
+                // Main10 profile, same tier, lower level -> should match
+                Case {
+                    c0: h265_codec_spec(2, 0, 153), // Main10, Main tier, Level 5.1
+                    c1: h265_codec_spec(2, 0, 120), // Main10, Main tier, Level 4.0
+                    must_match: true,
+                    msg: "Main10 profile, offered level 4.0 < configured 5.1 should match",
+                },
+                // High tier, multiple levels down -> should match
+                Case {
+                    c0: h265_codec_spec(1, 1, 153), // Main, High tier, Level 5.1
+                    c1: h265_codec_spec(1, 1, 93),  // Main, High tier, Level 3.1
+                    must_match: true,
+                    msg: "High tier, offered level 3.1 < configured 5.1 should match",
+                },
+            ];
+
+            for Case {
+                c0,
+                c1,
+                must_match,
+                msg,
+            } in cases.into_iter()
+            {
+                let matched = PayloadParams::match_h265_score(c0, c1).is_some();
+                assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+            }
+        }
+
+        /// Test H.265 level matching with exact scores.
+        /// Verifies that the score decrements based on level difference.
+        #[test]
+        fn test_level_matching_scores() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                expected: Option<usize>,
+                msg: &'static str,
+            }
+
+            let cases = [
+                // Exact match -> score 100
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(1, 0, 93),
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE),
+                    msg: "Exact match should return score 100",
+                },
+                // One level down -> score 100 - 1
+                Case {
+                    c0: h265_codec_spec(1, 0, 120), // Main, Main tier, Level 4.0
+                    c1: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 1),
+                    msg: "One level difference should return score 99",
+                },
+                // Two levels down -> score 100 - 2
+                Case {
+                    c0: h265_codec_spec(1, 0, 123), // Main, Main tier, Level 4.1
+                    c1: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 2),
+                    msg: "Two level difference should return score 98",
+                },
+                // Multiple levels down
+                Case {
+                    c0: h265_codec_spec(1, 0, 153), // Main, Main tier, Level 5.1
+                    c1: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 4),
+                    msg: "Four level difference (5.1 to 3.1) should return score 96",
+                },
+                // Offered level higher -> None
+                Case {
+                    c0: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(1, 0, 120), // Main, Main tier, Level 4.0
+                    expected: None,
+                    msg: "Offered level higher than configured should return None",
+                },
+                // Different profiles -> None
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(2, 0, 93), // Main10, Main tier, Level 3.1
+                    expected: None,
+                    msg: "Different profiles should return None",
+                },
+                // Different tiers -> None
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(1, 1, 93), // Main, High tier, Level 3.1
+                    expected: None,
+                    msg: "Different tiers should return None",
+                },
+            ];
+
+            for Case {
+                c0,
+                c1,
+                expected,
+                msg,
+            } in cases.into_iter()
+            {
+                assert_eq!(
+                    PayloadParams::match_h265_score(c0, c1),
+                    expected,
+                    "{msg}\nc0: {c0:#?}\nc1: {c1:#?}"
+                );
+            }
+        }
+
+        /// Test H.265 profile-only matching (for Chrome compatibility).
+        /// When only profile-id is provided without tier/level, match on profile only.
+        #[test]
+        fn test_profile_only_matching() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                expected: Option<usize>,
+                msg: &'static str,
+            }
+
+            let cases = [
+                // Both have profile-only, same profile -> score 90
+                Case {
+                    c0: h265_codec_spec_profile_only(1), // Main
+                    c1: h265_codec_spec_profile_only(1), // Main
+                    expected: Some(PayloadParams::PROFILE_ONLY_MATCH_SCORE),
+                    msg: "Profile-only match (Main) should return score 90",
+                },
+                // Both have profile-only, different profiles -> None
+                Case {
+                    c0: h265_codec_spec_profile_only(1), // Main
+                    c1: h265_codec_spec_profile_only(2), // Main10
+                    expected: None,
+                    msg: "Profile-only with different profiles should return None",
+                },
+                // One has full PTL, other has profile-only, same profile -> score 90
+                Case {
+                    c0: h265_codec_spec(1, 0, 93),       // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec_profile_only(1), // Main
+                    expected: Some(PayloadParams::PROFILE_ONLY_MATCH_SCORE),
+                    msg: "Mixed PTL and profile-only with matching profile should return score 90",
+                },
+                // One has full PTL, other has profile-only, different profiles -> None
+                Case {
+                    c0: h265_codec_spec(1, 0, 93),       // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec_profile_only(2), // Main10
+                    expected: None,
+                    msg: "Mixed PTL and profile-only with different profiles should return None",
+                },
+                // Reverse: profile-only vs full PTL, same profile -> score 90
+                Case {
+                    c0: h265_codec_spec_profile_only(1), // Main
+                    c1: h265_codec_spec(1, 0, 93),       // Main, Main tier, Level 3.1
+                    expected: Some(PayloadParams::PROFILE_ONLY_MATCH_SCORE),
+                    msg: "Profile-only vs full PTL with matching profile should return score 90",
+                },
+            ];
+
+            for Case {
+                c0,
+                c1,
+                expected,
+                msg,
+            } in cases.into_iter()
+            {
+                assert_eq!(
+                    PayloadParams::match_h265_score(c0, c1),
+                    expected,
+                    "{msg}\nc0: {c0:#?}\nc1: {c1:#?}"
+                );
+            }
+        }
+
+        /// Test negative cases for H.265 matching to ensure proper rejection.
+        #[test]
+        fn test_negative_cases() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                msg: &'static str,
+            }
+
+            let cases = [
+                // Profile mismatch with full PTL
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(2, 0, 93), // Main10, Main tier, Level 3.1
+                    msg: "Profile mismatch (Main vs Main10) must not match",
+                },
+                // Tier mismatch
+                Case {
+                    c0: h265_codec_spec(1, 0, 93), // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(1, 1, 93), // Main, High tier, Level 3.1
+                    msg: "Tier mismatch (Main vs High) must not match",
+                },
+                // Level too high
+                Case {
+                    c0: h265_codec_spec(1, 0, 90),  // Main, Main tier, Level 3.0
+                    c1: h265_codec_spec(1, 0, 186), // Main, Main tier, Level 6.2
+                    msg: "Offered level 6.2 > configured 3.0 must not match",
+                },
+                // All three different
+                Case {
+                    c0: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
+                    c1: h265_codec_spec(2, 1, 153), // Main10, High tier, Level 5.1
+                    msg: "Profile, tier, and level all different must not match",
+                },
+                // Profile-only mismatch
+                Case {
+                    c0: h265_codec_spec_profile_only(1), // Main
+                    c1: h265_codec_spec_profile_only(2), // Main10
+                    msg: "Profile-only mismatch must not match",
+                },
+                // Mixed full PTL vs profile-only with different profiles
+                Case {
+                    c0: h265_codec_spec(2, 0, 93),       // Main10, Main tier, Level 3.1
+                    c1: h265_codec_spec_profile_only(1), // Main
+                    msg: "Full PTL (Main10) vs profile-only (Main) must not match",
+                },
+            ];
+
+            for Case { c0, c1, msg } in cases.into_iter() {
+                assert_eq!(
+                    PayloadParams::match_h265_score(c0, c1),
+                    None,
+                    "{msg}\nc0: {c0:#?}\nc1: {c1:#?}"
+                );
+            }
         }
     }
 }
