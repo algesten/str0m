@@ -557,6 +557,7 @@ impl RtcSctp {
 
         while let Some(e) = assoc.poll() {
             if let Event::Connected = e {
+                assoc.set_max_send_message_size(self.remote_max_message_size);
                 set_state(&mut self.state, RtcSctpState::Established);
                 return self.poll();
             }
