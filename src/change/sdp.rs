@@ -3,11 +3,12 @@
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
+use str0m_proto::Id;
+
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::io::Id;
 use crate::media::{Media, Rids, Simulcast};
 use crate::packet::MediaKind;
 use crate::rtp_::MidRid;

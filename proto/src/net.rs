@@ -1,8 +1,8 @@
 //! Network types shared across str0m crates.
 
-use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::{fmt, ops::Deref};
 
 use serde::{Deserialize, Serialize};
 
@@ -123,23 +123,16 @@ impl FromStr for TcpType {
 }
 
 /// An instruction to send an outgoing packet.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct Transmit {
     /// Protocol the transmission should use.
     pub proto: Protocol,
-
     /// The source IP this packet should be sent from.
-    ///
-    /// For ICE it's important to send outgoing packets from the correct IP address.
-    /// The IP could come from a local socket or relayed over a TURN server. Features like
-    /// hole-punching will only work if the packets are routed through the correct interfaces.
     pub source: SocketAddr,
-
     /// The destination address this datagram should be sent to.
     pub destination: SocketAddr,
-
     /// Contents of the datagram.
-    pub contents: Vec<u8>,
+    pub contents: DatagramSend,
 }
 
 impl fmt::Debug for Transmit {
@@ -148,7 +141,31 @@ impl fmt::Debug for Transmit {
             .field("proto", &self.proto)
             .field("source", &self.source)
             .field("destination", &self.destination)
-            .field("contents_len", &self.contents.len())
+            .field("len", &self.contents.len())
             .finish()
+    }
+}
+
+/// A wrapper for some payload that is to be sent.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DatagramSend(Vec<u8>);
+
+impl From<Vec<u8>> for DatagramSend {
+    fn from(value: Vec<u8>) -> Self {
+        DatagramSend(value)
+    }
+}
+
+impl From<DatagramSend> for Vec<u8> {
+    fn from(value: DatagramSend) -> Self {
+        value.0
+    }
+}
+
+impl Deref for DatagramSend {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

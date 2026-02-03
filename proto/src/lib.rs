@@ -12,7 +12,10 @@ pub use bandwidth::{Bitrate, DataSize};
 pub mod crypto;
 
 pub mod net;
-pub use net::{Protocol, TcpType, Transmit};
+pub use net::{DatagramSend, Protocol, TcpType, Transmit};
 
 pub mod util;
 pub use util::{NonCryptographicRng, Pii};
+
+mod id;
+pub use id::Id;

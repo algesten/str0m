@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+use str0m_ice::Transmit;
 // Re-export types from str0m-ice
 pub use str0m_ice::{NetError, StunMessage, StunPacket};
 
@@ -32,8 +33,6 @@ pub struct Receive<'a> {
     pub contents: DatagramRecv<'a>,
 }
 
-pub(crate) use str0m_ice::stun::Id;
-
 pub use str0m_proto::DATAGRAM_MTU;
 pub use str0m_proto::DATAGRAM_MTU_WARN;
 
@@ -44,58 +43,6 @@ pub(crate) const DATAGRAM_MAX_PACKET_SIZE: usize = 2000;
 /// Max expected RTP header over, with full extensions etc.
 #[allow(dead_code)]
 pub const MAX_RTP_OVERHEAD: usize = 80;
-
-use std::ops::Deref;
-
-/// An instruction to send an outgoing packet.
-///
-/// This wraps the proto Transmit type but uses DatagramSend for contents.
-#[derive(Serialize, Deserialize)]
-pub struct Transmit {
-    /// Protocol the transmission should use.
-    pub proto: Protocol,
-    /// The source IP this packet should be sent from.
-    pub source: SocketAddr,
-    /// The destination address this datagram should be sent to.
-    pub destination: SocketAddr,
-    /// Contents of the datagram.
-    pub contents: DatagramSend,
-}
-
-impl fmt::Debug for Transmit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Transmit")
-            .field("proto", &self.proto)
-            .field("source", &self.source)
-            .field("destination", &self.destination)
-            .field("len", &self.contents.len())
-            .finish()
-    }
-}
-
-/// A wrapper for some payload that is to be sent.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DatagramSend(Vec<u8>);
-
-impl From<Vec<u8>> for DatagramSend {
-    fn from(value: Vec<u8>) -> Self {
-        DatagramSend(value)
-    }
-}
-
-impl From<DatagramSend> for Vec<u8> {
-    fn from(value: DatagramSend) -> Self {
-        value.0
-    }
-}
-
-impl Deref for DatagramSend {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 
 impl<'a> Receive<'a> {
     /// Creates a new instance by trying to parse the contents of `buf`.

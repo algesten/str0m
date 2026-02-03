@@ -771,7 +771,8 @@ pub mod error;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use crate::io::{DatagramRecv, DatagramSend, Protocol, Receive, TcpType, Transmit};
+    pub use crate::io::{DatagramRecv, Protocol, Receive, TcpType};
+    pub use str0m_proto::{DatagramSend, Transmit};
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");

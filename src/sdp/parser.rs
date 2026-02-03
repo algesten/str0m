@@ -746,6 +746,7 @@ where
 mod test {
     use super::*;
     use crate::io::Protocol;
+    use str0m_ice::TcpType;
 
     #[test]
     fn line_a() {

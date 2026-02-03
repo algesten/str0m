@@ -4,10 +4,9 @@ use std::time::{Duration, Instant};
 
 use tracing::{debug, trace};
 
-use crate::id::Id;
 use crate::stun::{StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
 use crate::Candidate;
-use str0m_proto::Pii;
+use str0m_proto::{Id, Pii};
 
 use crate::candidate::CandidateKind;
 

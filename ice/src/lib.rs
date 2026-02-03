@@ -39,7 +39,6 @@
 mod agent;
 mod candidate;
 mod error;
-mod id;
 mod io;
 mod pair;
 mod preference;

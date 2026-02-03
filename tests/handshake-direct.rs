@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use str0m::channel::{ChannelConfig, ChannelId, Reliability};
 use str0m::config::Fingerprint;
-use str0m::ice::IceCreds;
 use str0m::net::{Protocol, Receive};
+use str0m::IceCreds;
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig, RtcError};
 use tracing::{info_span, Span};
 

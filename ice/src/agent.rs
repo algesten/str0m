@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
-use crate::id::Id;
 use crate::io::Transmit;
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
@@ -16,7 +15,7 @@ use crate::preference::default_local_preference;
 use crate::stun::{Class, Method, StunTiming};
 
 use str0m_proto::crypto::Sha1HmacProvider;
-use str0m_proto::{NonCryptographicRng, Pii, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+use str0m_proto::{Id, NonCryptographicRng, Pii, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
 use crate::candidate::{Candidate, CandidateKind};
 use crate::pair::{CandidatePair, CheckState, PairId};
