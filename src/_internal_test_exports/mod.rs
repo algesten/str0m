@@ -1,11 +1,11 @@
 //! Exported things with feature `_internal_test_exports`.
 
 use crate::format::PayloadParams;
-use crate::ice_::IceCreds;
 use crate::media::Media;
 use crate::media::Mid;
 use crate::rtp::{ExtensionMap, RtpHeader};
 use crate::Rtc;
+use str0m_ice::IceCreds;
 
 pub mod fuzz;
 mod rng;

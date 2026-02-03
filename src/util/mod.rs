@@ -114,6 +114,7 @@ impl NonCryptographicRng {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     pub fn f32() -> f32 {
         fastrand::f32()
     }

@@ -6,17 +6,21 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tracing::{debug, trace, warn};
 
-use crate::crypto::Sha1HmacProvider;
-use crate::ice_::preference::default_local_preference;
-use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
+use crate::io::Transmit;
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
-use crate::io::{Transmit, DATAGRAM_MTU};
+use crate::preference::default_local_preference;
+use crate::stun::{Id, StunTiming};
 use crate::util::{NonCryptographicRng, Pii};
+use crate::{StunClass, StunMethod};
 
-use super::candidate::{Candidate, CandidateKind};
-use super::pair::{CandidatePair, CheckState, PairId};
+use str0m_proto::crypto::Sha1HmacProvider;
+use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+
+use crate::candidate::{Candidate, CandidateKind};
+use crate::pair::{CandidatePair, CheckState, PairId};
 
 /// Handles the ICE protocol for a given peer.
 ///

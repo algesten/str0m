@@ -665,11 +665,9 @@ use crate::crypto::{from_feature_flags, CryptoProvider};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
 
-#[path = "ice/mod.rs"]
-mod ice_;
-use ice_::IceAgent;
-use ice_::IceAgentEvent;
-pub use ice_::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
+// Re-export from str0m-ice crate
+pub use str0m_ice::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
+use str0m_ice::{IceAgent, IceAgentEvent};
 
 #[path = "config.rs"]
 mod config_mod;
@@ -688,10 +686,9 @@ pub mod config {
 // into a separate crate.
 #[doc(hidden)]
 pub mod ice {
-    pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{default_local_preference, LocalPreference};
-    pub use crate::ice_::{IceAgent, IceAgentEvent};
-    pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
+    pub use str0m_ice::{default_local_preference, LocalPreference};
+    pub use str0m_ice::{IceAgent, IceAgentEvent, IceCreds};
+    pub use str0m_ice::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
 mod io;
@@ -1629,7 +1626,13 @@ impl Rtc {
         }
 
         if let Some(v) = self.ice.poll_transmit() {
-            return Ok(Output::Transmit(v));
+            let t = io::Transmit {
+                proto: v.proto,
+                source: v.source,
+                destination: v.destination,
+                contents: io::DatagramSend::from(v.contents),
+            };
+            return Ok(Output::Transmit(t));
         }
 
         if let Some(send) = &self.send_addr {

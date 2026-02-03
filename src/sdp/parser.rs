@@ -206,6 +206,7 @@ where
 /// Parse a candidate string into a [Candidate].
 ///
 /// Does not parse an `a=` prefix or trailing newline.
+#[allow(dead_code)]
 pub fn parse_candidate(s: &str) -> Result<Candidate, SdpError> {
     candidate()
         .parse(s)

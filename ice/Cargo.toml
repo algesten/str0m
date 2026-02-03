@@ -1,0 +1,28 @@
+[package]
+name = "str0m-ice"
+version = "0.1.0"
+authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
+description = "ICE (Interactive Connectivity Establishment) implementation for str0m"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
+edition = "2021"
+
+# MSRV
+rust-version = "1.81.0"
+
+[features]
+default = []
+_internal_test_exports = []
+# Redacts personally identifiable information (PII) from logs debug and above
+pii = []
+
+[dependencies]
+tracing = "0.1.37"
+fastrand = "2.0.1"
+subtle = "2.0.0"
+serde = { version = "1.0.152", features = ["derive"] }
+crc = ">=3.0, <3.4"
+str0m-proto = { version = "0.1.2", path = "../proto" }
+
+[dev-dependencies]

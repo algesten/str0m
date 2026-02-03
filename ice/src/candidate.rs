@@ -1,4 +1,4 @@
-use super::IceError;
+use crate::error::IceError;
 use crate::io::{Protocol, TcpType};
 use crate::sdp::parse_candidate;
 use serde::ser::SerializeStruct;
@@ -195,7 +195,7 @@ impl Candidate {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn parsed(
+    pub fn parsed(
         foundation: String,
         component_id: u16,
         proto: Protocol,
@@ -370,7 +370,6 @@ impl Candidate {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn test_peer_rflx(
         addr: SocketAddr,
         base: SocketAddr,
@@ -533,15 +532,18 @@ impl Candidate {
         self.discarded
     }
 
-    pub(crate) fn set_ufrag(&mut self, ufrag: &str) {
+    #[doc(hidden)] // Private API.
+    pub fn set_ufrag(&mut self, ufrag: &str) {
         self.ufrag = Some(ufrag.into());
     }
 
-    pub(crate) fn ufrag(&self) -> Option<&str> {
+    #[doc(hidden)] // Private API.
+    pub fn ufrag(&self) -> Option<&str> {
         self.ufrag.as_deref()
     }
 
-    pub(crate) fn clear_ufrag(&mut self) {
+    #[doc(hidden)] // Private API.
+    pub fn clear_ufrag(&mut self) {
         self.ufrag = None;
     }
 

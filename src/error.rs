@@ -5,13 +5,13 @@ use std::fmt;
 
 // Re-export all error types for convenience
 pub use crate::crypto::DtlsError;
-pub use crate::ice_::IceError;
 pub use crate::io::NetError;
 pub use crate::packet::PacketError;
 pub use crate::rtp_::RtpError;
 pub use crate::sctp::ProtoError;
 pub use crate::sctp::SctpError;
 pub use crate::sdp::SdpError;
+pub use str0m_ice::IceError;
 
 use crate::{Direction, KeyframeRequestKind, Mid, Pt, Rid};
 
