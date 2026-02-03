@@ -280,7 +280,7 @@ impl RtcSctp {
             let transport = TransportConfig::default()
                 .with_max_init_retransmits(None)
                 .with_max_data_retransmits(None)
-                .with_max_receive_message_size(DEFAULT_REMOTE_MAX_MESSAGE_SIZE);
+                .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE);
             // Note: send limit set later after SDP negotiation
 
             let config = ClientConfig {
