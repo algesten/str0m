@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use super::super::macros::{log_bitrate_estimate, log_delay_variation};
@@ -7,14 +6,11 @@ use super::arrival_group::ArrivalGroupAccumulator;
 use super::rate_control::RateControl;
 use super::trendline::TrendlineEstimator;
 use crate::rtp_::Bitrate;
-use crate::util::{already_happened, MovingAverage};
+use crate::util::already_happened;
 
-const MAX_RTT_HISTORY_WINDOW: usize = 32;
 const UPDATE_INTERVAL: Duration = Duration::from_millis(25);
 /// The maximum time we keep updating our estimate without receiving a TWCC report.
 const MAX_TWCC_GAP: Duration = Duration::from_millis(500);
-/// RFC 6298: Exponentially Weighted Moving Average smoothing factor for RTT (alpha = 1/8)
-const RTT_SMOOTHING_FACTOR: f64 = 0.125;
 
 /// Delay controller for googcc inspired BWE.
 ///
@@ -28,10 +24,8 @@ pub struct DelayController {
     /// Last estimate produced, unlike [`next_estimate`] this will always have a value after the
     /// first estimate.
     last_estimate: Option<Bitrate>,
-    /// Smoothed RTT using EWMA (RFC 6298, alpha = 1/8).
-    smoothed_rtt: MovingAverage,
-    /// History of the max RTT derived for each TWCC report (kept for fallback).
-    max_rtt_history: VecDeque<Duration>,
+    /// Last known smoothed RTT from TWCC register.
+    last_smoothed_rtt: Option<Duration>,
 
     /// The next time we should poll.
     next_timeout: Instant,
@@ -46,8 +40,7 @@ impl DelayController {
             trendline_estimator: TrendlineEstimator::new(20),
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
             last_estimate: Some(initial_bitrate),
-            smoothed_rtt: MovingAverage::new(RTT_SMOOTHING_FACTOR),
-            max_rtt_history: VecDeque::default(),
+            last_smoothed_rtt: None,
             next_timeout: already_happened(),
             last_twcc_report: already_happened(),
         }
@@ -59,12 +52,10 @@ impl DelayController {
         acked: &[AckedPacket],
         acked_bitrate: Option<Bitrate>,
         probe_bitrate: Option<Bitrate>,
+        smoothed_rtt: Option<Duration>,
         now: Instant,
     ) -> Option<Bitrate> {
-        let mut max_rtt = None;
-
         for acked_packet in acked {
-            max_rtt = max_rtt.max(Some(acked_packet.rtt()));
             if let Some(delay_variation) = self
                 .arrival_group_accumulator
                 .accumulate_packet(acked_packet)
@@ -87,9 +78,8 @@ impl DelayController {
             }
         }
 
-        if let Some(rtt) = max_rtt {
-            self.update_rtt(rtt);
-        }
+        // Store the smoothed RTT for use in handle_timeout
+        self.last_smoothed_rtt = smoothed_rtt;
 
         let new_hypothesis = self.trendline_estimator.hypothesis();
 
@@ -97,7 +87,7 @@ impl DelayController {
             new_hypothesis,
             acked_bitrate,
             probe_bitrate,
-            self.get_smoothed_rtt(),
+            smoothed_rtt,
             now,
         );
         self.last_twcc_report = now;
@@ -115,7 +105,7 @@ impl DelayController {
             // no longer be considered valid. We need another TWCC report before we can update
             // estimates.
             let next_timeout_in = self
-                .get_smoothed_rtt()
+                .last_smoothed_rtt
                 .unwrap_or(MAX_TWCC_GAP)
                 .min(UPDATE_INTERVAL);
 
@@ -129,7 +119,7 @@ impl DelayController {
             self.trendline_estimator.hypothesis(),
             acked_bitrate,
             None,
-            self.get_smoothed_rtt(),
+            self.last_smoothed_rtt,
             now,
         );
     }
@@ -145,37 +135,6 @@ impl DelayController {
     /// re-excite the system while we're already congested.
     pub fn is_overusing(&self) -> bool {
         self.trendline_estimator.hypothesis() == BandwidthUsage::Overuse
-    }
-
-    /// Update smoothed RTT using EWMA (RFC 6298, alpha = 1/8).
-    fn update_rtt(&mut self, rtt: Duration) {
-        // Keep history as fallback in case smoothed RTT is not yet available
-        while self.max_rtt_history.len() >= MAX_RTT_HISTORY_WINDOW {
-            self.max_rtt_history.pop_front();
-        }
-        self.max_rtt_history.push_back(rtt);
-
-        // Update smoothed RTT using EWMA: smoothed = (7/8) * smoothed + (1/8) * sample
-        self.smoothed_rtt.update(rtt.as_secs_f64());
-    }
-
-    /// Get the current smoothed RTT, with fallback to mean of history if not yet available.
-    fn get_smoothed_rtt(&self) -> Option<Duration> {
-        // Try smoothed RTT first (EWMA)
-        if let Some(avg_secs) = self.smoothed_rtt.get() {
-            return Some(Duration::from_secs_f64(avg_secs));
-        }
-
-        // Fallback to mean of history during initialization
-        if self.max_rtt_history.is_empty() {
-            return None;
-        }
-
-        let sum = self
-            .max_rtt_history
-            .iter()
-            .fold(Duration::ZERO, |acc, rtt| acc + *rtt);
-        Some(sum / self.max_rtt_history.len() as u32)
     }
 
     fn update_estimate(
@@ -218,7 +177,7 @@ impl DelayController {
     fn trendline_hypothesis_valid(&self, now: Instant) -> bool {
         now.duration_since(self.last_twcc_report)
             <= self
-                .get_smoothed_rtt()
+                .last_smoothed_rtt
                 .map(|rtt| rtt * 2)
                 .unwrap_or(MAX_TWCC_GAP)
                 .min(UPDATE_INTERVAL * 2)

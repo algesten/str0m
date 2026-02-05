@@ -305,8 +305,18 @@ pub fn nack_delay() -> Result<(), RtcError> {
 
     let first_nack_tx = nacks_tx.first().expect("nack");
 
+    // First NACK should be sent within ~20-30ms (when gap is detected after next packet arrives)
     assert!(first_nack_tx < &Duration::from_millis(100));
-    assert!(nacks_tx.iter().all(|f| f < &Duration::from_millis(200)));
+    // With RTT-based retransmission (default 100ms RTT), NACKs are sent every ~100ms
+    // The test runs for up to 10 seconds, so we need to allow for multiple retries
+    // Each NACK is sent at: ~20ms, ~120ms, ~220ms, ~320ms, ...
+    // We'll check the last NACK to ensure retransmission timing is reasonable
+    let last_nack_tx = nacks_tx.last().expect("nack");
+    assert!(
+        last_nack_tx < &Duration::from_secs(1),
+        "Last NACK should be within 1 second, but was {:?}",
+        last_nack_tx
+    );
 
     let nacks_rx = l
         .events
@@ -328,8 +338,15 @@ pub fn nack_delay() -> Result<(), RtcError> {
 
     let first_nack_rx = nacks_rx.first().expect("nack");
 
+    // First NACK received should be within ~20-30ms
     assert!(first_nack_rx < &Duration::from_millis(100));
-    assert!(nacks_rx.iter().all(|f| f < &Duration::from_millis(200)));
+    // With RTT-based retransmission, NACKs continue until packet is received
+    let last_nack_rx = nacks_rx.last().expect("nack");
+    assert!(
+        last_nack_rx < &Duration::from_secs(1),
+        "Last NACK received should be within 1 second, but was {:?}",
+        last_nack_rx
+    );
 
     assert_eq!(nacks_rx.len(), nacks_tx.len());
 

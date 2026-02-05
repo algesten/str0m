@@ -26,14 +26,13 @@ use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
-use crate::util::{already_happened, not_happening, Soonest};
+use crate::util::{already_happened, Soonest};
 use crate::Event;
 use crate::{net, Reason};
 use crate::{RtcConfig, RtcError};
 
-/// Minimum time we delay between sending nacks. This should be
-/// set high enough to not cause additional problems in very bad
-/// network conditions.
+/// Minimum time between NACK processing. This ensures the session is
+/// polled regularly for NACK purposes, maintaining consistent timing.
 const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
@@ -216,8 +215,10 @@ impl Session {
         self.do_payload()?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
+        let twcc_rtt = self.twcc_tx_register.smoothed_rtt();
 
-        let do_nack = now >= self.nack_at().unwrap_or(not_happening());
+        // Check if we should process NACKs based on minimum interval
+        let do_nack = now >= self.last_nack + NACK_MIN_INTERVAL;
 
         self.streams.handle_timeout(
             now,
@@ -226,6 +227,7 @@ impl Session {
             &self.medias,
             &self.codec_config,
             &mut self.feedback_tx,
+            twcc_rtt,
         );
 
         if do_nack {
@@ -587,10 +589,10 @@ impl Session {
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::Twcc(twcc) = fb {
                 trace!("Handle TWCC: {:?}", twcc);
-                let maybe_records = self.twcc_tx_register.apply_report(twcc, now);
+                let maybe_update = self.twcc_tx_register.apply_report(twcc, now);
 
-                if let (Some(maybe_records), Some(bwe)) = (maybe_records, &mut self.bwe) {
-                    bwe.update(maybe_records, now);
+                if let (Some(update), Some(bwe)) = (maybe_update, &mut self.bwe) {
+                    bwe.update(update.records, update.smoothed_rtt, now);
                 }
                 need_configure_pacer = true;
 
@@ -897,7 +899,16 @@ impl Session {
             return None;
         }
 
-        Some(self.last_nack + NACK_MIN_INTERVAL)
+        // Use the earlier of:
+        // 1. Per-stream NACK time (RTT-aware)
+        // 2. Minimum interval since last NACK (for consistent polling)
+        let stream_nack_at = self.streams.nack_at();
+        let min_interval_at = self.last_nack + NACK_MIN_INTERVAL;
+
+        match stream_nack_at {
+            Some(t) => Some(t.min(min_interval_at)),
+            None => Some(min_interval_at),
+        }
     }
 
     fn twcc_at(&self) -> Option<Instant> {

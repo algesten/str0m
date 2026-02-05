@@ -17,6 +17,9 @@ use super::register::ReceiverRegister;
 use super::StreamPaused;
 use super::{rr_interval, RtpPacket};
 
+/// Default RTT when no RTT measurement is available yet (matching libWebRTC's kDefaultRtt).
+const NACK_DEFAULT_RTT: Duration = Duration::from_millis(100);
+
 /// Incoming encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
@@ -106,6 +109,10 @@ pub struct StreamRx {
 
     /// The configured threshold before considering the lack of packets as going into paused.
     pause_threshold: Duration,
+
+    /// Next time a NACK should be sent for this stream.
+    /// Used to avoid iterating through the active window when no NACKs are due.
+    nack_at: Option<Instant>,
 }
 
 /// The last sender info we recieved.
@@ -165,6 +172,7 @@ impl StreamRx {
             paused: true,
             need_paused_event: false,
             pause_threshold: Duration::from_millis(1500),
+            nack_at: None,
         }
     }
 
@@ -647,14 +655,23 @@ impl StreamRx {
 
     pub(crate) fn maybe_create_nack(
         &mut self,
+        now: Instant,
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
+        twcc_rtt: Option<Duration>,
     ) -> Option<()> {
         if !self.nack_enabled() {
+            self.nack_at = None;
             return None;
         }
 
-        let nacks = self.register.as_mut().and_then(|r| r.nack_report())?;
+        let rtt = twcc_rtt.unwrap_or(NACK_DEFAULT_RTT);
+
+        // nack_report uses RTT-aware timing internally to decide which packets need NACKs
+        let nacks = self
+            .register
+            .as_mut()
+            .and_then(|r| r.nack_report(now, rtt))?;
 
         for mut nack in nacks {
             nack.sender_ssrc = sender_ssrc;
@@ -665,7 +682,21 @@ impl StreamRx {
             self.stats.nacks += 1;
         }
 
+        // Schedule next NACK check based on when packets will need retransmission.
+        // This is used by Streams::nack_at() to optimize poll scheduling.
+        self.nack_at = self
+            .register
+            .as_ref()
+            .and_then(|r| r.next_nack_time(now, rtt));
+
         Some(())
+    }
+
+    pub(crate) fn nack_at(&self) -> Option<Instant> {
+        if !self.nack_enabled() {
+            return None;
+        }
+        self.nack_at
     }
 
     pub(crate) fn visit_stats(&self, snapshot: &mut StatsSnapshot, now: Instant) {

@@ -92,9 +92,10 @@ impl Bwe {
     pub fn update<'t>(
         &mut self,
         records: impl Iterator<Item = &'t crate::rtp_::TwccSendRecord>,
+        smoothed_rtt: Option<Duration>,
         now: Instant,
     ) {
-        self.bwe.update(records, now);
+        self.bwe.update(records, smoothed_rtt, now);
     }
 
     pub fn poll_estimate(&mut self) -> Option<Bitrate> {
@@ -178,7 +179,12 @@ impl SendSideBandwidthEstimator {
     }
 
     /// Record a packet from a TWCC report.
-    pub fn update<'t>(&mut self, records: impl Iterator<Item = &'t TwccSendRecord>, now: Instant) {
+    pub fn update<'t>(
+        &mut self,
+        records: impl Iterator<Item = &'t TwccSendRecord>,
+        smoothed_rtt: Option<Duration>,
+        now: Instant,
+    ) {
         let _ = self.started_at.get_or_insert(now);
 
         let send_records: Vec<_> = records.collect();
@@ -226,9 +232,13 @@ impl SendSideBandwidthEstimator {
         let is_probe_result = probe_result.is_some();
 
         // Update delay controller with the latest probe result
-        let maybe_estimate =
-            self.delay_controller
-                .update(&acked_packets, acked_bitrate, probe_result, now);
+        let maybe_estimate = self.delay_controller.update(
+            &acked_packets,
+            acked_bitrate,
+            probe_result,
+            smoothed_rtt,
+            now,
+        );
 
         let Some(delay_estimate) = maybe_estimate else {
             return;
@@ -421,10 +431,12 @@ pub struct AckedPacket {
     remote_recv_time: Instant,
     /// The local time when received confirmation that the other side received the seq i.e. when we
     /// received the TWCC report for this packet.
+    #[allow(dead_code)]
     local_recv_time: Instant,
 }
 
 impl AckedPacket {
+    #[allow(dead_code)]
     fn rtt(&self) -> Duration {
         self.local_recv_time - self.local_send_time
     }

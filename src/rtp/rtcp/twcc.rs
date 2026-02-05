@@ -8,6 +8,7 @@ use super::{extend_u16, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use super::{RtcpType, Ssrc, TransportType};
 
 use crate::rtp_::{TwccClusterId, TwccSeq};
+use crate::util::MovingAverage;
 
 /// Transport Wide Congestion Control.
 ///
@@ -997,7 +998,9 @@ impl<'a> TryFrom<&'a [u8]> for PacketChunk {
     }
 }
 
-#[derive(Debug)]
+/// RFC 6298: Exponentially Weighted Moving Average smoothing factor for RTT (alpha = 1/8)
+const RTT_SMOOTHING_FACTOR: f64 = 0.125;
+
 pub struct TwccSendRegister {
     /// How many send records to keep.
     keep: usize,
@@ -1014,6 +1017,19 @@ pub struct TwccSendRegister {
 
     /// Last registered Twcc number.
     last_registered: TwccSeq,
+
+    /// Smoothed RTT using EWMA (RFC 6298).
+    smoothed_rtt: MovingAverage,
+}
+
+/// Result of applying a TWCC report to the send register.
+///
+/// Contains an iterator over newly acknowledged records and the current smoothed RTT.
+pub struct TwccRegisterUpdate<I> {
+    /// Iterator over the [`TwccSendRecord`]s that were acknowledged in this report.
+    pub records: I,
+    /// Current smoothed RTT (EWMA of measured RTTs).
+    pub smoothed_rtt: Option<Duration>,
 }
 
 impl<'a> IntoIterator for &'a TwccSendRegister {
@@ -1162,6 +1178,7 @@ impl TwccSendRegister {
             time_zero: None,
             apply_report_counter: 0,
             last_registered: 0.into(),
+            smoothed_rtt: MovingAverage::new(RTT_SMOOTHING_FACTOR),
         }
     }
 
@@ -1183,13 +1200,14 @@ impl TwccSendRegister {
 
     /// Apply a TWCC RTCP report.
     ///
-    /// Returns iterator over [`TwccSendRecord`]s included in the given [`Twcc`]
-    /// except for ones that was already acked and returned before.
+    /// Returns a [`TwccRegisterUpdate`] containing an iterator over [`TwccSendRecord`]s
+    /// included in the given [`Twcc`] (except for ones already acked), and the
+    /// current smoothed RTT.
     pub fn apply_report(
         &mut self,
         twcc: Twcc,
         now: Instant,
-    ) -> Option<impl Iterator<Item = &TwccSendRecord>> {
+    ) -> Option<TwccRegisterUpdate<impl Iterator<Item = &TwccSendRecord>>> {
         if self.time_zero.is_none() {
             self.time_zero = Some(now);
         }
@@ -1290,8 +1308,27 @@ impl TwccSendRegister {
 
         let range = first_seq_no..=last_seq_no;
 
-        Some(
-            TwccSendRecordsIter {
+        // Update smoothed RTT from newly processed records
+        let max_rtt = self
+            .queue
+            .iter()
+            .skip(first_index)
+            .take_while(|r| r.seq() <= last_seq_no)
+            .filter(|r| {
+                r.recv_report
+                    .map(|rr| rr.apply_report_counter == apply_report_counter)
+                    .unwrap_or(false)
+            })
+            .filter_map(|r| r.rtt())
+            .max();
+        if let Some(rtt) = max_rtt {
+            self.smoothed_rtt.update(rtt.as_secs_f64());
+        }
+
+        let smoothed_rtt = self.smoothed_rtt();
+
+        Some(TwccRegisterUpdate {
+            records: TwccSendRecordsIter {
                 range: range.clone(),
                 index: first_index,
                 current: first_seq_no,
@@ -1305,7 +1342,8 @@ impl TwccSendRegister {
                     .map(|r| r.apply_report_counter == apply_report_counter)
                     .unwrap_or_default()
             }),
-        )
+            smoothed_rtt,
+        })
     }
 
     /// Calculate the egress loss for given time window.
@@ -1347,6 +1385,14 @@ impl TwccSendRegister {
     /// Calculate the RTT for the most recently reported packet.
     pub fn rtt(&self) -> Option<Duration> {
         self.queue.iter().rev().find_map(|s| s.rtt())
+    }
+
+    /// Get the smoothed RTT using EWMA (RFC 6298).
+    ///
+    /// This provides a more stable RTT estimate compared to `rtt()` which
+    /// returns the raw RTT from the most recent packet.
+    pub fn smoothed_rtt(&self) -> Option<Duration> {
+        self.smoothed_rtt.get().map(Duration::from_secs_f64)
     }
 }
 
@@ -1943,7 +1989,7 @@ mod test {
             },
             now,
         );
-        let iter = iter.unwrap();
+        let TwccRegisterUpdate { records: iter, .. } = iter.unwrap();
 
         for record in iter {
             assert!(
@@ -2099,6 +2145,7 @@ mod test {
             )
             .expect("apply_report to return Some(_)");
 
+        let TwccRegisterUpdate { records: iter, .. } = iter;
         assert_eq!(
             iter.map(|r| *r.seq()).collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 4, 5, 6, 7]
@@ -2209,6 +2256,7 @@ mod test {
                     now + Duration::from_millis(8),
                 )
                 .unwrap()
+                .records
                 .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq().as_u16()))
                 .collect::<Vec<_>>();
 
@@ -2231,6 +2279,7 @@ mod test {
                     now + Duration::from_millis(14),
                 )
                 .unwrap()
+                .records
                 .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq().as_u16()))
                 .collect::<Vec<_>>();
 
