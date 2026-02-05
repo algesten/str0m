@@ -852,7 +852,6 @@ impl IceAgent {
     /// has signalled us that they have invalidated one of their candidates.
     ///
     /// Returns `true` if the candidate was found and invalidated.
-    #[allow(unused)]
     pub fn invalidate_candidate(&mut self, c: &Candidate) -> bool {
         if let Some((idx, other)) = self.local_candidates.iter_mut().enumerate().find(|(_, v)| {
             v.addr() == c.addr()
