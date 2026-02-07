@@ -1506,9 +1506,9 @@ impl Depacketizer for H265Depacketizer {
 
             // Check if this is a keyframe.
             let is_keyframe = if let CodecExtra::H265(e) = codec_extra {
-                header.is_idr_picture() | e.is_keyframe
+                header.is_irap() | e.is_keyframe
             } else {
-                header.is_idr_picture()
+                header.is_irap()
             };
             *codec_extra = CodecExtra::H265(H265CodecExtra { is_keyframe });
 
