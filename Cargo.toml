@@ -31,6 +31,7 @@ openssl = ["dep:str0m-openssl"]
 wincrypto = ["dep:str0m-wincrypto"]
 apple-crypto = ["dep:str0m-apple-crypto"]
 vendored = ["str0m-openssl?/vendored"]
+dtls13 = ["str0m-openssl?/dtls13", "str0m-wincrypto?/dtls13"]
 unversioned = []
 
 # Redacts personally identifiable information (PII) from logs debug and above
@@ -57,7 +58,7 @@ crc = ">=3.0, <3.4"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m (required dependency)
-dimpl = { version = "0.2.4", default-features = false }
+dimpl = { git = "https://github.com/algesten/dimpl", branch = "dtls13", default-features = false }
 
 str0m-proto = { version = "0.1.2", path = "proto" }
 

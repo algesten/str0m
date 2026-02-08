@@ -10,6 +10,9 @@ edition = "2021"
 # MSRV
 rust-version = "1.81.0"
 
+[features]
+dtls13 = ["dep:dimpl"]
+
 [dependencies]
 tracing = "0.1.37"
 str0m-proto = { version = "0.1.1", path = "../../proto" }
@@ -19,3 +22,4 @@ windows = { version = "0.58", features = [
   "Win32_Security_Credentials",
   "Win32_System_Rpc",
 ] }
+dimpl = { git = "https://github.com/algesten/dimpl", branch = "dtls13", default-features = false, features = ["aws-lc-rs", "rcgen"], optional = true }

@@ -13,6 +13,7 @@ rust-version = "1.81.0"
 
 [features]
 vendored = ["openssl/vendored"]
+dtls13 = ["dep:dimpl"]
 
 [dependencies]
 tracing = "0.1.37"
@@ -20,3 +21,4 @@ str0m-proto = { version = "0.1.1", path = "../../proto", features = ["openssl"] 
 openssl = { version = "0.10.70" }
 openssl-sys = { version = "0.9.80" }
 libc = { version = "0.2" }
+dimpl = { git = "https://github.com/algesten/dimpl", branch = "dtls13", default-features = false, features = ["aws-lc-rs", "rcgen"], optional = true }

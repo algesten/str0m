@@ -431,6 +431,7 @@ fn run_rtc_loop_with_exchange(
                 contents,
             }) => {
                 println!("[{}] Received packet ({} bytes)", role, contents.len());
+                describe_packet(role, &contents);
                 let receive = Receive {
                     proto,
                     source,
@@ -458,6 +459,126 @@ fn run_rtc_loop_with_exchange(
     }
 
     Ok(())
+}
+
+/// Parse and describe DTLS/STUN packet headers to identify the protocol version.
+fn describe_packet(role: &str, data: &[u8]) {
+    if data.is_empty() {
+        return;
+    }
+
+    let b0 = data[0];
+
+    // STUN: first byte 0-3
+    if b0 <= 3 {
+        println!("[{}]   -> STUN", role);
+        return;
+    }
+
+    // DTLS 1.3 unified header: 001xxxxx pattern (0x20-0x3F)
+    if b0 & 0xE0 == 0x20 {
+        let epoch = b0 & 0x07;
+        println!("[{}]   -> DTLS 1.3 unified header (epoch={})", role, epoch);
+        return;
+    }
+
+    // Legacy DTLS record: 13-byte header
+    if data.len() >= 13 {
+        let content_type = b0;
+        let epoch = u16::from_be_bytes([data[3], data[4]]);
+        let length = u16::from_be_bytes([data[11], data[12]]) as usize;
+
+        let ct_str = match content_type {
+            20 => "ChangeCipherSpec",
+            21 => "Alert",
+            22 => "Handshake",
+            23 => "ApplicationData",
+            25 => "ACK [DTLS 1.3 only]",
+            _ => "Unknown",
+        };
+
+        print!("[{}]   -> record: {} epoch={}", role, ct_str, epoch);
+
+        // Parse handshake message type if plaintext handshake
+        if content_type == 22 && epoch == 0 && data.len() >= 26 {
+            // DTLS handshake header after record: type(1)+len(3)+msg_seq(2)+frag_off(3)+frag_len(3)
+            let hs_type = data[13];
+            let msg_seq = u16::from_be_bytes([data[17], data[18]]);
+            let hs_str = match hs_type {
+                1 => "ClientHello",
+                2 => "ServerHello",
+                3 => "HelloVerifyRequest",
+                4 => "NewSessionTicket",
+                8 => "EncryptedExtensions",
+                11 => "Certificate",
+                12 => "ServerKeyExchange [DTLS 1.2]",
+                13 => "CertificateRequest",
+                14 => "ServerHelloDone [DTLS 1.2]",
+                15 => "CertificateVerify",
+                16 => "ClientKeyExchange [DTLS 1.2]",
+                20 => "Finished",
+                _ => "?",
+            };
+            print!(" msg={} (seq={})", hs_str, msg_seq);
+
+            // For ServerHello, try to extract negotiated version from supported_versions extension
+            if hs_type == 2 {
+                if let Some(ver) = find_supported_versions_in_server_hello(&data[13..]) {
+                    match ver {
+                        0xFEFC => print!(" [supported_versions: DTLS 1.3]"),
+                        0xFEFD => print!(" [supported_versions: DTLS 1.2]"),
+                        0x0304 => print!(" [supported_versions: TLS 1.3]"),
+                        _ => print!(" [supported_versions: 0x{:04X}]", ver),
+                    }
+                }
+            }
+        }
+
+        println!();
+
+        // Handle multiple records concatenated in same packet
+        let next = 13 + length;
+        if next < data.len() {
+            describe_packet(role, &data[next..]);
+        }
+    }
+}
+
+/// Parse a ServerHello handshake message to find the supported_versions extension.
+fn find_supported_versions_in_server_hello(hs_data: &[u8]) -> Option<u16> {
+    // Skip DTLS handshake header: type(1)+len(3)+msg_seq(2)+frag_off(3)+frag_len(3) = 12 bytes
+    if hs_data.len() < 12 {
+        return None;
+    }
+    let body = &hs_data[12..];
+
+    // ServerHello body: version(2) + random(32) + session_id_len(1) + session_id(var)
+    //   + cipher_suite(2) + compression(1) + extensions_len(2) + extensions...
+    if body.len() < 35 {
+        return None;
+    }
+    let session_id_len = body[34] as usize;
+    // 2 (version) + 32 (random) + 1 (session_id_len) + session_id + 2 (cipher) + 1 (compression)
+    let ext_offset = 35 + session_id_len + 2 + 1;
+    if body.len() < ext_offset + 2 {
+        return None;
+    }
+    let ext_len = u16::from_be_bytes([body[ext_offset], body[ext_offset + 1]]) as usize;
+    let mut pos = ext_offset + 2;
+    let end = pos + ext_len;
+
+    while pos + 4 <= end && pos + 4 <= body.len() {
+        let ext_type = u16::from_be_bytes([body[pos], body[pos + 1]]);
+        let ext_data_len = u16::from_be_bytes([body[pos + 2], body[pos + 3]]) as usize;
+        pos += 4;
+        // supported_versions = 0x002B (43)
+        if ext_type == 0x002B && ext_data_len >= 2 && pos + 2 <= body.len() {
+            return Some(u16::from_be_bytes([body[pos], body[pos + 1]]));
+        }
+        pos += ext_data_len;
+    }
+
+    None
 }
 
 fn handle_event(

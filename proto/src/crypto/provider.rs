@@ -141,7 +141,7 @@ pub trait DtlsProvider: CryptoSafe {
     fn generate_certificate(&self) -> Option<DtlsCert>;
 
     /// Create a new DTLS instance with the given certificate.
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError>;
+    fn new_dtls(&self, cert: &DtlsCert, now: Instant) -> Result<Box<dyn DtlsInstance>, CryptoError>;
 
     /// Whether the provider is used in a test context.
     fn is_test(&self) -> bool {

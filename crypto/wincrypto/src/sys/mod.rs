@@ -15,7 +15,9 @@ pub use sha256::*;
 mod srtp;
 pub use srtp::*;
 
+#[cfg(not(feature = "dtls13"))]
 mod dtls;
+#[cfg(not(feature = "dtls13"))]
 pub use dtls::*;
 
 #[derive(Debug)]

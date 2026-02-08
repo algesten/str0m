@@ -38,7 +38,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         })
     }
 
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    fn new_dtls(&self, cert: &DtlsCert, _now: Instant) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         // Look up the Windows certificate by its DER bytes
         let win_cert = CERT_CACHE
             .lock()
@@ -99,9 +99,9 @@ impl WinCryptoDtlsInstance {
                 peer_cert_der,
             } => {
                 let profile = match srtp_profile_id {
-                    0x0001 => SrtpProfile::Aes128CmSha1_80,
-                    0x0007 => SrtpProfile::AeadAes128Gcm,
-                    0x0008 => SrtpProfile::AeadAes256Gcm,
+                    0x0001 => SrtpProfile::AES128_CM_SHA1_80,
+                    0x0007 => SrtpProfile::AEAD_AES_128_GCM,
+                    0x0008 => SrtpProfile::AEAD_AES_256_GCM,
                     _ => return, // Unknown profile, ignore
                 };
 

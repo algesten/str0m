@@ -24,7 +24,7 @@ impl DtlsProvider for AwsLcRsDtlsProvider {
             })
     }
 
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    fn new_dtls(&self, cert: &DtlsCert, now: Instant) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         let dimpl_cert = dimpl::DtlsCertificate {
             certificate: cert.certificate.clone(),
             private_key: cert.private_key.clone(),
@@ -41,7 +41,7 @@ impl DtlsProvider for AwsLcRsDtlsProvider {
             .build()
             .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {}", e)))?;
 
-        let dtls = dimpl::Dtls::new(Arc::new(config), dimpl_cert);
+        let dtls = dimpl::Dtls::new_13(Arc::new(config), dimpl_cert, now);
 
         Ok(Box::new(AwsLcRsDtlsInstance { dtls }))
     }

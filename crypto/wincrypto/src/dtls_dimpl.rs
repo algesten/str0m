@@ -1,4 +1,8 @@
-//! DTLS implementation using dimpl with RustCrypto backend.
+//! DTLS implementation using dimpl (DTLS 1.2 + 1.3) with aws-lc-rs backend.
+//!
+//! This module is compiled only when the `dtls13` feature is enabled.
+//! It replaces the native Windows SChannel DTLS with dimpl, which supports both
+//! DTLS 1.2 and DTLS 1.3 via auto-sensing.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,11 +15,10 @@ use str0m_proto::crypto::CryptoError;
 // ============================================================================
 
 #[derive(Debug)]
-pub(super) struct RustCryptoDtlsProvider;
+pub(super) struct DimplDtlsProvider;
 
-impl DtlsProvider for RustCryptoDtlsProvider {
+impl DtlsProvider for DimplDtlsProvider {
     fn generate_certificate(&self) -> Option<DtlsCert> {
-        // Use dimpl's rcgen-based certificate generation (with RustCrypto backend)
         dimpl::certificate::generate_self_signed_certificate()
             .ok()
             .map(|cert| DtlsCert {
@@ -30,20 +33,19 @@ impl DtlsProvider for RustCryptoDtlsProvider {
             private_key: cert.private_key.clone(),
         };
 
-        // Create a default dimpl Config with RustCrypto crypto provider
         let mut builder = dimpl::Config::builder();
         if self.is_test() {
-            // We need the DTLS impl to be deterministic for the BWE tests.
             builder = builder.dangerously_set_rng_seed(42);
         }
 
         let config = builder
             .build()
-            .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {}", e)))?;
+            .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {e}")))?;
 
-        let dtls = dimpl::Dtls::new_13(Arc::new(config), dimpl_cert, now);
+        // Use new_auto to support both DTLS 1.2 and 1.3
+        let dtls = dimpl::Dtls::new_auto(Arc::new(config), dimpl_cert, now);
 
-        Ok(Box::new(RustCryptoDtlsInstance { dtls }))
+        Ok(Box::new(DimplDtlsInstance { dtls }))
     }
 }
 
@@ -51,17 +53,17 @@ impl DtlsProvider for RustCryptoDtlsProvider {
 // DTLS Instance Wrapper
 // ============================================================================
 
-struct RustCryptoDtlsInstance {
+struct DimplDtlsInstance {
     dtls: dimpl::Dtls,
 }
 
-impl std::fmt::Debug for RustCryptoDtlsInstance {
+impl std::fmt::Debug for DimplDtlsInstance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RustCryptoDtlsInstance").finish()
+        f.debug_struct("DimplDtlsInstance").finish()
     }
 }
 
-impl DtlsInstance for RustCryptoDtlsInstance {
+impl DtlsInstance for DimplDtlsInstance {
     fn set_active(&mut self, active: bool) {
         self.dtls.set_active(active);
     }

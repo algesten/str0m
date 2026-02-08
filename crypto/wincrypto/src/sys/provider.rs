@@ -298,7 +298,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         }
     }
 
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    fn new_dtls(&self, cert: &DtlsCert, _now: Instant) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         // For now, generate a new certificate since we need the Windows CERT_CONTEXT
         // In a real implementation, we'd need to reconstruct from the DER bytes
         let win_cert = crate::Certificate::new_self_signed(true, "CN=WebRTC")
