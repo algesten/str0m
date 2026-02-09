@@ -42,8 +42,8 @@ impl DtlsProvider for DimplDtlsProvider {
             .build()
             .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {e}")))?;
 
-        // Use new_auto to support both DTLS 1.2 and 1.3
-        let dtls = dimpl::Dtls::new_auto(Arc::new(config), dimpl_cert, now);
+        // Use new_13 for DTLS 1.3 (same as aws-lc-rs backend)
+        let dtls = dimpl::Dtls::new_13(Arc::new(config), dimpl_cert, now);
 
         Ok(Box::new(DimplDtlsInstance { dtls }))
     }
