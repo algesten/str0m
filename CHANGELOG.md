@@ -1,5 +1,7 @@
 # Unreleased
 
+# 0.16.2
+
   * Fix hot timeout loop with null pacer #863
   * H265 to use is_irap() for keyframe detection #859
   * Fix probe estimator panic when probes accumulate #857
