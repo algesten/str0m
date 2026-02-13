@@ -716,8 +716,8 @@ pub mod rtp {
 
     /// Video Layers Allocation RTP Header Extension
     pub mod vla;
+    pub use crate::rtp_::{AbsCaptureTime, ExtensionValues, UserExtensionValues};
     pub use crate::rtp_::{Extension, ExtensionMap, ExtensionSerializer};
-    pub use crate::rtp_::{ExtensionValues, UserExtensionValues};
 
     pub use crate::rtp_::{RtpHeader, SeqNo, Ssrc, VideoOrientation};
     pub use crate::streams::{RtpPacket, StreamPaused, StreamRx, StreamTx};
@@ -2035,7 +2035,7 @@ mod test {
     #[test]
     fn event_is_reasonably_sized() {
         let n = std::mem::size_of::<Event>();
-        assert!(n < 470); // Increased from 450 to accommodate H.265 profile/tier/level fields
+        assert!(n < 490); // Increased to accommodate abs-capture-time fields in ExtensionValues
     }
 }
 
