@@ -4,7 +4,7 @@ pub use id::{Mid, Pt, Rid, SeqNo, SessionId, Ssrc, TwccClusterId, TwccSeq};
 
 mod ext;
 pub use ext::{Extension, ExtensionMap, ExtensionSerializer, ExtensionValues};
-pub use ext::{UserExtensionValues, VideoOrientation};
+pub use ext::{AbsCaptureTime, UserExtensionValues, VideoOrientation};
 
 mod dir;
 pub use dir::Direction;

@@ -643,15 +643,10 @@ impl Extension {
                 Some(3)
             }
             AbsoluteCaptureTime => {
-                // 64-bit NTP timestamp (UQ32.32 format).
-                // Optional 64-bit signed clock offset.
-                let time_abs = ev.abs_capture_time?;
+                let act = ev.abs_capture_time.as_ref()?;
+                let ntp_64 = act.capture_time.as_ntp_64();
 
-                // Convert SystemTime to NTP 64-bit fixed point
-                let ntp_64 = time_abs.as_ntp_64();
-
-                if let Some(offset) = ev.abs_capture_clock_offset {
-                    // Extended format: 16 bytes (8 for timestamp + 8 for offset)
+                if let Some(offset) = act.clock_offset {
                     if buf.len() < 16 {
                         return None;
                     }
@@ -659,7 +654,6 @@ impl Extension {
                     buf[8..16].copy_from_slice(&offset.to_be_bytes());
                     Some(16)
                 } else {
-                    // Shortened format: 8 bytes (timestamp only)
                     if buf.len() < 8 {
                         return None;
                     }
@@ -781,26 +775,16 @@ impl Extension {
             }
             // 8 or 16
             AbsoluteCaptureTime => {
-                // 64-bit NTP timestamp (UQ32.32 format).
-                // Optional 64-bit signed clock offset.
                 if buf.len() < 8 {
                     return None;
                 }
-
-                // Parse the NTP timestamp
                 let ntp_64 = u64::from_be_bytes(buf[..8].try_into().unwrap());
-
-                // Convert NTP timestamp directly to SystemTime
-                let system_time = SystemTime::from_ntp_64(ntp_64);
-                ev.abs_capture_time = Some(system_time);
-
-                // Parse optional clock offset (if present)
-                if buf.len() >= 16 {
-                    let offset = i64::from_be_bytes(buf[8..16].try_into().unwrap());
-                    ev.abs_capture_clock_offset = Some(offset);
-                } else {
-                    ev.abs_capture_clock_offset = None;
-                }
+                let clock_offset = (buf.len() >= 16)
+                    .then(|| i64::from_be_bytes(buf[8..16].try_into().unwrap()));
+                ev.abs_capture_time = Some(AbsCaptureTime {
+                    capture_time: SystemTime::from_ntp_64(ntp_64),
+                    clock_offset,
+                });
             }
             // 1
             AudioLevel => {
@@ -919,16 +903,8 @@ pub struct ExtensionValues {
     pub tx_time_offs: Option<u32>,
     #[doc(hidden)]
     pub abs_send_time: Option<Instant>,
-    /// Absolute capture time from the abs-capture-time RTP header extension.
-    /// This is the NTP wall-clock timestamp of when the first frame in the RTP packet
-    /// was originally captured at the source. It's `SystemTime` because it represents
-    /// an absolute NTP timestamp that must be preserved across systems.
     #[doc(hidden)]
-    pub abs_capture_time: Option<SystemTime>,
-    /// Clock offset between sender and capture systems, in signed UQ32.32 format.
-    /// Only present in the extended format of the abs-capture-time extension.
-    #[doc(hidden)]
-    pub abs_capture_clock_offset: Option<i64>,
+    pub abs_capture_time: Option<AbsCaptureTime>,
     #[doc(hidden)]
     pub transport_cc: Option<u16>, // (buf[0] << 8) | buf[1];
     #[doc(hidden)]
@@ -1115,11 +1091,8 @@ impl fmt::Debug for ExtensionValues {
         if let Some(t) = self.abs_send_time {
             write!(f, " abs_send_time: {:?}", t)?;
         }
-        if let Some(t) = self.abs_capture_time {
+        if let Some(t) = &self.abs_capture_time {
             write!(f, " abs_capture_time: {:?}", t)?;
-        }
-        if let Some(t) = self.abs_capture_clock_offset {
-            write!(f, " abs_capture_clock_offset: {}", t)?;
         }
         if let Some(t) = self.voice_activity {
             write!(f, " voice_activity: {t}")?;
@@ -1154,6 +1127,38 @@ impl fmt::Debug for ExtensionValues {
 
         write!(f, " }}")?;
         Ok(())
+    }
+}
+
+/// Absolute capture time from the `abs-capture-time` RTP header extension.
+///
+/// Contains the NTP wall-clock timestamp of original frame capture, and
+/// optionally the sender's estimate of the offset between its own clock
+/// and the capture system's clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AbsCaptureTime {
+    /// NTP wall-clock timestamp of original frame capture.
+    pub capture_time: SystemTime,
+    /// Sender's estimate of offset between its own NTP clock and the
+    /// capture system's NTP clock. Signed NTP fixed-point (Q32.32):
+    /// upper 32 bits whole seconds, lower 32 bits fractional.
+    pub clock_offset: Option<i64>,
+}
+
+/// 2^32 as f64, for NTP Q32.32 fixed-point conversion.
+const NTP_F32: f64 = 4_294_967_296.0;
+
+impl AbsCaptureTime {
+    /// Clock offset in seconds, if present.
+    ///
+    /// Per the spec: `Capture NTP Clock = Sender NTP Clock + offset`.
+    pub fn clock_offset_secs(&self) -> Option<f64> {
+        self.clock_offset.map(|v| v as f64 / NTP_F32)
+    }
+
+    /// Set the clock offset in seconds.
+    pub fn set_clock_offset(&mut self, secs: f64) {
+        self.clock_offset = Some((secs * NTP_F32) as i64);
     }
 }
 
@@ -1327,8 +1332,10 @@ mod test {
         let mut exts = ExtensionMap::empty();
         exts.set(5, Extension::AbsoluteCaptureTime);
         let ev = ExtensionValues {
-            abs_capture_time: Some(now),
-            abs_capture_clock_offset: None,
+            abs_capture_time: Some(AbsCaptureTime {
+                capture_time: now,
+                clock_offset: None,
+            }),
             ..Default::default()
         };
 
@@ -1338,18 +1345,18 @@ mod test {
         let mut ev2 = ExtensionValues::default();
         exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
 
-        let now2 = ev2.abs_capture_time.unwrap();
+        let act = ev2.abs_capture_time.unwrap();
 
         // Allow for small rounding errors in NTP conversion
-        let abs = if now > now2 {
-            now.duration_since(now2)
+        let abs = if now > act.capture_time {
+            now.duration_since(act.capture_time)
         } else {
-            now2.duration_since(now)
+            act.capture_time.duration_since(now)
         }
         .unwrap();
 
         assert!(abs < Duration::from_millis(1));
-        assert_eq!(ev2.abs_capture_clock_offset, None);
+        assert_eq!(act.clock_offset, None);
     }
 
     #[test]
@@ -1360,8 +1367,10 @@ mod test {
         let mut exts = ExtensionMap::empty();
         exts.set(5, Extension::AbsoluteCaptureTime);
         let ev = ExtensionValues {
-            abs_capture_time: Some(now),
-            abs_capture_clock_offset: Some(clock_offset),
+            abs_capture_time: Some(AbsCaptureTime {
+                capture_time: now,
+                clock_offset: Some(clock_offset),
+            }),
             ..Default::default()
         };
 
@@ -1371,18 +1380,18 @@ mod test {
         let mut ev2 = ExtensionValues::default();
         exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
 
-        let now2 = ev2.abs_capture_time.unwrap();
+        let act = ev2.abs_capture_time.unwrap();
 
         // Allow for small rounding errors in NTP conversion
-        let abs = if now > now2 {
-            now.duration_since(now2)
+        let abs = if now > act.capture_time {
+            now.duration_since(act.capture_time)
         } else {
-            now2.duration_since(now)
+            act.capture_time.duration_since(now)
         }
         .unwrap();
 
         assert!(abs < Duration::from_millis(1));
-        assert_eq!(ev2.abs_capture_clock_offset, Some(clock_offset));
+        assert_eq!(act.clock_offset, Some(clock_offset));
     }
 
     #[test]
@@ -1393,8 +1402,10 @@ mod test {
         let mut exts = ExtensionMap::empty();
         exts.set(16, Extension::AbsoluteCaptureTime);
         let ev = ExtensionValues {
-            abs_capture_time: Some(now),
-            abs_capture_clock_offset: Some(clock_offset),
+            abs_capture_time: Some(AbsCaptureTime {
+                capture_time: now,
+                clock_offset: Some(clock_offset),
+            }),
             ..Default::default()
         };
 
@@ -1407,18 +1418,18 @@ mod test {
         let mut ev2 = ExtensionValues::default();
         exts.parse(&buf, ExtensionsForm::TwoByte, &mut ev2);
 
-        let now2 = ev2.abs_capture_time.unwrap();
+        let act = ev2.abs_capture_time.unwrap();
 
         // Allow for small rounding errors in NTP conversion
-        let abs = if now > now2 {
-            now.duration_since(now2)
+        let abs = if now > act.capture_time {
+            now.duration_since(act.capture_time)
         } else {
-            now2.duration_since(now)
+            act.capture_time.duration_since(now)
         }
         .unwrap();
 
         assert!(abs < Duration::from_millis(1));
-        assert_eq!(ev2.abs_capture_clock_offset, Some(clock_offset));
+        assert_eq!(act.clock_offset, Some(clock_offset));
     }
 
     #[test]
