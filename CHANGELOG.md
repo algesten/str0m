@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Add `abs-capture-time` RTP header extension #864
+
 # 0.16.2
 
   * Fix hot timeout loop with null pacer #863
