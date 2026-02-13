@@ -425,13 +425,19 @@ impl IceAgent {
     /// Local ice candidates.
     ///
     /// The candidates have their ufrag filled out to the local credentials.
-    pub fn local_candidates(&self) -> &[Candidate] {
-        &self.local_candidates
+    pub fn local_candidates(&self) -> impl Iterator<Item = Candidate> + '_ {
+        self.local_candidates
+            .iter()
+            .filter(|c| !c.discarded())
+            .cloned()
     }
 
     /// Remote ice candidates.
-    pub fn remote_candidates(&self) -> &[Candidate] {
-        &self.remote_candidates
+    pub fn remote_candidates(&self) -> impl Iterator<Item = Candidate> + '_ {
+        self.remote_candidates
+            .iter()
+            .filter(|c| !c.discarded())
+            .cloned()
     }
 
     /// Determines whether any remote candidates match the specified address and
@@ -2303,6 +2309,32 @@ mod test {
         assert!(!events.contains(&IceAgentEvent::IceConnectionStateChange(
             IceConnectionState::Disconnected
         )));
+    }
+
+    #[test]
+    fn discarded_local_candidates_are_not_returned() {
+        let mut agent = new_test_agent();
+        let host1 = Candidate::host(ipv4_1(), "udp").unwrap();
+        let host2 = Candidate::host(ipv4_2(), "udp").unwrap();
+
+        let host1 = agent.add_local_candidate(host1.clone()).unwrap().clone();
+        let host2 = agent.add_local_candidate(host2.clone()).unwrap().clone();
+        agent.invalidate_candidate(&host1);
+
+        assert_eq!(agent.local_candidates().collect::<Vec<_>>(), vec![host2]);
+    }
+
+    #[test]
+    fn discarded_remote_candidates_are_not_returned() {
+        let mut agent = new_test_agent();
+        let host1 = Candidate::host(ipv4_1(), "udp").unwrap();
+        let host2 = Candidate::host(ipv4_2(), "udp").unwrap();
+
+        agent.add_remote_candidate(host1.clone());
+        agent.add_remote_candidate(host2.clone());
+        agent.invalidate_candidate(&host1);
+
+        assert_eq!(agent.remote_candidates().collect::<Vec<_>>(), vec![host2]);
     }
 
     fn make_serialized_binding_request(
