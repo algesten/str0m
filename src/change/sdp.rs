@@ -1422,7 +1422,7 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
                 // If we are performing an ICE restart and we are keeping the same
                 // candidates we need to use ufrag from the new ICE credentials
                 // in our offer.
-                let mut new_candidates = rtc.ice.local_candidates().to_vec();
+                let mut new_candidates = rtc.ice.local_candidates().collect::<Vec<_>>();
                 for c in &mut new_candidates {
                     c.set_ufrag(&new_creds.ufrag);
                 }
@@ -1434,7 +1434,7 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
         } else {
             (
                 rtc.ice.local_credentials().clone(),
-                rtc.ice.local_candidates().to_vec(),
+                rtc.ice.local_candidates().collect::<Vec<_>>(),
             )
         };
 
