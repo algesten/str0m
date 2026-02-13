@@ -779,8 +779,8 @@ impl Extension {
                     return None;
                 }
                 let ntp_64 = u64::from_be_bytes(buf[..8].try_into().unwrap());
-                let clock_offset = (buf.len() >= 16)
-                    .then(|| i64::from_be_bytes(buf[8..16].try_into().unwrap()));
+                let clock_offset =
+                    (buf.len() >= 16).then(|| i64::from_be_bytes(buf[8..16].try_into().unwrap()));
                 ev.abs_capture_time = Some(AbsCaptureTime {
                     capture_time: SystemTime::from_ntp_64(ntp_64),
                     clock_offset,
