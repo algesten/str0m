@@ -1030,9 +1030,7 @@ mod test {
                 "OnePacket",
                 vec![vec![0x01, 0x02]],
                 10,
-                vec![vec![
-                    0xEC, rands[0][0], rands[0][1], 0x10, 0x01, 0x01, 0x02,
-                ]],
+                vec![vec![0xEC, rands[0][0], rands[0][1], 0x10, 0x01, 0x01, 0x02]],
             ),
             (
                 // Inter-frame, 2 packets: MTU=9 → max_frag=1, tl0picidx=1
@@ -1061,9 +1059,7 @@ mod test {
                 vec![vec![0x01, 0x02, 0x03], vec![0x04]],
                 10,
                 vec![
-                    vec![
-                        0xE8, rands[0][0], rands[0][1], 0x10, 0x01, 0x01, 0x02,
-                    ],
+                    vec![0xE8, rands[0][0], rands[0][1], 0x10, 0x01, 0x01, 0x02],
                     vec![0xE4, rands[0][0], rands[0][1], 0x10, 0x01, 0x03],
                     vec![0xEC, rands[1][0], rands[1][1], 0x10, 0x02, 0x04],
                 ],
@@ -1181,7 +1177,11 @@ mod test {
         let keyframe = vec![0x82, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09];
         let packets = pck.packetize(12, &keyframe)?;
 
-        assert_eq!(packets.len(), 3, "10-byte keyframe at MTU=12 should produce 3 packets");
+        assert_eq!(
+            packets.len(),
+            3,
+            "10-byte keyframe at MTU=12 should produce 3 packets"
+        );
 
         // Packet 1: B=1, E=0, V=1 (keyframe first)
         // Flags: I=1,P=0,L=1,F=0,B=1,E=0,V=1,Z=0 = 0xAA
@@ -1209,7 +1209,11 @@ mod test {
 
         // Verify none exceed MTU
         for (i, pkt) in packets.iter().enumerate() {
-            assert!(pkt.len() <= 12, "Packet {i} exceeds MTU: {} > 12", pkt.len());
+            assert!(
+                pkt.len() <= 12,
+                "Packet {i} exceeds MTU: {} > 12",
+                pkt.len()
+            );
         }
 
         // Verify depacketizer round-trip: all 3 packets produce original payload
