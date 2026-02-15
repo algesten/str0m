@@ -425,7 +425,7 @@ impl IceAgent {
     /// Local ice candidates.
     ///
     /// The candidates have their ufrag filled out to the local credentials.
-    pub fn local_candidates(&self) -> impl Iterator<Item = Candidate> + '_ {
+    pub fn local_candidates(&self) -> impl Iterator<Item = Candidate> + Clone + '_ {
         self.local_candidates
             .iter()
             .filter(|c| !c.discarded())
@@ -433,7 +433,7 @@ impl IceAgent {
     }
 
     /// Remote ice candidates.
-    pub fn remote_candidates(&self) -> impl Iterator<Item = Candidate> + '_ {
+    pub fn remote_candidates(&self) -> impl Iterator<Item = Candidate> + Clone + '_ {
         self.remote_candidates
             .iter()
             .filter(|c| !c.discarded())
