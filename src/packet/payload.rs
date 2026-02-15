@@ -1,3 +1,5 @@
+use bytes::Bytes;
+
 use crate::format::CodecSpec;
 use crate::media::ToPayload;
 use crate::rtp_::Frequency;
@@ -60,7 +62,7 @@ impl Payloader {
                 marker,
                 ext_vals.clone(),
                 nackable,
-                data,
+                Bytes::from(data),
             )?;
         }
 

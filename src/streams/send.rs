@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
+use bytes::Bytes;
+
 use crate::error::PacketError;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
@@ -253,6 +255,9 @@ impl StreamTx {
     ///              audio this is always false. For temporal encoded video, some packets are discardable
     ///              and this flag should be set accordingly.
     /// * `payload` RTP packet payload, without header.
+    ///   Accepts `Vec<u8>`, `Bytes`, `&'static [u8]`, or any type implementing `Into<Bytes>`.
+    ///   When forwarding to multiple subscribers, pass `Bytes` and clone it — cloning `Bytes`
+    ///   is O(1) (atomic refcount increment) instead of a full heap allocation + memcpy.
     #[allow(clippy::too_many_arguments)]
     pub fn write_rtp(
         &mut self,
@@ -263,8 +268,9 @@ impl StreamTx {
         marker: bool,
         ext_vals: ExtensionValues,
         nackable: bool,
-        payload: Vec<u8>,
+        payload: impl Into<Bytes>,
     ) -> Result<(), PacketError> {
+        let payload = payload.into();
         let first_call = self.rtp_and_wallclock.is_none();
 
         if first_call && seq_no.roc() > 0 {

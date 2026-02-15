@@ -75,6 +75,8 @@ impl RtxCache {
 
 #[cfg(test)]
 mod test {
+    use bytes::Bytes;
+
     use crate::rtp_::MediaTime;
     use crate::rtp_::RtpHeader;
 
@@ -89,7 +91,7 @@ mod test {
             header: RtpHeader::default(),
             seq_no: seq_no.into(),
             time: MediaTime::from_90khz(0),
-            payload: millis.to_be_bytes().to_vec(),
+            payload: Bytes::from(millis.to_be_bytes().to_vec()),
             timestamp: after(now, millis),
             last_sender_info: None,
             nackable: true,

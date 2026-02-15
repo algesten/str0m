@@ -3,6 +3,8 @@ use std::fmt::{self};
 use std::time::Duration;
 use std::time::Instant;
 
+use bytes::Bytes;
+
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media, SenderFeedback};
@@ -61,7 +63,10 @@ pub struct RtpPacket {
     pub header: RtpHeader,
 
     /// RTP payload. This contains no header.
-    pub payload: Vec<u8>,
+    ///
+    /// Uses `bytes::Bytes` for zero-copy forwarding: cloning is O(1) via
+    /// atomic reference counting instead of a full heap allocation + memcpy.
+    pub payload: Bytes,
 
     /// str0m server timestamp.
     ///
@@ -112,7 +117,7 @@ impl RtpPacket {
                 payload_type: BLANK_PACKET_DEFAULT_PT,
                 ..Default::default()
             },
-            payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
+            payload: Bytes::new(), // This payload is never used. See RtpHeader::create_padding_packet
             nackable: false,
             last_sender_info: None,
             timestamp: already_happened(),

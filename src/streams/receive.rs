@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
+
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::MidRid;
 use crate::rtp_::{extend_u32, Bitrate, DlrrItem, ExtendedReport};
@@ -467,7 +469,7 @@ impl StreamRx {
             seq_no,
             time,
             header,
-            payload: data,
+            payload: Bytes::from(data),
             nackable: false,
             last_sender_info: self.sender_info.as_ref().map(|l| l.info),
             timestamp: now,
