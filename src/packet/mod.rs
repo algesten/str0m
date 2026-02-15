@@ -9,6 +9,7 @@ use crate::sdp::MediaType;
 use crate::rtp::vla::encode_leb_u63;
 
 mod av1;
+pub use av1::detect_av1_keyframe;
 pub use av1::Av1CodecExtra;
 use av1::{Av1Depacketizer, Av1Packetizer};
 
@@ -34,10 +35,12 @@ mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
+pub use vp8::detect_vp8_keyframe;
 pub use vp8::Vp8CodecExtra;
 pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
 mod vp9;
+pub use vp9::detect_vp9_keyframe;
 pub use vp9::Vp9CodecExtra;
 use vp9::{Vp9Depacketizer, Vp9Packetizer};
 

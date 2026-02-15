@@ -26,6 +26,61 @@ pub struct Vp8CodecExtra {
     pub is_keyframe: bool,
 }
 
+/// Detect whether a VP8 RTP payload contains a keyframe.
+///
+/// Parses the VP8 RTP payload descriptor (RFC 7741) to skip past the
+/// variable-length header, then checks the P bit in the VP8 payload header.
+/// P=0 means keyframe, P=1 means interframe.
+///
+/// Returns `true` only for the first packet of a keyframe (S=1, PID=0).
+pub fn detect_vp8_keyframe(payload: &[u8]) -> bool {
+    if payload.is_empty() {
+        return false;
+    }
+    let b0 = payload[0];
+    let s = (b0 & 0x10) >> 4; // Start of VP8 partition
+    let pid = b0 & 0x07; // Partition index
+                         // Only the first packet of a frame (S=1, PID=0) contains the payload header
+    if s != 1 || pid != 0 {
+        return false;
+    }
+    let x = (b0 & 0x80) >> 7; // Extension bit
+    let mut idx = 1;
+    if x == 1 {
+        if idx >= payload.len() {
+            return false;
+        }
+        let ext = payload[idx];
+        idx += 1;
+        let i = (ext & 0x80) >> 7; // PictureID present
+        let l = (ext & 0x40) >> 6; // TL0PICIDX present
+        let t = (ext & 0x20) >> 5; // TID present
+        let k = (ext & 0x10) >> 4; // KEYIDX present
+        if i == 1 {
+            if idx >= payload.len() {
+                return false;
+            }
+            if payload[idx] & 0x80 != 0 {
+                idx += 2; // 16-bit PictureID
+            } else {
+                idx += 1; // 7-bit PictureID
+            }
+        }
+        if l == 1 {
+            idx += 1; // tl0picidx
+        }
+        if t == 1 || k == 1 {
+            idx += 1; // TID/KEYIDX
+        }
+    }
+    if idx >= payload.len() {
+        return false;
+    }
+    // VP8 Payload Header: P bit is bit 0 of the first byte
+    // P=0 → keyframe, P=1 → interframe
+    payload[idx] & 0x01 == 0
+}
+
 /// Packetizes VP8 RTP packets.
 ///
 /// ## Unversioned API surface
@@ -595,5 +650,59 @@ mod test {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_detect_vp8_keyframe() {
+        // Empty payload
+        assert!(!detect_vp8_keyframe(&[]));
+
+        // Minimal keyframe: S=1, PID=0, no extensions, P=0
+        // Byte 0: X=0, R=0, N=0, S=1, PID=0 → 0x10
+        // Byte 1: VP8 payload header with P=0 (keyframe) → 0x00
+        assert!(detect_vp8_keyframe(&[0x10, 0x00]));
+
+        // Minimal interframe: S=1, PID=0, no extensions, P=1
+        // Byte 1: VP8 payload header with P=1 → 0x01
+        assert!(!detect_vp8_keyframe(&[0x10, 0x01]));
+
+        // Not the first packet (S=0) — cannot detect keyframe
+        assert!(!detect_vp8_keyframe(&[0x00, 0x00]));
+
+        // Continuation packet (PID != 0)
+        assert!(!detect_vp8_keyframe(&[0x11, 0x00]));
+
+        // With extension (X=1), 7-bit PictureID, keyframe
+        // Byte 0: X=1, S=1, PID=0 → 0x90
+        // Byte 1: I=1, L=0, T=0, K=0 → 0x80
+        // Byte 2: 7-bit PictureID (M=0) → 0x42
+        // Byte 3: VP8 payload header P=0 → 0x00
+        assert!(detect_vp8_keyframe(&[0x90, 0x80, 0x42, 0x00]));
+
+        // With extension, 7-bit PictureID, interframe
+        assert!(!detect_vp8_keyframe(&[0x90, 0x80, 0x42, 0x01]));
+
+        // With extension, 16-bit PictureID (M=1), keyframe
+        // Byte 2: M=1 → 0x80 | PID_high
+        // Byte 3: PID_low
+        // Byte 4: VP8 payload header P=0
+        assert!(detect_vp8_keyframe(&[0x90, 0x80, 0x80, 0x42, 0x00]));
+
+        // With all extensions: I=1(16-bit), L=1, T=1
+        // Byte 0: X=1, S=1 → 0x90
+        // Byte 1: I=1, L=1, T=1 → 0xE0
+        // Byte 2-3: 16-bit PictureID → 0x80, 0x42
+        // Byte 4: TL0PICIDX
+        // Byte 5: TID/KEYIDX
+        // Byte 6: VP8 payload header P=0
+        assert!(detect_vp8_keyframe(&[
+            0x90, 0xE0, 0x80, 0x42, 0x01, 0x00, 0x00
+        ]));
+
+        // Truncated: extension says PictureID but no bytes left
+        assert!(!detect_vp8_keyframe(&[0x90, 0x80]));
+
+        // Truncated: header consumed all bytes
+        assert!(!detect_vp8_keyframe(&[0x90, 0x80, 0x42]));
     }
 }
