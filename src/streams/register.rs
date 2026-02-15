@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp_::{Nack, ReceptionReport, SeqNo};
 
@@ -82,7 +82,7 @@ impl ReceiverRegister {
             self.first = Some(seq);
         }
 
-        let new = self.nack.update(seq);
+        let new = self.nack.update(seq, arrival);
 
         if new {
             self.count += 1;
@@ -94,8 +94,17 @@ impl ReceiverRegister {
     }
 
     /// Generates a NACK report
-    pub fn nack_report(&mut self) -> Option<impl Iterator<Item = Nack>> {
-        self.nack.nack_reports()
+    pub fn nack_report(
+        &mut self,
+        now: Instant,
+        rtt: Duration,
+    ) -> Option<impl Iterator<Item = Nack>> {
+        self.nack.nack_reports(now, rtt)
+    }
+
+    /// Returns the next time a NACK needs to be sent, if any
+    pub fn next_nack_time(&self, now: Instant, rtt: Duration) -> Option<Instant> {
+        self.nack.next_nack_time(now, rtt)
     }
 
     /// Create a new reception report.

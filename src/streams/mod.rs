@@ -404,6 +404,7 @@ impl Streams {
         !self.streams_rx.is_empty()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_timeout(
         &mut self,
         now: Instant,
@@ -412,6 +413,7 @@ impl Streams {
         medias: &[Media],
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
+        twcc_rtt: Option<Duration>,
     ) {
         self.mids_to_report.clear(); // Clear for checking StreamRx.
         for stream in self.streams_rx.values() {
@@ -430,7 +432,7 @@ impl Streams {
             }
 
             if do_nack {
-                stream.maybe_create_nack(sender_ssrc, feedback);
+                stream.maybe_create_nack(now, sender_ssrc, feedback, twcc_rtt);
             }
 
             stream.handle_timeout(now);
@@ -687,6 +689,11 @@ impl Streams {
             self.any_nack_active = Some(self.streams_rx.values().any(|s| s.nack_enabled()));
         }
         self.any_nack_active.unwrap()
+    }
+
+    pub(crate) fn nack_at(&self) -> Option<Instant> {
+        // Return the earliest NACK time across all streams
+        self.streams_rx.values().filter_map(|s| s.nack_at()).min()
     }
 
     fn rx_lookup_at(&self) -> Instant {
