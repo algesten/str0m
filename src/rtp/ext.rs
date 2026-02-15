@@ -1071,6 +1071,13 @@ impl UserExtensionValues {
             .downcast()
             .ok()
     }
+
+    /// Remove a user extension value (by type).
+    pub fn remove<T: Send + Sync + 'static>(&mut self) {
+        if let Some(map) = &mut self.map {
+            map.remove(&TypeId::of::<T>());
+        }
+    }
 }
 
 impl UnwindSafe for UserExtensionValues {}
