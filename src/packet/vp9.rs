@@ -155,6 +155,21 @@ pub fn detect_vp9_keyframe_bitstream(payload: &[u8]) -> bool {
     frame_type == 0
 }
 
+/// Detect whether a VP9 RTP payload contains a keyframe by inspecting the P bit.
+///
+/// VP9 RTP descriptor byte 0: `I|P|L|F|B|E|V|Z`
+/// - P=0: independently decodable frame (keyframe)
+/// - P=1: inter-picture predicted frame
+///
+/// Works with both flexible (F=1) and non-flexible (F=0) mode packets.
+pub fn detect_vp9_keyframe(payload: &[u8]) -> bool {
+    if payload.is_empty() {
+        return false;
+    }
+    // P bit is bit 6 of byte 0. P=0 means keyframe.
+    (payload[0] & 0x40) == 0
+}
+
 /// Packetizes VP9 RTP packets.
 ///
 /// Supports both non-flexible mode (F=0) and flexible mode (F=1), controlled
@@ -1505,5 +1520,27 @@ mod test {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_detect_vp9_keyframe() {
+        // Empty payload
+        assert!(!detect_vp9_keyframe(&[]));
+
+        // VP9 RTP descriptor byte 0: I|P|L|F|B|E|V|Z
+        // P=0 (bit 6 clear) → keyframe
+        // P=1 (bit 6 set) → inter-frame
+
+        // Keyframes (P=0)
+        assert!(detect_vp9_keyframe(&[0x80])); // I=1
+        assert!(detect_vp9_keyframe(&[0xA0])); // I=1, L=1
+        assert!(detect_vp9_keyframe(&[0xAE])); // I=1, L=1, B=1, E=1, V=1
+        assert!(detect_vp9_keyframe(&[0x00])); // all flags clear
+
+        // Inter-frames (P=1)
+        assert!(!detect_vp9_keyframe(&[0xE8])); // I=1, P=1, L=1, B=1
+        assert!(!detect_vp9_keyframe(&[0xEC])); // I=1, P=1, L=1, B=1, E=1
+        assert!(!detect_vp9_keyframe(&[0x40])); // P=1 only
+        assert!(!detect_vp9_keyframe(&[0xD5])); // I=1, P=1, F=1, E=1, Z=1
     }
 }

@@ -6,6 +6,21 @@ const OBU_TYPE_MASK: u8 = 0b0111_1000;
 const AGGREGATION_HEADER_SIZE: usize = 1;
 const MAX_NUM_OBUS_TO_OMTI_SIZE: usize = 3;
 
+/// Detect whether an AV1 RTP payload contains a keyframe.
+///
+/// Checks the N bit (new coded video sequence) in the AV1 aggregation header.
+/// N=1 indicates the first packet of a keyframe (random access point).
+///
+/// AV1 aggregation header layout: `Z|Y|W W|N|reserved`
+/// - N (bit 3): 1 = new coded video sequence starts
+pub fn detect_av1_keyframe(payload: &[u8]) -> bool {
+    if payload.is_empty() {
+        return false;
+    }
+    // N bit is bit 3 of the aggregation header
+    payload[0] & 0x08 != 0
+}
+
 /// AV1 information describing the depacketized / packetized data
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Av1CodecExtra {
@@ -1202,5 +1217,27 @@ mod test {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_detect_av1_keyframe() {
+        // Empty
+        assert!(!detect_av1_keyframe(&[]));
+
+        // AV1 aggregation header: Z|Y|W W|N|reserved
+        // N bit is bit 3 (0x08)
+
+        // N=1 → keyframe
+        assert!(detect_av1_keyframe(&[0x08]));
+        assert!(detect_av1_keyframe(&[0x18])); // Z=0,Y=0,W=01,N=1
+        assert!(detect_av1_keyframe(&[0x78])); // Z=0,Y=1,W=11,N=1
+        assert!(detect_av1_keyframe(&[0x88])); // Z=1,Y=0,W=00,N=1
+        assert!(detect_av1_keyframe(&[0x0F])); // N=1, reserved bits set
+
+        // N=0 → not a keyframe
+        assert!(!detect_av1_keyframe(&[0x00]));
+        assert!(!detect_av1_keyframe(&[0x10])); // W=01, N=0
+        assert!(!detect_av1_keyframe(&[0x70])); // Y=1, W=11, N=0
+        assert!(!detect_av1_keyframe(&[0xF0])); // Z=1, Y=1, W=11, N=0
     }
 }
