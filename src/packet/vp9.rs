@@ -2,8 +2,9 @@ use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 use std::fmt;
 
-/// Flexible mode 15 bit picture ID
-const VP9HEADER_SIZE: usize = 3;
+/// Max VP9 RTP payload descriptor size in non-flexible mode:
+/// flags(1) + 15-bit PID(2) + L byte(1) + tl0picidx(1) + SS(3 on keyframes) = 8
+const VP9HEADER_SIZE: usize = 8;
 const MAX_SPATIAL_LAYERS: usize = 3;
 const MAX_VP9REF_PICS: usize = 3;
 
@@ -100,10 +101,59 @@ pub struct Vp9CodecExtra {
     pub is_keyframe: bool,
 }
 
-/// Packetizes VP9 RTP packets.
+/// Detect whether a raw VP9 frame is a keyframe by inspecting the bitstream header.
+///
+/// VP9 uncompressed header (profile 0/1):
+///   `frame_marker(2) | profile_low(1) | profile_high(1) | show_existing(1) | frame_type(1)`
+///
+/// VP9 uncompressed header (profile 2/3):
+///   `frame_marker(2) | profile_low(1) | profile_high(1) | reserved(1) | show_existing(1) | frame_type(1)`
+///
+/// - `frame_marker` must be `0b10`
+/// - `frame_type`: 0 = KEY_FRAME, 1 = NON_KEY_FRAME
+/// - `show_existing_frame` = 1 references a previously decoded frame (not a real keyframe)
+///
+/// This function works on raw VP9 bitstream data (without RTP descriptor).
+pub fn detect_vp9_keyframe_bitstream(payload: &[u8]) -> bool {
+    if payload.is_empty() {
+        return false;
+    }
+    let b = payload[0];
+    // frame_marker must be 0b10 (bits 7-6)
+    if (b & 0xC0) != 0x80 {
+        return false;
+    }
+    // profile_high_bit is at bit 4
+    let profile_high = (b >> 4) & 1;
+    let (show_existing_frame, frame_type) = if profile_high == 1 {
+        // Profile 2 or 3: reserved_zero at bit 3, show_existing at bit 2, frame_type at bit 1
+        ((b >> 2) & 1, (b >> 1) & 1)
+    } else {
+        // Profile 0 or 1: show_existing at bit 3, frame_type at bit 2
+        ((b >> 3) & 1, (b >> 2) & 1)
+    };
+    // show_existing_frame references a previously decoded frame, not a real keyframe
+    if show_existing_frame != 0 {
+        return false;
+    }
+    // frame_type: 0 = KEY_FRAME
+    frame_type == 0
+}
+
+/// Packetizes VP9 RTP packets using non-flexible mode (F=0).
+///
+/// Non-flexible mode is required for broad browser compatibility — Safari and
+/// older Chrome versions drop inter-frames when flexible mode (F=1) is used.
+///
+/// Every packet includes layer indices (L=1) with `tl0picidx` for temporal
+/// reference tracking. Keyframe first-packets also include a scalability
+/// structure (V=1) describing the GOF.
 #[derive(Default, Clone)]
 pub struct Vp9Packetizer {
     picture_id: u16,
+    /// Temporal layer 0 picture index — increments on every frame (since all
+    /// frames are packetized as TID=0). Used in L byte for non-flexible mode.
+    tl0picidx: u8,
     initialized: bool,
     #[cfg(test)]
     initial_picture_id: u16,
@@ -113,52 +163,35 @@ impl fmt::Debug for Vp9Packetizer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Vp9Packetizer")
             .field("picture_id", &self.picture_id)
+            .field("tl0picidx", &self.tl0picidx)
             .field("initialized", &self.initialized)
             .finish()
     }
 }
 
 impl Packetizer for Vp9Packetizer {
-    /// Packetize some VP9 payload across one or more byte arrays
+    /// Packetize a VP9 frame into one or more RTP packets using non-flexible mode (F=0).
+    ///
+    /// ```text
+    /// Non-flexible mode (F=0) — draft-ietf-payload-vp9-13
+    ///
+    ///        0 1 2 3 4 5 6 7
+    ///       +-+-+-+-+-+-+-+-+
+    ///       |I|P|L|F|B|E|V|Z| (REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  I:   |M| PICTURE ID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  M:   | EXTENDED PID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  L:   | tid |U| SID |D| (CONDITIONALLY RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///       |   tl0picidx   | (CONDITIONALLY REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  V:   | SS            |
+    ///       | ..            |
+    ///       +-+-+-+-+-+-+-+-+
+    /// ```
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
-        /*
-         * https://www.ietf.org/id/draft-ietf-payload-vp9-13.txt
-         *
-         * Flexible mode (F=1)
-         *        0 1 2 3 4 5 6 7
-         *       +-+-+-+-+-+-+-+-+
-         *       |I|P|L|F|B|E|V|Z| (REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  I:   |M| PICTURE ID  | (REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  M:   | EXTENDED PID  | (RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *  L:   | tid |U| SID |D| (CONDITIONALLY RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+                             -\
-         *  P,F: | P_DIFF      |N| (CONDITIONALLY REQUIRED)    - up to 3 times
-         *       +-+-+-+-+-+-+-+-+                             -/
-         *  V:   | SS            |
-         *       | ..            |
-         *       +-+-+-+-+-+-+-+-+
-         *
-         * Non-flexible mode (F=0)
-         *        0 1 2 3 4 5 6 7
-         *       +-+-+-+-+-+-+-+-+
-         *       |I|P|L|F|B|E|V|Z| (REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  I:   |M| PICTURE ID  | (RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *  M:   | EXTENDED PID  | (RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *  L:   | tid |U| SID |D| (CONDITIONALLY RECOMMENDED)
-         *       +-+-+-+-+-+-+-+-+
-         *       |   tl0picidx   | (CONDITIONALLY REQUIRED)
-         *       +-+-+-+-+-+-+-+-+
-         *  V:   | SS            |
-         *       | ..            |
-         *       +-+-+-+-+-+-+-+-+
-         */
-
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);
         }
@@ -176,6 +209,15 @@ impl Packetizer for Vp9Packetizer {
             self.initialized = true;
         }
 
+        // Detect keyframe from VP9 bitstream to set P flag correctly.
+        let is_keyframe = detect_vp9_keyframe_bitstream(payload);
+
+        // tl0picidx increments on every TID=0 frame. Since we always emit TID=0,
+        // this increments on every frame per draft-ietf-payload-vp9, Section 6.3.
+        self.tl0picidx = self.tl0picidx.wrapping_add(1);
+
+        // VP9HEADER_SIZE is the max header (8 bytes, accounting for SS on keyframes).
+        // This ensures we never exceed MTU even on keyframe first-packets.
         let max_fragment_size = mtu as isize - VP9HEADER_SIZE as isize;
         let mut payloads = vec![];
         let mut payload_data_remaining = payload.len();
@@ -188,19 +230,50 @@ impl Packetizer for Vp9Packetizer {
         while payload_data_remaining > 0 {
             let current_fragment_size =
                 std::cmp::min(max_fragment_size as usize, payload_data_remaining);
-            let mut out = Vec::with_capacity(VP9HEADER_SIZE + current_fragment_size);
-            let mut buf = [0u8; VP9HEADER_SIZE];
-            buf[0] = 0x90; // F=1 I=1
-            if payload_data_index == 0 {
-                buf[0] |= 0x08; // B=1
-            }
-            if payload_data_remaining == current_fragment_size {
-                buf[0] |= 0x04; // E=1
-            }
-            buf[1] = (self.picture_id >> 8) as u8 | 0x80;
-            buf[2] = (self.picture_id & 0xFF) as u8;
+            let is_first = payload_data_index == 0;
+            let is_last = payload_data_remaining == current_fragment_size;
 
-            out.extend_from_slice(&buf[..]);
+            // Non-keyframe: 5 bytes (flags + 15-bit PID + L + tl0picidx)
+            // Keyframe first packet: 8 bytes (+ 3 bytes SS data)
+            let ss_size = if is_keyframe && is_first { 3 } else { 0 };
+            let header_size = 5 + ss_size;
+            let mut out = Vec::with_capacity(header_size + current_fragment_size);
+
+            // Byte 0: I|P|L|F|B|E|V|Z
+            let mut flags = 0xA0u8; // I=1, L=1 (F=0 implicit)
+            if !is_keyframe {
+                flags |= 0x40; // P=1 for inter-predicted frames
+            }
+            if is_first {
+                flags |= 0x08; // B=1 (beginning of frame)
+            }
+            if is_last {
+                flags |= 0x04; // E=1 (end of frame)
+            }
+            if is_keyframe && is_first {
+                flags |= 0x02; // V=1 (scalability structure present)
+            }
+            out.push(flags);
+
+            // Bytes 1-2: 15-bit picture ID (M=1)
+            out.push((self.picture_id >> 8) as u8 | 0x80);
+            out.push((self.picture_id & 0xFF) as u8);
+
+            // Bytes 3-4: Layer indices (L=1, non-flexible mode)
+            // TID(3)|U(1)|SID(3)|D(1) = TID=0, U=1, SID=0, D=0
+            out.push(0x10);
+            // tl0picidx (required when F=0 and L=1)
+            out.push(self.tl0picidx);
+
+            // SS data on keyframe first packet (V=1)
+            if is_keyframe && is_first {
+                // N_S(3)|Y(1)|G(1)|RES(3) = N_S=0 (1 spatial layer), Y=0, G=1
+                out.push(0x08);
+                // N_G = 1 (1 picture in GOF)
+                out.push(0x01);
+                // GOF[0]: TID(3)|U(1)|R(2)|RES(2) = TID=0, U=0, R=0
+                out.push(0x00);
+            }
 
             out.extend_from_slice(
                 &payload[payload_data_index..payload_data_index + current_fragment_size],
@@ -934,43 +1007,65 @@ mod test {
             r0 += 1;
         }
 
+        // Non-flexible mode (F=0) header layout:
+        //   Byte 0: I|P|L|F|B|E|V|Z  (I=1, L=1 always set)
+        //   Bytes 1-2: 15-bit PID (M=1)
+        //   Byte 3: TID(3)|U(1)|SID(3)|D(1) = 0x10 (TID=0, U=1, SID=0, D=0)
+        //   Byte 4: tl0picidx (wrapping u8, increments every frame)
+        //   [Bytes 5-7]: SS data on keyframe first packet only
+        //
+        // Flags byte (non-keyframe): I=1,P=1,L=1,F=0 = 0xE0 base
+        //   + B=0x08, E=0x04
+        //   B+E: 0xEC, B only: 0xE8, E only: 0xE4, neither: 0xE0
+        //
+        // Test payloads (0x01, 0x02, etc.) don't match VP9 bitstream keyframe
+        // pattern (frame_marker != 0b10), so they are treated as inter-frames (P=1).
+        // tl0picidx starts at 0 and increments by 1 per frame.
         let tests: Vec<(&str, Vec<Vec<u8>>, usize, Vec<Vec<u8>>)> = vec![
             ("NilPayload", vec![vec![]], 100, vec![]),
             ("SmallMTU", vec![vec![0x00, 0x00]], 1, vec![]),
             ("NegativeMTU", vec![vec![0x00, 0x00]], 0, vec![]),
             (
+                // Inter-frame, single packet: B+E set, tl0picidx=1
                 "OnePacket",
                 vec![vec![0x01, 0x02]],
                 10,
-                vec![vec![0x9C, rands[0][0], rands[0][1], 0x01, 0x02]],
+                vec![vec![
+                    0xEC, rands[0][0], rands[0][1], 0x10, 0x01, 0x01, 0x02,
+                ]],
             ),
             (
+                // Inter-frame, 2 packets: MTU=9 → max_frag=1, tl0picidx=1
                 "TwoPackets",
                 vec![vec![0x01, 0x02]],
-                4,
+                9,
                 vec![
-                    vec![0x98, rands[0][0], rands[0][1], 0x01],
-                    vec![0x94, rands[0][0], rands[0][1], 0x02],
+                    vec![0xE8, rands[0][0], rands[0][1], 0x10, 0x01, 0x01],
+                    vec![0xE4, rands[0][0], rands[0][1], 0x10, 0x01, 0x02],
                 ],
             ),
             (
+                // Inter-frame, 3 packets: MTU=9 → max_frag=1, tl0picidx=1
                 "ThreePackets",
                 vec![vec![0x01, 0x02, 0x03]],
-                4,
+                9,
                 vec![
-                    vec![0x98, rands[0][0], rands[0][1], 0x01],
-                    vec![0x90, rands[0][0], rands[0][1], 0x02],
-                    vec![0x94, rands[0][0], rands[0][1], 0x03],
+                    vec![0xE8, rands[0][0], rands[0][1], 0x10, 0x01, 0x01],
+                    vec![0xE0, rands[0][0], rands[0][1], 0x10, 0x01, 0x02],
+                    vec![0xE4, rands[0][0], rands[0][1], 0x10, 0x01, 0x03],
                 ],
             ),
             (
+                // Two inter-frames: frame1 tl0picidx=1, frame2 tl0picidx=2
                 "TwoFramesFourPackets",
                 vec![vec![0x01, 0x02, 0x03], vec![0x04]],
-                5,
+                10,
                 vec![
-                    vec![0x98, rands[0][0], rands[0][1], 0x01, 0x02],
-                    vec![0x94, rands[0][0], rands[0][1], 0x03],
-                    vec![0x9C, rands[1][0], rands[1][1], 0x04],
+                    vec![
+                        0xE8, rands[0][0], rands[0][1], 0x10, 0x01, 0x01, 0x02,
+                    ],
+                    vec![0xE4, rands[0][0], rands[0][1], 0x10, 0x01, 0x03],
+                    vec![0xEC, rands[1][0], rands[1][1], 0x10, 0x02, 0x04],
                 ],
             ),
         ];
@@ -996,7 +1091,7 @@ mod test {
             };
             let mut p_prev = Vp9Depacketizer::default();
             for i in 0..0x8000 {
-                let res = pck.packetize(4, &[0x01])?;
+                let res = pck.packetize(9, &[0x01])?;
                 let mut p = Vp9Depacketizer::default();
                 let mut payload = Vec::new();
                 let mut extra = CodecExtra::None;
@@ -1022,6 +1117,170 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_vp9_packetizer_keyframe() -> Result<(), PacketError> {
+        let mut pck = Vp9Packetizer {
+            initial_picture_id: 100,
+            ..Default::default()
+        };
+
+        // VP9 profile 0 keyframe bitstream: 0x82 = 0b10_00_0_0_10
+        // frame_marker=10, profile=00, show_existing=0, frame_type=0 (KEY)
+        let keyframe = vec![0x82, 0xAA, 0xBB];
+        let packets = pck.packetize(20, &keyframe)?;
+
+        assert_eq!(packets.len(), 1);
+        let pkt = &packets[0];
+        // Flags: I=1,P=0,L=1,F=0,B=1,E=1,V=1,Z=0 = 0xAE
+        assert_eq!(pkt[0], 0xAE, "Keyframe flags should be 0xAE");
+        // PID
+        assert_eq!(pkt[1], (100 >> 8) as u8 | 0x80);
+        assert_eq!(pkt[2], 100 & 0xFF);
+        // L byte: TID=0, U=1, SID=0, D=0
+        assert_eq!(pkt[3], 0x10);
+        // tl0picidx = 1 (first frame)
+        assert_eq!(pkt[4], 1);
+        // SS: N_S=0, Y=0, G=1 → 0x08
+        assert_eq!(pkt[5], 0x08);
+        // N_G=1
+        assert_eq!(pkt[6], 0x01);
+        // GOF[0]: TID=0, U=0, R=0
+        assert_eq!(pkt[7], 0x00);
+        // Payload
+        assert_eq!(&pkt[8..], &keyframe[..]);
+
+        // Now an inter-frame: 0x84 = 0b10_00_0_1_00 (frame_type=1)
+        let inter = vec![0x84, 0xCC];
+        let packets = pck.packetize(20, &inter)?;
+        assert_eq!(packets.len(), 1);
+        let pkt = &packets[0];
+        // Flags: I=1,P=1,L=1,F=0,B=1,E=1,V=0,Z=0 = 0xEC
+        assert_eq!(pkt[0], 0xEC, "Inter-frame flags should be 0xEC");
+        // tl0picidx = 2 (second frame, both TID=0 so both increment)
+        assert_eq!(pkt[4], 2);
+        // No SS data — payload starts at byte 5
+        assert_eq!(&pkt[5..], &inter[..]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_vp9_packetizer_fragmented_keyframe() -> Result<(), PacketError> {
+        let mut pck = Vp9Packetizer {
+            initial_picture_id: 50,
+            ..Default::default()
+        };
+
+        // VP9 profile 0 keyframe: 0x82 = frame_marker=10, profile=00, show_existing=0, frame_type=0
+        // 10 bytes of payload, MTU=12 → max_frag = 12 - 8 = 4
+        // First packet: 8-byte header (with SS) + 4 bytes payload = 12 ≤ MTU
+        // Second packet: 5-byte header + 4 bytes payload = 9 ≤ MTU
+        // Third packet: 5-byte header + 2 bytes payload = 7 ≤ MTU
+        let keyframe = vec![0x82, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09];
+        let packets = pck.packetize(12, &keyframe)?;
+
+        assert_eq!(packets.len(), 3, "10-byte keyframe at MTU=12 should produce 3 packets");
+
+        // Packet 1: B=1, E=0, V=1 (keyframe first)
+        // Flags: I=1,P=0,L=1,F=0,B=1,E=0,V=1,Z=0 = 0xAA
+        assert_eq!(packets[0][0], 0xAA);
+        assert_eq!(packets[0].len(), 12); // 8-byte header + 4-byte payload
+        assert_eq!(packets[0][3], 0x10); // L byte
+        assert_eq!(packets[0][4], 1); // tl0picidx
+        assert_eq!(packets[0][5], 0x08); // SS byte 1
+        assert_eq!(packets[0][6], 0x01); // SS byte 2 (N_G)
+        assert_eq!(packets[0][7], 0x00); // SS byte 3 (GOF[0])
+        assert_eq!(&packets[0][8..], &keyframe[0..4]); // payload
+
+        // Packet 2: B=0, E=0, V=0 (middle)
+        // Flags: I=1,P=0,L=1,F=0,B=0,E=0,V=0,Z=0 = 0xA0
+        assert_eq!(packets[1][0], 0xA0);
+        assert_eq!(packets[1].len(), 9); // 5-byte header + 4-byte payload
+        assert_eq!(packets[1][4], 1); // same tl0picidx
+        assert_eq!(&packets[1][5..], &keyframe[4..8]);
+
+        // Packet 3: B=0, E=1, V=0 (last)
+        // Flags: I=1,P=0,L=1,F=0,B=0,E=1,V=0,Z=0 = 0xA4
+        assert_eq!(packets[2][0], 0xA4);
+        assert_eq!(packets[2].len(), 7); // 5-byte header + 2-byte payload
+        assert_eq!(&packets[2][5..], &keyframe[8..10]);
+
+        // Verify none exceed MTU
+        for (i, pkt) in packets.iter().enumerate() {
+            assert!(pkt.len() <= 12, "Packet {i} exceeds MTU: {} > 12", pkt.len());
+        }
+
+        // Verify depacketizer round-trip: all 3 packets produce original payload
+        let mut full_payload = Vec::new();
+        let mut extra = CodecExtra::None;
+        for pkt in &packets {
+            let mut depkt = Vp9Depacketizer::default();
+            depkt.depacketize(pkt, &mut full_payload, &mut extra)?;
+        }
+        assert_eq!(full_payload, keyframe);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_vp9_tl0picidx_wrapping() -> Result<(), PacketError> {
+        let mut pck = Vp9Packetizer {
+            initial_picture_id: 0,
+            tl0picidx: 254, // Start near wrap point
+            ..Default::default()
+        };
+
+        // Frame 1: tl0picidx wraps 254 → 255
+        let packets = pck.packetize(20, &[0x01])?;
+        assert_eq!(packets[0][4], 255);
+
+        // Frame 2: tl0picidx wraps 255 → 0
+        let packets = pck.packetize(20, &[0x01])?;
+        assert_eq!(packets[0][4], 0);
+
+        // Frame 3: 0 → 1
+        let packets = pck.packetize(20, &[0x01])?;
+        assert_eq!(packets[0][4], 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_detect_vp9_keyframe_bitstream() {
+        // Empty payload
+        assert!(!detect_vp9_keyframe_bitstream(&[]));
+
+        // Invalid frame_marker (not 0b10)
+        assert!(!detect_vp9_keyframe_bitstream(&[0x00])); // frame_marker=00
+        assert!(!detect_vp9_keyframe_bitstream(&[0xC0])); // frame_marker=11
+        assert!(!detect_vp9_keyframe_bitstream(&[0x40])); // frame_marker=01
+
+        // Profile 0 keyframe: 10_00_0_0_xx = 0x80..0x83
+        assert!(detect_vp9_keyframe_bitstream(&[0x80]));
+        assert!(detect_vp9_keyframe_bitstream(&[0x82]));
+
+        // Profile 0 inter-frame: 10_00_0_1_xx = 0x84..0x87
+        assert!(!detect_vp9_keyframe_bitstream(&[0x84]));
+        assert!(!detect_vp9_keyframe_bitstream(&[0x86]));
+
+        // Profile 0 show_existing_frame=1: 10_00_1_x_xx = 0x88..0x8F
+        assert!(!detect_vp9_keyframe_bitstream(&[0x88]));
+        assert!(!detect_vp9_keyframe_bitstream(&[0x8C]));
+
+        // Profile 1 keyframe: 10_10_0_0_xx = 0xA0..0xA3
+        assert!(detect_vp9_keyframe_bitstream(&[0xA0]));
+
+        // Profile 1 inter-frame: 10_10_0_1_xx = 0xA4..0xA7
+        assert!(!detect_vp9_keyframe_bitstream(&[0xA4]));
+
+        // Profile 2 keyframe: 10_01_R_0_0_x
+        // 0x90 = 10_01_0_0_00 → profile_high=1, show_existing=0, frame_type=0
+        assert!(detect_vp9_keyframe_bitstream(&[0x90]));
+
+        // Profile 2 inter-frame: 10_01_0_0_1_0 = 0x92
+        assert!(!detect_vp9_keyframe_bitstream(&[0x92]));
     }
 
     #[test]
