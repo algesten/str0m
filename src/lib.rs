@@ -1391,14 +1391,15 @@ impl Rtc {
         Ok(())
     }
 
-    fn init_sctp(&mut self, client: bool) {
+    fn init_sctp(&mut self, client: bool, remote_max_message_size: Option<u32>) {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
         if self.sctp.is_inited() {
             return;
         }
 
-        self.sctp.init(client, self.last_now);
+        self.sctp
+            .init(client, self.last_now, remote_max_message_size);
     }
 
     /// Creates a new Mid that is not in the session already.

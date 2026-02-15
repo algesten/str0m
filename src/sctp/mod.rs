@@ -24,6 +24,12 @@ pub use error::SctpError;
 /// Bytes that can be buffered inside str0m across all streams.
 const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
 
+/// Maximum message size we advertise in SDP (what we can receive)
+pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
+
+/// Default max message size if remote doesn't advertise
+pub const DEFAULT_REMOTE_MAX_MESSAGE_SIZE: u32 = 64 * 1024;
+
 pub(crate) struct RtcSctp {
     state: RtcSctpState,
     endpoint: Endpoint,
@@ -34,6 +40,7 @@ pub(crate) struct RtcSctp {
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
     client: bool,
+    remote_max_message_size: u32,
 }
 
 /// This is okay because there is no way for a user of Rtc to interact with the Sctp subsystem
@@ -233,7 +240,12 @@ impl RtcSctp {
         // DTLS above MTU 1200: 1277
         // Let's try 1120, see if we can avoid warnings.
         config.max_payload_size(1120);
-        let server_config = ServerConfig::default();
+        let mut server_config = ServerConfig::default();
+
+        server_config.transport = Arc::new(
+            TransportConfig::default().with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE),
+        );
+
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
         let fake_addr = "1.1.1.1:5000".parse().unwrap();
 
@@ -247,6 +259,7 @@ impl RtcSctp {
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
             client: false,
+            remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
         }
     }
 
@@ -254,11 +267,15 @@ impl RtcSctp {
         self.state != RtcSctpState::Uninited
     }
 
-    pub fn init(&mut self, client: bool, now: Instant) {
+    pub fn init(&mut self, client: bool, now: Instant, remote_max_message_size: Option<u32>) {
         assert!(self.state == RtcSctpState::Uninited);
 
         self.client = client;
         self.last_now = now;
+
+        if let Some(max_msg_size) = remote_max_message_size {
+            self.remote_max_message_size = max_msg_size;
+        }
 
         if client {
             // For WebRTC, we never want to give up retransmitting
@@ -266,7 +283,9 @@ impl RtcSctp {
             // and SCTP should not give up until ICE gives up.
             let transport = TransportConfig::default()
                 .with_max_init_retransmits(None)
-                .with_max_data_retransmits(None);
+                .with_max_data_retransmits(None)
+                .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
+                .with_max_send_message_size(self.remote_max_message_size);
 
             let config = ClientConfig {
                 transport: Arc::new(transport),
@@ -538,6 +557,7 @@ impl RtcSctp {
 
         while let Some(e) = assoc.poll() {
             if let Event::Connected = e {
+                assoc.set_max_send_message_size(self.remote_max_message_size);
                 set_state(&mut self.state, RtcSctpState::Established);
                 return self.poll();
             }
@@ -790,6 +810,11 @@ impl RtcSctp {
             .iter()
             .find(|s| s.id == sctp_stream_id)
             .and_then(|s| s.config.as_ref())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remote_max_message_size(&self) -> u32 {
+        self.remote_max_message_size
     }
 }
 
