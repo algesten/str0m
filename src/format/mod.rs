@@ -2,7 +2,9 @@
 
 // These really don't belong anywhere, but I guess they're kind of related
 // to codecs etc.
-pub use crate::packet::{CodecExtra, H264CodecExtra, Vp8CodecExtra, Vp9CodecExtra};
+pub use crate::packet::{
+    CodecExtra, H264CodecExtra, Vp8CodecExtra, Vp9CodecExtra, Vp9PacketizerMode,
+};
 
 mod codec;
 mod codec_config;

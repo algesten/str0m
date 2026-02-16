@@ -1,4 +1,5 @@
 use crate::format::CodecSpec;
+use crate::format::Vp9PacketizerMode;
 use crate::media::ToPayload;
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::Frequency;
@@ -14,9 +15,9 @@ pub struct Payloader {
 }
 
 impl Payloader {
-    pub(crate) fn new(spec: CodecSpec) -> Self {
+    pub(crate) fn new(spec: CodecSpec, vp9_mode: Vp9PacketizerMode) -> Self {
         Payloader {
-            pack: spec.codec.into(),
+            pack: CodecPacketizer::new(spec.codec, vp9_mode),
             clock_rate: spec.clock_rate,
         }
     }

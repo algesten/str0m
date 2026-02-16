@@ -5,6 +5,7 @@ use crate::config::DtlsCert;
 use crate::crypto::dtls::DtlsVersion;
 use crate::crypto::CryptoProvider;
 use crate::format::CodecConfig;
+use crate::format::Vp9PacketizerMode;
 use crate::ice::IceCreds;
 use crate::rtp_::{Bitrate, Extension, ExtensionMap};
 use crate::Rtc;
@@ -44,6 +45,7 @@ pub struct RtcConfig {
     pub(crate) rtp_mode: bool,
     pub(crate) enable_raw_packets: bool,
     pub(crate) dtls_version: DtlsVersion,
+    pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
 }
 
 #[derive(Debug, Clone)]
@@ -555,6 +557,33 @@ impl RtcConfig {
         self.dtls_version
     }
 
+    /// Set the VP9 packetizer mode.
+    ///
+    /// VP9 supports two RTP payload descriptor formats:
+    ///
+    /// * [`Vp9PacketizerMode::NonFlexible`] (default) — 5-8 byte header with layer indices
+    ///   and scalability structure. Compatible with all major browsers including Safari.
+    /// * [`Vp9PacketizerMode::Flexible`] — minimal 3-byte header. Simpler but may cause
+    ///   issues with Safari which drops inter-frames.
+    pub fn set_vp9_packetizer_mode(mut self, mode: Vp9PacketizerMode) -> Self {
+        self.vp9_packetizer_mode = mode;
+        self
+    }
+
+    /// Returns the configured VP9 packetizer mode.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// # use str0m::format::Vp9PacketizerMode;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to NonFlexible.
+    /// assert_eq!(config.vp9_packetizer_mode(), Vp9PacketizerMode::NonFlexible);
+    /// ```
+    pub fn vp9_packetizer_mode(&self) -> Vp9PacketizerMode {
+        self.vp9_packetizer_mode
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self, start: Instant) -> Rtc {
         Rtc::new_from_config(self, start).expect("Failed to create Rtc from config")
@@ -589,6 +618,7 @@ impl Default for RtcConfig {
             rtp_mode: false,
             enable_raw_packets: false,
             dtls_version: DtlsVersion::Dtls12,
+            vp9_packetizer_mode: Vp9PacketizerMode::default(),
         }
     }
 }

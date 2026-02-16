@@ -14,6 +14,7 @@ use crate::rtp_::SRTP_OVERHEAD;
 use crate::RtcError;
 
 use crate::format::PayloadParams;
+use crate::format::Vp9PacketizerMode;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
 use crate::streams::{RtpPacket, Streams};
@@ -401,11 +402,12 @@ impl Media {
         pt: Pt,
         rid: Option<Rid>,
         params: &[PayloadParams],
+        vp9_mode: Vp9PacketizerMode,
     ) -> &mut Payloader {
         self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
-            Payloader::new(params.spec)
+            Payloader::new(params.spec, vp9_mode)
         })
     }
 
@@ -431,6 +433,7 @@ impl Media {
         &mut self,
         streams: &mut Streams,
         params: &[PayloadParams],
+        vp9_mode: Vp9PacketizerMode,
     ) -> Result<(), RtcError> {
         let Some(to_payload) = self.to_payload.pop_front() else {
             return Ok(());
@@ -450,7 +453,7 @@ impl Media {
 
         let pt = *pt;
 
-        let payloader = self.payloader_for(pt, *rid, params);
+        let payloader = self.payloader_for(pt, *rid, params, vp9_mode);
 
         const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs

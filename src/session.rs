@@ -8,6 +8,7 @@ use crate::crypto::dtls::SrtpProfile;
 use crate::crypto::CryptoProvider;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
+use crate::format::Vp9PacketizerMode;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
@@ -100,6 +101,9 @@ pub(crate) struct Session {
     /// Whether we are running in RTP-mode.
     pub rtp_mode: bool,
 
+    /// VP9 packetizer mode.
+    vp9_packetizer_mode: Vp9PacketizerMode,
+
     feedback_tx: VecDeque<Rtcp>,
     feedback_rx: VecDeque<Rtcp>,
 
@@ -161,6 +165,7 @@ impl Session {
             packet_first_sent: false,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
+            vp9_packetizer_mode: config.vp9_packetizer_mode,
             feedback_tx: VecDeque::new(),
             feedback_rx: VecDeque::new(),
             raw_packets: if config.enable_raw_packets {
@@ -1002,7 +1007,11 @@ impl Session {
 
     fn do_payload(&mut self) -> Result<(), RtcError> {
         for m in &mut self.medias {
-            m.do_payload(&mut self.streams, &self.codec_config)?;
+            m.do_payload(
+                &mut self.streams,
+                &self.codec_config,
+                self.vp9_packetizer_mode,
+            )?;
         }
 
         Ok(())

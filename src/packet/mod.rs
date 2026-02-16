@@ -285,21 +285,27 @@ pub(crate) enum CodecDepacketizer {
     Boxed(Box<dyn Depacketizer + Send + Sync + UnwindSafe>),
 }
 
-impl From<Codec> for CodecPacketizer {
-    fn from(c: Codec) -> Self {
-        match c {
+impl CodecPacketizer {
+    pub(crate) fn new(codec: Codec, vp9_mode: Vp9PacketizerMode) -> Self {
+        match codec {
             Codec::Opus => CodecPacketizer::Opus(OpusPacketizer),
             Codec::PCMU => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::PCMA => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => CodecPacketizer::H265(H265Packetizer::default()),
             Codec::Vp8 => CodecPacketizer::Vp8(Vp8Packetizer::default()),
-            Codec::Vp9 => CodecPacketizer::Vp9(Vp9Packetizer::default()),
+            Codec::Vp9 => CodecPacketizer::Vp9(Vp9Packetizer::with_mode(vp9_mode)),
             Codec::Av1 => CodecPacketizer::Av1(Av1Packetizer::default()),
             Codec::Null => CodecPacketizer::Null(NullPacketizer),
             Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
         }
+    }
+}
+
+impl From<Codec> for CodecPacketizer {
+    fn from(c: Codec) -> Self {
+        CodecPacketizer::new(c, Vp9PacketizerMode::default())
     }
 }
 
