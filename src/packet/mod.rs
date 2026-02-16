@@ -39,6 +39,7 @@ pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
 mod vp9;
 pub use vp9::Vp9CodecExtra;
+pub use vp9::Vp9PacketizerMode;
 use vp9::{Vp9Depacketizer, Vp9Packetizer};
 
 mod null;

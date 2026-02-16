@@ -2,11 +2,26 @@ use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 use std::fmt;
 
-/// Max VP9 RTP payload descriptor size in non-flexible mode:
+/// Max VP9 RTP payload descriptor size for non-flexible mode:
 /// flags(1) + 15-bit PID(2) + L byte(1) + tl0picidx(1) + SS(3 on keyframes) = 8
-const VP9HEADER_SIZE: usize = 8;
+const VP9_NON_FLEXIBLE_HEADER_SIZE: usize = 8;
+/// VP9 RTP payload descriptor size for flexible mode:
+/// flags(1) + 15-bit PID(2) = 3
+const VP9_FLEXIBLE_HEADER_SIZE: usize = 3;
 const MAX_SPATIAL_LAYERS: usize = 3;
 const MAX_VP9REF_PICS: usize = 3;
+
+/// VP9 packetizer mode controlling the RTP payload descriptor format.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Vp9PacketizerMode {
+    /// Flexible mode (F=1): minimal 3-byte header (flags + 15-bit PID).
+    /// Simpler but causes issues with Safari which drops inter-frames.
+    Flexible,
+    /// Non-flexible mode (F=0): 5-8 byte header with layer indices and
+    /// scalability structure. Compatible with all major browsers.
+    #[default]
+    NonFlexible,
+}
 
 /// Vp9 information describing the depacketized/packetized data.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -140,14 +155,11 @@ pub fn detect_vp9_keyframe_bitstream(payload: &[u8]) -> bool {
     frame_type == 0
 }
 
-/// Packetizes VP9 RTP packets using non-flexible mode (F=0).
+/// Packetizes VP9 RTP packets.
 ///
-/// Non-flexible mode is required for broad browser compatibility — Safari and
-/// older Chrome versions drop inter-frames when flexible mode (F=1) is used.
-///
-/// Every packet includes layer indices (L=1) with `tl0picidx` for temporal
-/// reference tracking. Keyframe first-packets also include a scalability
-/// structure (V=1) describing the GOF.
+/// Supports both non-flexible mode (F=0) and flexible mode (F=1), controlled
+/// by [`Vp9PacketizerMode`]. Defaults to non-flexible mode for broad browser
+/// compatibility — Safari and older Chrome drop inter-frames with F=1.
 #[derive(Default, Clone)]
 pub struct Vp9Packetizer {
     picture_id: u16,
@@ -155,8 +167,19 @@ pub struct Vp9Packetizer {
     /// frames are packetized as TID=0). Used in L byte for non-flexible mode.
     tl0picidx: u8,
     initialized: bool,
+    mode: Vp9PacketizerMode,
     #[cfg(test)]
     initial_picture_id: u16,
+}
+
+impl Vp9Packetizer {
+    /// Create a VP9 packetizer with the specified mode.
+    pub fn with_mode(mode: Vp9PacketizerMode) -> Self {
+        Self {
+            mode,
+            ..Default::default()
+        }
+    }
 }
 
 impl fmt::Debug for Vp9Packetizer {
@@ -165,32 +188,13 @@ impl fmt::Debug for Vp9Packetizer {
             .field("picture_id", &self.picture_id)
             .field("tl0picidx", &self.tl0picidx)
             .field("initialized", &self.initialized)
+            .field("mode", &self.mode)
             .finish()
     }
 }
 
 impl Packetizer for Vp9Packetizer {
-    /// Packetize a VP9 frame into one or more RTP packets using non-flexible mode (F=0).
-    ///
-    /// ```text
-    /// Non-flexible mode (F=0) — draft-ietf-payload-vp9-13
-    ///
-    ///        0 1 2 3 4 5 6 7
-    ///       +-+-+-+-+-+-+-+-+
-    ///       |I|P|L|F|B|E|V|Z| (REQUIRED)
-    ///       +-+-+-+-+-+-+-+-+
-    ///  I:   |M| PICTURE ID  | (RECOMMENDED)
-    ///       +-+-+-+-+-+-+-+-+
-    ///  M:   | EXTENDED PID  | (RECOMMENDED)
-    ///       +-+-+-+-+-+-+-+-+
-    ///  L:   | tid |U| SID |D| (CONDITIONALLY RECOMMENDED)
-    ///       +-+-+-+-+-+-+-+-+
-    ///       |   tl0picidx   | (CONDITIONALLY REQUIRED)
-    ///       +-+-+-+-+-+-+-+-+
-    ///  V:   | SS            |
-    ///       | ..            |
-    ///       +-+-+-+-+-+-+-+-+
-    /// ```
+    /// Packetize a VP9 frame into one or more RTP packets.
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);
@@ -209,6 +213,45 @@ impl Packetizer for Vp9Packetizer {
             self.initialized = true;
         }
 
+        match self.mode {
+            Vp9PacketizerMode::NonFlexible => self.packetize_non_flexible(mtu, payload),
+            Vp9PacketizerMode::Flexible => self.packetize_flexible(mtu, payload),
+        }
+    }
+
+    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, last: bool) -> bool {
+        last
+    }
+}
+
+impl Vp9Packetizer {
+    /// Non-flexible mode (F=0) packetization.
+    ///
+    /// 5-8 byte header with layer indices and scalability structure.
+    /// Compatible with all major browsers including Safari.
+    ///
+    /// ```text
+    ///        0 1 2 3 4 5 6 7
+    ///       +-+-+-+-+-+-+-+-+
+    ///       |I|P|L|F|B|E|V|Z| (REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  I:   |M| PICTURE ID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  M:   | EXTENDED PID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  L:   | tid |U| SID |D| (CONDITIONALLY RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///       |   tl0picidx   | (CONDITIONALLY REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  V:   | SS            |
+    ///       | ..            |
+    ///       +-+-+-+-+-+-+-+-+
+    /// ```
+    fn packetize_non_flexible(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+    ) -> Result<Vec<Vec<u8>>, PacketError> {
         // Detect keyframe from VP9 bitstream to set P flag correctly.
         let is_keyframe = detect_vp9_keyframe_bitstream(payload);
 
@@ -216,9 +259,9 @@ impl Packetizer for Vp9Packetizer {
         // this increments on every frame per draft-ietf-payload-vp9, Section 6.3.
         self.tl0picidx = self.tl0picidx.wrapping_add(1);
 
-        // VP9HEADER_SIZE is the max header (8 bytes, accounting for SS on keyframes).
-        // This ensures we never exceed MTU even on keyframe first-packets.
-        let max_fragment_size = mtu as isize - VP9HEADER_SIZE as isize;
+        // VP9_NON_FLEXIBLE_HEADER_SIZE is the max header (8 bytes, accounting for SS
+        // on keyframes). This ensures we never exceed MTU even on keyframe first-packets.
+        let max_fragment_size = mtu as isize - VP9_NON_FLEXIBLE_HEADER_SIZE as isize;
         let mut payloads = vec![];
         let mut payload_data_remaining = payload.len();
         let mut payload_data_index = 0;
@@ -291,8 +334,71 @@ impl Packetizer for Vp9Packetizer {
         Ok(payloads)
     }
 
-    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, last: bool) -> bool {
-        last
+    /// Flexible mode (F=1) packetization.
+    ///
+    /// Minimal 3-byte header (flags + 15-bit PID). Simpler but may cause
+    /// issues with Safari which drops inter-frames.
+    ///
+    /// ```text
+    ///        0 1 2 3 4 5 6 7
+    ///       +-+-+-+-+-+-+-+-+
+    ///       |I|P|L|F|B|E|V|Z| (REQUIRED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  I:   |M| PICTURE ID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    ///  M:   | EXTENDED PID  | (RECOMMENDED)
+    ///       +-+-+-+-+-+-+-+-+
+    /// ```
+    fn packetize_flexible(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+    ) -> Result<Vec<Vec<u8>>, PacketError> {
+        let max_fragment_size = mtu as isize - VP9_FLEXIBLE_HEADER_SIZE as isize;
+        let mut payloads = vec![];
+        let mut payload_data_remaining = payload.len();
+        let mut payload_data_index = 0;
+
+        if std::cmp::min(max_fragment_size, payload_data_remaining as isize) <= 0 {
+            return Ok(vec![]);
+        }
+
+        while payload_data_remaining > 0 {
+            let current_fragment_size =
+                std::cmp::min(max_fragment_size as usize, payload_data_remaining);
+            let is_first = payload_data_index == 0;
+            let is_last = payload_data_remaining == current_fragment_size;
+
+            let mut out = Vec::with_capacity(VP9_FLEXIBLE_HEADER_SIZE + current_fragment_size);
+
+            // Byte 0: I|P|L|F|B|E|V|Z — I=1, F=1
+            let mut flags = 0x90u8; // I=1, F=1
+            if is_first {
+                flags |= 0x08; // B=1
+            }
+            if is_last {
+                flags |= 0x04; // E=1
+            }
+            out.push(flags);
+
+            // Bytes 1-2: 15-bit picture ID (M=1)
+            out.push((self.picture_id >> 8) as u8 | 0x80);
+            out.push((self.picture_id & 0xFF) as u8);
+
+            out.extend_from_slice(
+                &payload[payload_data_index..payload_data_index + current_fragment_size],
+            );
+
+            payloads.push(out);
+
+            payload_data_remaining -= current_fragment_size;
+            payload_data_index += current_fragment_size;
+        }
+
+        self.picture_id += 1;
+        self.picture_id &= 0x7FFF;
+
+        Ok(payloads)
     }
 }
 
@@ -1249,6 +1355,97 @@ mod test {
         assert_eq!(packets[0][4], 1);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_vp9_packetizer_flexible_mode() -> Result<(), PacketError> {
+        let mut r0 = 8692;
+        let mut rands = vec![];
+        for _ in 0..10 {
+            rands.push(vec![(r0 >> 8) as u8 | 0x80, (r0 & 0xFF) as u8]);
+            r0 += 1;
+        }
+
+        // With VP9_FLEXIBLE_HEADER_SIZE=3, min productive MTU is 4.
+        // Flexible mode: 3 bytes header (flags + 15-bit PID)
+        //
+        // Flags byte: I|P|L|F|B|E|V|Z
+        //   I=1(0x80), F=1(0x10), B=first(0x08), E=last(0x04)
+        //   B+E: 0x80|0x10|0x08|0x04 = 0x9C
+        //   B:   0x80|0x10|0x08       = 0x98
+        //   E:   0x80|0x10|0x04       = 0x94
+        //   none:0x80|0x10            = 0x90
+        let tests: Vec<(&str, Vec<Vec<u8>>, usize, Vec<Vec<u8>>)> = vec![
+            ("NilPayload", vec![vec![]], 100, vec![]),
+            ("SmallMTU", vec![vec![0x00, 0x00]], 1, vec![]),
+            ("NegativeMTU", vec![vec![0x00, 0x00]], 0, vec![]),
+            (
+                "OnePacket",
+                vec![vec![0x01, 0x02]],
+                10,
+                vec![vec![0x9C, rands[0][0], rands[0][1], 0x01, 0x02]],
+            ),
+            (
+                // MTU=4 → max_frag=1 → 2 packets
+                "TwoPackets",
+                vec![vec![0x01, 0x02]],
+                4,
+                vec![
+                    vec![0x98, rands[0][0], rands[0][1], 0x01],
+                    vec![0x94, rands[0][0], rands[0][1], 0x02],
+                ],
+            ),
+            (
+                // MTU=4 → max_frag=1 → 3 packets
+                "ThreePackets",
+                vec![vec![0x01, 0x02, 0x03]],
+                4,
+                vec![
+                    vec![0x98, rands[0][0], rands[0][1], 0x01],
+                    vec![0x90, rands[0][0], rands[0][1], 0x02],
+                    vec![0x94, rands[0][0], rands[0][1], 0x03],
+                ],
+            ),
+            (
+                // MTU=5 → max_frag=2 → frame1: 2 pkts, frame2: 1 pkt
+                "TwoFramesFourPackets",
+                vec![vec![0x01, 0x02, 0x03], vec![0x04]],
+                5,
+                vec![
+                    vec![0x98, rands[0][0], rands[0][1], 0x01, 0x02],
+                    vec![0x94, rands[0][0], rands[0][1], 0x03],
+                    vec![0x9C, rands[1][0], rands[1][1], 0x04],
+                ],
+            ),
+        ];
+
+        for (name, bs, mtu, expected) in tests {
+            let mut pck = Vp9Packetizer {
+                initial_picture_id: 8692,
+                mode: Vp9PacketizerMode::Flexible,
+                ..Default::default()
+            };
+
+            let mut actual = vec![];
+            for b in &bs {
+                actual.extend(pck.packetize(mtu, b)?);
+            }
+            assert_eq!(expected, actual, "{name}: Payloaded packet");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_vp9_packetizer_with_mode() {
+        let pck = Vp9Packetizer::with_mode(Vp9PacketizerMode::Flexible);
+        assert_eq!(pck.mode, Vp9PacketizerMode::Flexible);
+
+        let pck = Vp9Packetizer::with_mode(Vp9PacketizerMode::NonFlexible);
+        assert_eq!(pck.mode, Vp9PacketizerMode::NonFlexible);
+
+        let pck = Vp9Packetizer::default();
+        assert_eq!(pck.mode, Vp9PacketizerMode::NonFlexible);
     }
 
     #[test]
