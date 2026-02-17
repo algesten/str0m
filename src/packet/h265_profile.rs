@@ -10,8 +10,9 @@ pub struct H265ProfileTierLevel {
 }
 
 impl H265ProfileTierLevel {
-    // Default profile/tier/level based on common usage.
-    // Main profile, Main tier, Level 3.1 is a widely supported combination.
+    // RFC 7798 §7.1 default values when parameters are absent from SDP:
+    // profile-id=1 (Main), tier-flag=0 (Main tier), level-id=93 (Level 3.1).
+    // https://www.rfc-editor.org/rfc/rfc7798#section-7.1
     pub(crate) const FALLBACK: Self = Self {
         profile: H265Profile::Main,
         tier: H265Tier::Main,
@@ -58,6 +59,11 @@ impl H265ProfileTierLevel {
     /// Returns the H.265 level (Level 3.1, Level 4.0, etc.).
     pub(crate) fn level(&self) -> H265Level {
         self.level
+    }
+
+    /// Returns a copy with the level replaced.
+    pub(crate) fn with_level(self, level: H265Level) -> Self {
+        Self { level, ..self }
     }
 
     /// Returns the numeric profile_id value for SDP serialization.
