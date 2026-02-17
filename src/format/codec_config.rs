@@ -278,7 +278,8 @@ impl CodecConfig {
         //   e.g. Level 6.0 → (6*10 + 0) * 3 = 180
         //
         // Chromium H265Level enum definition (kLevel6 = 180):
-        //   https://source.chromium.org/chromium/chromium/src/+/main:third_party/webrtc/api/video_codecs/h265_profile_tier_level.h
+        //   https://source.chromium.org/chromium/chromium/src/+/main:
+        //   third_party/webrtc/api/video_codecs/h265_profile_tier_level.h
         self.add_h265(PT_H265, Some(PT_H265_RTX), 1, 0, 180); // Main, Main tier, Level 6.0
     }
 
