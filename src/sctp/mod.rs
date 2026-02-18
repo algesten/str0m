@@ -948,3 +948,115 @@ impl From<(ReliabilityType, u32)> for Reliability {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to connect a client and server RtcSctp pair to Established state.
+    fn connect_client_server() -> (RtcSctp, RtcSctp) {
+        let now = Instant::now();
+        let mut client = RtcSctp::new();
+        let mut server = RtcSctp::new();
+
+        client.init(true, now);
+        server.init(false, now);
+
+        // Exchange packets until both are Established.
+        for _ in 0..20 {
+            // Drain client transmits -> feed to server
+            while let Some(t) = client.poll_transmit() {
+                if let Some(bufs) = transmit_to_vec(t) {
+                    for buf in bufs {
+                        server.handle_input(now, &buf);
+                    }
+                }
+            }
+            // Process server events
+            while let Some(e) = server.do_poll() {
+                if let SctpEvent::Transmit { packets } = e {
+                    for buf in packets {
+                        client.handle_input(now, &buf);
+                    }
+                }
+            }
+
+            // Drain server transmits -> feed to client
+            while let Some(t) = server.poll_transmit() {
+                if let Some(bufs) = transmit_to_vec(t) {
+                    for buf in bufs {
+                        client.handle_input(now, &buf);
+                    }
+                }
+            }
+            // Process client events
+            while let Some(e) = client.do_poll() {
+                if let SctpEvent::Transmit { packets } = e {
+                    for buf in packets {
+                        server.handle_input(now, &buf);
+                    }
+                }
+            }
+
+            if client.state == RtcSctpState::Established
+                && server.state == RtcSctpState::Established
+            {
+                break;
+            }
+        }
+
+        assert_eq!(client.state, RtcSctpState::Established);
+        assert_eq!(server.state, RtcSctpState::Established);
+
+        (client, server)
+    }
+
+    /// Regression test: when `assoc.open_stream()` returns `ErrStreamAlreadyExist`
+    /// for an in-band (DCEP) data channel, the entry must transition to Closed and
+    /// emit `SctpEvent::Close`. Before the fix, it stayed in `AwaitOpen` and retried
+    /// on every `do_poll()`, causing an infinite loop.
+    #[test]
+    fn err_stream_already_exist_in_band_returns_close() {
+        let (mut client, _server) = connect_client_server();
+
+        let stream_id: u16 = 0;
+
+        // Pre-create the stream in the association so the next open_stream() with the
+        // same ID will return ErrStreamAlreadyExist.
+        let assoc = client.assoc.as_mut().unwrap();
+        assoc
+            .open_stream(stream_id, PayloadProtocolIdentifier::Unknown)
+            .expect("first open_stream should succeed");
+
+        // Manually add an entry in AwaitOpen state with in-band config (negotiated: None).
+        // This simulates a locally-initiated in-band channel whose stream ID conflicts
+        // with one already opened by the remote peer.
+        client.entries.push(StreamEntry {
+            config: Some(ChannelConfig {
+                label: "test".to_string(),
+                ordered: true,
+                reliability: Reliability::Reliable,
+                negotiated: None, // in-band
+                protocol: String::new(),
+            }),
+            state: StreamEntryState::AwaitOpen,
+            id: stream_id,
+            do_close: false,
+            buffered_threshold: BufferedThresholdConfig::Unconfigured,
+        });
+
+        // Before the fix: do_poll() would return None (continue skipped close handling)
+        // and the entry would remain in AwaitOpen, retrying forever.
+        // After the fix: do_poll() should return SctpEvent::Close.
+        let event = client.do_poll();
+
+        assert!(
+            matches!(&event, Some(SctpEvent::Close { id }) if *id == stream_id),
+            "expected SctpEvent::Close for stream {stream_id}, got {event:?}"
+        );
+
+        // Verify entry transitioned to Closed.
+        let entry = client.entries.iter().find(|e| e.id == stream_id).unwrap();
+        assert_eq!(entry.state, StreamEntryState::Closed);
+    }
+}
