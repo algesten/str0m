@@ -63,7 +63,7 @@ impl<'a> SdpApi<'a> {
     /// // send json_answer to remote peer.
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
     /// ```
-    pub fn accept_offer(mut self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
+    pub fn accept_offer(self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
         debug!("Accept offer");
 
         // Invalidate any outstanding PendingOffer.
@@ -102,7 +102,7 @@ impl<'a> SdpApi<'a> {
         let remote_max_message_size = extract_max_message_size(offer.media_lines.iter());
 
         // Modify session with offer
-        apply_offer(&mut self.rtc, offer)?;
+        apply_offer(self.rtc, offer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
@@ -140,7 +140,7 @@ impl<'a> SdpApi<'a> {
     /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn accept_answer(
-        mut self,
+        self,
         mut pending: SdpPendingOffer,
         answer: SdpAnswer,
     ) -> Result<(), RtcError> {
@@ -179,7 +179,7 @@ impl<'a> SdpApi<'a> {
         let remote_max_message_size = extract_max_message_size(answer.media_lines.iter());
 
         // Modify session with answer
-        apply_answer(&mut self.rtc, pending.changes, answer)?;
+        apply_answer(self.rtc, pending.changes, answer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
@@ -2073,7 +2073,8 @@ mod test {
             c=IN IP4 172.17.0.1\r\n\
             t=0 0\r\n\
             a=group:BUNDLE 0\r\n\
-            a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23\r\n\
+            a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D\
+            :D3:9D:1F:94:6E:A5:23:46:94:23\r\n\
             m=application 9999 UDP/DTLS/SCTP webrtc-datachannel\r\n\
             a=mid:0\r\n\
             a=ice-ufrag:test\r\n\
