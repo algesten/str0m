@@ -1,5 +1,6 @@
 use crate::format::CodecSpec;
 use crate::media::ToPayload;
+use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::Frequency;
 use crate::streams::StreamTx;
 
@@ -42,6 +43,7 @@ impl Payloader {
 
         for (idx, data) in chunks.into_iter().enumerate() {
             let last = idx == len - 1;
+            let first = idx == 0;
 
             let previous_data = stream.last_packet();
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last)
@@ -52,13 +54,18 @@ impl Payloader {
             // TODO: delegate to self.pack to decide whether this packet is nackable.
             let nackable = !is_audio;
 
+            let mut pkt_ext_vals = ext_vals.clone();
+            if !first {
+                pkt_ext_vals.user_values.remove::<VideoLayersAllocation>();
+            }
+
             stream.write_rtp(
                 pt,
                 seq_no,
                 rtp_time.rebase(self.clock_rate).numer() as u32,
                 wallclock,
                 marker,
-                ext_vals.clone(),
+                pkt_ext_vals,
                 nackable,
                 data,
             )?;

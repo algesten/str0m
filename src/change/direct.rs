@@ -5,6 +5,7 @@ use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
+use crate::Candidate;
 use crate::IceCreds;
 use crate::Rtc;
 use crate::RtcError;
@@ -71,6 +72,19 @@ impl<'a> DirectApi<'a> {
     /// Sets the remote ICE credentials.
     pub fn set_remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
         self.rtc.ice.set_remote_credentials(remote_ice_credentials);
+    }
+
+    /// Invalidate a candidate and remove it from the connection.
+    ///
+    /// This is done for host candidates disappearing due to changes in the network
+    /// interfaces like a WiFi disconnecting or changing IPs.
+    ///
+    /// It can also be used to invalidate _remote_ candidates, i.e. if the remote
+    /// has signalled us that they have invalidated one of their candidates.
+    ///
+    /// Returns `true` if the candidate was found and invalidated.
+    pub fn invalidate_candidate(&mut self, c: &Candidate) -> bool {
+        self.rtc.ice.invalidate_candidate(c)
     }
 
     /// Returns a reference to the local DTLS fingerprint used by this peer connection.

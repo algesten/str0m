@@ -32,6 +32,12 @@ const MIN_RATIO_FOR_UNSATURATED_LINK: f64 = 0.9;
 /// Matches WebRTC's `kTargetUtilizationFraction`.
 const TARGET_UTILIZATION_FRACTION: f64 = 0.95;
 
+/// Maximum number of active probes before we trigger cleanup.
+const MAX_ACTIVE_PROBES: usize = 20;
+
+/// Probes older than this are considered stale and will be removed when hitting the cap.
+const STALE_PROBE_THRESHOLD: Duration = Duration::from_secs(5);
+
 /// Analyzes probe cluster results from TWCC feedback.
 ///
 /// This component takes packets tagged with a `TwccClusterId` and calculates the
@@ -53,6 +59,9 @@ pub struct ProbeEstimator {
 struct ProbeEstimatorState {
     /// Configuration of the active probe (targets for validation).
     config: ProbeClusterConfig,
+
+    /// When this probe was created.
+    created_at: Instant,
 
     /// When to erase this cluster's state (cluster history expiry).
     finalize_at: Instant,
@@ -88,18 +97,41 @@ impl ProbeEstimator {
     /// Start analyzing a new probe cluster.
     ///
     /// Resets all accumulated state and begins watching for packets with the
-    /// given cluster ID.
-    pub fn probe_start(&mut self, config: ProbeClusterConfig) {
-        self.states.push_back(ProbeEstimatorState::new(config));
-
-        // Sanity check: Under normal operation, we expect at most 2-4 active probes:
+    /// given cluster ID. Returns `true` if the probe was started, `false` if
+    /// it was rejected due to too many active probes.
+    pub fn probe_start(&mut self, config: ProbeClusterConfig, now: Instant) -> bool {
+        // Under normal operation, we expect at most 2-4 active probes:
         // - Initial exponential probing: 2 probes (3×, 6×)
         // - Further probing: 1-2 additional probes
         // - Allocation/recovery probing: 1-2 more
         // Even with rapid probe sequences and 1-second cleanup delay, we shouldn't
         // accumulate more than ~8 probes. If we hit 20, it indicates a bug in probe
         // lifecycle management (missing end_probe() calls or handle_timeout() not running).
-        assert!(self.states.len() < 20, "Too many active probes");
+
+        // If we've hit the cap, try to clean up stale probes first.
+        if self.states.len() >= MAX_ACTIVE_PROBES {
+            let before_cleanup = self.states.len();
+            self.states
+                .retain(|s| now.saturating_duration_since(s.created_at) < STALE_PROBE_THRESHOLD);
+
+            let removed = before_cleanup - self.states.len();
+            if removed > 0 {
+                debug!(
+                    removed,
+                    remaining = self.states.len(),
+                    "Cleaned up stale probes"
+                );
+            }
+
+            // If still at cap after cleanup, reject the new probe.
+            if self.states.len() >= MAX_ACTIVE_PROBES {
+                debug!("Rejecting new probe: too many active probes with none stale");
+                return false;
+            }
+        }
+
+        self.states.push_back(ProbeEstimatorState::new(config, now));
+        true
     }
 
     /// Process TWCC feedback records.
@@ -200,9 +232,10 @@ impl ProbeEstimator {
 }
 
 impl ProbeEstimatorState {
-    pub fn new(config: ProbeClusterConfig) -> Self {
+    pub fn new(config: ProbeClusterConfig, now: Instant) -> Self {
         Self {
             config,
+            created_at: now,
             finalize_at: not_happening(),
             first_send_time: None,
             last_send_time: None,
@@ -451,7 +484,7 @@ mod test {
 
         // Start probe
         let config = ProbeClusterConfig::new(1.into(), Bitrate::mbps(2), ProbeKind::Initial);
-        estimator.probe_start(config);
+        assert!(estimator.probe_start(config, now));
         assert!(estimator.states.len() == 1, "Should have one active probe");
         assert_eq!(estimator.poll_timeout(), not_happening());
 
@@ -504,7 +537,7 @@ mod test {
         });
 
         // First run: only received packets
-        estimator.probe_start(config);
+        estimator.probe_start(config, base);
         let recv_vec: Vec<_> = received.collect();
         let results: Vec<_> = estimator.update(recv_vec.iter()).collect();
         let estimate_only_received = results
@@ -514,7 +547,7 @@ mod test {
 
         // Second run: received + lost
         let mut estimator2 = ProbeEstimator::new();
-        estimator2.probe_start(config);
+        estimator2.probe_start(config, base);
         let mut all_vec = recv_vec;
         all_vec.extend(lost);
         let results: Vec<_> = estimator2.update(all_vec.iter()).collect();
@@ -552,7 +585,7 @@ mod test {
             })
             .collect();
 
-        estimator.probe_start(config);
+        estimator.probe_start(config, base);
         let results: Vec<_> = estimator.update(records.iter()).collect();
 
         assert!(
@@ -584,7 +617,7 @@ mod test {
             })
             .collect();
 
-        estimator.probe_start(config);
+        estimator.probe_start(config, base);
         let results: Vec<_> = estimator.update(records.iter()).collect();
 
         assert!(
@@ -592,5 +625,72 @@ mod test {
             "send_interval == 0 should be rejected, got: {:?}",
             results
         );
+    }
+
+    #[test]
+    fn stale_probes_cleaned_up_at_capacity() {
+        let mut estimator = ProbeEstimator::new();
+        let base = Instant::now();
+
+        // Fill up to MAX_ACTIVE_PROBES with probes created at `base`
+        for i in 0..MAX_ACTIVE_PROBES {
+            let config =
+                ProbeClusterConfig::new((i as u64).into(), Bitrate::mbps(2), ProbeKind::Initial);
+            assert!(
+                estimator.probe_start(config, base),
+                "should accept probe {i}"
+            );
+        }
+        assert_eq!(estimator.states.len(), MAX_ACTIVE_PROBES);
+
+        // Try to add another probe at the same time - should be rejected
+        let config = ProbeClusterConfig::new(100.into(), Bitrate::mbps(2), ProbeKind::Initial);
+        assert!(
+            !estimator.probe_start(config, base),
+            "should reject probe when at capacity with no stale probes"
+        );
+        assert_eq!(estimator.states.len(), MAX_ACTIVE_PROBES);
+
+        // Now try adding a probe 6 seconds later - all existing probes are stale
+        let later = base + Duration::from_secs(6);
+        let config = ProbeClusterConfig::new(101.into(), Bitrate::mbps(2), ProbeKind::Initial);
+        assert!(
+            estimator.probe_start(config, later),
+            "should accept probe after cleaning stale ones"
+        );
+        // All old probes should be cleaned, leaving only the new one
+        assert_eq!(estimator.states.len(), 1);
+    }
+
+    #[test]
+    fn non_stale_probes_preserved_during_cleanup() {
+        let mut estimator = ProbeEstimator::new();
+        let base = Instant::now();
+
+        // Add some old probes
+        for i in 0..15 {
+            let config =
+                ProbeClusterConfig::new((i as u64).into(), Bitrate::mbps(2), ProbeKind::Initial);
+            estimator.probe_start(config, base);
+        }
+
+        // Add some newer probes (3 seconds later, still within threshold)
+        let mid = base + Duration::from_secs(3);
+        for i in 15..MAX_ACTIVE_PROBES {
+            let config =
+                ProbeClusterConfig::new((i as u64).into(), Bitrate::mbps(2), ProbeKind::Initial);
+            estimator.probe_start(config, mid);
+        }
+        assert_eq!(estimator.states.len(), MAX_ACTIVE_PROBES);
+
+        // Try to add at 6 seconds - old probes are stale, mid probes are not
+        let later = base + Duration::from_secs(6);
+        let config = ProbeClusterConfig::new(100.into(), Bitrate::mbps(2), ProbeKind::Initial);
+        assert!(
+            estimator.probe_start(config, later),
+            "should accept after cleaning only stale probes"
+        );
+        // 15 old probes removed, 5 mid probes kept, 1 new probe added = 6
+        assert_eq!(estimator.states.len(), 6);
     }
 }

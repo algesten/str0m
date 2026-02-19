@@ -57,11 +57,6 @@ impl Pacer for NullPacer {
     }
 
     fn poll_queue(&mut self) -> Option<(MidRid, Option<TwccClusterId>)> {
-        // GATE: Block if we need timeout first
-        if self.needs_timeout_before_next_poll {
-            return None;
-        }
-
         let non_empty_queues = self
             .queue_states
             .iter()

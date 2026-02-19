@@ -255,12 +255,14 @@ impl Session {
         let do_probe = self.packet_first_sent && self.pacer.has_padding_queue();
 
         if let Some(probe_config) = bwe.handle_timeout(now, do_probe) {
-            #[cfg(feature = "_internal_test_exports")]
-            {
-                self.pending_probe = Some(probe_config);
+            // Only start the probe in the pacer if the estimator accepted it.
+            if bwe.start_probe(probe_config, now) {
+                #[cfg(feature = "_internal_test_exports")]
+                {
+                    self.pending_probe = Some(probe_config);
+                }
+                self.pacer.start_probe(probe_config);
             }
-            bwe.start_probe(probe_config);
-            self.pacer.start_probe(probe_config);
         }
 
         // Check if active probe just completed

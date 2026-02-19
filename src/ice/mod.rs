@@ -1383,7 +1383,6 @@ mod test {
 
         let outgoing_is_from_relay = from_agent
             .local_candidates()
-            .iter()
             .any(|c| c.addr() == from && c.kind() == CandidateKind::Relayed);
 
         // If NAT is present on sending agent, apply it.
@@ -1400,7 +1399,6 @@ mod test {
 
         let incoming_is_from_relay = to_agent
             .local_candidates()
-            .iter()
             .any(|c| c.addr() == to && c.kind() == CandidateKind::Relayed);
 
         // If NAT is present on receiving agent, apply it.

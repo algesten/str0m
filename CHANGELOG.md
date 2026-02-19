@@ -1,7 +1,19 @@
 # Unreleased
 
+  * Avoid sending VLA on every packet #866
+  * Add `abs-capture-time` RTP header extension #864
+
+# 0.16.2
+
+  * Fix hot timeout loop with null pacer #863
+  * H265 to use is_irap() for keyframe detection #859
+  * Fix probe estimator panic when probes accumulate #857
+  * Improve H265 test coverage and organization #853
+  * Add `DirectApi::invalidate_candidate()` #858
+
 # 0.16.1
 
+  * Fix two AV1 packetizer panics #854
   * Fix ICE disconnections with Chrome v144+ when not using ICE Lite #846
   * Downgrade noisy BWE logs #847
   * Fix H265 PACI depacketizer panic on short payload #849
@@ -19,7 +31,7 @@
   * BWE remove current_bitrate param (breaking) #838
   * BWE V2 (Probe clusters) #823
 
-0.15.0
+# 0.15.0
 
   * MediaData::is_keyframe() helper #805
   * Handle tcptype ICE candidates #797
@@ -31,12 +43,12 @@
   * Fix HMAC P_hash implementation for Apple Crypto #824
   * Update Apple Crypto crate to use CryptoKit #813
 
-0.14.3
+# 0.14.3
 
   * Bump dimpl 0.2.1 for SChannel compat #801
   * Reduce allocating in `str0m-aws-lc-rs` encrypt/decrypt #804
 
-0.14.2
+# 0.14.2
 
   * Fix order of DTLS pending packet poll #796
   * Defer panic on missing crypto provider until Rtc init #792
