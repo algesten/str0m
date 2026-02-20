@@ -20,7 +20,7 @@ use openssl::x509::{X509Builder, X509NameBuilder, X509};
 
 use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
-use str0m_proto::crypto::CryptoError;
+use str0m_proto::crypto::{CryptoError, DtlsVersion};
 use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
 // ============================================================================
@@ -275,9 +275,9 @@ where
 /// Convert OpenSSL SrtpProfileId to dimpl's SrtpProfile.
 fn srtp_profile_from_id(value: SrtpProfileId) -> Result<SrtpProfile, io::Error> {
     match value {
-        SrtpProfileId::SRTP_AES128_CM_SHA1_80 => Ok(SrtpProfile::Aes128CmSha1_80),
-        SrtpProfileId::SRTP_AEAD_AES_128_GCM => Ok(SrtpProfile::AeadAes128Gcm),
-        SrtpProfileId::SRTP_AEAD_AES_256_GCM => Ok(SrtpProfile::AeadAes256Gcm),
+        SrtpProfileId::SRTP_AES128_CM_SHA1_80 => Ok(SrtpProfile::AES128_CM_SHA1_80),
+        SrtpProfileId::SRTP_AEAD_AES_128_GCM => Ok(SrtpProfile::AEAD_AES_128_GCM),
+        SrtpProfileId::SRTP_AEAD_AES_256_GCM => Ok(SrtpProfile::AEAD_AES_256_GCM),
         x => Err(io::Error::other(format!(
             "Unsupported SRTP profile {:x}",
             x.as_raw()
@@ -422,9 +422,9 @@ fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, CryptoError> {
 /// Get the OpenSSL name for an SRTP profile.
 fn srtp_profile_openssl_name(profile: SrtpProfile) -> &'static str {
     match profile {
-        SrtpProfile::Aes128CmSha1_80 => "SRTP_AES128_CM_SHA1_80",
-        SrtpProfile::AeadAes128Gcm => "SRTP_AEAD_AES_128_GCM",
-        SrtpProfile::AeadAes256Gcm => "SRTP_AEAD_AES_256_GCM",
+        SrtpProfile::AES128_CM_SHA1_80 => "SRTP_AES128_CM_SHA1_80",
+        SrtpProfile::AEAD_AES_128_GCM => "SRTP_AEAD_AES_128_GCM",
+        SrtpProfile::AEAD_AES_256_GCM => "SRTP_AEAD_AES_256_GCM",
     }
 }
 
@@ -638,7 +638,19 @@ impl DtlsProvider for OsslDtlsProvider {
         generate_certificate_impl().ok()
     }
 
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    fn new_dtls(
+        &self,
+        cert: &DtlsCert,
+        _now: Instant,
+        dtls_version: DtlsVersion,
+    ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+        if dtls_version != DtlsVersion::Dtls12 {
+            return Err(CryptoError::Other(
+                "OpenSSL DTLS provider only supports DTLS 1.2. \
+                 Use aws-lc-rs or rust-crypto backend for DTLS 1.3/Auto."
+                    .to_string(),
+            ));
+        }
         Ok(Box::new(OsslDtlsInstance::new(cert)?))
     }
 }

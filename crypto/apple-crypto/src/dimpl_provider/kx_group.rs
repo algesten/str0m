@@ -6,7 +6,7 @@ use core_foundation::dictionary::CFMutableDictionary;
 use core_foundation::error::CFError;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use dimpl::buffer::Buf;
+use dimpl::crypto::Buf;
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 
 use dimpl::crypto::{ActiveKeyExchange, NamedGroup, SupportedKxGroup};

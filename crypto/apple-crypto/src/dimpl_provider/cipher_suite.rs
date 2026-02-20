@@ -1,8 +1,9 @@
 //! Cipher suite implementations using Apple CommonCrypto.
 
-use dimpl::buffer::{Buf, TmpBuf};
-use dimpl::crypto::SupportedCipherSuite;
-use dimpl::crypto::{Aad, Cipher, CipherSuite, HashAlgorithm, Nonce};
+use dimpl::crypto::SupportedDtls12CipherSuite;
+use dimpl::crypto::SupportedDtls13CipherSuite;
+use dimpl::crypto::{Aad, Cipher, Dtls12CipherSuite, HashAlgorithm, Nonce};
+use dimpl::crypto::{Buf, Dtls13CipherSuite, TmpBuf};
 
 const AES_GCM_TAG_LEN: usize = 16;
 
@@ -66,9 +67,9 @@ impl Cipher for AesGcm {
 #[derive(Debug)]
 struct Aes128GcmSha256;
 
-impl SupportedCipherSuite for Aes128GcmSha256 {
-    fn suite(&self) -> CipherSuite {
-        CipherSuite::ECDHE_ECDSA_AES128_GCM_SHA256
+impl SupportedDtls12CipherSuite for Aes128GcmSha256 {
+    fn suite(&self) -> Dtls12CipherSuite {
+        Dtls12CipherSuite::ECDHE_ECDSA_AES128_GCM_SHA256
     }
 
     fn hash_algorithm(&self) -> HashAlgorithm {
@@ -88,9 +89,9 @@ impl SupportedCipherSuite for Aes128GcmSha256 {
 #[derive(Debug)]
 struct Aes256GcmSha384;
 
-impl SupportedCipherSuite for Aes256GcmSha384 {
-    fn suite(&self) -> CipherSuite {
-        CipherSuite::ECDHE_ECDSA_AES256_GCM_SHA384
+impl SupportedDtls12CipherSuite for Aes256GcmSha384 {
+    fn suite(&self) -> Dtls12CipherSuite {
+        Dtls12CipherSuite::ECDHE_ECDSA_AES256_GCM_SHA384
     }
 
     fn hash_algorithm(&self) -> HashAlgorithm {
@@ -109,8 +110,92 @@ impl SupportedCipherSuite for Aes256GcmSha384 {
 static AES_128_GCM_SHA256: Aes128GcmSha256 = Aes128GcmSha256;
 static AES_256_GCM_SHA384: Aes256GcmSha384 = Aes256GcmSha384;
 
-pub(super) static ALL_CIPHER_SUITES: &[&dyn SupportedCipherSuite] =
+pub(super) static ALL_CIPHER_SUITES: &[&dyn SupportedDtls12CipherSuite] =
     &[&AES_128_GCM_SHA256, &AES_256_GCM_SHA384];
+
+/// TLS_AES_128_GCM_SHA256 cipher suite (TLS 1.3 / DTLS 1.3).
+#[derive(Debug)]
+struct Tls13Aes128GcmSha256;
+
+impl SupportedDtls13CipherSuite for Tls13Aes128GcmSha256 {
+    fn suite(&self) -> Dtls13CipherSuite {
+        Dtls13CipherSuite::AES_128_GCM_SHA256
+    }
+
+    fn hash_algorithm(&self) -> HashAlgorithm {
+        HashAlgorithm::SHA256
+    }
+
+    fn key_len(&self) -> usize {
+        16 // AES-128
+    }
+
+    fn iv_len(&self) -> usize {
+        12 // GCM IV
+    }
+
+    fn tag_len(&self) -> usize {
+        16 // GCM tag
+    }
+
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+        Ok(Box::new(AesGcm::new(key)?))
+    }
+
+    fn encrypt_sn(&self, sn_key: &[u8], sample: &[u8; 16]) -> [u8; 16] {
+        aes_ecb_encrypt(sn_key, sample)
+    }
+}
+
+/// TLS_AES_256_GCM_SHA384 cipher suite (TLS 1.3 / DTLS 1.3).
+#[derive(Debug)]
+struct Tls13Aes256GcmSha384;
+
+impl SupportedDtls13CipherSuite for Tls13Aes256GcmSha384 {
+    fn suite(&self) -> Dtls13CipherSuite {
+        Dtls13CipherSuite::AES_256_GCM_SHA384
+    }
+
+    fn hash_algorithm(&self) -> HashAlgorithm {
+        HashAlgorithm::SHA384
+    }
+
+    fn key_len(&self) -> usize {
+        32 // AES-256
+    }
+
+    fn iv_len(&self) -> usize {
+        12 // GCM IV
+    }
+
+    fn tag_len(&self) -> usize {
+        16 // GCM tag
+    }
+
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+        Ok(Box::new(AesGcm::new(key)?))
+    }
+
+    fn encrypt_sn(&self, sn_key: &[u8], sample: &[u8; 16]) -> [u8; 16] {
+        aes_ecb_encrypt(sn_key, sample)
+    }
+}
+
+/// Static instances of supported DTLS 1.3 cipher suites.
+static TLS13_AES_128_GCM_SHA256: Tls13Aes128GcmSha256 = Tls13Aes128GcmSha256;
+static TLS13_AES_256_GCM_SHA384: Tls13Aes256GcmSha384 = Tls13Aes256GcmSha384;
+
+/// All supported DTLS 1.3 cipher suites.
+pub(super) static ALL_DTLS13_CIPHER_SUITES: &[&dyn SupportedDtls13CipherSuite] =
+    &[&TLS13_AES_128_GCM_SHA256, &TLS13_AES_256_GCM_SHA384];
+
+/// AES-ECB single block encryption for record number protection.
+fn aes_ecb_encrypt(key: &[u8], input: &[u8; 16]) -> [u8; 16] {
+    let mut output = [0u8; 16];
+    crate::common_crypto::aes_ecb_round(key, input, &mut output)
+        .expect("AES-ECB encryption failed");
+    output
+}
 
 #[allow(clippy::large_enum_variant)]
 enum OutputBuffer {

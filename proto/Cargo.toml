@@ -20,7 +20,10 @@ _internal_test_exports = []
 
 [dependencies]
 # DTLS made for str0m (required dependency for types and traits)
-dimpl = { version = "0.2.4", default-features = false }
+dimpl = { version = "0.3.0", default-features = false }
+
+# Pin time to avoid time-core 0.1.8+ which requires edition 2024 (rustc 1.85+)
+time = ">=0.3, <0.3.37"
 
 # Pin base64ct to avoid 1.8 which requires edition 2024 (MSRV 1.85)
 base64ct = ">=1.0, <1.8"

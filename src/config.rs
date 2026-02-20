@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config::DtlsCert;
+use crate::crypto::dtls::DtlsVersion;
 use crate::crypto::CryptoProvider;
 use crate::format::CodecConfig;
 use crate::ice::IceCreds;
@@ -42,6 +43,7 @@ pub struct RtcConfig {
     pub(crate) send_buffer_video: usize,
     pub(crate) rtp_mode: bool,
     pub(crate) enable_raw_packets: bool,
+    pub(crate) dtls_version: DtlsVersion,
 }
 
 #[derive(Debug, Clone)]
@@ -540,6 +542,19 @@ impl RtcConfig {
         self
     }
 
+    /// Set which DTLS version to use.
+    ///
+    /// Defaults to [`DtlsVersion::Dtls12`].
+    pub fn set_dtls_version(mut self, version: DtlsVersion) -> Self {
+        self.dtls_version = version;
+        self
+    }
+
+    /// Get the configured DTLS version.
+    pub fn dtls_version(&self) -> DtlsVersion {
+        self.dtls_version
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self, start: Instant) -> Rtc {
         Rtc::new_from_config(self, start).expect("Failed to create Rtc from config")
@@ -573,6 +588,7 @@ impl Default for RtcConfig {
             send_buffer_video: 1000,
             rtp_mode: false,
             enable_raw_packets: false,
+            dtls_version: DtlsVersion::Dtls12,
         }
     }
 }

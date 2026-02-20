@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Update dimpl to 0.3.0 #874
   * Avoid sending VLA on every packet #866
   * Add `abs-capture-time` RTP header extension #864
   * Adjust `IceAgent::ice_timeout` to return timeout of successful pair #875

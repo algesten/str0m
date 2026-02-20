@@ -677,7 +677,7 @@ pub use config_mod::RtcConfig;
 
 /// Additional configuration.
 pub mod config {
-    pub use super::crypto::dtls::{DtlsCert, KeyingMaterial};
+    pub use super::crypto::dtls::{DtlsCert, DtlsVersion, KeyingMaterial};
     pub use super::crypto::{CryptoProvider, Fingerprint};
 }
 
@@ -1158,6 +1158,8 @@ impl Rtc {
                 &dtls_cert,
                 crypto_provider.dtls_provider,
                 crypto_provider.sha256_provider,
+                start,
+                config.dtls_version,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,

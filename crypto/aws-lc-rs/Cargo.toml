@@ -13,5 +13,7 @@ rust-version = "1.81.0"
 
 [dependencies]
 str0m-proto = { version = "0.1.2", path = "../../proto" }
-dimpl = { version = "0.2.4", default-features = false, features = ["aws-lc-rs", "rcgen"] }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+dimpl = { version = "0.3.0", default-features = false, features = ["aws-lc-rs", "rcgen"] }
+# Pin time to avoid time-core 0.1.8+ which requires edition 2024 (rustc 1.85+)
+time = ">=0.3, <0.3.37"
