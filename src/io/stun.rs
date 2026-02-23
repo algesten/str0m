@@ -19,7 +19,7 @@ pub struct StunTiming {
 }
 
 impl StunTiming {
-    /// Calculate the ICE timeout.
+    /// Calculate the ICE timeout of a successful pair.
     pub fn timeout(&self) -> Duration {
         let base_timeout = (2..=self.max_retransmits)
             .map(|n| self.stun_resend_delay(n))
