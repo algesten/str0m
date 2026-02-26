@@ -1,5 +1,6 @@
 # Unreleased
 
+  * VP9 switch packetizer to non-flexible mode (F=0)
   * Fix H265 SDP negotiation level handling #872
   * Update dimpl to 0.3.0 #874
   * Avoid sending VLA on every packet #866
