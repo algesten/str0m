@@ -2,6 +2,7 @@
 
   * Avoid sending VLA on every packet #866
   * Add `abs-capture-time` RTP header extension #864
+  * Fix infinite loop on in-band data channel stream conflict #873
 
 # 0.16.2
 
