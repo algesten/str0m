@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Add RTP-level keyframe detection for VP8, VP9, AV1, H264 and H265
   * VP9 switch packetizer to non-flexible mode (F=0)
   * Fix H265 SDP negotiation level handling #872
   * Update dimpl to 0.3.0 #874
