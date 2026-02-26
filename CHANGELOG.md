@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix H265 SDP negotiation level handling #872
   * Update dimpl to 0.3.0 #874
   * Avoid sending VLA on every packet #866
   * Add `abs-capture-time` RTP header extension #864
