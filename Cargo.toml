@@ -57,7 +57,10 @@ crc = ">=3.0, <3.4"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m (required dependency)
-dimpl = { version = "0.2.4", default-features = false }
+dimpl = { version = "0.3.0", default-features = false }
+
+# Pin time to avoid time-core 0.1.8+ which requires edition 2024 (rustc 1.85+)
+time = ">=0.3, <0.3.37"
 
 str0m-proto = { version = "0.1.2", path = "proto" }
 
@@ -77,6 +80,11 @@ str0m-wincrypto = { version = "0.3.2", path = "crypto/wincrypto", optional = tru
 rouille = { version = "3.6.2", features = [] }
 str0m-rust-crypto = { version = "0.1.2", path = "crypto/rust-crypto" }
 netem = { package = "str0m-netem", version = "0.1.1", path = "netem" }
+
+# Pin tempfile to avoid getrandom 0.4.1 which requires edition 2024 (MSRV 1.85)
+tempfile = ">=3, <3.25"
+# Pin url to avoid idna 1.x / ICU crates requiring rustc 1.82+
+url = ">=2, <2.5"
 
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }

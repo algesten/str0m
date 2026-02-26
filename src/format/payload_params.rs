@@ -429,28 +429,28 @@ impl PayloadParams {
 
     /// Match H.265 codec specifications and return compatibility score.
     ///
-    /// # Direction Semantics
-    ///
-    /// This function assumes:
-    /// - `c0` is the **local/configured** receiving capability
-    /// - `c1` is the **remote/offered** sending capability
-    ///
-    /// The level check `c1_level <= c0_level` enforces that the remote encoder
-    /// must not exceed our decoder's configured level.
-    ///
-    /// # Matching Rules
+    /// # Matching Rules — Full PTL (both sides have profile+tier+level)
     ///
     /// - **Profiles** must match exactly (no cross-profile compatibility)
     /// - **Tiers** must match exactly (Main vs High tier are distinct)
-    /// - **Levels** allow `c1_level <= c0_level` (we can decode lower complexity)
-    /// - **Missing profile info** on either side causes rejection (no fallback)
+    /// - **Levels** penalize score by `|c0_level - c1_level|` but never reject.
+    ///   Unlike H.264 (which rejects when `c1_level > c0_level`), H.265
+    ///   tolerates level mismatches in either direction because `update_param`
+    ///   narrows the negotiated level to `min(local, remote)` afterward.
+    ///
+    /// # Matching Rules — Profile-only (at least one side lacks tier+level)
+    ///
+    /// - **Profiles** must match; missing profile info falls back to
+    ///   `FALLBACK.profile()` (not rejected).
+    /// - **Tiers and levels** are not checked (insufficient information).
+    /// - Returns a lower score (90) so full-PTL matches are preferred.
     ///
     /// # Returns
     ///
-    /// - `Some(100)` for exact match
+    /// - `Some(100)` for exact full-PTL match
     /// - `Some(100 - level_gap)` for profile/tier match with level difference
     /// - `Some(90)` for profile-only match (when tier/level unavailable)
-    /// - `None` for incompatible or invalid specs
+    /// - `None` for profile or tier mismatch
     pub(crate) fn match_h265_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
         match (
             c0.format.h265_profile_tier_level,
@@ -460,27 +460,25 @@ impl PayloadParams {
                 // Both have full PTL - strict matching
 
                 // Profiles must match exactly.
+                // RFC 7798 §7.2.2: profile-id is a configuration parameter
+                // that MUST be used symmetrically in offer/answer.
+                // https://www.rfc-editor.org/rfc/rfc7798#section-7.2.2
                 if c0_ptl.profile() != c1_ptl.profile() {
                     return None;
                 }
 
-                // Tiers must match exactly per H.265 spec semantics.
-                // Main tier and High tier are not interchangeable.
+                // Tiers must match exactly.
+                // RFC 7798 §7.2.2: tier-flag is a configuration parameter
+                // that MUST be used symmetrically in offer/answer.
+                // https://www.rfc-editor.org/rfc/rfc7798#section-7.2.2
                 if c0_ptl.tier() != c1_ptl.tier() {
                     return None;
                 }
 
-                // We can decode bitstreams at our configured level or any lower level.
-                // Reject if the offered level exceeds our configured capability.
-                if c1_ptl.level() > c0_ptl.level() {
-                    return None;
-                }
-
-                // Decrement score based on level difference (prefer exact match).
-                let level_difference: usize = c0_ptl
-                    .level()
-                    .ordinal()
-                    .saturating_sub(c1_ptl.level().ordinal());
+                // Level difference penalizes score but never causes rejection.
+                // Actual level narrowing to min(local, remote) is done in update_param.
+                let level_difference: usize =
+                    c0_ptl.level().ordinal().abs_diff(c1_ptl.level().ordinal());
 
                 // Pure scoring without artificial floor - let caller decide policy
                 Some(Self::EXACT_MATCH_SCORE.saturating_sub(level_difference))
@@ -531,15 +529,18 @@ impl PayloadParams {
             return;
         };
 
-        // For some codecs, fmtp parameters are effectively negotiated and the SDP answer
-        // must not introduce parameters the remote did not offer.
-        //
-        // In particular, some browsers offer H.265 with only `profile-id` and will reject
-        // an answer that includes additional H.265 fmtp parameters (e.g. `tier-flag`, `level-id`).
-        // To maximize interoperability, mirror the remote's negotiated H.265 fmtp shape.
+        // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.
         if self.spec.codec == Codec::H265 && first.spec.codec == Codec::H265 {
-            if let Some(ptl) = first.spec.format.h265_profile_tier_level {
-                self.spec.format.h265_profile_tier_level = Some(ptl);
+            if let Some(remote_ptl) = first.spec.format.h265_profile_tier_level {
+                // Narrow level to min(local, remote) so the negotiated level
+                // never exceeds either side's capability.
+                let negotiated_ptl =
+                    if let Some(local_ptl) = self.spec.format.h265_profile_tier_level {
+                        remote_ptl.with_level(std::cmp::min(local_ptl.level(), remote_ptl.level()))
+                    } else {
+                        remote_ptl
+                    };
+                self.spec.format.h265_profile_tier_level = Some(negotiated_ptl);
                 // Avoid also serializing `profile-id` via the VP9 `profile_id` field.
                 self.spec.format.profile_id = None;
             } else if let Some(profile_id) = first.spec.format.profile_id {
@@ -847,12 +848,12 @@ mod test {
                     must_match: true,
                     msg: "Same profile/tier, offered level 3.1 < configured 4.0 should match",
                 },
-                // Same profile and tier, offered level higher -> should NOT match
+                // Same profile and tier, offered level higher -> should still match (with penalty)
                 Case {
                     c0: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
                     c1: h265_codec_spec(1, 0, 120), // Main, Main tier, Level 4.0
-                    must_match: false,
-                    msg: "Same profile/tier, offered level 4.0 > configured 3.1 should NOT match",
+                    must_match: true,
+                    msg: "Same profile/tier, offered level 4.0 > configured 3.1 should match (penalized)",
                 },
                 // Different profiles -> should NOT match
                 Case {
@@ -936,12 +937,12 @@ mod test {
                     expected: Some(PayloadParams::EXACT_MATCH_SCORE - 4),
                     msg: "Four level difference (5.1 to 3.1) should return score 96",
                 },
-                // Offered level higher -> None
+                // Offered level higher -> still matches, penalized by 1 ordinal
                 Case {
                     c0: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
                     c1: h265_codec_spec(1, 0, 120), // Main, Main tier, Level 4.0
-                    expected: None,
-                    msg: "Offered level higher than configured should return None",
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 1),
+                    msg: "Offered level one higher than configured should return score 99",
                 },
                 // Different profiles -> None
                 Case {
@@ -1060,17 +1061,11 @@ mod test {
                     c1: h265_codec_spec(1, 1, 93), // Main, High tier, Level 3.1
                     msg: "Tier mismatch (Main vs High) must not match",
                 },
-                // Level too high
-                Case {
-                    c0: h265_codec_spec(1, 0, 90),  // Main, Main tier, Level 3.0
-                    c1: h265_codec_spec(1, 0, 186), // Main, Main tier, Level 6.2
-                    msg: "Offered level 6.2 > configured 3.0 must not match",
-                },
-                // All three different
+                // All three different (profile+tier mismatch rejects)
                 Case {
                     c0: h265_codec_spec(1, 0, 93),  // Main, Main tier, Level 3.1
                     c1: h265_codec_spec(2, 1, 153), // Main10, High tier, Level 5.1
-                    msg: "Profile, tier, and level all different must not match",
+                    msg: "Profile and tier different must not match",
                 },
                 // Profile-only mismatch
                 Case {

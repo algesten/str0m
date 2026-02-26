@@ -417,7 +417,8 @@ impl IceAgent {
         }
     }
 
-    /// How long we at most tolerate missing replies for a candidate pair before considering it failed.
+    /// How long we at most tolerate missing replies for a successful candidate pair
+    /// before considering it failed.
     pub fn ice_timeout(&self) -> Duration {
         self.timing_config.timeout()
     }

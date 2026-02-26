@@ -4,7 +4,7 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::time::Instant;
 
 use crate::crypto::dtls::{DtlsCert, DtlsOutput};
-use crate::crypto::dtls::{DtlsInstance, DtlsProvider};
+use crate::crypto::dtls::{DtlsInstance, DtlsProvider, DtlsVersion};
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
 use crate::crypto::{CryptoError, DtlsError};
@@ -52,9 +52,11 @@ impl Dtls {
         cert: &DtlsCert,
         dtls_provider: &dyn DtlsProvider,
         sha256_provider: &dyn Sha256Provider,
+        now: Instant,
+        dtls_version: DtlsVersion,
     ) -> Result<Self, DtlsError> {
         let instance = dtls_provider
-            .new_dtls(cert)
+            .new_dtls(cert, now, dtls_version)
             .map_err(DtlsError::CryptoError)?;
 
         // Compute fingerprint from the certificate DER bytes

@@ -1,7 +1,10 @@
 # Unreleased
 
+  * Fix H265 SDP negotiation level handling #872
+  * Update dimpl to 0.3.0 #874
   * Avoid sending VLA on every packet #866
   * Add `abs-capture-time` RTP header extension #864
+  * Adjust `IceAgent::ice_timeout` to return timeout of successful pair #875
   * Fix infinite loop on in-band data channel stream conflict #873
 
 # 0.16.2

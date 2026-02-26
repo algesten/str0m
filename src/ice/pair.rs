@@ -481,3 +481,38 @@ impl fmt::Debug for CandidatePair {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    use super::*;
+
+    #[test]
+    fn ice_timeout_after_established() {
+        let stun_timing = StunTiming::default();
+
+        let mut pair = CandidatePair::new(0, CandidateKind::Host, 0, CandidateKind::Host, 0);
+
+        let mut now = Instant::now();
+
+        for _ in 0..20 {
+            let id = pair.new_attempt(now, &stun_timing);
+
+            now += Duration::from_millis(500);
+
+            pair.record_binding_response(now, id, 0);
+        }
+
+        let offline_at = now;
+
+        while pair.is_still_possible(now, &stun_timing) {
+            pair.new_attempt(now, &stun_timing);
+            now = pair.next_binding_attempt(now, &stun_timing);
+        }
+
+        let duration = now.duration_since(offline_at);
+
+        assert_eq!(duration, stun_timing.timeout())
+    }
+}

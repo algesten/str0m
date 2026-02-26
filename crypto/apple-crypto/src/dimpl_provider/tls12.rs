@@ -1,6 +1,6 @@
 //! TLS 1.2 PRF implementation using Apple CommonCrypto.
 
-use dimpl::buffer::Buf;
+use dimpl::crypto::Buf;
 use dimpl::crypto::{HashAlgorithm, PrfProvider};
 
 #[derive(Debug)]
@@ -106,7 +106,7 @@ pub(super) static PRF_PROVIDER: ApplePrfProvider = ApplePrfProvider;
 
 #[cfg(test)]
 mod tests {
-    use dimpl::buffer::Buf;
+    use dimpl::crypto::Buf;
     use dimpl::crypto::HashAlgorithm;
     use dimpl::crypto::PrfProvider;
 

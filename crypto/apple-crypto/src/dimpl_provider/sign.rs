@@ -10,12 +10,12 @@ use core_foundation::error::CFError;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use der::Decode;
-use dimpl::buffer::Buf;
+use dimpl::crypto::Buf;
 use security_framework::key::{Algorithm, SecKey};
 use spki::ObjectIdentifier;
 use x509_cert::Certificate as X509Certificate;
 
-use dimpl::crypto::{CipherSuite, HashAlgorithm, KeyProvider};
+use dimpl::crypto::{HashAlgorithm, KeyProvider};
 use dimpl::crypto::{SignatureAlgorithm, SignatureVerifier, SigningKey as SigningKeyTrait};
 
 // Security framework FFI bindings
@@ -99,13 +99,6 @@ impl SigningKeyTrait for EcdsaSigningKey {
             EcCurve::P256 => HashAlgorithm::SHA256,
             EcCurve::P384 => HashAlgorithm::SHA384,
         }
-    }
-
-    fn is_compatible(&self, cipher_suite: CipherSuite) -> bool {
-        matches!(
-            cipher_suite,
-            CipherSuite::ECDHE_ECDSA_AES256_GCM_SHA384 | CipherSuite::ECDHE_ECDSA_AES128_GCM_SHA256
-        )
     }
 }
 

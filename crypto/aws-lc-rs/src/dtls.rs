@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::CryptoError;
+use str0m_proto::crypto::DtlsVersion;
 
 // ============================================================================
 // DTLS Provider Implementation
@@ -24,7 +25,12 @@ impl DtlsProvider for AwsLcRsDtlsProvider {
             })
     }
 
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    fn new_dtls(
+        &self,
+        cert: &DtlsCert,
+        now: Instant,
+        dtls_version: DtlsVersion,
+    ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         let dimpl_cert = dimpl::DtlsCertificate {
             certificate: cert.certificate.clone(),
             private_key: cert.private_key.clone(),
@@ -41,7 +47,17 @@ impl DtlsProvider for AwsLcRsDtlsProvider {
             .build()
             .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {}", e)))?;
 
-        let dtls = dimpl::Dtls::new(Arc::new(config), dimpl_cert);
+        let config = Arc::new(config);
+        let dtls = match dtls_version {
+            DtlsVersion::Dtls12 => dimpl::Dtls::new_12(config, dimpl_cert, now),
+            DtlsVersion::Dtls13 => dimpl::Dtls::new_13(config, dimpl_cert, now),
+            DtlsVersion::Auto => dimpl::Dtls::new_auto(config, dimpl_cert, now),
+            _ => {
+                return Err(CryptoError::Other(format!(
+                    "Unsupported DTLS version: {dtls_version}"
+                )))
+            }
+        };
 
         Ok(Box::new(AwsLcRsDtlsInstance { dtls }))
     }

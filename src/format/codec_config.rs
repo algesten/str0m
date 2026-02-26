@@ -272,8 +272,15 @@ impl CodecConfig {
 
         // Start with single default configuration
         // Profile/tier/level negotiation will happen via SDP fmtp parameters
-        // Using Level 5.2 (level_id=156) to support modern browsers like Chrome
-        self.add_h265(PT_H265, Some(PT_H265_RTX), 1, 0, 156); // Main, Main tier, Level 5.2
+        //
+        // Level 6.0 (level_id=180) — a high capability level well supported by modern browsers.
+        // Level-id formula per ITU-T H.265 Annex A: level_id = (a*10 + b) * 3
+        //   e.g. Level 6.0 → (6*10 + 0) * 3 = 180
+        //
+        // Chromium H265Level enum definition (kLevel6 = 180):
+        //   https://source.chromium.org/chromium/chromium/src/+/main:
+        //   third_party/webrtc/api/video_codecs/h265_profile_tier_level.h
+        self.add_h265(PT_H265, Some(PT_H265_RTX), 1, 0, 180); // Main, Main tier, Level 6.0
     }
 
     /// Add a default VP9 payload type.
@@ -786,5 +793,306 @@ mod test {
             duplicates,
             all_pts
         );
+    }
+
+    // ── H.265 direction-based negotiation tests ──────────────────────────
+
+    /// Helper: build a CodecConfig containing only H.265 at the given PTL.
+    fn h265_config(profile_id: u8, tier_flag: u8, level_id: u8) -> CodecConfig {
+        let mut config = CodecConfig::empty();
+        config.add_h265(
+            102.into(),
+            Some(103.into()),
+            profile_id,
+            tier_flag,
+            level_id,
+        );
+        config
+    }
+
+    /// Helper: build a single-element remote PayloadParams for H.265 with full PTL.
+    fn h265_remote_ptl(profile_id: u8, tier_flag: u8, level_id: u8) -> Vec<PayloadParams> {
+        use crate::packet::H265ProfileTierLevel;
+        vec![PayloadParams::new(
+            102.into(),
+            Some(103.into()),
+            CodecSpec {
+                codec: Codec::H265,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    h265_profile_tier_level: Some(
+                        H265ProfileTierLevel::new(profile_id, tier_flag, level_id).unwrap(),
+                    ),
+                    ..Default::default()
+                },
+            },
+        )]
+    }
+
+    /// Helper: build a single-element remote PayloadParams for H.265 with profile-id only.
+    fn h265_remote_profile_only(profile_id: u32) -> Vec<PayloadParams> {
+        vec![PayloadParams::new(
+            102.into(),
+            Some(103.into()),
+            CodecSpec {
+                codec: Codec::H265,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    profile_id: Some(profile_id),
+                    ..Default::default()
+                },
+            },
+        )]
+    }
+
+    /// Helper: build a single-element remote PayloadParams for H.265 with no fmtp.
+    fn h265_remote_no_fmtp() -> Vec<PayloadParams> {
+        vec![PayloadParams::new(
+            102.into(),
+            Some(103.into()),
+            CodecSpec {
+                codec: Codec::H265,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        )]
+    }
+
+    /// Helper: extract the H.265 param from a config (panics if missing).
+    fn get_h265(config: &CodecConfig) -> &PayloadParams {
+        config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::H265)
+            .expect("H.265 param missing")
+    }
+
+    // ── recvonly: remote sends to us ─────────────────────────────────────
+
+    /// Remote sends at Level 5.2, we can receive at Level 6.0.
+    /// Negotiated level should narrow to min(6.0, 5.2) = 5.2.
+    #[test]
+    fn test_h265_recvonly_remote_level_lower() {
+        let mut config = h265_config(1, 0, 180); // Main, Main tier, Level 6.0
+        let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
+
+        // Direction::SendOnly = remote is sending (we receive)
+        config.update_params(&remote, Direction::SendOnly);
+
+        let ptl = get_h265(&config)
+            .spec()
+            .format
+            .h265_profile_tier_level
+            .unwrap();
+        assert_eq!(
+            ptl.level_id(),
+            156,
+            "Should narrow to min(180,156) = Level 5.2"
+        );
+        assert_eq!(ptl.profile_id(), 1, "Profile should be preserved");
+        assert_eq!(ptl.tier_flag(), 0, "Tier should be preserved");
+    }
+
+    /// Remote sends at Level 6.0, we can receive at Level 5.2.
+    /// Negotiated level should narrow to min(5.2, 6.0) = 5.2.
+    #[test]
+    fn test_h265_recvonly_local_level_lower() {
+        let mut config = h265_config(1, 0, 156); // Level 5.2
+        let remote = h265_remote_ptl(1, 0, 180); // Level 6.0
+
+        config.update_params(&remote, Direction::SendOnly);
+
+        let ptl = get_h265(&config)
+            .spec()
+            .format
+            .h265_profile_tier_level
+            .unwrap();
+        assert_eq!(
+            ptl.level_id(),
+            156,
+            "Should narrow to min(156,180) = Level 5.2"
+        );
+    }
+
+    // ── sendrecv: both sides send and receive ────────────────────────────
+
+    /// Both sides sendrecv. Local Level 6.0, remote Level 5.2.
+    /// Effective level should narrow to min(6.0, 5.2) = 5.2.
+    #[test]
+    fn test_h265_sendrecv_remote_level_lower() {
+        let mut config = h265_config(1, 0, 180); // Level 6.0
+        let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let ptl = get_h265(&config)
+            .spec()
+            .format
+            .h265_profile_tier_level
+            .unwrap();
+        assert_eq!(ptl.level_id(), 156, "sendrecv: should narrow to Level 5.2");
+    }
+
+    /// Both sides sendrecv. Local Level 5.2, remote Level 6.0.
+    /// Effective level should narrow to min(5.2, 6.0) = 5.2.
+    #[test]
+    fn test_h265_sendrecv_local_level_lower() {
+        let mut config = h265_config(1, 0, 156); // Level 5.2
+        let remote = h265_remote_ptl(1, 0, 180); // Level 6.0
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let ptl = get_h265(&config)
+            .spec()
+            .format
+            .h265_profile_tier_level
+            .unwrap();
+        assert_eq!(ptl.level_id(), 156, "sendrecv: should narrow to Level 5.2");
+    }
+
+    /// Same level on both sides. Should remain unchanged.
+    #[test]
+    fn test_h265_sendrecv_same_level() {
+        let mut config = h265_config(1, 0, 156); // Level 5.2
+        let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let ptl = get_h265(&config)
+            .spec()
+            .format
+            .h265_profile_tier_level
+            .unwrap();
+        assert_eq!(ptl.level_id(), 156, "Same levels should stay at Level 5.2");
+    }
+
+    // ── sendonly: we send, remote receives ───────────────────────────────
+
+    /// Remote declares recvonly at Level 5.2, we offer sendonly at Level 6.0.
+    /// Negotiated level should narrow to 5.2 (receiver wins).
+    #[test]
+    fn test_h265_sendonly_receiver_level_lower() {
+        let mut config = h265_config(1, 0, 180); // Level 6.0
+        let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
+
+        // Direction::RecvOnly = remote is receiving (we send)
+        config.update_params(&remote, Direction::RecvOnly);
+
+        let ptl = get_h265(&config)
+            .spec()
+            .format
+            .h265_profile_tier_level
+            .unwrap();
+        assert_eq!(
+            ptl.level_id(),
+            156,
+            "sendonly: should narrow to receiver's Level 5.2"
+        );
+    }
+
+    /// Remote offers only profile-id=1, no tier/level.
+    /// Local should drop its full PTL and echo back profile-id only.
+    #[test]
+    fn test_h265_profile_only_remote_mirrors() {
+        let mut config = h265_config(1, 0, 180); // Full PTL
+        let remote = h265_remote_profile_only(1); // profile-id only
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let h265 = get_h265(&config);
+        assert!(
+            h265.spec().format.h265_profile_tier_level.is_none(),
+            "Full PTL should be cleared when remote only offers profile-id"
+        );
+        assert_eq!(
+            h265.spec().format.profile_id,
+            Some(1),
+            "profile_id should mirror the remote's value"
+        );
+    }
+
+    // ── no-fmtp remote ──────────────────────────────────────────────────
+
+    /// Remote has no H.265 fmtp at all. Local should clear both fields.
+    #[test]
+    fn test_h265_no_fmtp_remote_clears() {
+        let mut config = h265_config(1, 0, 180); // Full PTL
+        let remote = h265_remote_no_fmtp();
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let h265 = get_h265(&config);
+        assert!(
+            h265.spec().format.h265_profile_tier_level.is_none(),
+            "PTL should be cleared when remote has no fmtp"
+        );
+        assert!(
+            h265.spec().format.profile_id.is_none(),
+            "profile_id should be cleared when remote has no fmtp"
+        );
+    }
+
+    // ── profile_id field cleanup ─────────────────────────────────────────
+
+    /// When remote has full PTL, the `profile_id` field must be None
+    /// to avoid duplicate serialization (profile-id appears in both
+    /// h265_profile_tier_level AND the VP9-style profile_id field).
+    #[test]
+    fn test_h265_profile_id_cleared_on_ptl_match() {
+        let mut config = CodecConfig::empty();
+        // Artificially set both fields to simulate a misconfigured state
+        config.add_config(
+            102.into(),
+            Some(103.into()),
+            Codec::H265,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams {
+                h265_profile_tier_level: Some(
+                    crate::packet::H265ProfileTierLevel::new(1, 0, 180).unwrap(),
+                ),
+                profile_id: Some(1), // should be cleared after negotiation
+                ..Default::default()
+            },
+        );
+        let remote = h265_remote_ptl(1, 0, 156);
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let h265 = get_h265(&config);
+        assert!(
+            h265.spec().format.profile_id.is_none(),
+            "profile_id field must be None when full PTL is present"
+        );
+        assert!(
+            h265.spec().format.h265_profile_tier_level.is_some(),
+            "PTL should still be present"
+        );
+    }
+
+    // ── default level ────────────────────────────────────────────────────
+
+    /// `enable_h265` should produce Level 6.0 (level_id = 180).
+    #[test]
+    fn test_h265_default_level_is_6_0() {
+        let mut config = CodecConfig::empty();
+        config.enable_h265(true);
+
+        let h265 = get_h265(&config);
+        let ptl = h265.spec().format.h265_profile_tier_level.unwrap();
+        assert_eq!(
+            ptl.level_id(),
+            180,
+            "Default H.265 level should be 6.0 (180)"
+        );
+        assert_eq!(
+            ptl.profile_id(),
+            1,
+            "Default H.265 profile should be Main (1)"
+        );
+        assert_eq!(ptl.tier_flag(), 0, "Default H.265 tier should be Main (0)");
     }
 }
