@@ -2,9 +2,12 @@
 
 // These really don't belong anywhere, but I guess they're kind of related
 // to codecs etc.
-pub use crate::packet::{detect_av1_keyframe, detect_vp8_keyframe, detect_vp9_keyframe};
 pub use crate::packet::{
-    CodecExtra, H264CodecExtra, Vp8CodecExtra, Vp9CodecExtra, Vp9PacketizerMode,
+    detect_av1_keyframe, detect_h264_keyframe, detect_h265_keyframe, detect_vp8_keyframe,
+    detect_vp9_keyframe,
+};
+pub use crate::packet::{
+    CodecExtra, H264CodecExtra, H265CodecExtra, Vp8CodecExtra, Vp9CodecExtra, Vp9PacketizerMode,
 };
 
 mod codec;

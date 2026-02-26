@@ -52,6 +52,74 @@ const H265NALU_CRA_NUT: u8 = 21;
 
 pub static ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
+/// Detect whether an H265 (HEVC) RTP payload contains a keyframe.
+///
+/// Checks for IRAP (Intra Random Access Point) NAL units in the RTP payload.
+/// IRAP types include BLA (16-18), IDR (19-20), and CRA (21).
+///
+/// Handles single NAL units, aggregation packets (AP, type 48),
+/// and fragmentation units (FU, type 49).
+///
+/// For FU packets, only the start fragment (S=1) is detected as a
+/// keyframe since the original NAL type is in the FU header.
+pub fn detect_h265_keyframe(payload: &[u8]) -> bool {
+    if payload.len() < H265NALU_HEADER_SIZE {
+        return false;
+    }
+
+    let header = H265NALUHeader::new(payload[0], payload[1]);
+    let nalu_type = header.nalu_type();
+
+    match nalu_type {
+        // Single NAL unit (types 0-47)
+        0..=47 => header.is_irap(),
+
+        // Aggregation packet: check all aggregated NALUs
+        H265NALU_AGGREGATION_PACKET_TYPE => {
+            let mut offset = H265NALU_HEADER_SIZE;
+            while offset + 2 <= payload.len() {
+                let nalu_size = ((payload[offset] as usize) << 8) | payload[offset + 1] as usize;
+                offset += 2;
+                if offset + nalu_size > payload.len() || nalu_size < H265NALU_HEADER_SIZE {
+                    break;
+                }
+                let inner = H265NALUHeader::new(payload[offset], payload[offset + 1]);
+                if inner.is_irap() {
+                    return true;
+                }
+                offset += nalu_size;
+            }
+            false
+        }
+
+        // Fragmentation unit: check FU header for original NAL type
+        H265NALU_FRAGMENTATION_UNIT_TYPE => {
+            // FU header is byte 2 (after 2-byte NAL header)
+            if payload.len() < H265NALU_HEADER_SIZE + 1 {
+                return false;
+            }
+            let fu_header = payload[H265NALU_HEADER_SIZE];
+            // S bit (start fragment) is bit 7
+            if fu_header & 0x80 == 0 {
+                return false;
+            }
+            // FU type is lower 6 bits
+            let fu_type = fu_header & 0x3F;
+            matches!(
+                fu_type,
+                H265NALU_BLA_W_LP
+                    | H265NALU_BLA_W_RADL
+                    | H265NALU_BLA_N_LP
+                    | H265NALU_IDR_W_RADL
+                    | H265NALU_IDR_N_LP
+                    | H265NALU_CRA_NUT
+            )
+        }
+
+        _ => false,
+    }
+}
+
 /// Packetizes H265 (HEVC) RTP payloads.
 ///
 /// This implements the packetization rules from RFC 7798.
@@ -4864,4 +4932,71 @@ mod test {
             Ok(())
         }
     } // end integration_tests
+
+    #[test]
+    fn test_detect_h265_keyframe() {
+        // Empty / too short payload
+        assert!(!detect_h265_keyframe(&[]));
+        assert!(!detect_h265_keyframe(&[0x00]));
+
+        // Single IDR_W_RADL (type 19): nalu_type in bits [14:9]
+        // type 19 = 0b010011 → byte0 = 0b0_010011_0 = 0x26, byte1 = TID
+        let idr_w_radl = H265NALUHeader::new_with_type(H265NALU_IDR_W_RADL, 0, 1);
+        assert!(detect_h265_keyframe(&idr_w_radl.0.to_be_bytes()));
+
+        // Single IDR_N_LP (type 20)
+        let idr_n_lp = H265NALUHeader::new_with_type(H265NALU_IDR_N_LP, 0, 1);
+        assert!(detect_h265_keyframe(&idr_n_lp.0.to_be_bytes()));
+
+        // Single CRA (type 21)
+        let cra = H265NALUHeader::new_with_type(H265NALU_CRA_NUT, 0, 1);
+        assert!(detect_h265_keyframe(&cra.0.to_be_bytes()));
+
+        // Single BLA_W_LP (type 16)
+        let bla = H265NALUHeader::new_with_type(H265NALU_BLA_W_LP, 0, 1);
+        assert!(detect_h265_keyframe(&bla.0.to_be_bytes()));
+
+        // Single non-IRAP (type 1 = TRAIL_R)
+        let trail_r = H265NALUHeader::new_with_type(1, 0, 1);
+        assert!(!detect_h265_keyframe(&trail_r.0.to_be_bytes()));
+
+        // Aggregation packet (type 48) with IDR inside
+        let ap_header = H265NALUHeader::new_with_type(H265NALU_AGGREGATION_PACKET_TYPE, 0, 1);
+        let idr_header = H265NALUHeader::new_with_type(H265NALU_IDR_W_RADL, 0, 1);
+        let idr_bytes = idr_header.0.to_be_bytes();
+        let mut ap_with_idr = Vec::new();
+        ap_with_idr.extend_from_slice(&ap_header.0.to_be_bytes()); // AP header
+        ap_with_idr.extend_from_slice(&[0x00, 0x03]); // NALU size = 3
+        ap_with_idr.extend_from_slice(&idr_bytes); // IDR header
+        ap_with_idr.push(0x00); // payload byte
+        assert!(detect_h265_keyframe(&ap_with_idr));
+
+        // Aggregation packet without IRAP
+        let non_irap_header = H265NALUHeader::new_with_type(1, 0, 1);
+        let non_irap_bytes = non_irap_header.0.to_be_bytes();
+        let mut ap_no_irap = Vec::new();
+        ap_no_irap.extend_from_slice(&ap_header.0.to_be_bytes());
+        ap_no_irap.extend_from_slice(&[0x00, 0x03]);
+        ap_no_irap.extend_from_slice(&non_irap_bytes);
+        ap_no_irap.push(0x00);
+        assert!(!detect_h265_keyframe(&ap_no_irap));
+
+        // FU start fragment with IDR type
+        let fu_header_bytes = H265NALUHeader::new_with_type(H265NALU_FRAGMENTATION_UNIT_TYPE, 0, 1);
+        let mut fu_start_idr = Vec::new();
+        fu_start_idr.extend_from_slice(&fu_header_bytes.0.to_be_bytes());
+        fu_start_idr.push(0x80 | H265NALU_IDR_W_RADL); // S=1, type=19
+        fu_start_idr.extend_from_slice(&[0x00, 0x00]);
+        assert!(detect_h265_keyframe(&fu_start_idr));
+
+        // FU continuation fragment (S=0) - cannot detect
+        let mut fu_cont = Vec::new();
+        fu_cont.extend_from_slice(&fu_header_bytes.0.to_be_bytes());
+        fu_cont.push(H265NALU_IDR_W_RADL); // S=0, type=19
+        fu_cont.extend_from_slice(&[0x00, 0x00]);
+        assert!(!detect_h265_keyframe(&fu_cont));
+
+        // FU too short (no FU header byte)
+        assert!(!detect_h265_keyframe(&fu_header_bytes.0.to_be_bytes()));
+    }
 } // end test module
