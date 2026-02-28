@@ -9,6 +9,7 @@ use netem::{Input as NetemInput, Netem, NetemConfig, Output as NetemOutput};
 
 use pcap_file::pcap::PcapReader;
 use str0m::change::SdpApi;
+use str0m::config::DtlsVersion;
 use str0m::crypto::CryptoProvider;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
@@ -52,6 +53,69 @@ impl Peer {
             None
         }
     }
+
+    /// Get the DTLS version for this peer based on environment variables.
+    /// Returns `DtlsVersion::Auto` if no environment variable is set, unless the
+    /// crypto provider only supports DTLS 1.2 (openssl, wincrypto) in which case
+    /// it defaults to `DtlsVersion::Dtls12`.
+    /// Supported values: "auto", "1.2", "1.3"
+    pub fn dtls_version(&self) -> DtlsVersion {
+        let env_var = match self {
+            Peer::Left => "L_DTLS_VERSION",
+            Peer::Right => "R_DTLS_VERSION",
+        };
+
+        let default = if self.crypto_is_dtls12_only() {
+            DtlsVersion::Dtls12
+        } else {
+            DtlsVersion::Auto
+        };
+
+        match std::env::var(env_var).as_deref() {
+            Ok("1.2") => DtlsVersion::Dtls12,
+            Ok("1.3") => DtlsVersion::Dtls13,
+            Ok("auto") => DtlsVersion::Auto,
+            Err(_) => default,
+            Ok(other) => panic!(
+                "Unknown DTLS version '{}'. Supported values: auto, 1.2, 1.3",
+                other
+            ),
+        }
+    }
+
+    /// Check if a crypto provider only supports DTLS 1.2 (e.g. openssl, wincrypto).
+    fn crypto_is_dtls12_only(&self) -> bool {
+        let env_var = match self {
+            Peer::Left => "L_CRYPTO",
+            Peer::Right => "R_CRYPTO",
+        };
+
+        matches!(
+            std::env::var(env_var).as_deref(),
+            Ok("openssl") | Ok("wincrypto")
+        )
+    }
+
+    /// Returns true if the current DTLS version + crypto combination should be skipped.
+    /// openssl and wincrypto only support DTLS 1.2, so auto and 1.3 are skipped.
+    pub fn should_skip_dtls_version(&self) -> bool {
+        if self.crypto_is_dtls12_only() {
+            matches!(self.dtls_version(), DtlsVersion::Auto | DtlsVersion::Dtls13)
+        } else {
+            false
+        }
+    }
+}
+
+/// Returns true if the test should be skipped due to an unsupported
+/// DTLS version + crypto provider combination on either peer.
+/// Call this at the start of tests and return early if true.
+pub fn skip_dtls_version_test() -> bool {
+    if Peer::Left.should_skip_dtls_version() || Peer::Right.should_skip_dtls_version() {
+        eprintln!("Skipping test: crypto provider does not support the configured DTLS version");
+        return true;
+    }
+    false
 }
 
 /// Owned version of Receive for queueing.
@@ -82,12 +146,13 @@ pub struct TestRtc {
 impl TestRtc {
     pub fn new(peer: Peer) -> Self {
         let now = Instant::now();
-        let rtc = if let Some(crypto) = peer.crypto_provider() {
-            Rtc::builder().set_crypto_provider(crypto).build(now)
-        } else {
-            Rtc::new(now)
-        };
+        let mut builder = Rtc::builder().set_dtls_version(peer.dtls_version());
 
+        if let Some(crypto) = peer.crypto_provider() {
+            builder = builder.set_crypto_provider(crypto);
+        }
+
+        let rtc = builder.build(now);
         Self::new_with_rtc(peer.span(), rtc)
     }
 
@@ -434,13 +499,19 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
 }
 
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
-    let mut rtc1_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
+    let mut rtc1_builder = Rtc::builder()
+        .set_rtp_mode(true)
+        .enable_raw_packets(true)
+        .set_dtls_version(Peer::Left.dtls_version());
 
     if let Some(crypto) = Peer::Left.crypto_provider() {
         rtc1_builder = rtc1_builder.set_crypto_provider(crypto);
     }
 
-    let mut rtc2_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
+    let mut rtc2_builder = Rtc::builder()
+        .set_rtp_mode(true)
+        .enable_raw_packets(true)
+        .set_dtls_version(Peer::Right.dtls_version());
 
     if let Some(crypto) = Peer::Right.crypto_provider() {
         rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
