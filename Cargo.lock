@@ -527,6 +527,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dimpl"
+version = "0.3.0"
+source = "git+https://github.com/algesten/dimpl?rev=f773eaf87164da04642b54ba0c5e9c25c92959be#f773eaf87164da04642b54ba0c5e9c25c92959be"
+dependencies = [
+ "arrayvec",
+ "log",
+ "nom",
+ "once_cell",
+ "rand 0.9.2",
+ "subtle",
+ "time",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,7 +1638,7 @@ dependencies = [
  "arrayvec",
  "combine",
  "crc",
- "dimpl",
+ "dimpl 0.3.0 (git+https://github.com/algesten/dimpl?rev=f773eaf87164da04642b54ba0c5e9c25c92959be)",
  "fastrand",
  "pcap-file",
  "rand 0.9.2",
@@ -1656,7 +1670,7 @@ dependencies = [
  "apple-cryptokit-rs",
  "core-foundation",
  "der",
- "dimpl",
+ "dimpl 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pkcs8",
  "sec1",
  "security-framework",
@@ -1672,7 +1686,7 @@ name = "str0m-aws-lc-rs"
 version = "0.1.2"
 dependencies = [
  "aws-lc-rs",
- "dimpl",
+ "dimpl 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "str0m-proto",
  "time",
 ]
@@ -1701,7 +1715,7 @@ name = "str0m-proto"
 version = "0.1.2"
 dependencies = [
  "base64ct",
- "dimpl",
+ "dimpl 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl",
  "subtle",
  "time",
@@ -1714,7 +1728,7 @@ dependencies = [
  "aes",
  "aes-gcm",
  "ctr",
- "dimpl",
+ "dimpl 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hmac",
  "p256",
  "sha1",

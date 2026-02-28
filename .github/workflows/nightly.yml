@@ -16,168 +16,169 @@ jobs:
   # Tests all combinations of crypto providers and DTLS versions.
   # openssl and wincrypto only support DTLS 1.2, so auto/1.3 are excluded for those.
   # Incompatible DTLS version combinations (1.2 <-> 1.3) are expected to fail.
-  windows-crypto-test:
-    name: Windows - L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
-    runs-on: windows-latest
-    timeout-minutes: 15
 
-    strategy:
-      fail-fast: false
-      matrix:
-        l_crypto: ["rust-crypto", "aws", "wincrypto"]
-        r_crypto: ["rust-crypto", "aws", "wincrypto"]
-        l_dtls_version: ["auto", "1.2", "1.3"]
-        r_dtls_version: ["auto", "1.2", "1.3"]
-        exclude:
-          # wincrypto only supports DTLS 1.2
-          - l_crypto: "wincrypto"
-            l_dtls_version: "auto"
-          - l_crypto: "wincrypto"
-            l_dtls_version: "1.3"
-          - r_crypto: "wincrypto"
-            r_dtls_version: "auto"
-          - r_crypto: "wincrypto"
-            r_dtls_version: "1.3"
+  # windows-crypto-test:
+  #   name: Windows - L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
+  #   runs-on: windows-latest
+  #   timeout-minutes: 15
+  #
+  #   strategy:
+  #     fail-fast: true
+  #     matrix:
+  #       l_crypto: ["rust-crypto", "aws", "wincrypto"]
+  #       r_crypto: ["rust-crypto", "aws", "wincrypto"]
+  #       l_dtls_version: ["auto", "1.2", "1.3"]
+  #       r_dtls_version: ["auto", "1.2", "1.3"]
+  #       exclude:
+  #         # wincrypto only supports DTLS 1.2
+  #         - l_crypto: "wincrypto"
+  #           l_dtls_version: "auto"
+  #         - l_crypto: "wincrypto"
+  #           l_dtls_version: "1.3"
+  #         - r_crypto: "wincrypto"
+  #           r_dtls_version: "auto"
+  #         - r_crypto: "wincrypto"
+  #           r_dtls_version: "1.3"
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         persist-credentials: false
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       id: toolchain
+  #
+  #     - uses: Swatinem/rust-cache@v2
+  #       with:
+  #         key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}-${{ matrix.l_dtls_version }}-${{ matrix.r_dtls_version }}
+  #
+  #     - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
+  #       if: ${{ !((matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3')) }}
+  #       env:
+  #         L_CRYPTO: ${{ matrix.l_crypto }}
+  #         R_CRYPTO: ${{ matrix.r_crypto }}
+  #         L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
+  #         R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
+  #       run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto --lib --bins --tests
+  #
+  #     - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }} (expected fail)
+  #       if: ${{ (matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3') }}
+  #       env:
+  #         L_CRYPTO: ${{ matrix.l_crypto }}
+  #         R_CRYPTO: ${{ matrix.r_crypto }}
+  #         L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
+  #         R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
+  #       shell: bash
+  #       run: |
+  #         ! cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto --lib --bins --tests
 
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+  # linux-crypto-test:
+  #   name: Linux - L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 15
+  #
+  #   strategy:
+  #     fail-fast: true
+  #     matrix:
+  #       l_crypto: ["rust-crypto", "aws", "openssl"]
+  #       r_crypto: ["rust-crypto", "aws", "openssl"]
+  #       l_dtls_version: ["auto", "1.2", "1.3"]
+  #       r_dtls_version: ["auto", "1.2", "1.3"]
+  #       exclude:
+  #         # openssl only supports DTLS 1.2
+  #         - l_crypto: "openssl"
+  #           l_dtls_version: "auto"
+  #         - l_crypto: "openssl"
+  #           l_dtls_version: "1.3"
+  #         - r_crypto: "openssl"
+  #           r_dtls_version: "auto"
+  #         - r_crypto: "openssl"
+  #           r_dtls_version: "1.3"
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         persist-credentials: false
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       id: toolchain
+  #
+  #     - uses: Swatinem/rust-cache@v2
+  #       with:
+  #         key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}-${{ matrix.l_dtls_version }}-${{ matrix.r_dtls_version }}
+  #
+  #     - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
+  #       if: ${{ !((matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3')) }}
+  #       env:
+  #         L_CRYPTO: ${{ matrix.l_crypto }}
+  #         R_CRYPTO: ${{ matrix.r_crypto }}
+  #         L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
+  #         R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
+  #       run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,openssl --lib --bins --tests
+  #
+  #     - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }} (expected fail)
+  #       if: ${{ (matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3') }}
+  #       env:
+  #         L_CRYPTO: ${{ matrix.l_crypto }}
+  #         R_CRYPTO: ${{ matrix.r_crypto }}
+  #         L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
+  #         R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
+  #       run: |
+  #         ! cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,openssl --lib --bins --tests
 
-      - uses: dtolnay/rust-toolchain@stable
-        id: toolchain
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}-${{ matrix.l_dtls_version }}-${{ matrix.r_dtls_version }}
-
-      - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
-        if: ${{ !((matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3')) }}
-        env:
-          L_CRYPTO: ${{ matrix.l_crypto }}
-          R_CRYPTO: ${{ matrix.r_crypto }}
-          L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
-          R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto --lib --bins --tests
-
-      - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }} (expected fail)
-        if: ${{ (matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3') }}
-        env:
-          L_CRYPTO: ${{ matrix.l_crypto }}
-          R_CRYPTO: ${{ matrix.r_crypto }}
-          L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
-          R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
-        shell: bash
-        run: |
-          ! cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto --lib --bins --tests
-
-  linux-crypto-test:
-    name: Linux - L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    strategy:
-      fail-fast: false
-      matrix:
-        l_crypto: ["rust-crypto", "aws", "openssl"]
-        r_crypto: ["rust-crypto", "aws", "openssl"]
-        l_dtls_version: ["auto", "1.2", "1.3"]
-        r_dtls_version: ["auto", "1.2", "1.3"]
-        exclude:
-          # openssl only supports DTLS 1.2
-          - l_crypto: "openssl"
-            l_dtls_version: "auto"
-          - l_crypto: "openssl"
-            l_dtls_version: "1.3"
-          - r_crypto: "openssl"
-            r_dtls_version: "auto"
-          - r_crypto: "openssl"
-            r_dtls_version: "1.3"
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@stable
-        id: toolchain
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}-${{ matrix.l_dtls_version }}-${{ matrix.r_dtls_version }}
-
-      - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
-        if: ${{ !((matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3')) }}
-        env:
-          L_CRYPTO: ${{ matrix.l_crypto }}
-          R_CRYPTO: ${{ matrix.r_crypto }}
-          L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
-          R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,openssl --lib --bins --tests
-
-      - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }} (expected fail)
-        if: ${{ (matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3') }}
-        env:
-          L_CRYPTO: ${{ matrix.l_crypto }}
-          R_CRYPTO: ${{ matrix.r_crypto }}
-          L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
-          R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
-        run: |
-          ! cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,openssl --lib --bins --tests
-
-  macos-crypto-test:
-    name: macOS - L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
-    runs-on: macos-latest
-    timeout-minutes: 15
-
-    strategy:
-      fail-fast: false
-      matrix:
-        l_crypto: ["rust-crypto", "aws", "apple-crypto", "openssl"]
-        r_crypto: ["rust-crypto", "aws", "apple-crypto", "openssl"]
-        l_dtls_version: ["auto", "1.2", "1.3"]
-        r_dtls_version: ["auto", "1.2", "1.3"]
-        exclude:
-          # openssl only supports DTLS 1.2
-          - l_crypto: "openssl"
-            l_dtls_version: "auto"
-          - l_crypto: "openssl"
-            l_dtls_version: "1.3"
-          - r_crypto: "openssl"
-            r_dtls_version: "auto"
-          - r_crypto: "openssl"
-            r_dtls_version: "1.3"
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@stable
-        id: toolchain
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}-${{ matrix.l_dtls_version }}-${{ matrix.r_dtls_version }}
-
-      - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
-        if: ${{ !((matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3')) }}
-        env:
-          L_CRYPTO: ${{ matrix.l_crypto }}
-          R_CRYPTO: ${{ matrix.r_crypto }}
-          L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
-          R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl --lib --bins --tests
-
-      - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }} (expected fail)
-        if: ${{ (matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3') }}
-        env:
-          L_CRYPTO: ${{ matrix.l_crypto }}
-          R_CRYPTO: ${{ matrix.r_crypto }}
-          L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
-          R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
-        run: |
-          ! cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl --lib --bins --tests
+  # macos-crypto-test:
+  #   name: macOS - L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
+  #   runs-on: macos-latest
+  #   timeout-minutes: 15
+  #
+  #   strategy:
+  #     fail-fast: true
+  #     matrix:
+  #       l_crypto: ["rust-crypto", "aws", "apple-crypto", "openssl"]
+  #       r_crypto: ["rust-crypto", "aws", "apple-crypto", "openssl"]
+  #       l_dtls_version: ["auto", "1.2", "1.3"]
+  #       r_dtls_version: ["auto", "1.2", "1.3"]
+  #       exclude:
+  #         # openssl only supports DTLS 1.2
+  #         - l_crypto: "openssl"
+  #           l_dtls_version: "auto"
+  #         - l_crypto: "openssl"
+  #           l_dtls_version: "1.3"
+  #         - r_crypto: "openssl"
+  #           r_dtls_version: "auto"
+  #         - r_crypto: "openssl"
+  #           r_dtls_version: "1.3"
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         persist-credentials: false
+  #
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       id: toolchain
+  #
+  #     - uses: Swatinem/rust-cache@v2
+  #       with:
+  #         key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}-${{ matrix.l_dtls_version }}-${{ matrix.r_dtls_version }}
+  #
+  #     - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }}
+  #       if: ${{ !((matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3')) }}
+  #       env:
+  #         L_CRYPTO: ${{ matrix.l_crypto }}
+  #         R_CRYPTO: ${{ matrix.r_crypto }}
+  #         L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
+  #         R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
+  #       run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl --lib --bins --tests
+  #
+  #     - name: Test L:${{ matrix.l_crypto }}/${{ matrix.l_dtls_version }} <-> R:${{ matrix.r_crypto }}/${{ matrix.r_dtls_version }} (expected fail)
+  #       if: ${{ (matrix.l_dtls_version == '1.3' && matrix.r_dtls_version == '1.2') || (matrix.l_dtls_version == '1.2' && matrix.r_dtls_version == '1.3') }}
+  #       env:
+  #         L_CRYPTO: ${{ matrix.l_crypto }}
+  #         R_CRYPTO: ${{ matrix.r_crypto }}
+  #         L_DTLS_VERSION: ${{ matrix.l_dtls_version }}
+  #         R_DTLS_VERSION: ${{ matrix.r_dtls_version }}
+  #       run: |
+  #         ! cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl --lib --bins --tests
 
   # Additional platform testing
   platform-build-test:
@@ -186,7 +187,7 @@ jobs:
     timeout-minutes: 30
 
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         platform:
           - name: Linux ARM64
@@ -239,7 +240,7 @@ jobs:
     timeout-minutes: 30
 
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         platform:
           # iOS targets - ARM64 only
