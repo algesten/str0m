@@ -133,8 +133,12 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let vla_ext = Extension::with_serializer(VLA_URI, VlaSerializer);
 
     let now = Instant::now();
-    let rtc_l = builder_for(Peer::Left).set_extension(14, vla_ext.clone()).build(now);
-    let rtc_r = builder_for(Peer::Right).set_extension(14, vla_ext).build(now);
+    let rtc_l = builder_for(Peer::Left)
+        .set_extension(14, vla_ext.clone())
+        .build(now);
+    let rtc_r = builder_for(Peer::Right)
+        .set_extension(14, vla_ext)
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);
 

@@ -142,7 +142,9 @@ fn rtp_reordering_buffer_audio() -> Result<(), RtcError> {
     let now = Instant::now();
     let rtc1 = builder_for(Peer::Left).set_rtp_mode(true).build(now);
     // Receiver has reordering buffer enabled (default is 15 for audio)
-    let rtc2 = builder_for(Peer::Right).set_reordering_size_audio(15).build(now);
+    let rtc2 = builder_for(Peer::Right)
+        .set_reordering_size_audio(15)
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
@@ -249,7 +251,9 @@ fn rtp_reordering_buffer_video() -> Result<(), RtcError> {
     let now = Instant::now();
     let rtc1 = builder_for(Peer::Left).set_rtp_mode(true).build(now);
     // Receiver has reordering buffer for video
-    let rtc2 = builder_for(Peer::Right).set_reordering_size_video(30).build(now);
+    let rtc2 = builder_for(Peer::Right)
+        .set_reordering_size_video(30)
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
@@ -343,7 +347,9 @@ fn rtp_reordering_buffer_custom_size() -> Result<(), RtcError> {
     let now = Instant::now();
     let rtc1 = builder_for(Peer::Left).set_rtp_mode(true).build(now);
     // Receiver has small reordering buffer (5 packets)
-    let rtc2 = builder_for(Peer::Right).set_reordering_size_audio(5).build(now);
+    let rtc2 = builder_for(Peer::Right)
+        .set_reordering_size_audio(5)
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
@@ -490,7 +496,9 @@ fn rtp_reordering_buffer_large() -> Result<(), RtcError> {
     let now = Instant::now();
     let rtc1 = builder_for(Peer::Left).set_rtp_mode(true).build(now);
     // Receiver has large reordering buffer (50 packets)
-    let rtc2 = builder_for(Peer::Right).set_reordering_size_audio(50).build(now);
+    let rtc2 = builder_for(Peer::Right)
+        .set_reordering_size_audio(50)
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 

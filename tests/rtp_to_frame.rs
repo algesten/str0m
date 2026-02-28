@@ -16,7 +16,9 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
 
     let now = Instant::now();
     let rtc1 = builder_for(Peer::Left).set_rtp_mode(true).build(now);
-    let rtc2 = builder_for(Peer::Right).set_reordering_size_audio(0).build(now);
+    let rtc2 = builder_for(Peer::Right)
+        .set_reordering_size_audio(0)
+        .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 

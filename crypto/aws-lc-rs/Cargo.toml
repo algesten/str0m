@@ -15,6 +15,9 @@ rust-version = "1.81.0"
 str0m-proto = { version = "0.1.2", path = "../../proto" }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
 # dimpl = { path = "../../dimpl", default-features = false, features = ["aws-lc-rs", "rcgen"] }
-dimpl = { git = "https://github.com/algesten/dimpl", rev = "6c8ac71979780a031cfd46784f1889f3a342e664", default-features = false, features = ["aws-lc-rs", "rcgen"] }
+dimpl.git = "https://github.com/algesten/dimpl"
+dimpl.rev = "6c8ac71979780a031cfd46784f1889f3a342e664"
+dimpl.default-features = false
+dimpl.features = ["aws-lc-rs", "rcgen"]
 # Pin time to avoid time-core 0.1.8+ which requires edition 2024 (rustc 1.85+)
 time = ">=0.3, <0.3.37"

@@ -1,12 +1,12 @@
 use std::time::Instant;
 
 mod common;
+use common::builder_for;
 use common::init_crypto_default;
 use common::init_log;
 use common::negotiate;
 use common::Peer;
 use common::TestRtc;
-use common::builder_for;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::format::CodecSpec;
@@ -359,11 +359,17 @@ fn non_media_creator_cannot_change_inactive_to_recvonly() {
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),
-            builder_for(Peer::Left).clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Left)
+                .clear_codecs()
+                .enable_vp8(true)
+                .build(now),
         ),
         TestRtc::new_with_rtc(
             info_span!("R"),
-            builder_for(Peer::Right).clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Right)
+                .clear_codecs()
+                .enable_vp8(true)
+                .build(now),
         ),
     );
 
@@ -395,11 +401,17 @@ fn media_creator_can_change_inactive_to_recvonly() {
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),
-            builder_for(Peer::Left).clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Left)
+                .clear_codecs()
+                .enable_vp8(true)
+                .build(now),
         ),
         TestRtc::new_with_rtc(
             info_span!("R"),
-            builder_for(Peer::Right).clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Right)
+                .clear_codecs()
+                .enable_vp8(true)
+                .build(now),
         ),
     );
 
