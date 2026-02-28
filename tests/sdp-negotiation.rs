@@ -4,7 +4,9 @@ mod common;
 use common::init_crypto_default;
 use common::init_log;
 use common::negotiate;
+use common::Peer;
 use common::TestRtc;
+use common::builder_for;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::format::CodecSpec;
@@ -14,7 +16,6 @@ use str0m::media::Direction;
 use str0m::media::Frequency;
 use str0m::media::MediaKind;
 use str0m::rtp::{Extension, ExtensionMap};
-use str0m::Rtc;
 use tracing::info_span;
 use tracing::Span;
 
@@ -124,8 +125,8 @@ pub fn answer_no_match() {
     init_crypto_default();
 
     // L has one codec, and that is not matched by R. This should disable the m-line.
-    let mut l = build_params(info_span!("L"), &[vp8(100)]);
-    let mut r = build_params(info_span!("R"), &[h264(96)]);
+    let mut l = build_params(Peer::Left, info_span!("L"), &[vp8(100)]);
+    let mut r = build_params(Peer::Right, info_span!("R"), &[h264(96)]);
 
     // Create offer from L
     let (offer, pending) = l.span.in_scope(|| {
@@ -358,11 +359,11 @@ fn non_media_creator_cannot_change_inactive_to_recvonly() {
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Left).clear_codecs().enable_vp8(true).build(now),
         ),
         TestRtc::new_with_rtc(
             info_span!("R"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Right).clear_codecs().enable_vp8(true).build(now),
         ),
     );
 
@@ -394,11 +395,11 @@ fn media_creator_can_change_inactive_to_recvonly() {
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Left).clear_codecs().enable_vp8(true).build(now),
         ),
         TestRtc::new_with_rtc(
             info_span!("R"),
-            Rtc::builder().clear_codecs().enable_vp8(true).build(now),
+            builder_for(Peer::Right).clear_codecs().enable_vp8(true).build(now),
         ),
     );
 
@@ -432,7 +433,7 @@ fn max_bundle_offer_accepted() {
     // Create an Rtc that supports both opus and VP8
     let mut r = TestRtc::new_with_rtc(
         info_span!("R"),
-        Rtc::builder()
+        builder_for(Peer::Right)
             .clear_codecs()
             .enable_opus(true)
             .enable_vp8(true)
@@ -506,8 +507,8 @@ fn with_params(
     span_r: Span,
     params_r: &[PayloadParams],
 ) -> (TestRtc, TestRtc) {
-    let mut l = build_params(span_l, params_l);
-    let mut r = build_params(span_r, params_r);
+    let mut l = build_params(Peer::Left, span_l, params_l);
+    let mut r = build_params(Peer::Right, span_r, params_r);
 
     let kind = params_l
         .first()
@@ -522,8 +523,8 @@ fn with_params(
 }
 
 fn with_exts(exts_l: ExtensionMap, exts_r: ExtensionMap) -> (TestRtc, TestRtc) {
-    let mut l = build_exts(info_span!("L"), exts_l);
-    let mut r = build_exts(info_span!("R"), exts_r);
+    let mut l = build_exts(Peer::Left, info_span!("L"), exts_l);
+    let mut r = build_exts(Peer::Right, info_span!("R"), exts_r);
 
     negotiate(&mut l, &mut r, |change| {
         change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
@@ -532,8 +533,8 @@ fn with_exts(exts_l: ExtensionMap, exts_r: ExtensionMap) -> (TestRtc, TestRtc) {
     (l, r)
 }
 
-fn build_params(span: Span, params: &[PayloadParams]) -> TestRtc {
-    let mut b = Rtc::builder().clear_codecs();
+fn build_params(peer: Peer, span: Span, params: &[PayloadParams]) -> TestRtc {
+    let mut b = builder_for(peer).clear_codecs();
     let config = b.codec_config();
     for p in params {
         config.add_config(
@@ -550,8 +551,8 @@ fn build_params(span: Span, params: &[PayloadParams]) -> TestRtc {
     TestRtc::new_with_rtc(span, rtc)
 }
 
-fn build_exts(span: Span, exts: ExtensionMap) -> TestRtc {
-    let mut b = Rtc::builder().clear_codecs();
+fn build_exts(peer: Peer, span: Span, exts: ExtensionMap) -> TestRtc {
+    let mut b = builder_for(peer).clear_codecs();
     b = b.enable_vp8(true);
     let e = b.extension_map();
     *e = exts;

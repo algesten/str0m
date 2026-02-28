@@ -81,7 +81,7 @@ fn dtls_with_ice_lite() -> Result<(), RtcError> {
     let mut l = TestRtc::new(Peer::Left);
 
     // R is ice-lite (typically server-side), but still use Peer::Right crypto provider
-    let mut rtc_r_builder = Rtc::builder().set_ice_lite(true);
+    let mut rtc_r_builder = Rtc::builder().set_ice_lite(true).set_dtls_version(Peer::Right.dtls_version());
     if let Some(crypto) = Peer::Right.crypto_provider() {
         rtc_r_builder = rtc_r_builder.set_crypto_provider(crypto);
     }
@@ -126,7 +126,7 @@ fn dtls_pregenerated_certificate() -> Result<(), RtcError> {
     let cert = provider.dtls_provider.generate_certificate().unwrap();
 
     // Use the pregenerated certificate with the same crypto provider
-    let mut rtc_l_builder = Rtc::builder().set_dtls_cert(cert);
+    let mut rtc_l_builder = Rtc::builder().set_dtls_cert(cert).set_dtls_version(Peer::Left.dtls_version());
     if let Some(crypto) = Peer::Left.crypto_provider() {
         rtc_l_builder = rtc_l_builder.set_crypto_provider(crypto);
     }
@@ -174,8 +174,8 @@ fn dtls_pregenerated_certificate_same_fingerprint() -> Result<(), RtcError> {
     let cert_clone = cert.clone();
 
     // Create two instances with the same certificate
-    let mut rtc1_builder = Rtc::builder().set_dtls_cert(cert);
-    let mut rtc2_builder = Rtc::builder().set_dtls_cert(cert_clone);
+    let mut rtc1_builder = Rtc::builder().set_dtls_cert(cert).set_dtls_version(Peer::Left.dtls_version());
+    let mut rtc2_builder = Rtc::builder().set_dtls_cert(cert_clone).set_dtls_version(Peer::Left.dtls_version());
     if let Some(crypto) = Peer::Left.crypto_provider() {
         rtc1_builder = rtc1_builder.set_crypto_provider(crypto.clone());
         rtc2_builder = rtc2_builder.set_crypto_provider(crypto);

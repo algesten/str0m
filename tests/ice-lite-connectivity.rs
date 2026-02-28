@@ -2,11 +2,11 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use netem::NetemConfig;
-use str0m::{Event, IceConnectionState, RtcConfig, RtcError};
+use str0m::{Event, IceConnectionState, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn ice_lite_premature_disconnect() -> Result<(), RtcError> {
@@ -15,7 +15,7 @@ pub fn ice_lite_premature_disconnect() -> Result<(), RtcError> {
 
     let mut l = TestRtc::new(Peer::Left);
 
-    let rtc = RtcConfig::new().set_ice_lite(true).build(Instant::now());
+    let rtc = builder_for(Peer::Right).set_ice_lite(true).build(Instant::now());
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc);
 
     r.set_netem(NetemConfig::new().latency(Duration::from_millis(5)));

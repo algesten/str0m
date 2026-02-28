@@ -7,12 +7,11 @@ use str0m::media::{Direction, MediaKind};
 use str0m::rtp::Extension;
 use str0m::rtp::ExtensionSerializer;
 use str0m::rtp::ExtensionValues;
-use str0m::Rtc;
 use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn user_rtp_header_extension() -> Result<(), RtcError> {
@@ -71,11 +70,11 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
 
     // Both L and R must have the uri + serializer configured.
     let now = Instant::now();
-    let rtc_l = Rtc::builder()
+    let rtc_l = builder_for(Peer::Left)
         //
         .set_extension(12, user_ext.clone())
         .build(now);
-    let rtc_r = Rtc::builder()
+    let rtc_r = builder_for(Peer::Right)
         //
         .set_extension(12, user_ext)
         .build(now);
@@ -213,11 +212,11 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
 
     // Both L and R must have the uri + serializer configured.
     let now = Instant::now();
-    let rtc_l = Rtc::builder()
+    let rtc_l = builder_for(Peer::Left)
         //
         .set_extension(12, user_ext.clone())
         .build(now);
-    let rtc_r = Rtc::builder()
+    let rtc_r = builder_for(Peer::Right)
         //
         .set_extension(12, user_ext)
         .build(now);

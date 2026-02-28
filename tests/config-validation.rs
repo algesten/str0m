@@ -8,7 +8,7 @@ use str0m::{Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
 
 /// Test set_reordering_size_audio() and set_reordering_size_video() with custom sizes.
 #[test]
@@ -17,7 +17,7 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
     init_crypto_default();
 
     // Verify config builder correctly sets and retrieves values
-    let config = RtcConfig::new()
+    let config = builder_for(Peer::Left)
         .set_reordering_size_audio(20)
         .set_reordering_size_video(50);
 
@@ -104,13 +104,13 @@ fn config_raw_packets_enabled() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let rtc = RtcConfig::new()
+    let rtc = builder_for(Peer::Left)
         .enable_raw_packets(true)
         .build(Instant::now());
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
 
-    let rtc_r = RtcConfig::new()
+    let rtc_r = builder_for(Peer::Right)
         .enable_raw_packets(true)
         .build(Instant::now());
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
@@ -172,13 +172,13 @@ fn config_stats_interval_custom() -> Result<(), RtcError> {
     init_crypto_default();
 
     let stats_interval = Duration::from_secs(1);
-    let rtc = RtcConfig::new()
+    let rtc = builder_for(Peer::Left)
         .set_stats_interval(Some(stats_interval))
         .build(Instant::now());
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
 
-    let rtc_r = RtcConfig::new()
+    let rtc_r = builder_for(Peer::Right)
         .set_stats_interval(Some(stats_interval))
         .build(Instant::now());
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
@@ -243,13 +243,13 @@ fn config_stats_disabled() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let rtc = RtcConfig::new()
+    let rtc = builder_for(Peer::Left)
         .set_stats_interval(None)
         .build(Instant::now());
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc);
 
-    let rtc_r = RtcConfig::new()
+    let rtc_r = builder_for(Peer::Right)
         .set_stats_interval(None)
         .build(Instant::now());
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
@@ -315,12 +315,12 @@ fn config_fingerprint_verification_disabled() -> Result<(), RtcError> {
     use str0m::Candidate;
 
     // Create RTCs with fingerprint verification DISABLED
-    let rtc_l = RtcConfig::new()
+    let rtc_l = builder_for(Peer::Left)
         .set_fingerprint_verification(false)
         .set_rtp_mode(true)
         .build(Instant::now());
 
-    let rtc_r = RtcConfig::new()
+    let rtc_r = builder_for(Peer::Right)
         .set_fingerprint_verification(false)
         .set_rtp_mode(true)
         .build(Instant::now());
@@ -389,7 +389,7 @@ fn config_clone_multiple_instances() -> Result<(), RtcError> {
     init_crypto_default();
 
     // Create a config with custom settings (not ice_lite since both can't be ice_lite)
-    let config = RtcConfig::new()
+    let config = builder_for(Peer::Left)
         .set_reordering_size_audio(20)
         .set_reordering_size_video(40);
 
@@ -433,7 +433,7 @@ fn config_send_buffer_sizes() -> Result<(), RtcError> {
     init_crypto_default();
 
     // Verify config builder correctly sets and retrieves values
-    let config = RtcConfig::new()
+    let config = builder_for(Peer::Left)
         .set_send_buffer_audio(100)
         .set_send_buffer_video(2000);
 

@@ -1,12 +1,11 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use str0m::RtcConfig;
 use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
@@ -15,7 +14,7 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
 
     let mut l = TestRtc::new(Peer::Left);
 
-    let rtc = RtcConfig::new().set_ice_lite(true).build(Instant::now());
+    let rtc = builder_for(Peer::Right).set_ice_lite(true).build(Instant::now());
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());

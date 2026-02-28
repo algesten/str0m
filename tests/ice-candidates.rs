@@ -4,12 +4,11 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::ice::IceCreds;
-use str0m::RtcConfig;
 use str0m::RtcError;
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 /// Test connection with only host candidates.
 #[test]
@@ -215,7 +214,7 @@ fn ice_custom_credentials() -> Result<(), RtcError> {
         pass: "custompassword456789012".into(),
     };
 
-    let rtc = RtcConfig::new()
+    let rtc = builder_for(Peer::Left)
         .set_local_ice_credentials(custom_creds.clone())
         .build(Instant::now());
 
@@ -277,7 +276,7 @@ fn ice_stun_timeout_initial_rto() -> Result<(), RtcError> {
 
     // Set a short initial RTO of 50ms (default is 250ms)
     let custom_rto = Duration::from_millis(50);
-    let mut config = RtcConfig::new();
+    let mut config = builder_for(Peer::Left);
     config.set_initial_stun_rto(custom_rto);
     let start = Instant::now();
     let rtc = config.build(start);
@@ -366,7 +365,7 @@ fn ice_stun_timeout_max_rto() -> Result<(), RtcError> {
     let initial_rto = Duration::from_millis(100);
     let max_rto = Duration::from_millis(150);
 
-    let mut config = RtcConfig::new();
+    let mut config = builder_for(Peer::Left);
     config.set_initial_stun_rto(initial_rto);
     config.set_max_stun_rto(max_rto);
     let start = Instant::now();
@@ -463,7 +462,7 @@ fn ice_stun_max_retransmits() -> Result<(), RtcError> {
 
     // Set max retransmits to 3 (default is 9) and short RTOs for faster test
     let max_retransmits = 3;
-    let mut config = RtcConfig::new();
+    let mut config = builder_for(Peer::Left);
     config.set_max_stun_retransmits(max_retransmits);
     config.set_initial_stun_rto(Duration::from_millis(20));
     config.set_max_stun_rto(Duration::from_millis(40));
@@ -546,7 +545,7 @@ fn ice_lite_mode() -> Result<(), RtcError> {
     init_crypto_default();
 
     let mut l = TestRtc::new(Peer::Left);
-    let rtc = RtcConfig::new().set_ice_lite(true).build(Instant::now());
+    let rtc = builder_for(Peer::Right).set_ice_lite(true).build(Instant::now());
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());

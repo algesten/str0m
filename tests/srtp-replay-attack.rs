@@ -4,10 +4,10 @@ use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
 use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
-use str0m::{Event, Input, Output, Rtc, RtcError};
+use str0m::{Event, Input, Output, RtcError};
 
 mod common;
-use common::{connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, TestRtc};
+use common::{builder_for, connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, Peer, TestRtc};
 
 const EXPECTED_PACKETS: usize = 50;
 const REPLAY_PER_PACKET: usize = 5;
@@ -112,11 +112,11 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     init_crypto_default();
 
     let now = Instant::now();
-    let rtc1 = Rtc::builder()
+    let rtc1 = builder_for(Peer::Left)
         .set_rtp_mode(true)
         .enable_raw_packets(true)
         .build(now);
-    let rtc2 = Rtc::builder()
+    let rtc2 = builder_for(Peer::Right)
         .enable_raw_packets(true)
         // release packet straight away
         .set_reordering_size_audio(0)

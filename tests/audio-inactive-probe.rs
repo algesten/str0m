@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 
 use netem::Bitrate;
 use str0m::media::{Direction, MediaKind};
-use str0m::{Rtc, RtcError};
+use str0m::RtcError;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 /// Similar test but with bandwidth estimation enabled to increase probe likelihood
 #[test]
@@ -15,7 +15,7 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
     init_crypto_default();
 
     // Only sender (L) needs BWE enabled
-    let rtc1 = Rtc::builder()
+    let rtc1 = builder_for(Peer::Left)
         .enable_bwe(Some(Bitrate::kbps(800)))
         .build(Instant::now());
 

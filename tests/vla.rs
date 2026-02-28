@@ -5,10 +5,10 @@ use str0m::rtp::vla::{ResolutionAndFramerate, Serializer as VlaSerializer};
 use str0m::rtp::vla::{SimulcastStreamAllocation, SpatialLayerAllocation};
 use str0m::rtp::vla::{TemporalLayerAllocation, VideoLayersAllocation, URI as VLA_URI};
 use str0m::rtp::{Extension, ExtensionValues, Ssrc};
-use str0m::{Event, Rtc, RtcError};
+use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r_with_rtc, init_crypto_default, init_log, progress};
+use common::{builder_for, connect_l_r_with_rtc, init_crypto_default, init_log, progress, Peer};
 
 #[test]
 pub fn vla_rtp_mode() -> Result<(), RtcError> {
@@ -18,11 +18,11 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     let vla_ext = Extension::with_serializer(VLA_URI, VlaSerializer);
 
     let now = Instant::now();
-    let rtc_l = Rtc::builder()
+    let rtc_l = builder_for(Peer::Left)
         .set_rtp_mode(true)
         .set_extension(14, vla_ext.clone())
         .build(now);
-    let rtc_r = Rtc::builder()
+    let rtc_r = builder_for(Peer::Right)
         .set_rtp_mode(true)
         .set_extension(14, vla_ext)
         .build(now);
@@ -133,8 +133,8 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let vla_ext = Extension::with_serializer(VLA_URI, VlaSerializer);
 
     let now = Instant::now();
-    let rtc_l = Rtc::builder().set_extension(14, vla_ext.clone()).build(now);
-    let rtc_r = Rtc::builder().set_extension(14, vla_ext).build(now);
+    let rtc_l = builder_for(Peer::Left).set_extension(14, vla_ext.clone()).build(now);
+    let rtc_r = builder_for(Peer::Right).set_extension(14, vla_ext).build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);
 

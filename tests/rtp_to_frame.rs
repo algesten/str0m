@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::{ExtensionValues, Ssrc};
-use str0m::{Event, Rtc, RtcError};
+use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r_with_rtc, init_crypto_default, init_log, progress};
+use common::{builder_for, connect_l_r_with_rtc, init_crypto_default, init_log, progress, Peer};
 
 #[test]
 pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
@@ -15,8 +15,8 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
     init_crypto_default();
 
     let now = Instant::now();
-    let rtc1 = Rtc::builder().set_rtp_mode(true).build(now);
-    let rtc2 = Rtc::builder().set_reordering_size_audio(0).build(now);
+    let rtc1 = builder_for(Peer::Left).set_rtp_mode(true).build(now);
+    let rtc2 = builder_for(Peer::Right).set_reordering_size_audio(0).build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 

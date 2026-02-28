@@ -11,7 +11,7 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig,
 use tracing::{info_span, Span};
 
 mod common;
-use common::{init_crypto_default, init_log};
+use common::{init_crypto_default, init_log, Peer};
 
 /// Pre-negotiated data channel SCTP stream ID
 const DATA_CHANNEL_ID: u16 = 0;
@@ -178,7 +178,13 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
 fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, String), RtcError> {
     let ice_creds = IceCreds::new();
 
-    let mut rtc_config = RtcConfig::new().set_local_ice_credentials(ice_creds.clone());
+    let peer = if is_client { Peer::Left } else { Peer::Right };
+    let mut rtc_config = RtcConfig::new()
+        .set_local_ice_credentials(ice_creds.clone())
+        .set_dtls_version(peer.dtls_version());
+    if let Some(crypto) = peer.crypto_provider() {
+        rtc_config = rtc_config.set_crypto_provider(crypto);
+    }
     if !is_client {
         rtc_config = rtc_config.set_ice_lite(true);
     }

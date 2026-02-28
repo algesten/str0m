@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::rtp::rtcp::Twcc;
-use str0m::{Rtc, RtcError};
+use str0m::RtcError;
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
 
 #[test]
 pub fn twcc() -> Result<(), RtcError> {
@@ -16,8 +16,8 @@ pub fn twcc() -> Result<(), RtcError> {
     init_crypto_default();
 
     let now = Instant::now();
-    let l_rtc = Rtc::builder().enable_raw_packets(true).build(now);
-    let r_rtc = Rtc::builder().enable_raw_packets(true).build(now);
+    let l_rtc = builder_for(Peer::Left).enable_raw_packets(true).build(now);
+    let r_rtc = builder_for(Peer::Right).enable_raw_packets(true).build(now);
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), l_rtc);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), r_rtc);

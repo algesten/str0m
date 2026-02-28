@@ -2,11 +2,11 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::channel::ChannelConfig;
-use str0m::{Candidate, Event, RtcConfig, RtcError};
+use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn data_channel_direct() -> Result<(), RtcError> {
@@ -15,7 +15,7 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
 
     let mut l = TestRtc::new(Peer::Left);
 
-    let rtc_r = RtcConfig::new().set_ice_lite(true).build(Instant::now());
+    let rtc_r = builder_for(Peer::Right).set_ice_lite(true).build(Instant::now());
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;

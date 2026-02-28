@@ -4,10 +4,10 @@ use std::time::Duration;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::rtp::{Extension, ExtensionMap};
-use str0m::{Event, Rtc, RtcError};
+use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn abs_capture_time_negotiation() -> Result<(), RtcError> {
@@ -19,11 +19,11 @@ pub fn abs_capture_time_negotiation() -> Result<(), RtcError> {
     exts.set(9, Extension::AbsoluteCaptureTime);
 
     let now = std::time::Instant::now();
-    let mut l_rtc = Rtc::builder();
+    let mut l_rtc = builder_for(Peer::Left);
     *l_rtc.extension_map() = exts.clone();
     let mut l = TestRtc::new_with_rtc(Peer::Left.span(), l_rtc.build(now));
 
-    let mut r_rtc = Rtc::builder();
+    let mut r_rtc = builder_for(Peer::Right);
     *r_rtc.extension_map() = exts.clone();
     let mut r = TestRtc::new_with_rtc(Peer::Right.span(), r_rtc.build(now));
 
@@ -104,7 +104,7 @@ pub fn abs_capture_time_sdp_roundtrip() -> Result<(), RtcError> {
     exts.set(9, Extension::AbsoluteCaptureTime);
 
     let now = std::time::Instant::now();
-    let mut l_rtc = Rtc::builder();
+    let mut l_rtc = builder_for(Peer::Left);
     *l_rtc.extension_map() = exts.clone();
     let mut l = TestRtc::new_with_rtc(Peer::Left.span(), l_rtc.build(now));
 

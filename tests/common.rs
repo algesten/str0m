@@ -10,6 +10,7 @@ use netem::{Input as NetemInput, Netem, NetemConfig, Output as NetemOutput};
 use pcap_file::pcap::PcapReader;
 use str0m::change::SdpApi;
 use str0m::config::DtlsVersion;
+use str0m::RtcConfig;
 use str0m::crypto::CryptoProvider;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
@@ -110,6 +111,18 @@ pub fn skip_dtls_version_test() -> bool {
         return true;
     }
     false
+}
+
+/// Create an `Rtc` builder pre-configured with the DTLS version and crypto
+/// provider for the given peer (from environment variables).
+/// Tests that create custom `Rtc::builder()` chains should use this instead
+/// to ensure nightly CI matrix compatibility.
+pub fn builder_for(peer: Peer) -> RtcConfig {
+    let mut builder = Rtc::builder().set_dtls_version(peer.dtls_version());
+    if let Some(crypto) = peer.crypto_provider() {
+        builder = builder.set_crypto_provider(crypto);
+    }
+    builder
 }
 
 /// Owned version of Receive for queueing.

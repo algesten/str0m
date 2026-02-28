@@ -24,12 +24,12 @@ pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (
     let start = Instant::now();
 
     // Only sender (L) needs BWE enabled
-    let rtc1 = Rtc::builder()
+    let rtc1 = builder_for(Peer::Left)
         .set_rtp_mode(true)
         .enable_bwe(Some(initial_bitrate))
         .build(start);
 
-    let rtc2 = Rtc::builder().set_rtp_mode(true).build(start);
+    let rtc2 = builder_for(Peer::Right).set_rtp_mode(true).build(start);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 

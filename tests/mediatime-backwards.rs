@@ -8,7 +8,7 @@ use str0m::{Event, RtcError};
 use tracing::info;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn mediatime_backwards() -> Result<(), RtcError> {
@@ -19,7 +19,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     let mut r = TestRtc::new(Peer::Right);
 
     // Enable raw packets to trace the RTP headers
-    r.rtc = str0m::Rtc::builder()
+    r.rtc = builder_for(Peer::Right)
         .enable_raw_packets(true)
         .build(Instant::now());
 

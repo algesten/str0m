@@ -4,19 +4,19 @@ use std::time::{Duration, Instant};
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::stats::MediaEgressStats;
-use str0m::{Event, RtcConfig, RtcError};
+use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn stats() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let l_config = RtcConfig::new().set_stats_interval(Some(Duration::from_secs(10)));
-    let r_config = RtcConfig::new().set_stats_interval(Some(Duration::from_secs(10)));
+    let l_config = builder_for(Peer::Left).set_stats_interval(Some(Duration::from_secs(10)));
+    let r_config = builder_for(Peer::Right).set_stats_interval(Some(Duration::from_secs(10)));
 
     let now = Instant::now();
     let mut l = TestRtc::new_with_rtc(info_span!("L"), l_config.build(now));

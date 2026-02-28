@@ -2,12 +2,11 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
-use str0m::Rtc;
 use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{builder_for, init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn contiguous_all_the_way() -> Result<(), RtcError> {
@@ -145,7 +144,7 @@ impl Server {
 
         // We need to lower the default reordering buffer size, or we won't make it
         // past the dropped packet.
-        let rtc_r = Rtc::builder()
+        let rtc_r = builder_for(Peer::Right)
             .set_reordering_size_video(5)
             .build(Instant::now());
 
