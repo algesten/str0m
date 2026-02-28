@@ -1,6 +1,8 @@
 //! OpenSSL implementation of cryptographic functions.
-//! DTLS via OpenSSL's native DTLS implementation.
+//! DTLS 1.2 via OpenSSL's native DTLS implementation.
+//! DTLS 1.3 and Auto via dimpl with OpenSSL as crypto backend.
 
+mod dimpl_provider;
 mod dtls;
 mod sha1;
 mod sha256;
@@ -18,7 +20,8 @@ extern crate tracing;
 /// Create the default OpenSSL crypto provider.
 ///
 /// This provider implements all cryptographic operations required for WebRTC:
-/// - DTLS 1.2 for secure key exchange (using dimpl protocol + OpenSSL TLS)
+/// - DTLS 1.2 for secure key exchange (using OpenSSL's native DTLS)
+/// - DTLS 1.3 and Auto for secure key exchange (using dimpl protocol + OpenSSL crypto)
 /// - SRTP for encrypted media
 /// - SHA1-HMAC for STUN message integrity
 /// - SHA-256 for certificate fingerprints
