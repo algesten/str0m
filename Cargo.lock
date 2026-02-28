@@ -497,7 +497,7 @@ dependencies = [
 [[package]]
 name = "dimpl"
 version = "0.3.0"
-source = "git+https://github.com/algesten/dimpl?rev=6c8ac71979780a031cfd46784f1889f3a342e664#6c8ac71979780a031cfd46784f1889f3a342e664"
+source = "git+https://github.com/algesten/dimpl?rev=5bb5047289d59faaf2b7d0c3dcde25c80cdd2ff0#5bb5047289d59faaf2b7d0c3dcde25c80cdd2ff0"
 dependencies = [
  "aes-gcm",
  "arrayvec",

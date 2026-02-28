@@ -15,7 +15,7 @@ rust-version = "1.81.0"
 str0m-proto = { version = "0.1.2", path = "../../proto" }
 # dimpl = { path = "../../dimpl", default-features = false, features = ["rust-crypto", "rcgen"] }
 dimpl.git = "https://github.com/algesten/dimpl"
-dimpl.rev = "6c8ac71979780a031cfd46784f1889f3a342e664"
+dimpl.rev = "5bb5047289d59faaf2b7d0c3dcde25c80cdd2ff0"
 dimpl.default-features = false
 dimpl.features = ["rust-crypto", "rcgen"]
 # Pin time to avoid time-core 0.1.8+ which requires edition 2024 (rustc 1.85+)
