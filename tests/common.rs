@@ -55,9 +55,9 @@ impl Peer {
     }
 
     /// Get the DTLS version for this peer based on environment variables.
-    /// Returns `DtlsVersion::Auto` if no environment variable is set, unless the
-    /// crypto provider only supports DTLS 1.2 (openssl, wincrypto) in which case
-    /// it defaults to `DtlsVersion::Dtls12`.
+    /// Returns `DtlsVersion::Dtls12` if no environment variable is set (preserving
+    /// the default behavior), unless explicitly set to "auto".
+    /// openssl and wincrypto only support DTLS 1.2, so they also default to `Dtls12`.
     /// Supported values: "auto", "1.2", "1.3"
     pub fn dtls_version(&self) -> DtlsVersion {
         let env_var = match self {
@@ -65,17 +65,11 @@ impl Peer {
             Peer::Right => "R_DTLS_VERSION",
         };
 
-        let default = if self.crypto_is_dtls12_only() {
-            DtlsVersion::Dtls12
-        } else {
-            DtlsVersion::Auto
-        };
-
         match std::env::var(env_var).as_deref() {
             Ok("1.2") => DtlsVersion::Dtls12,
             Ok("1.3") => DtlsVersion::Dtls13,
             Ok("auto") => DtlsVersion::Auto,
-            Err(_) => default,
+            Err(_) => DtlsVersion::Dtls12,
             Ok(other) => panic!(
                 "Unknown DTLS version '{}'. Supported values: auto, 1.2, 1.3",
                 other
