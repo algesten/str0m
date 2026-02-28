@@ -402,8 +402,8 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
         #[cfg(feature = "rust-crypto")]
         "rust-crypto" => str0m_rust_crypto::default_provider(),
 
-        #[cfg(feature = "openssl")]
-        "openssl" => str0m_openssl::default_provider(),
+        #[cfg(any(feature = "openssl", feature = "openssl_dimpl"))]
+        "openssl" | "openssl_dimpl" => str0m_openssl::default_provider(),
 
         #[cfg(all(feature = "wincrypto", target_os = "windows"))]
         "wincrypto" => str0m_wincrypto::default_provider(),
@@ -417,8 +417,10 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
             available.push("aws-lc-rs");
             #[cfg(feature = "rust-crypto")]
             available.push("rust-crypto");
-            #[cfg(feature = "openssl")]
+            #[cfg(any(feature = "openssl", feature = "openssl_dimpl"))]
             available.push("openssl");
+            #[cfg(feature = "openssl_dimpl")]
+            available.push("openssl_dimpl");
             #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             available.push("wincrypto");
             #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]

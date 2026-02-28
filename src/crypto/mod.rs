@@ -43,6 +43,9 @@ pub fn from_feature_flags() -> CryptoProvider {
     #[cfg(feature = "openssl")]
     return str0m_openssl::default_provider();
 
+    #[cfg(feature = "openssl_dimpl")]
+    return str0m_openssl::default_provider();
+
     #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
     return str0m_apple_crypto::default_provider();
 
