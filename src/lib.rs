@@ -1130,6 +1130,13 @@ impl Rtc {
             ice.set_ice_lite(config.ice_lite);
         }
 
+        // Bootstrap the ICE agent's internal clock so that poll_timeout() returns
+        // a real deadline from the start.  Without this, poll_timeout() returns None
+        // (because last_now is None) and ICE checks are never scheduled until the
+        // first Input::Timeout — which can be delayed arbitrarily by a long DTLS
+        // timeout (e.g. 24 h for DtlsVersion::Auto / ServerPending).
+        ice.handle_timeout(start);
+
         if let Some(initial_stun_rto) = config.initial_stun_rto {
             ice.set_initial_stun_rto(initial_stun_rto);
         }

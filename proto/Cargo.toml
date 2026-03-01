@@ -20,10 +20,7 @@ _internal_test_exports = []
 
 [dependencies]
 # DTLS made for str0m (required dependency for types and traits)
-# dimpl = { path = "../dimpl", default-features = false }
-dimpl.git = "https://github.com/algesten/dimpl"
-dimpl.rev = "5bb5047289d59faaf2b7d0c3dcde25c80cdd2ff0"
-dimpl.default-features = false
+dimpl = { git = "https://github.com/algesten/dimpl", rev = "b140fbdcfa45d762001c6fbe0923331956859548", default-features = false }
 
 # Pin time to avoid time-core 0.1.8+ which requires edition 2024 (rustc 1.85+)
 time = ">=0.3, <0.3.37"
