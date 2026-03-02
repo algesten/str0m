@@ -371,6 +371,7 @@ impl IceAgent {
     /// Defaults to 250ms.
     pub fn set_initial_stun_rto(&mut self, timeout: Duration) {
         if mem::replace(&mut self.timing_config.initial_rto, timeout) == timeout {
+            trace!(?timeout, "initial_rto unchanged");
             return;
         }
 
@@ -391,6 +392,7 @@ impl IceAgent {
     /// Defaults to 3000ms.
     pub fn set_max_stun_rto(&mut self, timeout: Duration) {
         if mem::replace(&mut self.timing_config.max_rto, timeout) == timeout {
+            trace!(?timeout, "max_rto unchanged");
             return;
         }
 
@@ -404,6 +406,7 @@ impl IceAgent {
     /// Defaults to 9.
     pub fn set_max_stun_retransmits(&mut self, num: usize) {
         if mem::replace(&mut self.timing_config.max_retransmits, num) == num {
+            trace!(%num, "max_rto max_retransmits");
             return;
         }
 
