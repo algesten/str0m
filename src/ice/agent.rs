@@ -1,9 +1,9 @@
 use std::collections::{HashSet, VecDeque};
-use std::fmt;
 use std::net::SocketAddr;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::{fmt, mem};
 
 use serde::{Deserialize, Serialize};
 
@@ -370,7 +370,9 @@ impl IceAgent {
     ///
     /// Defaults to 250ms.
     pub fn set_initial_stun_rto(&mut self, timeout: Duration) {
-        self.timing_config.initial_rto = timeout;
+        if mem::replace(&mut self.timing_config.initial_rto, timeout) == timeout {
+            return;
+        }
 
         debug!("initial_rto = {timeout:?}");
 
@@ -388,7 +390,9 @@ impl IceAgent {
     ///
     /// Defaults to 3000ms.
     pub fn set_max_stun_rto(&mut self, timeout: Duration) {
-        self.timing_config.max_rto = timeout;
+        if mem::replace(&mut self.timing_config.max_rto, timeout) == timeout {
+            return;
+        }
 
         debug!("max_rto = {timeout:?}");
 
@@ -399,7 +403,9 @@ impl IceAgent {
     ///
     /// Defaults to 9.
     pub fn set_max_stun_retransmits(&mut self, num: usize) {
-        self.timing_config.max_retransmits = num;
+        if mem::replace(&mut self.timing_config.max_retransmits, num) == num {
+            return;
+        }
 
         debug!("max_retransmits = {num}");
     }
