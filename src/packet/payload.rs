@@ -56,8 +56,16 @@ impl Payloader {
             let nackable = !is_audio;
 
             let mut pkt_ext_vals = ext_vals.clone();
+
             if !first {
+                pkt_ext_vals.abs_capture_time = None;
                 pkt_ext_vals.user_values.remove::<VideoLayersAllocation>();
+            }
+
+            if !last {
+                pkt_ext_vals.video_orientation = None;
+                pkt_ext_vals.video_content_type = None;
+                pkt_ext_vals.video_timing = None;
             }
 
             stream.write_rtp(

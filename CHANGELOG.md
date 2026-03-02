@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Reduce number of RTP header extensions sent on every packet #880
   * Add RTP-level keyframe detection for VP8, VP9, AV1, H264 and H265 #869
   * VP9 switch packetizer to non-flexible mode (F=0) #868
   * Fix H265 SDP negotiation level handling #872
