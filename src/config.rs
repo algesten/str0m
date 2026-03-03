@@ -8,6 +8,7 @@ use crate::format::CodecConfig;
 use crate::format::Vp9PacketizerMode;
 use crate::ice::IceCreds;
 use crate::rtp_::{Bitrate, Extension, ExtensionMap};
+use crate::sctp::SctpConfig;
 use crate::Rtc;
 
 /// Customized config for creating an [`Rtc`] instance.
@@ -46,6 +47,8 @@ pub struct RtcConfig {
     pub(crate) enable_raw_packets: bool,
     pub(crate) dtls_version: DtlsVersion,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
+    pub(crate) sctp_config: Option<SctpConfig>,
+    pub(crate) snap_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -544,6 +547,52 @@ impl RtcConfig {
         self
     }
 
+    /// Set the SCTP configuration.
+    ///
+    /// If not set, default SCTP settings optimized for WebRTC will be used.
+    pub fn set_sctp_config(mut self, config: SctpConfig) -> Self {
+        self.sctp_config = Some(config);
+        self
+    }
+
+    /// Get the configured SCTP settings, if set.
+    pub fn sctp_config(&self) -> Option<&SctpConfig> {
+        self.sctp_config.as_ref()
+    }
+
+    /// Enable SNAP (SCTP Negotiation Acceleration Protocol).
+    ///
+    /// When enabled, the `a=sctp-init` attribute is included in outgoing SDP
+    /// offers, allowing the SCTP association to skip the 4-way handshake
+    /// and go directly to established state. This saves up to two network
+    /// round-trip times when establishing data channels.
+    ///
+    /// When this is `false`, outgoing SDP offers will not include `a=sctp-init`.
+    /// However, incoming offers that contain `a=sctp-init` will still be
+    /// reciprocated in answers, since str0m always supports the extension at
+    /// the protocol level (per §5.4 of draft-hancke-tsvwg-snap).
+    ///
+    /// See [draft-hancke-tsvwg-snap](https://datatracker.ietf.org/doc/draft-hancke-tsvwg-snap/).
+    ///
+    /// Default: `false`
+    pub fn set_snap_enabled(mut self, enabled: bool) -> Self {
+        self.snap_enabled = enabled;
+        self
+    }
+
+    /// Returns whether SNAP is enabled.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to false.
+    /// assert_eq!(config.snap_enabled(), false);
+    /// ```
+    pub fn snap_enabled(&self) -> bool {
+        self.snap_enabled
+    }
+
     /// Set which DTLS version to use.
     ///
     /// Defaults to [`DtlsVersion::Dtls12`].
@@ -619,6 +668,8 @@ impl Default for RtcConfig {
             enable_raw_packets: false,
             dtls_version: DtlsVersion::Dtls12,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
+            sctp_config: None,
+            snap_enabled: false,
         }
     }
 }

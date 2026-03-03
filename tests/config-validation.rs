@@ -361,8 +361,8 @@ fn config_fingerprint_verification_disabled() -> Result<(), RtcError> {
     l.direct_api().start_dtls(true).unwrap();
     r.direct_api().start_dtls(false).unwrap();
 
-    l.direct_api().start_sctp(true);
-    r.direct_api().start_sctp(false);
+    l.direct_api().start_sctp(true).unwrap();
+    r.direct_api().start_sctp(false).unwrap();
 
     // Connection should succeed despite corrupted fingerprints
     loop {

@@ -14,11 +14,14 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
+use crate::sctp::RtcSctp;
+use crate::sctp::{ProtoError, SctpError};
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
+use crate::SnapState;
 use crate::{Candidate, IceCreds};
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
@@ -99,16 +102,31 @@ impl<'a> SdpApi<'a> {
         // Ensure setup=active/passive is corresponding remote and init dtls.
         init_dtls(self.rtc, &offer)?;
 
+        // Extract a=sctp-init from remote offer before apply_offer consumes it.
+        let remote_sctp_init = offer.sctp_init().map(|v| v.to_vec());
+
         // Modify session with offer
         apply_offer(&mut self.rtc.session, offer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
+
+        let has_snap = process_remote_sctp_init(
+            &mut self.rtc.sctp,
+            remote_sctp_init.as_deref(),
+            &mut self.rtc.snap.remote_init,
+        )?;
+
+        // Generate local sctp-init for the answer:
+        // When the remote included a=sctp-init, we reciprocate (§5.4).
+        let local_sctp_init =
+            resolve_local_sctp_init(&mut self.rtc.sctp, &mut self.rtc.snap, has_snap);
+
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+            self.rtc.try_init_sctp(client)?;
         }
 
-        let params = AsSdpParams::new(self.rtc, None);
+        let params = AsSdpParams::new(self.rtc, None, local_sctp_init);
         let sdp = as_sdp(&self.rtc.session, params);
 
         debug!("Create answer");
@@ -174,13 +192,25 @@ impl<'a> SdpApi<'a> {
         // Split out new channels, since that is not handled by the Session.
         let new_channels = pending.changes.take_new_channels();
 
+        // Extract a=sctp-init from remote answer before apply_answer consumes it.
+        let remote_sctp_init = answer.sctp_init().map(|v| v.to_vec());
+
         // Modify session with answer
         apply_answer(&mut self.rtc.session, pending.changes, answer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
+
+        // The return value is unused on the answer path: we already emitted our
+        // local sctp-init in the offer, so there is nothing to reciprocate.
+        let _has_snap = process_remote_sctp_init(
+            &mut self.rtc.sctp,
+            remote_sctp_init.as_deref(),
+            &mut self.rtc.snap.remote_init,
+        )?;
+
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+            self.rtc.try_init_sctp(client)?;
         }
 
         for (id, config) in new_channels {
@@ -415,9 +445,9 @@ impl<'a> SdpApi<'a> {
 
     /// Attempt to apply the changes made.
     ///
-    /// If this returns [`SdpOffer`], the caller the changes are
-    /// not happening straight away, and the caller is expected to do a negotiation with the remote
-    /// peer and apply the answer using [`SdpPendingOffer`].
+    /// If this returns [`SdpOffer`], the changes are not happening straight away, and the
+    /// caller is expected to do a negotiation with the remote peer and apply the answer
+    /// using [`SdpPendingOffer`].
     ///
     /// In case this returns `None`, there either were no changes, or the changes could be applied
     /// without doing a negotiation. Specifically for additional [`SdpApi::add_channel()`]
@@ -628,7 +658,14 @@ fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
         rtc.ice.set_controlling(!rtc.ice.ice_lite());
     }
 
-    let params = AsSdpParams::new(rtc, Some(changes));
+    // Generate local sctp-init for SNAP if enabled and we have/will have an app m-line.
+    // When `has_snap_app` is true but SCTP is already established without SNAP,
+    // `resolve_local_sctp_init` returns `None` — the guard inside handles this.
+    let has_snap_app =
+        rtc.snap.enabled && (rtc.session.app().is_some() || changes.contains_add_app());
+    let local_sctp_init = resolve_local_sctp_init(&mut rtc.sctp, &mut rtc.snap, has_snap_app);
+
+    let params = AsSdpParams::new(rtc, Some(changes), local_sctp_init);
     let sdp = as_sdp(&rtc.session, params);
 
     sdp.into()
@@ -701,6 +738,113 @@ fn init_dtls(rtc: &mut Rtc, remote_sdp: &Sdp) -> Result<(), RtcError> {
     Ok(())
 }
 
+/// Resolve the local `a=sctp-init` value for an outgoing offer or answer.
+///
+/// - If SCTP is already established with SNAP, re-emit the cached value (§5.6).
+/// - If SCTP is established without SNAP, return `None`.
+/// - If `want_snap` is true and SCTP is not yet established, generate and cache a fresh INIT.
+///
+/// This function is intentionally infallible: if SNAP INIT generation fails,
+/// we log a warning and degrade to a non-SNAP offer. SNAP failure should not
+/// prevent session establishment.
+fn resolve_local_sctp_init(
+    sctp: &mut RtcSctp,
+    snap: &mut SnapState,
+    want_snap: bool,
+) -> Option<Vec<u8>> {
+    if sctp.is_inited() {
+        if snap.remote_init.is_some() {
+            // Established SNAP association — §5.6: re-emit the same value.
+            return snap.local_init.clone();
+        }
+        // Established non-SNAP association — MUST NOT inject sctp-init.
+        return None;
+    }
+
+    if !want_snap {
+        return None;
+    }
+
+    if let Some(cached) = &snap.local_init {
+        return Some(cached.clone());
+    }
+
+    let Some(sctp_config) = sctp.sctp_config_or_default() else {
+        return None;
+    };
+
+    match sctp_config.local_init_chunk() {
+        Ok(init) => {
+            snap.local_init = Some(init.clone());
+            Some(init)
+        }
+        Err(e) => {
+            warn!("Failed to generate SNAP INIT chunk, degrading to non-SNAP: {e}");
+            None
+        }
+    }
+}
+
+/// Shared logic for processing a remote `a=sctp-init` attribute from an offer or answer.
+///
+/// Returns `true` if this is a new SNAP negotiation (remote init was accepted
+/// and stored in the SCTP config), `false` otherwise.
+///
+/// The remote init bytes are stored in two places:
+///   1. `SctpConfig.remote_sctp_init` — consumed by `init()` to configure sctp-proto.
+///   2. `negotiated_remote` (i.e. `SnapState.remote_init`) — retained for §5.6
+///      re-offer validation after the config is consumed.
+///
+/// When the remote includes `a=sctp-init`, we always accept and reciprocate —
+/// Section 5.4 of draft-hancke-tsvwg-snap says the answerer MAY include the
+/// attribute, and doing so is beneficial.
+fn process_remote_sctp_init(
+    sctp: &mut RtcSctp,
+    remote_init: Option<&[u8]>,
+    negotiated_remote: &mut Option<Vec<u8>>,
+) -> Result<bool, RtcError> {
+    if let Some(remote_init_bytes) = remote_init {
+        if sctp.is_inited() {
+            // §5.6: SCTP already established — remote MUST re-send the
+            // same sctp-init value on subsequent offers/answers.
+            match negotiated_remote {
+                Some(cached) if cached.as_slice() == remote_init_bytes => {
+                    debug!("Remote re-sent expected a=sctp-init for established association");
+                }
+                Some(_) => {
+                    return Err(RtcError::RemoteSdp(
+                        "Changed a=sctp-init for existing SCTP association".into(),
+                    ));
+                }
+                None => {
+                    return Err(RtcError::RemoteSdp(
+                        "Unexpected a=sctp-init for existing SCTP association".into(),
+                    ));
+                }
+            }
+            Ok(false)
+        } else if let Some(sctp_config) = sctp.sctp_config_or_default() {
+            // Store remote INIT in both places:
+            //   1. SctpConfig — consumed by init() to configure sctp-proto.
+            //   2. SnapState  — retained for §5.6 re-offer validation.
+            let bytes = remote_init_bytes.to_vec();
+            sctp_config.set_remote_chunk_init(bytes.clone());
+            *negotiated_remote = Some(bytes);
+            Ok(true)
+        } else {
+            Err(RtcError::Sctp(SctpError::Proto(ProtoError::Other(
+                "SCTP config unavailable when processing a=sctp-init".into(),
+            ))))
+        }
+    } else if sctp.is_inited() && negotiated_remote.is_some() {
+        Err(RtcError::RemoteSdp(
+            "Missing a=sctp-init for established SNAP SCTP association".into(),
+        ))
+    } else {
+        Ok(false)
+    }
+}
+
 fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     let (media_lines, mids, stream_ids) = {
         let mut v = as_media_lines(session);
@@ -746,6 +890,16 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
                 m.as_media_line(attrs, &ssrcs, &session.exts, &params)
             })
             .collect::<Vec<_>>();
+
+        // Add a=sctp-init to the application m-line if SNAP is configured.
+        if let Some(sctp_init) = &params.local_sctp_init {
+            for line in &mut lines {
+                if line.typ.is_channel() {
+                    line.attrs
+                        .push(sdp::MediaAttribute::SctpInit(sctp_init.clone()));
+                }
+            }
+        }
 
         if let Some(pending) = params.pending {
             pending.apply_to(&mut lines);
@@ -1411,10 +1565,15 @@ struct AsSdpParams<'a, 'b> {
     pub fingerprint: &'a Fingerprint,
     pub setup: Setup,
     pub pending: Option<&'b Changes>,
+    pub local_sctp_init: Option<Vec<u8>>,
 }
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
-    pub fn new(rtc: &'a Rtc, pending: Option<&'b Changes>) -> Self {
+    pub fn new(
+        rtc: &'a Rtc,
+        pending: Option<&'b Changes>,
+        local_sctp_init: Option<Vec<u8>>,
+    ) -> Self {
         let (creds, candidates) = if let Some((new_creds, keep_local_candidates)) =
             pending.and_then(|p| p.ice_restart())
         {
@@ -1448,6 +1607,7 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
                 None => Setup::ActPass,
             },
             pending,
+            local_sctp_init,
         }
     }
 

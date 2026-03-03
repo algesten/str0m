@@ -15,6 +15,7 @@ use crate::io::Id;
 use crate::packet::H265ProfileTierLevel;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::{Candidate, IceCreds, VERSION};
+use base64::Engine;
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -76,6 +77,16 @@ impl Sdp {
         }
 
         candidates.into_iter()
+    }
+
+    /// Get the `a=sctp-init` value from the application m-line, if present.
+    ///
+    /// Returns the decoded SCTP INIT chunk bytes.
+    pub(crate) fn sctp_init(&self) -> Option<&[u8]> {
+        self.media_lines
+            .iter()
+            .find(|m| m.typ.is_channel())
+            .and_then(|m| m.sctp_init())
     }
 
     pub(crate) fn setup(&self) -> Option<Setup> {
@@ -255,6 +266,19 @@ impl MediaLine {
             // We should only use `mid()` once we're certain there is
             // a mid line. This is checked by `check_consistent`.
             .expect("missing a=mid")
+    }
+
+    /// Get the sctp-init attribute value (decoded SCTP INIT chunk bytes).
+    ///
+    /// Returns `None` if no `a=sctp-init` attribute is present.
+    pub fn sctp_init(&self) -> Option<&[u8]> {
+        self.attrs.iter().find_map(|a| {
+            if let MediaAttribute::SctpInit(v) = a {
+                Some(v.as_slice())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn msid(&self) -> Option<Msid> {
@@ -810,6 +834,9 @@ pub enum MediaAttribute {
     Mid(Mid),     // 0, 1, 2
     SctpPort(u16),
     MaxMessageSize(usize),
+    /// a=sctp-init:<base64-encoded SCTP INIT chunk>
+    /// See draft-hancke-tsvwg-snap
+    SctpInit(Vec<u8>),
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
     ExtMap {
@@ -1319,6 +1346,13 @@ impl fmt::Display for MediaAttribute {
             Mid(v) => write!(f, "a=mid:{v}\r\n")?,
             SctpPort(v) => write!(f, "a=sctp-port:{v}\r\n")?,
             MaxMessageSize(v) => write!(f, "a=max-message-size:{v}\r\n")?,
+            SctpInit(v) => {
+                write!(
+                    f,
+                    "a=sctp-init:{}\r\n",
+                    base64::engine::general_purpose::STANDARD.encode(v)
+                )?;
+            }
             ExtMap { id, ext } => {
                 if !ext.is_serialized() {
                     return Ok(());

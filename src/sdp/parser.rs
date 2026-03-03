@@ -12,6 +12,7 @@ use crate::io::TcpType;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
 use crate::{Candidate, CandidateKind};
+use base64::Engine;
 
 use super::data::*;
 
@@ -512,6 +513,25 @@ where
     )
     .map(MediaAttribute::MaxMessageSize);
 
+    // a=sctp-init:<base64-encoded SCTP INIT chunk>
+    // See draft-hancke-tsvwg-snap (§4.2: base64 defined in RFC 4566, i.e. standard with padding)
+    //
+    // NOTE: §5.3 says "If the data is not properly base64-encoded this results
+    // in an error". We intentionally deviate: malformed base64 causes the parser
+    // to drop the attribute as Unused and fall back to a non-SNAP session. This
+    // is more robust than hard-failing the entire offer on a single bad attribute.
+    let sctp_init = attribute_line("sctp-init", any_value()).and_then(|s| {
+        base64::engine::general_purpose::STANDARD
+            .decode(&s)
+            .map(MediaAttribute::SctpInit)
+            .map_err(|e| {
+                StreamErrorFor::<Input>::message_format(format_args!(
+                    "invalid base64 in sctp-init: {}: {}",
+                    s, e
+                ))
+            })
+    });
+
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:<value>["/"<direction>] <URI> <extensionattributes>
     let extmap = attribute_line(
@@ -761,31 +781,37 @@ where
 
     let unused = typed_line('a', any_value()).map(MediaAttribute::Unused);
 
+    // Split into two choice() calls because combine's choice macro supports at most 25 parsers.
     choice((
-        attempt(ice_ufrag),
-        attempt(ice_pwd),
-        attempt(ice_opt),
-        attempt(finger),
-        attempt(setup),
-        attempt(mid),
-        attempt(sctp_port),
-        attempt(max_message_size),
-        attempt(extmap),
-        attempt(direction),
-        attempt(msid),
-        attempt(rtcp),
-        attempt(rtcpmux),
-        attempt(rtcpmuxonly),
-        attempt(rtcprsize),
-        attempt(cand),
-        attempt(endof),
-        attempt(rtpmap),
-        attempt(rtcp_fb),
-        attempt(fmtp),
-        attempt(rid),
-        attempt(simulcast),
-        attempt(ssrc_group),
-        attempt(ssrc),
+        attempt(choice((
+            attempt(ice_ufrag),
+            attempt(ice_pwd),
+            attempt(ice_opt),
+            attempt(finger),
+            attempt(setup),
+            attempt(mid),
+            attempt(sctp_port),
+            attempt(max_message_size),
+            attempt(sctp_init),
+            attempt(extmap),
+            attempt(direction),
+            attempt(msid),
+            attempt(rtcp),
+        ))),
+        attempt(choice((
+            attempt(rtcpmux),
+            attempt(rtcpmuxonly),
+            attempt(rtcprsize),
+            attempt(cand),
+            attempt(endof),
+            attempt(rtpmap),
+            attempt(rtcp_fb),
+            attempt(fmtp),
+            attempt(rid),
+            attempt(simulcast),
+            attempt(ssrc_group),
+            attempt(ssrc),
+        ))),
         unused,
     ))
 }
