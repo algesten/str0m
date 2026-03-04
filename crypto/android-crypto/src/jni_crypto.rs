@@ -3,8 +3,7 @@
 //! This module provides low-level wrappers around Android's crypto functionality
 //! accessed via JNI.
 
-use jni::objects::{JByteArray, JClass, JMethodID, JObject, JValue};
-use jni::signature::{Primitive, ReturnType};
+use jni::objects::{JByteArray, JValue};
 use jni::JNIEnv;
 
 use str0m_proto::crypto::CryptoError;
@@ -24,8 +23,6 @@ macro_rules! with_jni_env {
         $f(&mut env)
     }};
 }
-
-pub(crate) use with_jni_env;
 
 /// Compute SHA-256 hash using java.security.MessageDigest.
 pub fn sha256(data: &[u8]) -> Result<[u8; 32], CryptoError> {
@@ -773,6 +770,7 @@ pub struct Sha256Context {
     data: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl Sha256Context {
     pub fn new() -> Self {
         Self { data: Vec::new() }
@@ -854,6 +852,7 @@ pub struct Sha384Context {
     data: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl Sha384Context {
     pub fn new() -> Self {
         Self { data: Vec::new() }

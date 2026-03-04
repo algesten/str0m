@@ -70,6 +70,10 @@ impl ActiveKeyExchange for EcdhKeyExchange {
         out.extend_from_slice(&shared_secret);
         Ok(())
     }
+
+    fn group(&self) -> NamedGroup {
+        self.group
+    }
 }
 
 /// P-256 (secp256r1) ECDH key exchange group.
@@ -81,12 +85,8 @@ impl SupportedKxGroup for Secp256r1 {
         NamedGroup::Secp256r1
     }
 
-    fn start(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
         Ok(Box::new(EcdhKeyExchange::new(NamedGroup::Secp256r1, buf)?))
-    }
-
-    fn pub_key_len(&self) -> usize {
-        65 // Uncompressed point: 04 || X (32 bytes) || Y (32 bytes)
     }
 }
 

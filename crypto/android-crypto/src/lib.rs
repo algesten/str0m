@@ -10,21 +10,18 @@
 mod dimpl_provider;
 mod dtls;
 mod jni_crypto;
+mod jvm;
 mod sha1;
 mod sha256;
 mod srtp;
 
-use jni::JavaVM;
-use once_cell::sync::OnceCell;
 use str0m_proto::crypto::CryptoProvider;
 
 use dtls::AndroidCryptoDtlsProvider;
+pub(crate) use jvm::get_jvm;
 use sha1::AndroidCryptoSha1HmacProvider;
 use sha256::AndroidCryptoSha256Provider;
 use srtp::AndroidCryptoSrtpProvider;
-
-/// Global JVM reference for JNI calls.
-static JVM: OnceCell<JavaVM> = OnceCell::new();
 
 /// Initialize the Android crypto provider with the JVM.
 ///
@@ -44,20 +41,8 @@ static JVM: OnceCell<JavaVM> = OnceCell::new();
 ///     jni::sys::JNI_VERSION_1_6
 /// }
 /// ```
-pub fn init_jvm(vm: JavaVM) {
-    JVM.set(vm)
-        .expect("JVM already initialized for android-crypto");
-}
-
-/// Get the global JVM reference.
-///
-/// # Panics
-///
-/// Panics if `init_jvm` has not been called.
-pub(crate) fn get_jvm() -> &'static JavaVM {
-    JVM.get()
-        .expect("JVM not initialized. Call init_jvm() first, typically in JNI_OnLoad")
-}
+#[cfg(not(test))]
+pub use jvm::init_jvm;
 
 /// Create the default Android JNI crypto provider.
 ///

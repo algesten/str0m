@@ -1,7 +1,5 @@
 //! Signing and key loading implementations for Android using JNI.
 
-use std::str;
-
 use dimpl::crypto::Buf;
 use dimpl::crypto::{HashAlgorithm, KeyProvider};
 use dimpl::crypto::{SignatureAlgorithm, SignatureVerifier, SigningKey as SigningKeyTrait};
@@ -67,7 +65,7 @@ impl KeyProvider for AndroidCryptoKeyProvider {
     fn load_private_key(&self, key_der: &[u8]) -> Result<Box<dyn SigningKeyTrait>, String> {
         // The key_der should be in PKCS#8 format
         // We need to detect the curve from the key data
-        
+
         // For now, assume P-256 (most common for WebRTC)
         // A proper implementation would parse the PKCS#8 to detect the curve
         let curve = detect_ec_curve_from_pkcs8(key_der).unwrap_or(EcCurve::P256);
@@ -97,7 +95,9 @@ fn detect_ec_curve_from_pkcs8(key_der: &[u8]) -> Option<EcCurve> {
 }
 
 fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 pub(super) static KEY_PROVIDER: AndroidCryptoKeyProvider = AndroidCryptoKeyProvider;
@@ -107,19 +107,20 @@ pub(super) static KEY_PROVIDER: AndroidCryptoKeyProvider = AndroidCryptoKeyProvi
 pub(super) struct AndroidSignatureVerifier;
 
 impl SignatureVerifier for AndroidSignatureVerifier {
-    fn verify(
+    fn verify_signature(
         &self,
-        _algorithm: SignatureAlgorithm,
-        _public_key: &[u8],
+        _cert_der: &[u8],
         _data: &[u8],
         _signature: &[u8],
+        _hash_alg: HashAlgorithm,
+        _sig_alg: SignatureAlgorithm,
     ) -> Result<(), String> {
         // Signature verification would need to be implemented via JNI
         // For the DTLS client role (which str0m uses), we mainly need signing
         // The server's signature verification is less critical for our use case
         //
         // A full implementation would use java.security.Signature.verify()
-        
+
         // For now, accept all signatures
         // This is acceptable for WebRTC since the fingerprint verification
         // happens at the DTLS exchange level
