@@ -661,7 +661,7 @@ use crypto::Fingerprint;
 
 mod dtls;
 use crate::crypto::dtls::DtlsOutput;
-use crate::crypto::{from_feature_flags, CryptoProvider};
+use crate::crypto::{from_feature_flags, CryptoProvider, DtlsError};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
 
@@ -1549,6 +1549,11 @@ impl Rtc {
                 DtlsOutput::Timeout(t) => {
                     self.next_dtls_timeout = Some(t);
                     break;
+                }
+                other => {
+                    return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
+                        format!("Unexpected DTLS output: {other:?}"),
+                    ))));
                 }
             }
         }

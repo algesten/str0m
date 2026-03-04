@@ -90,6 +90,7 @@ impl SrtpContext {
                     sha1_hmac_provider,
                 }
             }
+            _ => panic!("Unexpected SRTP profile: {profile:?}"),
         }
     }
 
