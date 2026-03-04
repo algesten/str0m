@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
+use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
 use crate::rtp_::SRTP_BLOCK_SIZE;
@@ -360,7 +360,16 @@ impl Media {
                 reordering_size_video
             };
 
-            let buffer = DepacketizingBuffer::new(codec.into(), hold_back);
+            let mut depack: CodecDepacketizer = codec.into();
+
+            // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
+            if let CodecDepacketizer::H265(ref mut h265) = depack {
+                if params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                    h265.with_donl(true);
+                }
+            }
+
+            let buffer = DepacketizingBuffer::new(depack, hold_back);
 
             self.depayloaders.insert((pt, rid), buffer);
         }

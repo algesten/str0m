@@ -552,6 +552,13 @@ impl PayloadParams {
                 self.spec.format.h265_profile_tier_level = None;
                 self.spec.format.profile_id = None;
             }
+
+            // Adopt remote's sprop-max-don-diff so the depacketizer knows whether
+            // incoming packets contain DONL fields (RFC 7798 §7.1).
+            // The packetizer also uses this to decide whether to emit DONL.
+            if first.spec.format.sprop_max_don_diff.is_some() {
+                self.spec.format.sprop_max_don_diff = first.spec.format.sprop_max_don_diff;
+            }
         }
 
         let mut remote_pt = first.pt;
@@ -795,6 +802,7 @@ mod test {
 
     mod h265 {
         use super::*;
+        use crate::packet::Packetizer;
 
         fn h265_codec_spec(profile_id: u8, tier_flag: u8, level_id: u8) -> CodecSpec {
             CodecSpec {
@@ -1088,6 +1096,176 @@ mod test {
                     "{msg}\nc0: {c0:#?}\nc1: {c1:#?}"
                 );
             }
+        }
+
+        /// Test that sprop-max-don-diff is adopted from remote SDP during negotiation,
+        /// and that packetizer/depacketizer are correctly initialized with DONL enabled.
+        #[test]
+        fn test_sprop_max_don_diff_negotiation_enables_donl() {
+            use crate::packet::{CodecDepacketizer, CodecPacketizer};
+
+            // Local config: no sprop-max-don-diff (default)
+            let local_spec = h265_codec_spec(1, 0, 93);
+            let mut local_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                local_spec,
+            );
+            assert_eq!(
+                local_params.spec.format.sprop_max_don_diff, None,
+                "Local should have no sprop-max-don-diff initially"
+            );
+
+            // Remote offers H.265 with sprop-max-don-diff=32
+            let mut remote_spec = h265_codec_spec(1, 0, 93);
+            remote_spec.format.sprop_max_don_diff = Some(32);
+            let remote_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                remote_spec,
+            );
+
+            // Simulate SDP negotiation (update_param merges remote into local)
+            let mut claimed = [false; 128];
+            let mut unlocked = std::collections::HashSet::new();
+            local_params.update_param(
+                &[remote_params],
+                &mut claimed,
+                false, // remote is controlling (we're answering)
+                &mut unlocked,
+            );
+
+            // Verify sprop-max-don-diff was adopted from remote
+            assert_eq!(
+                local_params.spec.format.sprop_max_don_diff,
+                Some(32),
+                "sprop-max-don-diff should be adopted from remote after negotiation"
+            );
+
+            // Verify packetizer is initialized with DONL enabled
+            let donl_enabled = local_params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            assert!(
+                donl_enabled,
+                "DONL should be enabled when sprop-max-don-diff > 0"
+            );
+
+            let mut pack = CodecPacketizer::new(
+                local_params.spec.codec,
+                crate::format::Vp9PacketizerMode::default(),
+            );
+            if let CodecPacketizer::H265(ref mut h265) = pack {
+                h265.with_donl(donl_enabled);
+            }
+
+            // Packetize a NAL — should include DONL field (2 extra bytes)
+            let nalu = vec![0x02, 0x01, 0xAA, 0xBB];
+            let packets = pack.packetize(1200, &nalu).unwrap();
+            assert_eq!(packets.len(), 1);
+            assert_eq!(
+                packets[0].len(),
+                nalu.len() + 2, // +2 for DONL
+                "Packetized output should include 2-byte DONL field"
+            );
+
+            // Verify depacketizer is initialized with DONL enabled
+            let mut depack: CodecDepacketizer = local_params.spec.codec.into();
+            if let CodecDepacketizer::H265(ref mut h265) = depack {
+                h265.with_donl(donl_enabled);
+            }
+
+            // Depacketize the packet — should correctly strip DONL
+            use crate::packet::{CodecExtra, Depacketizer};
+            let mut out = Vec::new();
+            let mut extra = CodecExtra::None;
+            if let CodecDepacketizer::H265(ref mut h265) = depack {
+                h265.depacketize(&packets[0], &mut out, &mut extra).unwrap();
+            }
+
+            // Output should be Annex-B: start code + original NAL
+            assert_eq!(&out[0..4], &[0x00, 0x00, 0x00, 0x01]);
+            assert_eq!(
+                &out[4..],
+                &nalu[..],
+                "Depacketized NAL should match original"
+            );
+        }
+
+        /// Test that sprop-max-don-diff=0 from remote does NOT enable DONL.
+        #[test]
+        fn test_sprop_max_don_diff_zero_disables_donl() {
+            let local_spec = h265_codec_spec(1, 0, 93);
+            let mut local_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                local_spec,
+            );
+
+            // Remote offers with sprop-max-don-diff=0 (no reordering)
+            let mut remote_spec = h265_codec_spec(1, 0, 93);
+            remote_spec.format.sprop_max_don_diff = Some(0);
+            let remote_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                remote_spec,
+            );
+
+            let mut claimed = [false; 128];
+            let mut unlocked = std::collections::HashSet::new();
+            local_params.update_param(&[remote_params], &mut claimed, false, &mut unlocked);
+
+            assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
+            let donl_enabled = local_params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            assert!(
+                !donl_enabled,
+                "DONL should NOT be enabled when sprop-max-don-diff=0"
+            );
+
+            // Packetize without DONL — packet should be same size as NAL
+            let nalu = vec![0x02, 0x01, 0xAA, 0xBB];
+            let mut pack = crate::packet::CodecPacketizer::new(
+                local_params.spec.codec,
+                crate::format::Vp9PacketizerMode::default(),
+            );
+            // Don't call with_donl(true) since donl_enabled is false
+            let packets = pack.packetize(1200, &nalu).unwrap();
+            assert_eq!(
+                packets[0].len(),
+                nalu.len(),
+                "No DONL field when sprop-max-don-diff=0"
+            );
+        }
+
+        /// Test that missing sprop-max-don-diff from remote preserves local value.
+        #[test]
+        fn test_sprop_max_don_diff_absent_preserves_local() {
+            // Local has sprop-max-don-diff=16
+            let mut local_spec = h265_codec_spec(1, 0, 93);
+            local_spec.format.sprop_max_don_diff = Some(16);
+            let mut local_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                local_spec,
+            );
+
+            // Remote offers without sprop-max-don-diff
+            let remote_spec = h265_codec_spec(1, 0, 93);
+            assert!(remote_spec.format.sprop_max_don_diff.is_none());
+            let remote_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                remote_spec,
+            );
+
+            let mut claimed = [false; 128];
+            let mut unlocked = std::collections::HashSet::new();
+            local_params.update_param(&[remote_params], &mut claimed, false, &mut unlocked);
+
+            // Local value should be preserved (remote didn't override)
+            assert_eq!(
+                local_params.spec.format.sprop_max_don_diff,
+                Some(16),
+                "Local sprop-max-don-diff should be preserved when remote doesn't specify it"
+            );
         }
     }
 }

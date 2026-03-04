@@ -1319,6 +1319,94 @@ mod test {
         println!("{:?}", parsed);
         parsed.expect("to parse ok");
     }
+
+    /// Test parsing an SDP offer containing H.265 with sprop-max-don-diff.
+    /// Verifies the fmtp line is correctly parsed into FormatParam::SpropMaxDonDiff
+    /// alongside H265ProfileTierLevel.
+    #[test]
+    fn parse_sdp_h265_with_sprop_max_don_diff() {
+        // Fingerprint split across lines to stay within 110 cols.
+        let sdp = concat!(
+            "v=0\r\n",
+            "o=- 1234567890 2 IN IP4 127.0.0.1\r\n",
+            "s=-\r\n",
+            "t=0 0\r\n",
+            "a=group:BUNDLE 0\r\n",
+            "a=fingerprint:sha-256 ",
+            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:",
+            "66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:",
+            "22:33:44:55:66:77:88:99\r\n",
+            "a=msid-semantic: WMS\r\n",
+            "m=video 9 UDP/TLS/RTP/SAVPF 102 103\r\n",
+            "c=IN IP4 0.0.0.0\r\n",
+            "a=rtcp:9 IN IP4 0.0.0.0\r\n",
+            "a=ice-ufrag:abcd\r\n",
+            "a=ice-pwd:abcdefghijklmnopqrstuv\r\n",
+            "a=ice-options:trickle\r\n",
+            "a=fingerprint:sha-256 ",
+            "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:",
+            "66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:",
+            "22:33:44:55:66:77:88:99\r\n",
+            "a=setup:actpass\r\n",
+            "a=mid:0\r\n",
+            "a=sendrecv\r\n",
+            "a=rtpmap:102 H265/90000\r\n",
+            "a=fmtp:102 profile-id=1;tier-flag=0;",
+            "level-id=93;sprop-max-don-diff=32\r\n",
+            "a=rtpmap:103 rtx/90000\r\n",
+            "a=fmtp:103 apt=102\r\n",
+        );
+
+        let (sdp, _remaining) = sdp_parser().parse(sdp).expect("SDP should parse");
+
+        // Find the video media section
+        assert_eq!(sdp.media_lines.len(), 1);
+        let media = &sdp.media_lines[0];
+
+        // Find fmtp for PT 102 (H.265)
+        let fmtp_values: Vec<_> = media
+            .attrs
+            .iter()
+            .filter_map(|a| {
+                if let MediaAttribute::Fmtp { pt, values } = a {
+                    if *pt == 102.into() {
+                        return Some(values.clone());
+                    }
+                }
+                None
+            })
+            .flatten()
+            .collect();
+
+        // Should contain H265ProfileTierLevel
+        assert!(
+            fmtp_values
+                .iter()
+                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))),
+            "Should have H265ProfileTierLevel param"
+        );
+
+        // Should contain SpropMaxDonDiff(32)
+        assert!(
+            fmtp_values
+                .iter()
+                .any(|p| matches!(p, FormatParam::SpropMaxDonDiff(32))),
+            "Should have SpropMaxDonDiff(32) param, got: {:?}",
+            fmtp_values
+        );
+
+        // Verify PTL values
+        if let Some(FormatParam::H265ProfileTierLevel(ptl)) = fmtp_values
+            .iter()
+            .find(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+        {
+            assert_eq!(ptl.profile_id(), 1);
+            assert_eq!(ptl.tier_flag(), 0);
+            assert_eq!(ptl.level_id(), 93);
+        } else {
+            panic!("H265ProfileTierLevel not found");
+        }
+    }
 }
 
 // Safari addTransceiver('audio', {direction: 'sendonly'}))

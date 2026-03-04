@@ -81,6 +81,11 @@ pub struct FormatParams {
     ///
     /// See ITU-T H.265 Annex A for complete definitions.
     pub h265_profile_tier_level: Option<crate::packet::H265ProfileTierLevel>,
+
+    /// H.265 sprop-max-don-diff parameter (RFC 7798 §7.1).
+    /// When > 0, DONL fields are included in H.265 RTP packets to support
+    /// out-of-order NAL unit decoding.
+    pub sprop_max_don_diff: Option<u16>,
 }
 
 impl FormatParams {
@@ -122,6 +127,7 @@ impl FormatParams {
             LevelIdx(v) => self.level_idx = Some(*v),
             Tier(v) => self.tier = Some(*v),
             H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
+            SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
             Apt(_) => {}
             Unknown => {}
         }
@@ -165,6 +171,9 @@ impl FormatParams {
         if let Some(ptl) = self.h265_profile_tier_level {
             r.push(H265ProfileTierLevel(ptl));
         }
+        if let Some(v) = self.sprop_max_don_diff {
+            r.push(SpropMaxDonDiff(v));
+        }
 
         r
     }
@@ -179,5 +188,52 @@ impl fmt::Display for FormatParams {
             .collect::<Vec<_>>()
             .join(";");
         write!(f, "{s}")
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn sprop_max_don_diff_roundtrip() {
+        // Test that sprop-max-don-diff parameter round-trips correctly
+        let f = FormatParams {
+            sprop_max_don_diff: Some(32),
+            ..Default::default()
+        };
+
+        // Serialize to string
+        let fmtp_str = f.to_string();
+        assert_eq!(fmtp_str, "sprop-max-don-diff=32");
+
+        // Parse back
+        let parsed = FormatParams::parse_line(&fmtp_str);
+        assert_eq!(parsed.sprop_max_don_diff, Some(32));
+    }
+
+    #[test]
+    fn h265_combined_params_roundtrip() {
+        use crate::packet::H265ProfileTierLevel;
+
+        // Test H.265 with both profile/tier/level and sprop-max-don-diff
+        let ptl = H265ProfileTierLevel::new(1, 0, 93).unwrap();
+        let f = FormatParams {
+            h265_profile_tier_level: Some(ptl),
+            sprop_max_don_diff: Some(32),
+            ..Default::default()
+        };
+
+        // Serialize to string
+        let fmtp_str = f.to_string();
+        assert!(fmtp_str.contains("profile-id=1"));
+        assert!(fmtp_str.contains("tier-flag=0"));
+        assert!(fmtp_str.contains("level-id=93"));
+        assert!(fmtp_str.contains("sprop-max-don-diff=32"));
+
+        // Parse back
+        let parsed = FormatParams::parse_line(&fmtp_str);
+        assert_eq!(parsed.h265_profile_tier_level, Some(ptl));
+        assert_eq!(parsed.sprop_max_don_diff, Some(32));
     }
 }
