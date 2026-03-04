@@ -15,7 +15,8 @@ struct AndroidCryptoAes128CmSha1_80Cipher {
 
 impl std::fmt::Debug for AndroidCryptoAes128CmSha1_80Cipher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AndroidCryptoAes128CmSha1_80Cipher").finish()
+        f.debug_struct("AndroidCryptoAes128CmSha1_80Cipher")
+            .finish()
     }
 }
 
@@ -165,7 +166,8 @@ struct AndroidCryptoSupportedAeadAes128Gcm;
 
 impl std::fmt::Debug for AndroidCryptoSupportedAeadAes128Gcm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AndroidCryptoSupportedAeadAes128Gcm").finish()
+        f.debug_struct("AndroidCryptoSupportedAeadAes128Gcm")
+            .finish()
     }
 }
 
@@ -179,7 +181,8 @@ struct AndroidCryptoSupportedAeadAes256Gcm;
 
 impl std::fmt::Debug for AndroidCryptoSupportedAeadAes256Gcm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AndroidCryptoSupportedAeadAes256Gcm").finish()
+        f.debug_struct("AndroidCryptoSupportedAeadAes256Gcm")
+            .finish()
     }
 }
 
@@ -258,7 +261,11 @@ fn aes_ctr_round(
         }
     }
 
-    jni_crypto::aes_ecb_encrypt(key, &countered_iv[..offset], &mut encrypted_countered_iv[..offset])?;
+    jni_crypto::aes_ecb_encrypt(
+        key,
+        &countered_iv[..offset],
+        &mut encrypted_countered_iv[..offset],
+    )?;
 
     // XOR the intermediate_output with the input
     for i in 0..input.len() {

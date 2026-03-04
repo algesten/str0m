@@ -33,14 +33,9 @@ impl Cipher for AesGcm {
     fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
         let ciphertext_length = plaintext.len() + AES_GCM_TAG_LEN;
         let mut ciphertext = vec![0u8; ciphertext_length];
-        let output_size = jni_crypto::aes_gcm_encrypt(
-            &self.key,
-            &nonce,
-            plaintext,
-            &aad,
-            &mut ciphertext,
-        )
-        .map_err(|err| format!("{err:?}"))?;
+        let output_size =
+            jni_crypto::aes_gcm_encrypt(&self.key, &nonce, plaintext, &aad, &mut ciphertext)
+                .map_err(|err| format!("{err:?}"))?;
         plaintext.clear();
         plaintext.extend_from_slice(&ciphertext[..output_size]);
         Ok(())
@@ -49,18 +44,11 @@ impl Cipher for AesGcm {
     fn decrypt(&mut self, ciphertext: &mut TmpBuf, aad: Aad, nonce: Nonce) -> Result<(), String> {
         let plaintext_length = ciphertext.len() - AES_GCM_TAG_LEN;
         let mut output = vec![0u8; plaintext_length];
-        let output_size = jni_crypto::aes_gcm_decrypt(
-            &self.key,
-            &nonce,
-            ciphertext.as_ref(),
-            &aad,
-            &mut output,
-        )
-        .map_err(|err| format!("{err:?}"))?;
+        let output_size =
+            jni_crypto::aes_gcm_decrypt(&self.key, &nonce, ciphertext.as_ref(), &aad, &mut output)
+                .map_err(|err| format!("{err:?}"))?;
         ciphertext.truncate(output_size);
-        ciphertext
-            .as_mut()
-            .copy_from_slice(&output[0..output_size]);
+        ciphertext.as_mut().copy_from_slice(&output[0..output_size]);
         Ok(())
     }
 }
@@ -192,7 +180,6 @@ pub(super) static ALL_DTLS13_CIPHER_SUITES: &[&dyn SupportedDtls13CipherSuite] =
 /// AES-ECB encrypt for sequence number encryption in DTLS 1.3.
 fn aes_ecb_encrypt(key: &[u8], input: &[u8; 16]) -> [u8; 16] {
     let mut output = [0u8; 16];
-    jni_crypto::aes_ecb_encrypt(key, input, &mut output)
-        .expect("AES-ECB encryption failed");
+    jni_crypto::aes_ecb_encrypt(key, input, &mut output).expect("AES-ECB encryption failed");
     output
 }

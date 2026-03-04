@@ -37,13 +37,13 @@ impl PrfProvider for AndroidPrfProvider {
         // Compute A(1) = HMAC(secret, label + seed)
         match hash {
             HashAlgorithm::SHA256 => {
-                let result = jni_crypto::hmac_sha256(secret, label_seed)
-                    .map_err(|e| format!("{e:?}"))?;
+                let result =
+                    jni_crypto::hmac_sha256(secret, label_seed).map_err(|e| format!("{e:?}"))?;
                 hmac_a[..32].copy_from_slice(&result);
             }
             HashAlgorithm::SHA384 => {
-                let result = jni_crypto::hmac_sha384(secret, label_seed)
-                    .map_err(|e| format!("{e:?}"))?;
+                let result =
+                    jni_crypto::hmac_sha384(secret, label_seed).map_err(|e| format!("{e:?}"))?;
                 hmac_a[..48].copy_from_slice(&result);
             }
             _ => return Err(format!("Unsupported hash algorithm for PRF: {hash:?}")),
@@ -62,14 +62,14 @@ impl PrfProvider for AndroidPrfProvider {
             let mut hmac_block = [0u8; 48];
             let hmac_block_length = match hash {
                 HashAlgorithm::SHA256 => {
-                    let result = jni_crypto::hmac_sha256(secret, payload)
-                        .map_err(|e| format!("{e:?}"))?;
+                    let result =
+                        jni_crypto::hmac_sha256(secret, payload).map_err(|e| format!("{e:?}"))?;
                     hmac_block[..32].copy_from_slice(&result);
                     32
                 }
                 HashAlgorithm::SHA384 => {
-                    let result = jni_crypto::hmac_sha384(secret, payload)
-                        .map_err(|e| format!("{e:?}"))?;
+                    let result =
+                        jni_crypto::hmac_sha384(secret, payload).map_err(|e| format!("{e:?}"))?;
                     hmac_block[..48].copy_from_slice(&result);
                     48
                 }
