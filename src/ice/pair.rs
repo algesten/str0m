@@ -484,8 +484,6 @@ impl fmt::Debug for CandidatePair {
 
 #[cfg(test)]
 mod tests {
-    use tracing_subscriber::util::SubscriberInitExt;
-
     use super::*;
 
     #[test]
