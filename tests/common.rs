@@ -411,8 +411,11 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
         #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
         "apple-crypto" => str0m_apple_crypto::default_provider(),
 
+        #[cfg(all(feature = "android-crypto", target_os = "android"))]
+        "android-crypto" => str0m_android_crypto::default_provider(),
+
         _ => {
-            let mut available = Vec::new();
+            let mut available: Vec<&str> = Vec::new();
             #[cfg(feature = "aws-lc-rs")]
             available.push("aws-lc-rs");
             #[cfg(feature = "rust-crypto")]

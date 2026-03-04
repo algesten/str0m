@@ -30,6 +30,7 @@ rust-crypto = ["dep:str0m-rust-crypto"]
 openssl = ["dep:str0m-openssl"]
 wincrypto = ["dep:str0m-wincrypto"]
 apple-crypto = ["dep:str0m-apple-crypto"]
+android-crypto = ["dep:str0m-android-crypto"]
 vendored = ["str0m-openssl?/vendored"]
 unversioned = []
 
@@ -72,13 +73,20 @@ str0m-openssl = { version = "0.1.2", path = "crypto/openssl", optional = true }
 [target.'cfg(target_vendor = "apple")'.dependencies]
 str0m-apple-crypto = { version = "0.1.4", path = "crypto/apple-crypto", optional = true }
 
+[target.'cfg(target_os = "android")'.dependencies]
+str0m-android-crypto = { version = "0.1.0", path = "crypto/android-crypto", optional = true }
+
 [target.'cfg(windows)'.dependencies]
 # Windows Crypto (CNG + SChannel)
 str0m-wincrypto = { version = "0.3.2", path = "crypto/wincrypto", optional = true }
 
+# str0m-rust-crypto pulls in dimpl/rcgen which unconditionally activates
+# aws-lc-rs. Exclude it on Android where we use android-crypto instead.
+[target.'cfg(not(target_os = "android"))'.dev-dependencies]
+str0m-rust-crypto = { version = "0.1.2", path = "crypto/rust-crypto" }
+
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }
-str0m-rust-crypto = { version = "0.1.2", path = "crypto/rust-crypto" }
 netem = { package = "str0m-netem", version = "0.1.1", path = "netem" }
 
 # Pin tempfile to avoid getrandom 0.4.1 which requires edition 2024 (MSRV 1.85)

@@ -33,17 +33,17 @@ pub fn init_jvm(vm: JavaVM) {
 /// # Panics
 ///
 /// Panics if `init_jvm` has not been called.
-#[cfg(not(test))]
-pub(crate) fn get_jvm() -> &'static JavaVM {
-    JVM.get()
-        .expect("JVM not initialized. Call init_jvm() first, typically in JNI_OnLoad")
-}
+// #[cfg(not(test))]
+// pub(crate) fn get_jvm() -> &'static JavaVM {
+//     JVM.get()
+//         .expect("JVM not initialized. Call init_jvm() first, typically in JNI_OnLoad")
+// }
 
 /// Get the global JVM reference for tests.
 ///
 /// When running as a native test binary (via `cargo ndk-test`), there is no `JNI_OnLoad` call.
 /// This version lazily creates a JVM using the Android runtime.
-#[cfg(test)]
+//#[cfg(test)]
 pub(crate) fn get_jvm() -> &'static JavaVM {
     JVM.get_or_init(create_test_jvm)
 }
@@ -54,7 +54,7 @@ pub(crate) fn get_jvm() -> &'static JavaVM {
 /// 1. Loading `libnativehelper.so` and calling `JniInvocationCreate` + `JniInvocationInit`
 ///    to load the ART runtime (`libart.so`).
 /// 2. Calling `JNI_CreateJavaVM` to create the VM.
-#[cfg(test)]
+//#[cfg(test)]
 fn create_test_jvm() -> JavaVM {
     use std::ffi::c_void;
     use std::ptr;
