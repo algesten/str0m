@@ -2,28 +2,15 @@
 
 use crate::WinCryptoError;
 use windows::core::Owned;
-use windows::Win32::Security::Cryptography::BCryptHashData;
 use windows::Win32::Security::Cryptography::BCRYPT_HASH_HANDLE;
 use windows::Win32::Security::Cryptography::BCRYPT_SHA256_ALG_HANDLE;
-use windows::Win32::Security::Cryptography::{BCryptCreateHash, BCryptFinishHash};
+use windows::Win32::Security::Cryptography::{BCryptHash, BCryptHashData};
 
 /// Compute SHA-256 hash of the given data using Windows CNG.
 pub fn sha256(data: &[u8]) -> Result<[u8; 32], WinCryptoError> {
     let mut hash = [0u8; 32];
     unsafe {
-        let mut hash_handle = Owned::new(BCRYPT_HASH_HANDLE::default());
-
-        WinCryptoError::from_ntstatus(BCryptCreateHash(
-            BCRYPT_SHA256_ALG_HANDLE,
-            &mut *hash_handle,
-            None,
-            None,
-            0,
-        ))?;
-
-        WinCryptoError::from_ntstatus(BCryptHashData(*hash_handle, data, 0))?;
-
-        WinCryptoError::from_ntstatus(BCryptFinishHash(*hash_handle, &mut hash, 0))?;
+        WinCryptoError::from_ntstatus(BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, data, &mut hash))?;
     }
     Ok(hash)
 }
