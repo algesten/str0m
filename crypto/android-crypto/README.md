@@ -84,3 +84,60 @@ all the necessary crypto APIs:
 - `java.security.KeyPairGenerator` with EC
 - `java.security.Signature` with SHA256withECDSA
 - `javax.crypto.KeyAgreement` with ECDH
+
+## Building and Testing with cargo-ndk
+
+This crate must be cross-compiled for Android. The easiest way is with
+[cargo-ndk](https://github.com/nickelc/cargo-ndk) and
+[cargo-ndk-test](https://crates.io/crates/cargo-ndk-test).
+
+### Setup
+
+```sh
+# Install the tools
+cargo install cargo-ndk
+cargo install cargo-ndk-test
+
+# Install the Rust Android target
+rustup target add aarch64-linux-android
+
+# Ensure ANDROID_HOME is set (or adb is in your PATH)
+export ANDROID_HOME=~/Library/Android/sdk   # macOS default
+export PATH="$ANDROID_HOME/platform-tools:$PATH"
+```
+
+An Android emulator or device must be running and reachable via `adb`.
+
+### Building
+
+```sh
+# Build the crate (from the repo root or this directory)
+cargo ndk -t arm64-v8a build -p str0m-android-crypto
+
+# Build with tests compiled
+cargo ndk -t arm64-v8a build -p str0m-android-crypto --tests
+
+# Build str0m itself with the android-crypto backend
+cargo ndk -t arm64-v8a build --no-default-features --features android-crypto
+```
+
+### Running tests
+
+`cargo-ndk-test` pushes the test binary to a connected Android device or
+emulator and runs it there. This is required because the JNI crypto calls
+need a real Android runtime.
+
+```sh
+# Run the android-crypto unit tests
+cargo ndk-test -t arm64-v8a -p str0m-android-crypto
+
+# Run a single test
+cargo ndk-test -t arm64-v8a -p str0m-android-crypto -- dtls::test::test_generate_certificate
+
+# Run str0m integration tests with the android-crypto backend
+cargo ndk-test -t arm64-v8a --no-default-features --features android-crypto
+```
+
+> **Note:** Plain `cargo test --target aarch64-linux-android` will not work
+> because it cannot execute the binary on the host. Always use `cargo ndk-test`
+> to run tests on a connected Android target.
