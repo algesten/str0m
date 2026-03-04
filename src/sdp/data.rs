@@ -926,7 +926,7 @@ pub enum FormatParam {
 
     /// H.265 sprop-max-don-diff parameter (RFC 7798 §7.1).
     /// When > 0, DONL fields are included in RTP packets to support
-    /// out-of-order NAL unit decoding.
+    /// out-of-order NAL unit decoding. Valid range: 0–32767.
     SpropMaxDonDiff(u16),
 
     /// RTX (resend) codecs, which PT it concerns.
@@ -953,7 +953,11 @@ impl FormatParam {
             "profile" => v.parse().map(Profile).ok(),
             "level-idx" => v.parse().map(LevelIdx).ok(),
             "tier" => v.parse().map(Tier).ok(),
-            "sprop-max-don-diff" => v.parse().map(SpropMaxDonDiff).ok(),
+            "sprop-max-don-diff" => v
+                .parse::<u16>()
+                .ok()
+                .filter(|&v| v <= 32767)
+                .map(SpropMaxDonDiff),
             "apt" => v.parse::<u8>().map(|v| Apt(Pt::from(v))).ok(),
             _ => None,
         }
@@ -1944,9 +1948,13 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             let param0 = FormatParam::parse("sprop-max-don-diff", "0");
             assert!(matches!(param0, FormatParam::SpropMaxDonDiff(0)));
 
-            // Parse max valid value (RFC 7798: 0..32767)
+            // Parse max valid value (RFC 7798 §7.1: 0..32767)
             let param_max = FormatParam::parse("sprop-max-don-diff", "32767");
             assert!(matches!(param_max, FormatParam::SpropMaxDonDiff(32767)));
+
+            // Out-of-range value (32768) rejected per RFC 7798 §7.1
+            let param_over = FormatParam::parse("sprop-max-don-diff", "32768");
+            assert!(matches!(param_over, FormatParam::Unknown));
 
             // Invalid value falls back to Unknown
             let param_bad = FormatParam::parse("sprop-max-don-diff", "notanumber");
