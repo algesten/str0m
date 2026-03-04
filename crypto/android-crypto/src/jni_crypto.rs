@@ -1312,11 +1312,11 @@ fn extract_ec_public_key_from_spki(spki: &[i8]) -> Result<Vec<u8>, CryptoError> 
         return Err(CryptoError::Other("SPKI too short".into()));
     }
 
-    // Skip outer SEQUENCE tag and length
-    let (_, rest) = skip_tag_length(&spki, 0x30)?;
+    // Parse outer SEQUENCE — work inside its content
+    let (spki_content, _) = skip_tag_length(&spki, 0x30)?;
 
-    // Skip AlgorithmIdentifier SEQUENCE
-    let (_, rest) = skip_tag_length(rest, 0x30)?;
+    // Skip AlgorithmIdentifier SEQUENCE (consume it, continue with rest)
+    let (_, rest) = skip_tag_length(spki_content, 0x30)?;
 
     // Parse BIT STRING
     if rest.is_empty() || rest[0] != 0x03 {

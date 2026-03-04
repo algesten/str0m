@@ -16,7 +16,8 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
     let key_pair = jni_crypto::generate_ec_key_pair_p256()?;
 
     // Create a self-signed certificate
-    let certificate = build_self_signed_cert(&key_pair.public_key_bytes, &key_pair.private_key_der)?;
+    let certificate =
+        build_self_signed_cert(&key_pair.public_key_bytes, &key_pair.private_key_der)?;
 
     Ok(DtlsCert {
         certificate,
@@ -274,5 +275,45 @@ impl DtlsInstance for AndroidCryptoDtlsInstance {
 
     fn is_active(&self) -> bool {
         self.dtls.is_active()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_generate_certificate() {
+        let cert = generate_certificate_impl().expect("certificate generation failed");
+
+        // Certificate should be non-empty DER starting with SEQUENCE tag (0x30)
+        assert!(!cert.certificate.is_empty(), "certificate is empty");
+        assert_eq!(
+            cert.certificate[0], 0x30,
+            "certificate DER does not start with SEQUENCE tag"
+        );
+
+        // Private key should be non-empty DER (PKCS#8 starts with SEQUENCE tag)
+        assert!(!cert.private_key.is_empty(), "private key is empty");
+        assert_eq!(
+            cert.private_key[0], 0x30,
+            "private key DER does not start with SEQUENCE tag"
+        );
+
+        // Compute SHA-256 fingerprint (what str0m uses for DTLS verification)
+        let fingerprint =
+            jni_crypto::sha256(&cert.certificate).expect("SHA-256 fingerprint failed");
+        assert_eq!(fingerprint.len(), 32);
+
+        // Generating a second certificate should produce different keys
+        let cert2 = generate_certificate_impl().expect("second certificate generation failed");
+        assert_ne!(
+            cert.private_key, cert2.private_key,
+            "two generated certificates should have different private keys"
+        );
+        assert_ne!(
+            cert.certificate, cert2.certificate,
+            "two generated certificates should differ"
+        );
     }
 }
