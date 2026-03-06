@@ -1,4 +1,5 @@
 use std::collections::{HashSet, VecDeque};
+use std::fmt;
 use std::net::SocketAddr;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
