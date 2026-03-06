@@ -4,7 +4,6 @@ use std::net::SocketAddr;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use std::{fmt, mem};
 
 use serde::{Deserialize, Serialize};
 
