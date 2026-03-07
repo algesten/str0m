@@ -699,8 +699,7 @@ mod test {
     }
 
     #[test]
-    fn test_parse_vla_3_simulcast_streams_with_1_active_spatial_layers_and_2_temporal_layers_with_resolutions()
-     {
+    fn test_parse_vla_3_sim_1_spatial_2_temporal_with_resolutions() {
         assert_ser_deser(
             &[
                 0b0110_0001,

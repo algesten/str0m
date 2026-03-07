@@ -172,12 +172,12 @@ mod test {
         let offer = SdpOffer(sdp());
         let json = serde_json::to_string(&offer).unwrap();
 
-        assert_eq!(
-            json,
-            format!(
-                "{{\"type\":\"offer\",\"sdp\":\"v=0\\r\\no=str0m-{VERSION} 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}}"
-            )
+        let expected = format!(
+            "{{\"type\":\"offer\",\"sdp\":\
+             \"v=0\\r\\no=str0m-{VERSION} 123 2 \
+             IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}}"
         );
+        assert_eq!(json, expected);
 
         let offer2: SdpOffer = serde_json::from_str(&json).unwrap();
 
@@ -189,12 +189,12 @@ mod test {
         let answer = SdpAnswer(sdp());
         let json = serde_json::to_string(&answer).unwrap();
 
-        assert_eq!(
-            json,
-            format!(
-                "{{\"type\":\"answer\",\"sdp\":\"v=0\\r\\no=str0m-{VERSION} 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}}"
-            )
+        let expected = format!(
+            "{{\"type\":\"answer\",\"sdp\":\
+             \"v=0\\r\\no=str0m-{VERSION} 123 2 \
+             IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}}"
         );
+        assert_eq!(json, expected);
 
         let answer2: SdpAnswer = serde_json::from_str(&json).unwrap();
 
