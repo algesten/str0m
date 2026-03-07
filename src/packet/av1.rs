@@ -36,11 +36,12 @@ pub struct Av1CodecExtra {
 #[derive(Default, Debug)]
 pub struct Av1Packetizer {
     packets: Vec<Packet>,
+    obus: Vec<Obu>,
 }
 
 impl Av1Packetizer {
-    fn emit(&mut self, mtu: usize, obus: Vec<Obu>, payloads: &mut Vec<Vec<u8>>) {
-        if obus.is_empty() {
+    fn emit(&mut self, mtu: usize, payloads: &mut Vec<Vec<u8>>) {
+        if self.obus.is_empty() {
             return;
         }
 
@@ -53,7 +54,7 @@ impl Av1Packetizer {
 
         // Push as many obus as possible into each packet
         let mut current_packet = Packet::new(0);
-        for (obu_idx, obu) in obus.iter().enumerate() {
+        for (obu_idx, obu) in self.obus.iter().enumerate() {
             let mut previous_obu_extra_size = self.extra_size_for_previous_obu(&current_packet);
             let min_required_size = if current_packet.num_obu_elements >= MAX_NUM_OBUS_TO_OMTI_SIZE
             {
@@ -131,23 +132,23 @@ impl Av1Packetizer {
         }
 
         self.packets.push(current_packet);
-        self.write_rtp_payloads(obus, payloads)
+        self.write_rtp_payloads(payloads)
     }
 
-    fn write_rtp_payloads(&self, obus: Vec<Obu>, payloads: &mut Vec<Vec<u8>>) {
+    fn write_rtp_payloads(&self, payloads: &mut Vec<Vec<u8>>) {
         for (i, packet) in self.packets.iter().enumerate() {
             let is_first_packet = i == 0;
             let mut rtp_payload: Vec<u8> = vec![0u8; AGGREGATION_HEADER_SIZE + packet.packet_size];
             let mut pos = 0;
 
-            let header = self.aggregation_header(packet, &obus, is_first_packet);
+            let header = self.aggregation_header(packet, &self.obus, is_first_packet);
             rtp_payload[pos] = header;
             pos += 1;
 
             let mut obu_offset = packet.first_obu_offset;
             // Write all obu elements except the last one
             for obu_idx in 0..(packet.num_obu_elements - 1) {
-                let obu = &obus[packet.first_obu + obu_idx];
+                let obu = &self.obus[packet.first_obu + obu_idx];
                 let obu_fragment_size = obu.size - obu_offset;
                 pos += encode_leb_u63(obu_fragment_size as u64, &mut rtp_payload[pos..]);
 
@@ -175,7 +176,7 @@ impl Av1Packetizer {
                 obu_offset = 0;
             }
 
-            let last_obu = &obus[packet.first_obu + packet.num_obu_elements - 1];
+            let last_obu = &self.obus[packet.first_obu + packet.num_obu_elements - 1];
             let mut obu_fragment_size = packet.last_obu_size;
             if packet.num_obu_elements > MAX_NUM_OBUS_TO_OMTI_SIZE {
                 pos += encode_leb_u63(obu_fragment_size as u64, &mut rtp_payload[pos..]);
@@ -279,8 +280,8 @@ impl Packetizer for Av1Packetizer {
         }
 
         let mut payloads = vec![];
-        let obus = parse_obus(payload)?;
-        self.emit(mtu, obus, &mut payloads);
+        parse_obus(payload, &mut self.obus)?;
+        self.emit(mtu, &mut payloads);
 
         Ok(payloads)
     }
@@ -295,6 +296,9 @@ impl Packetizer for Av1Packetizer {
 pub struct Av1Depacketizer {
     /// current obu payload
     obu_buffer: Vec<u8>,
+
+    /// reusable buffer for parsed OBUs
+    parsed_obus: Vec<Obu>,
 
     /// length of current obu
     obu_length: usize,
@@ -413,8 +417,8 @@ impl Depacketizer for Av1Depacketizer {
 
             self.obu_length += fragment_obu_length;
 
-            let mut obus = parse_obus(&self.obu_buffer)?;
-            let Some(obu) = obus.first_mut() else {
+            parse_obus(&self.obu_buffer, &mut self.parsed_obus)?;
+            let Some(obu) = self.parsed_obus.first_mut() else {
                 self.obu_length = 0;
                 self.obu_buffer.clear();
                 obu_idx += 1;
@@ -500,7 +504,7 @@ impl ObuType {
 }
 
 /// Represents an OBU (Open Bitstream Unit) with its header, extension, payload, and size.
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Obu {
     header: u8,
     ext_header: u8,
@@ -583,45 +587,52 @@ pub fn leb_128_size(mut value: usize) -> usize {
 /// - S (1 bit) - OBU Has Size Field: A flag indicating whether the obu_size syntax element will be present.
 /// - E (1 bit) - OBU Extension Flag: A flag indicatin if the optional obu_extension_header is present.
 /// - R (1 bit) - OBU Reserved Bits: must be set to 0. The value is ignored by a decoder.
-fn parse_obus(payload: &[u8]) -> Result<Vec<Obu>, PacketError> {
+fn parse_obus(payload: &[u8], parsed_obus: &mut Vec<Obu>) -> Result<(), PacketError> {
     let mut reader = (payload, 0);
-    let mut parsed_obus = Vec::new();
+    let mut obu_idx = 0;
 
     while reader.remaining() > 0 {
-        let mut obu = Obu {
-            header: reader.get_u8().ok_or(PacketError::ErrAv1CorruptedPacket)?,
-            ..Default::default()
-        };
-        obu.size += 1;
+        // Reuse existing Obu entry if available, otherwise grow the Vec
+        if obu_idx >= parsed_obus.len() {
+            parsed_obus.push(Obu::default());
+        }
+        let obu = &mut parsed_obus[obu_idx];
+
+        obu.header = reader.get_u8().ok_or(PacketError::ErrAv1CorruptedPacket)?;
+        obu.ext_header = 0;
+        obu.size = 1;
 
         if obu.has_extension() {
             obu.ext_header = reader.get_u8().ok_or(PacketError::ErrAv1CorruptedPacket)?;
             obu.size += 1;
         }
 
+        // Reuse the existing payload Vec — clear preserves capacity
+        obu.payload.clear();
+
         if obu.has_size() {
             let obu_size = reader
                 .get_variant()
                 .ok_or(PacketError::ErrAv1CorruptedPacket)?;
-            if obu_size > reader.remaining() {
-                return Err(PacketError::ErrAv1CorruptedPacket);
-            }
-            obu.payload = reader
+            let bytes = reader
                 .get_bytes(obu_size)
                 .ok_or(PacketError::ErrAv1CorruptedPacket)?;
+            obu.payload.extend_from_slice(bytes);
         } else {
-            obu.payload = reader.get_remaining();
+            obu.payload.extend_from_slice(reader.get_remaining());
         }
         obu.size += obu.payload.len();
 
         if let Some(obu_type) = obu.obu_type() {
             if obu_type.include_in_packetization() {
-                parsed_obus.push(obu);
+                obu_idx += 1;
             }
         }
     }
 
-    Ok(parsed_obus)
+    // Trim any leftover entries from previous calls
+    parsed_obus.truncate(obu_idx);
+    Ok(())
 }
 
 #[cfg(test)]
