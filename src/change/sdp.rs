@@ -1438,15 +1438,26 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             )
         };
 
+        // RFC 8842 Section 5.2/5.5: Offerers MUST always use a=setup:actpass.
+        // Answerers use the negotiated role (active/passive).
+        // We distinguish offer vs answer by the presence of `pending` (Some = offer).
+        let setup = if pending.is_some() {
+            // This is an offer — always actpass per RFC 8842
+            Setup::ActPass
+        } else {
+            // This is an answer — use the negotiated DTLS role
+            match rtc.dtls.is_active() {
+                Some(true) => Setup::Active,
+                Some(false) => Setup::Passive,
+                None => Setup::ActPass,
+            }
+        };
+
         AsSdpParams {
             candidates,
             creds,
             fingerprint: rtc.dtls.local_fingerprint(),
-            setup: match rtc.dtls.is_active() {
-                Some(true) => Setup::Active,
-                Some(false) => Setup::Passive,
-                None => Setup::ActPass,
-            },
+            setup,
             pending,
         }
     }
@@ -1653,6 +1664,82 @@ mod test {
 
     fn count_lines(lines: &str, what: &str) -> usize {
         lines.lines().filter(|l| l == &what).count()
+    }
+
+    fn get_setup_from_media_line(line: &MediaLine) -> Setup {
+        line.setup().expect("Expected a=setup attribute in SDP")
+    }
+
+    /// RFC 8842 §5.2: an offer MUST use a=setup:actpass regardless of DTLS role.
+    #[test]
+    fn offer_uses_actpass() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut rtc = Rtc::new(now);
+
+        let mut change = rtc.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, _pending) = change.apply().unwrap();
+
+        let setup = get_setup_from_media_line(&offer.media_lines[0]);
+        assert_eq!(
+            setup,
+            Setup::ActPass,
+            "Offer must use a=setup:actpass per RFC 8842 §5.2"
+        );
+    }
+
+    /// RFC 8842 §5.5: the answerer uses the negotiated DTLS role (active or passive).
+    /// When the offerer uses actpass, the answerer picks passive (DTLS server) and the
+    /// offerer becomes active (DTLS client). The answerer's SDP must reflect passive.
+    #[test]
+    fn answer_uses_negotiated_dtls_role() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut offerer = Rtc::new(now);
+        let mut answerer = Rtc::new(now);
+
+        // Offerer creates the offer.
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, pending) = change.apply().unwrap();
+
+        // Verify the offer itself is actpass.
+        assert_eq!(
+            get_setup_from_media_line(&offer.media_lines[0]),
+            Setup::ActPass,
+            "Offer must use a=setup:actpass"
+        );
+
+        // Answerer accepts and generates the answer.
+        let answer = answerer.sdp_api().accept_offer(offer).unwrap();
+
+        // When the offerer sends actpass, the answerer takes the passive DTLS role
+        // (see init_dtls: ActPass from remote → local takes Passive).
+        // The answerer's SDP must reflect that with a=setup:passive.
+        assert_eq!(
+            get_setup_from_media_line(&answer.media_lines[0]),
+            Setup::Passive,
+            "Answerer's SDP must use a=setup:passive when responding to an actpass offer"
+        );
+
+        // Complete the exchange on the offerer side.
+        offerer.sdp_api().accept_answer(pending, answer).unwrap();
+
+        // Now generate a subsequent offer from the offerer (re-offer).
+        // Even after the DTLS role is settled (offerer is now passive), a new offer
+        // must still carry a=setup:actpass per RFC 8842 §5.2.
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        let (reoffer, _) = change.apply().unwrap();
+
+        assert_eq!(
+            get_setup_from_media_line(&reoffer.media_lines[0]),
+            Setup::ActPass,
+            "Re-offer must still use a=setup:actpass even after DTLS role is settled"
+        );
     }
 
     #[test]
