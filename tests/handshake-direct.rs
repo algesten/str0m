@@ -82,10 +82,10 @@ fn run_handshake_test(client_dtls: DtlsVersion, server_dtls: DtlsVersion) -> Res
     let server_crypto_name =
         std::env::var("R_CRYPTO").unwrap_or_else(|_| default_crypto_name().into());
 
-    // wincrypto and openssl only support DTLS 1.2 — skip tests requiring 1.3/Auto.
+    // openssl only supports DTLS 1.2 — skip tests requiring 1.3/Auto.
     // Also skip Auto client → 1.2-only server: dimpl advertises X25519 in the hybrid
     // ClientHello but its DTLS 1.2 engine can't process X25519 in ServerKeyExchange.
-    let dtls12_only = |name: &str| matches!(name, "wincrypto" | "openssl");
+    let dtls12_only = |name: &str| matches!(name, "openssl");
     let needs_13 = |v: DtlsVersion| matches!(v, DtlsVersion::Auto | DtlsVersion::Dtls13);
 
     if (dtls12_only(&client_crypto_name) && needs_13(client_dtls))

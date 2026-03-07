@@ -1,10 +1,6 @@
 use std::{error::Error, fmt};
 use windows::Win32::Foundation::{NTSTATUS, WIN32_ERROR};
-use windows::Win32::System::Rpc::{RPC_S_OK, RPC_STATUS};
 use windows::core::{Error as WindowsError, HRESULT};
-
-mod cert;
-pub use cert::*;
 
 mod sha1;
 pub use sha1::*;
@@ -15,15 +11,11 @@ pub use sha256::*;
 mod srtp;
 pub use srtp::*;
 
-mod dtls;
-pub use dtls::*;
-
 #[derive(Debug)]
 pub enum WinCryptoError {
     Generic(String),
     Hresult(HRESULT),
     NtStatus(NTSTATUS),
-    RpcStatus(RPC_STATUS),
     Win32Error(WIN32_ERROR),
     WindowsError(WindowsError),
 }
@@ -39,14 +31,6 @@ impl WinCryptoError {
             Err(Self::NtStatus(ntstatus))
         }
     }
-
-    pub fn from_rpc_status(rpc_status: RPC_STATUS) -> Result<(), Self> {
-        if rpc_status == RPC_S_OK {
-            Ok(())
-        } else {
-            Err(Self::RpcStatus(rpc_status))
-        }
-    }
 }
 
 impl fmt::Display for WinCryptoError {
@@ -55,7 +39,6 @@ impl fmt::Display for WinCryptoError {
             Self::Generic(message) => write!(f, "{}", message),
             Self::Hresult(hresult) => write!(f, "Hresult({})", hresult.0),
             Self::Win32Error(win32_error) => write!(f, "Win32Error({})", win32_error.0),
-            Self::RpcStatus(rpc_status) => write!(f, "RpcStatus({})", rpc_status.0),
             Self::NtStatus(ntstatus) => write!(f, "NtStatus({})", ntstatus.0),
             Self::WindowsError(err) => write!(f, "{}", err),
         }
@@ -68,7 +51,6 @@ impl Error for WinCryptoError {
             Self::Generic(_) => None,
             Self::Hresult(_) => None,
             Self::Win32Error(_) => None,
-            Self::RpcStatus(_) => None,
             Self::NtStatus(_) => None,
             Self::WindowsError(err) => Some(err),
         }

@@ -2055,8 +2055,9 @@ dependencies = [
 name = "str0m-wincrypto"
 version = "0.3.2"
 dependencies = [
+ "dimpl",
  "str0m-proto",
- "tracing",
+ "time",
  "windows",
 ]
 
