@@ -80,6 +80,14 @@ impl SupportedDtls12CipherSuite for Aes128GcmSha256 {
         (0, 16, 4)
     }
 
+    fn explicit_nonce_len(&self) -> usize {
+        8
+    }
+
+    fn tag_len(&self) -> usize {
+        16
+    }
+
     fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
         Ok(Box::new(AesGcm::new(key)?))
     }
@@ -100,6 +108,14 @@ impl SupportedDtls12CipherSuite for Aes256GcmSha384 {
 
     fn key_lengths(&self) -> (usize, usize, usize) {
         (0, 32, 4)
+    }
+
+    fn explicit_nonce_len(&self) -> usize {
+        8
+    }
+
+    fn tag_len(&self) -> usize {
+        16
     }
 
     fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
