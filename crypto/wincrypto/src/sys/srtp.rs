@@ -21,9 +21,15 @@ const AEAD_AES_GCM_TAG_LEN: usize = 16;
 /// too early. It is also why access to the key handle should remain
 /// hidden.
 pub struct SrtpKey(Owned<BCRYPT_KEY_HANDLE>);
-// SAFETY: BCRYPT_KEY_HANDLEs are safe to send between threads.
+// SAFETY: `BCRYPT_KEY_HANDLE` is an opaque CNG handle documented by Microsoft
+// Learn for the BCrypt APIs; this wrapper never dereferences it directly and
+// only passes it back to those APIs.
+// Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/
 unsafe impl Send for SrtpKey {}
-// SAFETY: BCRYPT_KEY_HANDLEs are safe to send between threads.
+// SAFETY: `BCRYPT_KEY_HANDLE` is an opaque CNG handle documented by Microsoft
+// Learn for the BCrypt APIs; this wrapper never dereferences it directly and
+// only passes it back to those APIs.
+// Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/
 unsafe impl Sync for SrtpKey {}
 
 impl SrtpKey {
@@ -35,7 +41,10 @@ impl SrtpKey {
 
     /// Creates a key from the given data for operating AES in ECB mode.
     pub fn create_aes_ecb_key(key: &[u8]) -> Result<Self, WinCryptoError> {
-        // SAFETY: The key and key_handle will exist before and after this call.
+        // SAFETY: Microsoft Learn documents `BCryptGenerateSymmetricKey` as
+        // borrowing the caller-provided key bytes and output handle only for
+        // the duration of the call; both outlive this block.
+        // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptgeneratesymmetrickey
         unsafe {
             let mut key_handle = Owned::new(BCRYPT_KEY_HANDLE::default());
             WinCryptoError::from_ntstatus(BCryptGenerateSymmetricKey(
@@ -51,7 +60,10 @@ impl SrtpKey {
 
     /// Creates a key from the given data for operating AES in GCM mode.
     pub fn create_aes_gcm_key(key: &[u8]) -> Result<Self, WinCryptoError> {
-        // SAFETY: The key and key_handle will exist before and after this call.
+        // SAFETY: Microsoft Learn documents `BCryptGenerateSymmetricKey` as
+        // borrowing the caller-provided key bytes and output handle only for
+        // the duration of the call; both outlive this block.
+        // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptgeneratesymmetrickey
         unsafe {
             let mut key_handle = Owned::new(BCRYPT_KEY_HANDLE::default());
             WinCryptoError::from_ntstatus(BCryptGenerateSymmetricKey(
@@ -73,8 +85,10 @@ pub fn srtp_aes_ecb_round(
     output: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
     let mut count = 0;
-    // SAFETY: The Windows API accepts references, so normal borrow checker
-    // behaviors work.
+    // SAFETY: Microsoft Learn documents `BCryptEncrypt` as borrowing the input
+    // and output buffers only for the duration of the call; both outlive this
+    // block.
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptencrypt
     unsafe {
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             *key.0,
@@ -118,25 +132,44 @@ pub fn srtp_aes_128_cm(
         }
     }
 
-    let mut count = 0;
-    // SAFETY: The Windows API accepts references, so normal borrow checker
-    // behaviors work. The spare reference used to pass a mutable and immutable
-    // reference into the BCryptEncypt method relies on `countered_iv` which exists
-    // beyond the unsafe block.
+    let mut count = 0u32;
+    // SAFETY: CNG documents that `BCryptEncrypt` supports in-place
+    // operation (pbInput == pbOutput). We call the raw FFI symbol with
+    // raw pointers to avoid creating aliased `&[u8]` / `&mut [u8]` Rust
+    // references to `countered_iv`, which would be UB under Rust's
+    // aliasing model.
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptencrypt
     unsafe {
-        // Now, we'll encrypt the countered IV. CNG can do this in-place, so we'll need
-        // a separate reference to the slice, but fool the borrow-checker, otherwise it
-        // won't like us passing the immutable and mutable reference to BCryptEncrypt.
-        let encrypted_countered_iv =
-            std::slice::from_raw_parts_mut(countered_iv.as_mut_ptr(), countered_iv.len());
+        use windows::Win32::Foundation::NTSTATUS;
+
+        #[link(name = "bcrypt")]
+        unsafe extern "system" {
+            fn BCryptEncrypt(
+                hkey: BCRYPT_KEY_HANDLE,
+                pbinput: *const u8,
+                cbinput: u32,
+                ppaddinginfo: *const std::ffi::c_void,
+                pbiv: *mut u8,
+                cbiv: u32,
+                pboutput: *mut u8,
+                cboutput: u32,
+                pcbresult: *mut u32,
+                dwflags: u32,
+            ) -> NTSTATUS;
+        }
+
+        let ptr = countered_iv.as_mut_ptr();
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             *key.0,
-            Some(&countered_iv[..offset]),
-            None,
-            None,
-            Some(&mut encrypted_countered_iv[..offset]),
+            ptr,
+            offset as u32,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            0,
+            ptr,
+            offset as u32,
             &mut count,
-            BCRYPT_FLAGS(0),
+            0,
         ))?;
     }
 
@@ -179,10 +212,11 @@ pub fn srtp_aead_aes_gcm_encrypt(
     };
 
     let mut count = 0;
-    // SAFETY: The Windows API accepts references, so normal borrow checker
-    // behaviors work for those. The `auth_cipher_mode_info` however, contains
-    // pointers. It is important that the data pointed to there (`additional_auth_data`,
-    // `cipher_text` and `iv`) exists for the duration of the unsafe block.
+    // SAFETY: Microsoft Learn documents `BCryptEncrypt` as borrowing the input,
+    // output, and authenticated-cipher-mode-info buffers only for the duration
+    // of the call. `auth_cipher_mode_info` points only to slices that outlive
+    // this block.
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptencrypt
     unsafe {
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             *key.0,
@@ -235,10 +269,11 @@ pub fn srtp_aead_aes_gcm_decrypt(
     };
 
     let mut count = 0;
-    // SAFETY: The Windows API accepts references, so normal borrow checker
-    // behaviors work for those. The `auth_cipher_mode_info` however, contains
-    // pointers. It is important that the data pointed to there (`additional_auth_data`,
-    // `cipher_text` and `iv`) exists for the duration of the unsafe block.
+    // SAFETY: Microsoft Learn documents `BCryptDecrypt` as borrowing the input,
+    // output, and authenticated-cipher-mode-info buffers only for the duration
+    // of the call. `auth_cipher_mode_info` points only to slices that outlive
+    // this block.
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptdecrypt
     unsafe {
         WinCryptoError::from_ntstatus(BCryptDecrypt(
             *key.0,
