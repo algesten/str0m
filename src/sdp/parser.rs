@@ -1243,8 +1243,7 @@ mod test {
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "113.185.55.72:41775".parse().unwrap());
 
-        let a =
-            "a=candidate:3936339338 1 udp 2122265343 fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b 59125 \
+        let a = "a=candidate:3936339338 1 udp 2122265343 fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b 59125 \
             typ host generation 0 network-id 4 network-cost 50";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(

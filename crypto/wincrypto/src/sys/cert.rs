@@ -1,19 +1,19 @@
 use super::WinCryptoError;
 use windows::{
-    core::{Owned, GUID, HSTRING, PSTR, PWSTR},
     Win32::{
         Foundation::GetLastError,
         Security::Cryptography::{
-            szOID_ECDSA_SHA256, szOID_RSA_SHA256RSA, CertCreateSelfSignCertificate,
-            CertFreeCertificateContext, CertStrToNameW, NCryptCreatePersistedKey, NCryptDeleteKey,
-            NCryptFinalizeKey, NCryptOpenStorageProvider, CERT_CONTEXT, CERT_CREATE_SELFSIGN_FLAGS,
-            CERT_KEY_SPEC, CERT_OID_NAME_STR, CRYPT_ALGORITHM_IDENTIFIER, CRYPT_INTEGER_BLOB,
-            CRYPT_KEY_PROV_INFO, HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, MS_KEY_STORAGE_PROVIDER,
-            NCRYPT_ECDSA_P256_ALGORITHM, NCRYPT_FLAGS, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE,
-            NCRYPT_SILENT_FLAG, X509_ASN_ENCODING,
+            CERT_CONTEXT, CERT_CREATE_SELFSIGN_FLAGS, CERT_KEY_SPEC, CERT_OID_NAME_STR,
+            CRYPT_ALGORITHM_IDENTIFIER, CRYPT_INTEGER_BLOB, CRYPT_KEY_PROV_INFO,
+            CertCreateSelfSignCertificate, CertFreeCertificateContext, CertStrToNameW,
+            HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, MS_KEY_STORAGE_PROVIDER, NCRYPT_ECDSA_P256_ALGORITHM,
+            NCRYPT_FLAGS, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
+            NCryptCreatePersistedKey, NCryptDeleteKey, NCryptFinalizeKey,
+            NCryptOpenStorageProvider, X509_ASN_ENCODING, szOID_ECDSA_SHA256, szOID_RSA_SHA256RSA,
         },
         System::Rpc::{UuidCreate, UuidToStringW},
     },
+    core::{GUID, HSTRING, Owned, PSTR, PWSTR},
 };
 
 /// Certificate wraps the CERT_CONTEXT pointer, so that it can be destroyed
@@ -190,7 +190,7 @@ impl Drop for Certificate {
 mod tests {
     use std::ffi::CStr;
     use windows::Win32::Security::Cryptography::{
-        szOID_ECC_PUBLIC_KEY, szOID_RSA_RSA, CertNameToStrA, CERT_X500_NAME_STR, X509_ASN_ENCODING,
+        CERT_X500_NAME_STR, CertNameToStrA, X509_ASN_ENCODING, szOID_ECC_PUBLIC_KEY, szOID_RSA_RSA,
     };
 
     #[test]

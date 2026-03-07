@@ -1,8 +1,8 @@
 //! SHA-256 implementation using Windows CNG.
 
 use crate::WinCryptoError;
-use windows::Win32::Security::Cryptography::BCryptHash;
 use windows::Win32::Security::Cryptography::BCRYPT_SHA256_ALG_HANDLE;
+use windows::Win32::Security::Cryptography::BCryptHash;
 
 /// Compute SHA-256 hash of the given data using Windows CNG.
 pub fn sha256(data: &[u8]) -> Result<[u8; 32], WinCryptoError> {

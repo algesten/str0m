@@ -15,7 +15,7 @@ jobs:
   test:
     strategy:
       matrix:
-        rust: [stable, beta, 1.81.0]
+        rust: [stable, beta, 1.85.0]
         crypto:
           - name: openssl
             os: ubuntu-latest
@@ -72,20 +72,20 @@ jobs:
         id: toolchain
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: Test pii
         run: cargo +${{steps.toolchain.outputs.name}} test --test pii --features pii
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v1
+      - uses: Swatinem/rust-cache@v2
       - name: fmt
         run: cargo +${{steps.toolchain.outputs.name}} fmt --all -- --check
       - name: clippy (default features)
@@ -116,7 +116,7 @@ jobs:
   related-crates:
     strategy:
       matrix:
-        rust: [stable, beta, 1.81.0]
+        rust: [stable, beta, 1.85.0]
         dir:
           - name: proto
             os: ubuntu-latest

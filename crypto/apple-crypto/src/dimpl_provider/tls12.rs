@@ -148,17 +148,19 @@ mod tests {
         let mut output = Buf::new();
         let mut scratch = Buf::new();
         let provider = super::ApplePrfProvider {};
-        assert!(provider
-            .prf_tls12(
-                &hex_as_bytes!(b"9bbe436ba940f017b17652849a71db35"),
-                "test label",
-                &hex_as_bytes!(b"a0ba9f936cda311827a6f796ffd5198c"),
-                &mut output,
-                100,
-                &mut scratch,
-                HashAlgorithm::SHA256,
-            )
-            .is_ok());
+        assert!(
+            provider
+                .prf_tls12(
+                    &hex_as_bytes!(b"9bbe436ba940f017b17652849a71db35"),
+                    "test label",
+                    &hex_as_bytes!(b"a0ba9f936cda311827a6f796ffd5198c"),
+                    &mut output,
+                    100,
+                    &mut scratch,
+                    HashAlgorithm::SHA256,
+                )
+                .is_ok()
+        );
         assert_eq!(
             output.as_ref(),
             &hex_as_bytes!(

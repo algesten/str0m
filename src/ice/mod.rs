@@ -703,8 +703,8 @@ mod test {
     }
 
     #[test]
-    pub fn identical_host_and_server_reflexive_candidates_dont_create_new_pairs_on_inbound_stun_request(
-    ) {
+    pub fn identical_host_and_server_reflexive_candidates_dont_create_new_pairs_on_inbound_stun_request()
+     {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 

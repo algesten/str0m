@@ -8,10 +8,10 @@ use str0m::config::{DtlsVersion, Fingerprint};
 use str0m::ice::IceCreds;
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig, RtcError};
-use tracing::{info_span, Span};
+use tracing::{Span, info_span};
 
 mod common;
-use common::{init_crypto_default, init_log, Peer};
+use common::{Peer, init_crypto_default, init_log};
 
 /// Pre-negotiated data channel SCTP stream ID
 const DATA_CHANNEL_ID: u16 = 0;
@@ -754,7 +754,7 @@ fn write_pcap(path: &std::path::Path, packets: &[PcapPacket]) -> std::io::Result
         ip_header[4..6].copy_from_slice(&(i as u16).to_be_bytes()); // identification
         ip_header[8] = 64; // TTL
         ip_header[9] = 17; // protocol = UDP
-                           // checksum left as 0 (Wireshark will flag but still parse)
+        // checksum left as 0 (Wireshark will flag but still parse)
         match pkt.src {
             SocketAddr::V4(a) => ip_header[12..16].copy_from_slice(&a.ip().octets()),
             _ => {}

@@ -5,7 +5,7 @@ use str0m::rtp::Ssrc;
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, connect_l_r, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {

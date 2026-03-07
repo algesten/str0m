@@ -10,10 +10,10 @@ use std::str::from_utf8;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::util::already_happened;
-use crate::util::epoch_to_beginning;
 use crate::util::InstantExt;
 use crate::util::SystemTimeExt;
+use crate::util::already_happened;
+use crate::util::epoch_to_beginning;
 
 use crate::rtp_::Frequency;
 
@@ -739,11 +739,7 @@ impl Extension {
             UnknownUri(_, serializer) => {
                 let n = serializer.write_to(buf, ev);
 
-                if n == 0 {
-                    None
-                } else {
-                    Some(n)
-                }
+                if n == 0 { None } else { Some(n) }
             }
         }
     }

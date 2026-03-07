@@ -16,19 +16,19 @@ use crate::pacer::QueueSnapshot;
 use crate::pacer::QueueState;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, Descriptions, Extension, ExtensionMap, ExtensionValues, Frequency};
+use crate::rtp_::{MAX_BLANK_PADDING_PAYLOAD_SIZE, Sdes, SdesType};
 use crate::rtp_::{MediaTime, Mid, NackEntry, ReportList, Rtcp, RtpHeader};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
-use crate::rtp_::{Sdes, SdesType, MAX_BLANK_PADDING_PAYLOAD_SIZE};
-use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
+use crate::rtp_::{SRTP_BLOCK_SIZE, SeqNo};
 use crate::session::PacketReceipt;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::{already_happened, not_happening, InstantExt};
+use crate::util::{InstantExt, already_happened, not_happening};
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
 use super::send_stats::StreamTxStats;
-use super::{rr_interval, RtpPacket};
+use super::{RtpPacket, rr_interval};
 
 /// The smallest size of padding for which we attempt to use a spurious resend. For padding
 /// requests smaller than this we use blank packets instead.
@@ -1009,8 +1009,7 @@ impl StreamTx {
             if let Some(pt) = media.first_pt_with_rtx(config) {
                 trace!(
                     "StreamTx {:?} PT {} before first regular packet",
-                    self.midrid,
-                    pt
+                    self.midrid, pt
                 );
                 self.pt_for_padding = Some(pt);
 

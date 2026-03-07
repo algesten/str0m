@@ -16,7 +16,7 @@ use openssl::ssl::{HandshakeError, MidHandshakeSslStream, Ssl};
 use openssl::ssl::{SslContext, SslContextBuilder, SslMethod};
 use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::extension::{BasicConstraints, ExtendedKeyUsage, KeyUsage};
-use openssl::x509::{X509Builder, X509NameBuilder, X509};
+use openssl::x509::{X509, X509Builder, X509NameBuilder};
 
 use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};

@@ -3,19 +3,19 @@ use std::time::{Duration, Instant};
 
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::MidRid;
-use crate::rtp_::{extend_u32, Bitrate, DlrrItem, ExtendedReport};
+use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
 use crate::rtp_::{Fir, FirEntry, Frequency, MediaTime, Remb};
 use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
 use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp};
 use crate::rtp_::{RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
 use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
-use crate::util::{already_happened, calculate_rtt};
 use crate::util::{InstantExt, SystemTimeExt};
+use crate::util::{already_happened, calculate_rtt};
 
-use super::register::ReceiverRegister;
 use super::StreamPaused;
-use super::{rr_interval, RtpPacket};
+use super::register::ReceiverRegister;
+use super::{RtpPacket, rr_interval};
 
 /// Incoming encoded stream.
 ///
@@ -487,8 +487,7 @@ impl StreamRx {
 
         trace!(
             "Repaired seq no {} -> {}",
-            header.sequence_number,
-            orig_seq_no_16
+            header.sequence_number, orig_seq_no_16
         );
 
         header.sequence_number = orig_seq_no_16;
@@ -577,9 +576,7 @@ impl StreamRx {
 
         trace!(
             "Created feedback RR/XR ({:?}): {:?} {:?}",
-            self.midrid,
-            rr,
-            xr
+            self.midrid, rr, xr
         );
         feedback.push_back(Rtcp::ReceiverReport(rr));
         feedback.push_back(Rtcp::ExtendedReport(xr));

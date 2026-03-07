@@ -1,4 +1,4 @@
-use crate::rtp_::{extend_u15, extend_u7, extend_u8};
+use crate::rtp_::{extend_u7, extend_u8, extend_u15};
 
 use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
@@ -40,7 +40,7 @@ pub fn detect_vp8_keyframe(payload: &[u8]) -> bool {
     let b0 = payload[0];
     let s = (b0 & 0x10) >> 4; // Start of VP8 partition
     let pid = b0 & 0x07; // Partition index
-                         // Only the first packet of a frame (S=1, PID=0) contains the payload header
+    // Only the first packet of a frame (S=1, PID=0) contains the payload header
     if s != 1 || pid != 0 {
         return false;
     }

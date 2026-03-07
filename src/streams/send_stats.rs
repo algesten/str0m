@@ -1,10 +1,10 @@
 use std::time::{Duration, Instant};
 
 use crate::rtp::SeqNo;
-use crate::rtp_::{extend_u32, ReceptionReport};
+use crate::rtp_::{ReceptionReport, extend_u32};
 use crate::stats::{MediaEgressStats, RemoteIngressStats, StatsSnapshot};
 use crate::util::value_history::ValueHistory;
-use crate::util::{calculate_rtt, InstantExt};
+use crate::util::{InstantExt, calculate_rtt};
 
 use super::MidRid;
 

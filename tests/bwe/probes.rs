@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use netem::{DataSize, NetemConfig};
-use str0m::bwe::Bitrate;
 use str0m::RtcError;
+use str0m::bwe::Bitrate;
 
-use crate::common::{connect_with_bwe, init_crypto_default, init_log, BweTestContext, Step};
+use crate::common::{BweTestContext, Step, connect_with_bwe, init_crypto_default, init_log};
 
 #[test]
 fn initial_exponential_probes_3x_and_6x() -> Result<(), RtcError> {

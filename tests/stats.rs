@@ -8,7 +8,7 @@ use str0m::{Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{TestRtc, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn stats() -> Result<(), RtcError> {

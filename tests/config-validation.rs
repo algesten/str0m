@@ -8,7 +8,7 @@ use str0m::{Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, negotiate, progress};
 
 /// Test set_reordering_size_audio() and set_reordering_size_video() with custom sizes.
 #[test]
@@ -311,8 +311,8 @@ fn config_fingerprint_verification_disabled() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    use str0m::crypto::Fingerprint;
     use str0m::Candidate;
+    use str0m::crypto::Fingerprint;
 
     // Create RTCs with fingerprint verification DISABLED
     let rtc_l = RtcConfig::new()

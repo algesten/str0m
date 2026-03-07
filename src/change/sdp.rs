@@ -3,6 +3,8 @@
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
+use crate::Rtc;
+use crate::RtcError;
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
@@ -17,12 +19,10 @@ use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
-use crate::Rtc;
-use crate::RtcError;
 use crate::{Candidate, IceCreds};
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
-use crate::streams::{Streams, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
+use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, Streams};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
 pub struct SdpApi<'a> {
@@ -1730,7 +1730,8 @@ mod test {
         let first_pt = resolve_pt(first_mline, first_mline.pts[0]);
 
         assert_eq!(
-            first_pt.codec, Codec::Vp8,
+            first_pt.codec,
+            Codec::Vp8,
             "The first PT returned should be the highest priority PT from the answer that is supported."
         );
 

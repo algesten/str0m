@@ -4,9 +4,9 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use crate::Bitrate;
 use crate::rtp::SeqNo;
 use crate::rtp_::{Mid, Rid};
-use crate::Bitrate;
 use crate::{io::Protocol, rtp_::MidRid};
 
 pub(crate) struct Stats {

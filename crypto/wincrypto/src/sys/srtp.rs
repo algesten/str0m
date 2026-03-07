@@ -1,13 +1,13 @@
 use super::WinCryptoError;
 use std::ptr::addr_of;
 use windows::{
-    core::Owned,
     Win32::Security::Cryptography::{
-        BCryptDecrypt, BCryptEncrypt, BCryptGenerateSymmetricKey, BCRYPT_AES_ECB_ALG_HANDLE,
-        BCRYPT_AES_GCM_ALG_HANDLE, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO,
-        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION, BCRYPT_BLOCK_PADDING, BCRYPT_FLAGS,
-        BCRYPT_KEY_HANDLE,
+        BCRYPT_AES_ECB_ALG_HANDLE, BCRYPT_AES_GCM_ALG_HANDLE,
+        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
+        BCRYPT_BLOCK_PADDING, BCRYPT_FLAGS, BCRYPT_KEY_HANDLE, BCryptDecrypt, BCryptEncrypt,
+        BCryptGenerateSymmetricKey,
     },
+    core::Owned,
 };
 
 const MAX_BUFFER_SIZE: usize = 2048;

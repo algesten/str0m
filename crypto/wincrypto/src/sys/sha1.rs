@@ -1,10 +1,10 @@
 use super::WinCryptoError;
 use windows::{
-    core::Owned,
     Win32::Security::Cryptography::{
-        BCryptCreateHash, BCryptFinishHash, BCryptHashData, BCRYPT_HASH_HANDLE,
-        BCRYPT_HMAC_SHA1_ALG_HANDLE,
+        BCRYPT_HASH_HANDLE, BCRYPT_HMAC_SHA1_ALG_HANDLE, BCryptCreateHash, BCryptFinishHash,
+        BCryptHashData,
     },
+    core::Owned,
 };
 
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
