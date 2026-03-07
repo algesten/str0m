@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Workaround DCEP panics due to reuse race condition #883
   * sprop-max-don-diff SDP parameter #885
   * Reduce number of RTP header extensions sent on every packet #880
   * Add RTP-level keyframe detection for VP8, VP9, AV1, H264 and H265 #869
