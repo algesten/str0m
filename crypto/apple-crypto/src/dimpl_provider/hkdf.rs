@@ -34,10 +34,10 @@ impl HkdfProvider for AppleHkdfProvider {
         // HKDF-Extract: PRK = HMAC-Hash(salt, IKM)
         // If salt is empty, use a zero-filled salt of hash length
         let hash_len = hash.output_len();
-        let zero_salt: Vec<u8>;
+        // SHA-384 (48 bytes) is the largest hash output we support.
+        let zero_salt = [0u8; 48];
         let actual_salt = if salt.is_empty() {
-            zero_salt = vec![0u8; hash_len];
-            &zero_salt[..]
+            &zero_salt[..hash_len]
         } else {
             salt
         };
@@ -66,11 +66,12 @@ impl HkdfProvider for AppleHkdfProvider {
             return Err("HKDF output too long".into());
         }
 
-        let mut t_prev = Vec::new();
+        let mut t_prev: Vec<u8> = Vec::new();
         let mut okm = Vec::with_capacity(output_len);
+        let mut input = Vec::with_capacity(hash_len + info.len() + 1);
 
         for i in 1..=n {
-            let mut input = Vec::with_capacity(t_prev.len() + info.len() + 1);
+            input.clear();
             input.extend_from_slice(&t_prev);
             input.extend_from_slice(info);
             input.push(i as u8);
@@ -136,15 +137,14 @@ fn build_hkdf_label(
     if context.len() > 255 {
         return Err("Context too long for HKDF-Expand-Label".into());
     }
-    if output_len > 65535 {
-        return Err("Output length too large for HKDF-Expand-Label".into());
-    }
+    let len_u16 = u16::try_from(output_len)
+        .map_err(|_| format!("Output length {output_len} exceeds u16::MAX"))?;
 
     let info_len = 2 + 1 + full_label_len + 1 + context.len();
     let mut info = Vec::with_capacity(info_len);
 
     // uint16 length
-    info.extend_from_slice(&(output_len as u16).to_be_bytes());
+    info.extend_from_slice(&len_u16.to_be_bytes());
     // opaque label
     info.push(full_label_len as u8);
     info.extend_from_slice(prefix);
@@ -157,3 +157,92 @@ fn build_hkdf_label(
 }
 
 pub(super) static HKDF_PROVIDER: AppleHkdfProvider = AppleHkdfProvider;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dimpl_provider::test_utils::{hex_to_vec, to_hex};
+
+    // RFC 5869 Test Case 1 (SHA-256)
+    #[test]
+    fn hkdf_rfc5869_case1() {
+        let ikm = hex_to_vec("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b");
+        let salt = hex_to_vec("000102030405060708090a0b0c");
+        let info = hex_to_vec("f0f1f2f3f4f5f6f7f8f9");
+        let expected_prk = "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5";
+        let expected_okm =
+            "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865";
+
+        let provider = AppleHkdfProvider;
+        let mut prk = Buf::new();
+        provider
+            .hkdf_extract(HashAlgorithm::SHA256, &salt, &ikm, &mut prk)
+            .unwrap();
+        assert_eq!(to_hex(&prk), expected_prk);
+
+        let mut okm = Buf::new();
+        provider
+            .hkdf_expand(HashAlgorithm::SHA256, &prk, &info, &mut okm, 42)
+            .unwrap();
+        assert_eq!(to_hex(&okm), expected_okm);
+    }
+
+    // RFC 5869 Test Case 2 (SHA-256, longer inputs)
+    #[test]
+    fn hkdf_rfc5869_case2() {
+        let ikm = hex_to_vec(
+            "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f\
+             202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f\
+             404142434445464748494a4b4c4d4e4f",
+        );
+        let salt = hex_to_vec(
+            "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f\
+             808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f\
+             a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        );
+        let info = hex_to_vec(
+            "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf\
+             d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef\
+             f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        );
+        let expected_prk = "06a6b88c5853361a06104c9ceb35b45cef760014904671014a193f40c15fc244";
+        let expected_okm = "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c\
+             59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71\
+             cc30c58179ec3e87c14c01d5c1f3434f1d87";
+
+        let provider = AppleHkdfProvider;
+        let mut prk = Buf::new();
+        provider
+            .hkdf_extract(HashAlgorithm::SHA256, &salt, &ikm, &mut prk)
+            .unwrap();
+        assert_eq!(to_hex(&prk), expected_prk);
+
+        let mut okm = Buf::new();
+        provider
+            .hkdf_expand(HashAlgorithm::SHA256, &prk, &info, &mut okm, 82)
+            .unwrap();
+        assert_eq!(to_hex(&okm), expected_okm);
+    }
+
+    // RFC 5869 Test Case 3 (SHA-256, zero-length salt/info)
+    #[test]
+    fn hkdf_rfc5869_case3() {
+        let ikm = hex_to_vec("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b");
+        let expected_prk = "19ef24a32c717b167f33a91d6f648bdf96596776afdb6377ac434c1c293ccb04";
+        let expected_okm = "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d\
+             9d201395faa4b61a96c8";
+
+        let provider = AppleHkdfProvider;
+        let mut prk = Buf::new();
+        provider
+            .hkdf_extract(HashAlgorithm::SHA256, &[], &ikm, &mut prk)
+            .unwrap();
+        assert_eq!(to_hex(&prk), expected_prk);
+
+        let mut okm = Buf::new();
+        provider
+            .hkdf_expand(HashAlgorithm::SHA256, &prk, &[], &mut okm, 42)
+            .unwrap();
+        assert_eq!(to_hex(&okm), expected_okm);
+    }
+}
