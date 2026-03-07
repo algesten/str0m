@@ -6,7 +6,7 @@ use str0m::{Event, IceConnectionState, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn ice_lite_premature_disconnect() -> Result<(), RtcError> {

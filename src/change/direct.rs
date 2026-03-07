@@ -1,14 +1,14 @@
+use crate::Candidate;
+use crate::IceCreds;
+use crate::Rtc;
+use crate::RtcError;
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
-use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
-use crate::Candidate;
-use crate::IceCreds;
-use crate::Rtc;
-use crate::RtcError;
+use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, StreamRx, StreamTx};
 
 /// Direct change strategy.
 ///

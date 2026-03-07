@@ -1,11 +1,10 @@
 use super::WinCryptoError;
-use windows::{
-    core::Owned,
-    Win32::Security::Cryptography::{
-        BCryptCreateHash, BCryptFinishHash, BCryptHashData, BCRYPT_HASH_HANDLE,
-        BCRYPT_HMAC_SHA1_ALG_HANDLE,
-    },
-};
+use windows::Win32::Security::Cryptography::BCRYPT_HASH_HANDLE;
+use windows::Win32::Security::Cryptography::BCRYPT_HMAC_SHA1_ALG_HANDLE;
+use windows::Win32::Security::Cryptography::BCryptCreateHash;
+use windows::Win32::Security::Cryptography::BCryptFinishHash;
+use windows::Win32::Security::Cryptography::BCryptHashData;
+use windows::core::Owned;
 
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
     // SAFETY: The Windows APIs accept references, so normal borrow checker

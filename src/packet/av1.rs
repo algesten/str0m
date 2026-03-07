@@ -1,4 +1,4 @@
-use super::{encode_leb_u63, BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
+use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer, encode_leb_u63};
 
 const OBU_EXTENSION_PRESENT_MASK: u8 = 0b0000_0100;
 const OBU_SIZE_PRESENT_MASK: u8 = 0b0000_0010;

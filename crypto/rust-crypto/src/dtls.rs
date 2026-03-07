@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::CryptoError;
 use str0m_proto::crypto::DtlsVersion;
+use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 
 // ============================================================================
 // DTLS Provider Implementation
@@ -55,7 +55,7 @@ impl DtlsProvider for RustCryptoDtlsProvider {
             _ => {
                 return Err(CryptoError::Other(format!(
                     "Unsupported DTLS version: {dtls_version}"
-                )))
+                )));
             }
         };
 

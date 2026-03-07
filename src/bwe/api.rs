@@ -1,6 +1,6 @@
 //! Bandwidth estimation.
 
-use crate::{rtp_::Mid, Rtc};
+use crate::{Rtc, rtp_::Mid};
 
 pub use crate::rtp_::Bitrate;
 

@@ -1,5 +1,5 @@
-use super::contiguity::FrameContiguityState;
 use super::Vp8CodecExtra;
+use super::contiguity::FrameContiguityState;
 
 #[derive(Debug, Default)]
 pub struct Vp8Contiguity {

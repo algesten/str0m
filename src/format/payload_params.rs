@@ -675,27 +675,28 @@ mod test {
                 msg: &'static str,
             }
 
-            let cases = [Case {
-                c0: h264_codec_spec(None, None, Some(0x42E01F)),
-                c1: h264_codec_spec(None, None, Some(0x4DA01F)),
-                must_match: true,
-                msg:
-                    "0x42A01F and 0x4DF01F should match, they are both constrained baseline subprofile",
-            }, Case {
-                c0: h264_codec_spec(None, None, Some(0x42E01F)),
-                c1: h264_codec_spec(None, Some(1), Some(0x4DA01F)),
-                must_match: false,
-                msg:
-                    "0x42A01F and 0x4DF01F with differing packetization modes should not match",
-            },  Case {
-                c0: h264_codec_spec(None, Some(0), Some(0x422000)),
-                c1: h264_codec_spec(None, None, Some(0x42B00A)),
-                must_match: true,
-                msg:
-                    "0x424000 and 0x42B00A should match because they are both the baseline subprofile \
+            let cases = [
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42E01F)),
+                    c1: h264_codec_spec(None, None, Some(0x4DA01F)),
+                    must_match: true,
+                    msg: "0x42A01F and 0x4DF01F should match, they are both constrained baseline subprofile",
+                },
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x42E01F)),
+                    c1: h264_codec_spec(None, Some(1), Some(0x4DA01F)),
+                    must_match: false,
+                    msg: "0x42A01F and 0x4DF01F with differing packetization modes should not match",
+                },
+                Case {
+                    c0: h264_codec_spec(None, Some(0), Some(0x422000)),
+                    c1: h264_codec_spec(None, None, Some(0x42B00A)),
+                    must_match: true,
+                    msg: "0x424000 and 0x42B00A should match because they are both the baseline subprofile \
                     and the level idc of 0x42F01F will be adjusted to Level1B because the constraint \
-                    set 3 flag is set"
-            }];
+                    set 3 flag is set",
+                },
+            ];
 
             for Case {
                 c0,

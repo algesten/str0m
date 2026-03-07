@@ -3,10 +3,10 @@ use std::io;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::time::Instant;
 
-use crate::crypto::dtls::{DtlsCert, DtlsOutput};
-use crate::crypto::dtls::{DtlsInstance, DtlsProvider, DtlsVersion};
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
+use crate::crypto::dtls::{DtlsCert, DtlsOutput};
+use crate::crypto::dtls::{DtlsInstance, DtlsProvider, DtlsVersion};
 use crate::crypto::{CryptoError, DtlsError};
 use crate::io::DatagramSend;
 use crate::util::already_happened;

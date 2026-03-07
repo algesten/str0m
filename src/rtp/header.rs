@@ -1,7 +1,7 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 use super::ext::{ExtensionMap, ExtensionValues, ExtensionsForm};
-use super::{Pt, SeqNo, Ssrc, MAX_BLANK_PADDING_PAYLOAD_SIZE};
+use super::{MAX_BLANK_PADDING_PAYLOAD_SIZE, Pt, SeqNo, Ssrc};
 
 /// Parsed header from an RTP packet.
 #[derive(Debug, Clone, PartialEq, Eq)]

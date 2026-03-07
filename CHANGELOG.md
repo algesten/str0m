@@ -1,5 +1,6 @@
 # Unreleased
 
+  * MSRV 1.85, Edition 2024 and bump deps #891
   * Reduce allocations in AV1 packetizer/depacketizer #889
   * Workaround DCEP panics due to reuse race condition #883
   * sprop-max-don-diff SDP parameter #885

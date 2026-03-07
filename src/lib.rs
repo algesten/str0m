@@ -661,7 +661,7 @@ use crypto::Fingerprint;
 
 mod dtls;
 use crate::crypto::dtls::DtlsOutput;
-use crate::crypto::{from_feature_flags, CryptoProvider, DtlsError};
+use crate::crypto::{CryptoProvider, DtlsError, from_feature_flags};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
 
@@ -689,8 +689,8 @@ pub mod config {
 #[doc(hidden)]
 pub mod ice {
     pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{default_local_preference, LocalPreference};
     pub use crate::ice_::{IceAgent, IceAgentEvent};
+    pub use crate::ice_::{LocalPreference, default_local_preference};
     pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
@@ -770,7 +770,7 @@ use media::{MediaAdded, MediaChanged, MediaData};
 pub mod change;
 
 mod util;
-use util::{not_happening, Soonest};
+use util::{Soonest, not_happening};
 
 mod session;
 use session::Session;
@@ -1468,7 +1468,7 @@ impl Rtc {
                     //
                 }
                 IceAgentEvent::IceConnectionStateChange(v) => {
-                    return Ok(Output::Event(Event::IceConnectionStateChange(v)))
+                    return Ok(Output::Event(Event::IceConnectionStateChange(v)));
                 }
                 IceAgentEvent::DiscoveredRecv { proto, source } => {
                     debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);

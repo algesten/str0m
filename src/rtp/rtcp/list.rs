@@ -158,7 +158,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
             return None;
         }
 
-        let n = self.0 .0[self.1].as_ref();
+        let n = self.0.0[self.1].as_ref();
         if n.is_some() {
             self.1 += 1;
         }
@@ -175,7 +175,7 @@ impl<T> Iterator for IterOwned<T> {
             return None;
         }
 
-        let n = self.0 .0[self.1].take();
+        let n = self.0.0[self.1].take();
         if n.is_some() {
             self.1 += 1;
         }

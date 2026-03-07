@@ -1,5 +1,5 @@
-use super::list::private::WordSized;
 use super::Ssrc;
+use super::list::private::WordSized;
 use super::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, RtcpType};
 
 /// A receiver report.

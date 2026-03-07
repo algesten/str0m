@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use super::super::macros::{log_trendline_estimate, log_trendline_modified_trend};
 
-use super::super::time::{TimeDelta, Timestamp};
 use super::super::BandwidthUsage;
+use super::super::time::{TimeDelta, Timestamp};
 use super::arrival_group::InterGroupDelayDelta;
 
 const SMOOTHING_COEF: f64 = 0.9;

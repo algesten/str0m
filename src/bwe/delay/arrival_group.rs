@@ -3,8 +3,8 @@ use std::time::{Duration, Instant};
 
 use crate::rtp_::TwccSeq;
 
-use super::super::time::{TimeDelta, Timestamp};
 use super::super::AckedPacket;
+use super::super::time::{TimeDelta, Timestamp};
 
 const BURST_TIME_INTERVAL: Duration = Duration::from_millis(5);
 const SEND_TIME_GROUP_LENGTH: Duration = Duration::from_millis(5);

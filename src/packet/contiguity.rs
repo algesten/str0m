@@ -1,6 +1,6 @@
+use super::CodecExtra;
 use super::contiguity_vp8::Vp8Contiguity;
 use super::contiguity_vp9::Vp9Contiguity;
-use super::CodecExtra;
 
 #[derive(Debug)]
 pub enum Contiguity {
@@ -93,7 +93,9 @@ impl FrameContiguityState {
             self.last_picture_id = Some(picture_id);
             if !contiguous_seq {
                 // this as happened in Safari + very lossy network (very rare)
-                debug!("VP8 or VP9: contiguous pictures implies contiguous seq numbers: encoding issue ?")
+                debug!(
+                    "VP8 or VP9: contiguous pictures implies contiguous seq numbers: encoding issue ?"
+                )
             }
         }
 

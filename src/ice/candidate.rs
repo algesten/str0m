@@ -966,7 +966,8 @@ mod tests {
         candidate.raddr = Some("5.5.5.5:5555".parse().unwrap());
         assert_eq!(
             no_hash(candidate.to_string()),
-            "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag");
+            "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag"
+        );
 
         // let base_addr = "5.6.7.8:4321".parse().unwrap();
 

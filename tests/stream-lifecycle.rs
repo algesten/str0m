@@ -8,7 +8,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, negotiate, progress};
 
 /// Test that StreamPaused event is emitted after no packets for ~1.5 seconds.
 #[test]
@@ -161,11 +161,7 @@ fn stream_pause_resume_cycle() -> Result<(), RtcError> {
         .iter()
         .filter_map(|(_, e)| {
             if let Event::StreamPaused(p) = e {
-                if p.mid == mid {
-                    Some(p.paused)
-                } else {
-                    None
-                }
+                if p.mid == mid { Some(p.paused) } else { None }
             } else {
                 None
             }

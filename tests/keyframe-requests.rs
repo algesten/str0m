@@ -6,7 +6,7 @@ use str0m::media::{Direction, KeyframeRequestKind, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, negotiate, progress};
 
 /// Test PLI (Picture Loss Indication) request is sent and received.
 #[test]

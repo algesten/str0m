@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::crypto::Sha1HmacProvider;
 use crate::ice_::preference::default_local_preference;
-use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
+use crate::io::{DATAGRAM_MTU, Transmit};
+use crate::io::{DATAGRAM_MTU_WARN, Id, StunClass, StunMethod, StunTiming};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
-use crate::io::{Transmit, DATAGRAM_MTU};
 use crate::util::{NonCryptographicRng, Pii};
 
 use super::candidate::{Candidate, CandidateKind};
@@ -697,7 +697,9 @@ impl IceAgent {
             Some((_, o)) if !o.discarded() => {
                 // Existing non-discarded candidate in viable pair, ignore
                 // Discarded candidates and candidates not in a viable pair are handled below
-                trace!("Ignoring candidate({c:?}) that exactly matches existing non-discarded candidate");
+                trace!(
+                    "Ignoring candidate({c:?}) that exactly matches existing non-discarded candidate"
+                );
                 return;
             }
             Some((i, o)) if o.discarded() => Some(i),
@@ -1005,8 +1007,7 @@ impl IceAgent {
                 if local != local_creds.ufrag {
                     trace!(
                         "Message rejected, local user mismatch: {} != {}",
-                        local,
-                        local_creds.ufrag
+                        local, local_creds.ufrag
                     );
                     return false;
                 }
@@ -1015,8 +1016,7 @@ impl IceAgent {
                     if remote != remote_creds.ufrag {
                         trace!(
                             "Message rejected, remote user mismatch: {} != {}",
-                            remote,
-                            remote_creds.ufrag
+                            remote, remote_creds.ufrag
                         );
                         return false;
                     }
@@ -1031,7 +1031,9 @@ impl IceAgent {
                     .any(|pair| pair.has_binding_attempt(message.trans_id()));
 
                 if !belongs_to_a_candidate_pair {
-                    trace!("Message rejected, transaction ID does not belong to any of our candidate pairs");
+                    trace!(
+                        "Message rejected, transaction ID does not belong to any of our candidate pairs"
+                    );
                     return false;
                 }
 
@@ -1507,9 +1509,7 @@ impl IceAgent {
 
         trace!(
             "Send STUN reply: {} -> {} {:?}",
-            local_addr,
-            remote_addr,
-            reply
+            local_addr, remote_addr, reply
         );
 
         let mut buf = vec![0_u8; DATAGRAM_MTU];
@@ -1946,31 +1946,45 @@ mod test {
         let mut agent = new_test_agent();
 
         // Candidates with the same SocketAddr but different protocols are considered distinct.
-        assert!(agent
-            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
-            .is_some());
-        assert!(agent
-            .add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap())
-            .is_some());
-        assert!(agent
-            .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
-            .is_some());
+        assert!(
+            agent
+                .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+                .is_some()
+        );
+        assert!(
+            agent
+                .add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap())
+                .is_some()
+        );
+        assert!(
+            agent
+                .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
+                .is_some()
+        );
 
         // Verify these are rejected, since these tuples of address and protocol have been added.
-        assert!(agent
-            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
-            .is_none());
-        assert!(agent
-            .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
-            .is_none());
+        assert!(
+            agent
+                .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+                .is_none()
+        );
+        assert!(
+            agent
+                .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
+                .is_none()
+        );
 
         // Verify these are allowed, since these have different addresses.
-        assert!(agent
-            .add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap())
-            .is_some());
-        assert!(agent
-            .add_local_candidate(Candidate::host(ipv4_2(), "ssltcp").unwrap())
-            .is_some());
+        assert!(
+            agent
+                .add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap())
+                .is_some()
+        );
+        assert!(
+            agent
+                .add_local_candidate(Candidate::host(ipv4_2(), "ssltcp").unwrap())
+                .is_some()
+        );
     }
 
     #[test]

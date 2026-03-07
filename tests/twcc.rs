@@ -8,7 +8,7 @@ use str0m::{Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
+use common::{TestRtc, init_crypto_default, init_log, negotiate, progress};
 
 #[test]
 pub fn twcc() -> Result<(), RtcError> {
@@ -61,7 +61,7 @@ pub fn twcc() -> Result<(), RtcError> {
     }
 
     let (sent_twcc, received_twcc) = {
-        use str0m::rtp::{rtcp::Rtcp, RawPacket};
+        use str0m::rtp::{RawPacket, rtcp::Rtcp};
         let r_twcc: Vec<_> = r
             .events
             .iter()

@@ -20,7 +20,7 @@ use dimpl::crypto::{SignatureAlgorithm, SignatureVerifier, SigningKey as Signing
 
 // Security framework FFI bindings
 #[link(name = "Security", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     static kSecAttrKeyType: core_foundation::string::CFStringRef;
     static kSecAttrKeyTypeECSECPrimeRandom: core_foundation::string::CFStringRef;
     static kSecAttrKeyClass: core_foundation::string::CFStringRef;

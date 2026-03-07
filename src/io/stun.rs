@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use crc::{Crc, CRC_32_ISO_HDLC};
+use crc::{CRC_32_ISO_HDLC, Crc};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 

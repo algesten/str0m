@@ -7,7 +7,7 @@ use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
 use str0m::{Event, Input, Output, Rtc, RtcError};
 
 mod common;
-use common::{connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, TestRtc};
+use common::{TestRtc, connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log};
 
 const EXPECTED_PACKETS: usize = 50;
 const REPLAY_PER_PACKET: usize = 5;
