@@ -26,7 +26,11 @@ exclude = ["rouille", "rand_core"]
 
 [advisories]
 yanked = "deny"
-ignore = []
+ignore = [
+  # time: DoS via stack exhaustion in RFC 2822 parsing. 
+  # Fixed in >=0.3.47, but that requires MSRV 1.88.
+  "RUSTSEC-2026-0009",
+]
 
 [bans]
 multiple-versions = "deny"
