@@ -161,8 +161,8 @@ pub(crate) trait BitRead {
     fn get_offset(&self) -> usize;
     fn get_u8(&mut self) -> Option<u8>;
     fn get_u16(&mut self) -> Option<u16>;
-    fn get_remaining(&mut self) -> Vec<u8>;
-    fn get_bytes(&mut self, size: usize) -> Option<Vec<u8>>;
+    fn get_remaining(&mut self) -> &[u8];
+    fn get_bytes(&mut self, size: usize) -> Option<&[u8]>;
     fn get_variant(&mut self) -> Option<usize>;
     fn consume(&mut self, bytes: usize);
 }
@@ -210,26 +210,19 @@ impl BitRead for (&[u8], usize) {
         Some(u16::from_be_bytes([self.get_u8()?, self.get_u8()?]))
     }
 
-    fn get_remaining(&mut self) -> Vec<u8> {
-        let mut remaining = Vec::new();
-        while self.remaining() > 7 {
-            remaining.push(self.get_u8().unwrap());
-        }
-
-        remaining
+    fn get_remaining(&mut self) -> &[u8] {
+        let offset = self.1 / 8;
+        self.1 = self.0.len() * 8;
+        &self.0[offset..]
     }
 
-    fn get_bytes(&mut self, size: usize) -> Option<Vec<u8>> {
+    fn get_bytes(&mut self, size: usize) -> Option<&[u8]> {
         if self.remaining() < (size * 8) {
             return None;
         }
-
-        let mut bytes = Vec::new();
-        while bytes.len() < size {
-            bytes.push(self.get_u8().unwrap());
-        }
-
-        Some(bytes)
+        let offset = self.1 / 8;
+        self.1 += size * 8;
+        Some(&self.0[offset..offset + size])
     }
 
     fn get_variant(&mut self) -> Option<usize> {
