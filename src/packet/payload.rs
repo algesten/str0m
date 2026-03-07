@@ -16,8 +16,17 @@ pub struct Payloader {
 
 impl Payloader {
     pub(crate) fn new(spec: CodecSpec, vp9_mode: Vp9PacketizerMode) -> Self {
+        let mut pack = CodecPacketizer::new(spec.codec, vp9_mode);
+
+        // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
+        if let CodecPacketizer::H265(ref mut h265) = pack {
+            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                h265.with_donl(true);
+            }
+        }
+
         Payloader {
-            pack: CodecPacketizer::new(spec.codec, vp9_mode),
+            pack,
             clock_rate: spec.clock_rate,
         }
     }
