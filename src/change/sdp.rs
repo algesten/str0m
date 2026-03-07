@@ -488,7 +488,15 @@ impl<'a> SdpApi<'a> {
     /// ```
     pub fn merge(&mut self, mut pending_offer: SdpPendingOffer) {
         pending_offer.retain_relevant(self.rtc);
-        self.changes.extend(pending_offer.changes.drain(..));
+
+        // Prepend the original pending changes before the current SdpApi's own changes.
+        //
+        // AddMedia / AddApp entries from the pending offer carry already-allocated MIDs
+        // that the remote peer may have committed to specific m-line positions. They must
+        // appear before any new changes so that as_new_medias() assigns them the same
+        // indices as in the original offer.
+        pending_offer.changes.0.append(&mut self.changes.0);
+        self.changes.0 = pending_offer.changes.0;
     }
 }
 
@@ -1564,10 +1572,18 @@ impl Changes {
         config: &'b CodecConfig,
         exts: &'b ExtensionMap,
     ) -> impl Iterator<Item = Media> + 'a {
-        self.0
-            .iter()
-            .enumerate()
-            .filter_map(move |(idx, c)| c.as_new_media(index_start + idx, config, exts))
+        // Use a separate counter that only advances for entries that actually produce
+        // an m-line (AddMedia / AddApp).  Non-media entries (Direction, IceRestart,
+        // AddChannel) must not consume an index slot, otherwise the resulting m-line
+        // indices would be non-contiguous and out of sync with their array positions.
+        let mut media_idx = 0usize;
+        self.0.iter().filter_map(move |c| {
+            let result = c.as_new_media(index_start + media_idx, config, exts);
+            if result.is_some() {
+                media_idx += 1;
+            }
+            result
+        })
     }
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
@@ -1694,8 +1710,212 @@ mod test {
         changes.merge(pending);
         let (new_offer, _) = changes.apply().unwrap();
 
-        assert_eq!(offer.media_lines[0], new_offer.media_lines[1]);
+        // After merge(), the original AddMedia (audio) is prepended before the new AddMedia
+        // (video) to preserve its original m-line position.  So audio is at index 0 and video at 1.
+        assert_eq!(offer.media_lines[0], new_offer.media_lines[0]);
+        assert_eq!(new_offer.media_lines[0].typ, MediaType::Audio);
+        assert_eq!(new_offer.media_lines[1].typ, MediaType::Video);
         assert_eq!(new_offer.media_lines.len(), 2);
+    }
+
+    // The indices assigned to Media objects by as_new_medias() must be contiguous starting
+    // from index_start.  Only entries that produce m-lines (AddMedia / AddApp) should
+    // consume an index slot – non-media entries (AddChannel, Direction, IceRestart) must
+    // not advance the counter.
+    //
+    // We test this by building a Changes vector directly and inspecting the indices
+    // returned by as_new_medias().
+    #[test]
+    fn as_new_medias_contiguous_indices_with_non_media_changes() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut rtc = Rtc::new(now);
+
+        // Build a Changes vector that interleaves non-media entries with media entries.
+        // The non-media AddChannel entry must not consume an index slot.
+        //
+        // Changes = [AddApp(mid0), AddChannel(id, cfg), AddMedia(audio)]
+        //
+        // index_start = 0 (fresh session)
+        // Expected indices: AddApp → 0, AddMedia(audio) → 1
+        // Buggy indices:    AddApp → 0, AddMedia(audio) → 2
+        let mut changes = Changes::default();
+        let mid_app = rtc.new_mid();
+        changes.0.push(Change::AddApp(mid_app));
+        let mid_audio = rtc.new_mid();
+        let chan_id = rtc.chan.new_channel(&ChannelConfig {
+            label: "ch".into(),
+            ..Default::default()
+        });
+        changes.0.push(Change::AddChannel((
+            chan_id,
+            ChannelConfig {
+                label: "ch".into(),
+                ..Default::default()
+            },
+        )));
+        changes.0.push(Change::AddMedia(AddMedia {
+            mid: mid_audio,
+            cname: "test".into(),
+            msid: Msid {
+                stream_id: "stream".into(),
+                track_id: "track".into(),
+            },
+            kind: MediaKind::Audio,
+            dir: Direction::SendOnly,
+            ssrcs: vec![],
+            simulcast: None,
+            pts: vec![],
+            exts: ExtensionMap::empty(),
+            index: 0, // will be overwritten by as_new_media()
+        }));
+
+        let config = CodecConfig::new_with_defaults();
+        let exts = ExtensionMap::standard();
+
+        let medias: Vec<Media> = changes.as_new_medias(0, &config, &exts).collect();
+
+        // Should produce two Media objects: one for AddApp, one for AddMedia(audio).
+        assert_eq!(medias.len(), 2, "Expected 2 media-producing entries");
+
+        // The first m-line is AddApp at index 0.
+        assert_eq!(medias[0].index(), 0, "AddApp should have index 0");
+
+        // The second m-line is Audio.  It must get the contiguous index 1, not 2 (which
+        // would result from counting the non-media AddChannel entry as a slot).
+        assert_eq!(
+            medias[1].index(),
+            1,
+            "AddMedia(audio) should have contiguous index 1, not 2"
+        );
+    }
+
+    // AddMedia/AddApp entries from a pending offer carry already-allocated MIDs whose
+    // m-line positions the remote peer may have committed to.  When merging a pending offer
+    // into a new SdpApi, those original entries must be prepended so they keep their
+    // original lower-index positions rather than being displaced by new changes.
+    #[test]
+    fn sdp_api_merge_stale_media_keeps_original_position() {
+        crate::init_crypto_default();
+
+        let mut rtc = Rtc::new(Instant::now());
+
+        // First offer: add audio.  Audio will be at index 0.
+        let mut changes = rtc.sdp_api();
+        let _mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+        let (offer1, pending) = changes.apply().unwrap();
+
+        // The original offer has audio at position 0.
+        assert_eq!(offer1.media_lines[0].typ, MediaType::Audio);
+
+        // Simulate glare: a new SdpApi adds video, then merges the pending offer
+        // containing the original audio AddMedia.
+        let mut changes = rtc.sdp_api();
+        changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+        changes.merge(pending);
+        let (offer2, _) = changes.apply().unwrap();
+
+        // The original audio must be prepended before the new video, keeping it at
+        // position 0 — the same position as in the original offer.
+        assert_eq!(
+            offer2.media_lines[0].typ,
+            MediaType::Audio,
+            "Original audio from pending should be at position 0 (same as original offer)"
+        );
+        assert_eq!(
+            offer2.media_lines[1].typ,
+            MediaType::Video,
+            "New video added to current SdpApi should be at position 1"
+        );
+        assert_eq!(
+            offer1.media_lines[0], offer2.media_lines[0],
+            "Audio m-line must be identical between original and merged offers"
+        );
+    }
+
+    // When a new SdpApi has its own AddMedia changes and also merges a pending offer that
+    // has AddMedia changes, the original pending entries must come before the new ones so
+    // their m-line positions are stable:
+    //   1. First offer: [AddMedia(audio), AddMedia(video)] → audio at 0, video at 1
+    //   2. Glare – pending is saved
+    //   3. New SdpApi: [AddMedia(screen)]
+    //   4. After merge: [AddMedia(audio), AddMedia(video), AddMedia(screen)]
+    //      → audio at 0, video at 1, screen at 2  (CORRECT)
+    #[test]
+    fn sdp_api_merge_with_direction_and_new_media_preserves_positions() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut rtc1 = Rtc::new(now);
+        let mut rtc2 = Rtc::new(now);
+
+        // Establish one audio m-line so we can change its direction later.
+        let mut changes = rtc1.sdp_api();
+        let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+        let (offer0, pending0) = changes.apply().unwrap();
+        let answer0 = rtc2.sdp_api().accept_offer(offer0).unwrap();
+        rtc1.sdp_api().accept_answer(pending0, answer0).unwrap();
+        // Session now: audio at index 0.
+
+        // Create an offer with two new medias: video1 and video2.
+        // video1 → session position 1, video2 → session position 2.
+        let mut changes = rtc1.sdp_api();
+        let mid_v1 = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+        let mid_v2 = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+        let (offer1, pending1) = changes.apply().unwrap();
+
+        assert_eq!(offer1.media_lines[1].mid(), mid_v1, "video1 at idx 1");
+        assert_eq!(offer1.media_lines[2].mid(), mid_v2, "video2 at idx 2");
+
+        // Glare: create a new SdpApi that:
+        //   (a) changes direction of existing audio m-line (non-media Change)
+        //   (b) adds a new screen-share video m-line
+        // Then merge the original pending1 into it.
+        let mut changes = rtc1.sdp_api();
+        changes.set_direction(mid_audio, Direction::Inactive);
+        let mid_screen = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+        changes.merge(pending1);
+        let (offer2, _) = changes.apply().unwrap();
+
+        // Session already has audio at index 0.
+        // The merged offer must have:
+        //   position 0: audio (existing, unchanged)
+        //   position 1: video1 (from pending — same position as offer1)
+        //   position 2: video2 (from pending — same position as offer1)
+        //   position 3: screen (newly added in the new SdpApi)
+        assert_eq!(
+            offer2.media_lines.len(),
+            4,
+            "Merged offer should have 4 m-lines: audio + video1 + video2 + screen"
+        );
+
+        // Original video m-lines from the pending offer must keep their positions (1 and 2).
+        assert_eq!(
+            offer2.media_lines[1].mid(),
+            mid_v1,
+            "video1 from pending should remain at position 1"
+        );
+        assert_eq!(
+            offer1.media_lines[1], offer2.media_lines[1],
+            "video1 m-line should be identical in both offers"
+        );
+        assert_eq!(
+            offer2.media_lines[2].mid(),
+            mid_v2,
+            "video2 from pending should remain at position 2"
+        );
+        assert_eq!(
+            offer1.media_lines[2], offer2.media_lines[2],
+            "video2 m-line should be identical in both offers"
+        );
+
+        // New screen share is at position 3, after the original pending m-lines.
+        assert_eq!(
+            offer2.media_lines[3].mid(),
+            mid_screen,
+            "New screen-share should be at position 3"
+        );
     }
 
     #[test]
