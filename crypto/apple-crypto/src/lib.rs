@@ -23,6 +23,7 @@ use srtp::AppleCryptoSrtpProvider;
 ///
 /// This provider implements all cryptographic operations required for WebRTC:
 /// - DTLS 1.2 for secure key exchange (using dimpl protocol + Apple CommonCrypto)
+/// - DTLS 1.3 and Auto for secure key exchange (using dimpl protocol + Apple CommonCrypto)
 /// - SRTP for encrypted media
 /// - SHA1-HMAC for STUN message integrity
 /// - SHA-256 for certificate fingerprints

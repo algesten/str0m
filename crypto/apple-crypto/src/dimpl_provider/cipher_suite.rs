@@ -202,6 +202,10 @@ static TLS13_AES_128_GCM_SHA256: Tls13Aes128GcmSha256 = Tls13Aes128GcmSha256;
 static TLS13_AES_256_GCM_SHA384: Tls13Aes256GcmSha384 = Tls13Aes256GcmSha384;
 
 /// All supported DTLS 1.3 cipher suites.
+///
+/// Note: ChaCha20-Poly1305 is not supported because Apple CryptoKit does not
+/// expose the raw ChaCha20 stream cipher needed for DTLS 1.3 record sequence
+/// number encryption (RFC 9001 Section 5.4.4).
 pub(super) static ALL_DTLS13_CIPHER_SUITES: &[&dyn SupportedDtls13CipherSuite] =
     &[&TLS13_AES_128_GCM_SHA256, &TLS13_AES_256_GCM_SHA384];
 
@@ -225,7 +229,7 @@ impl OutputBuffer {
     const STACK_BUFFER_SIZE: usize = 1024;
 
     fn new(size: usize) -> Self {
-        if size < Self::STACK_BUFFER_SIZE {
+        if size <= Self::STACK_BUFFER_SIZE {
             Self::Stack([0u8; Self::STACK_BUFFER_SIZE])
         } else {
             Self::Heap(vec![0; size])

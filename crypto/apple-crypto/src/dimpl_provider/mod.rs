@@ -44,3 +44,18 @@ impl SecureRandom for AppleSecureRandom {
 }
 
 static SECURE_RANDOM: AppleSecureRandom = AppleSecureRandom;
+
+#[cfg(test)]
+pub(super) mod test_utils {
+    pub fn hex_to_vec(hex: &str) -> Vec<u8> {
+        assert!(hex.len() % 2 == 0, "hex string must have even length");
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    pub fn to_hex(data: &[u8]) -> String {
+        data.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
