@@ -28,7 +28,8 @@ default = ["aws-lc-rs", "examples"]
 aws-lc-rs = ["dep:str0m-aws-lc-rs"]
 rust-crypto = ["dep:str0m-rust-crypto"]
 openssl = ["dep:str0m-openssl"]
-wincrypto = ["dep:str0m-wincrypto"]
+wincrypto = ["dep:str0m-wincrypto", "str0m-wincrypto/dtls12"]
+wincrypto_dimpl = ["dep:str0m-wincrypto"]
 apple-crypto = ["dep:str0m-apple-crypto"]
 vendored = ["str0m-openssl?/vendored"]
 unversioned = []
@@ -72,7 +73,7 @@ str0m-apple-crypto = { version = "0.1.4", path = "crypto/apple-crypto", optional
 
 [target.'cfg(windows)'.dependencies]
 # Windows Crypto (CNG + SChannel)
-str0m-wincrypto = { version = "0.3.2", path = "crypto/wincrypto", optional = true }
+str0m-wincrypto = { version = "0.3.2", path = "crypto/wincrypto", optional = true, default-features = false }
 
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }

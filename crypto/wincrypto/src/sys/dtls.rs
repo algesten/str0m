@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use tracing::{debug, warn};
 use windows::Win32::Foundation::SEC_E_MESSAGE_ALTERED;
 use windows::Win32::Foundation::SEC_E_OK;
 use windows::Win32::Foundation::SEC_E_OUT_OF_SEQUENCE;

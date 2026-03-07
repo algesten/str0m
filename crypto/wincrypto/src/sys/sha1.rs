@@ -7,8 +7,13 @@ use windows::Win32::Security::Cryptography::BCryptHashData;
 use windows::core::Owned;
 
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
-    // SAFETY: The Windows APIs accept references, so normal borrow checker
-    // behaviors work for these uses.
+    // SAFETY: Microsoft Learn documents `BCryptCreateHash`,
+    // `BCryptHashData`, and `BCryptFinishHash` as borrowing the handle, key,
+    // input, and output buffers only for the duration of each call; all of
+    // them outlive this block.
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptcreatehash
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcrypthashdata
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcryptfinishhash
     unsafe {
         // Create hash.
         let mut hash_handle = Owned::new(BCRYPT_HASH_HANDLE::default());
