@@ -618,3 +618,63 @@ static KX_GROUP_P384: P384 = P384;
 
 pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] =
     &[&KX_GROUP_X25519, &KX_GROUP_P256, &KX_GROUP_P384];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two wincrypto X25519 exchanges must produce identical shared secrets.
+    #[test]
+    fn x25519_roundtrip_symmetric() {
+        let alice = X25519Kx.start_exchange(Buf::new()).unwrap();
+        let bob = X25519Kx.start_exchange(Buf::new()).unwrap();
+
+        let alice_pub = alice.pub_key().to_vec();
+        let bob_pub = bob.pub_key().to_vec();
+
+        let mut alice_secret = Buf::new();
+        let mut bob_secret = Buf::new();
+        alice.complete(&bob_pub, &mut alice_secret).unwrap();
+        bob.complete(&alice_pub, &mut bob_secret).unwrap();
+
+        assert_eq!(
+            &alice_secret[..],
+            &bob_secret[..],
+            "X25519 shared secrets must be identical regardless of which side completes"
+        );
+        assert_eq!(alice_secret.len(), 32);
+    }
+
+    /// Verify wincrypto X25519 shared secret matches x25519-dalek (reference implementation).
+    ///
+    /// This catches byte-order bugs: BCryptDeriveKey returns the raw secret in
+    /// reversed byte order, and we must reverse it to match RFC 7748.
+    #[test]
+    fn x25519_interop_with_dalek() {
+        use rand_core::OsRng;
+        use x25519_dalek::{EphemeralSecret, PublicKey};
+
+        // Generate a key pair with x25519-dalek (reference)
+        let dalek_secret = EphemeralSecret::random_from_rng(&mut OsRng);
+        let dalek_pub = PublicKey::from(&dalek_secret);
+
+        // Generate a key pair with wincrypto CNG
+        let win_kx = X25519Kx.start_exchange(Buf::new()).unwrap();
+        let win_pub = win_kx.pub_key().to_vec();
+
+        // wincrypto completes with dalek's public key
+        let mut win_shared = Buf::new();
+        win_kx.complete(dalek_pub.as_bytes(), &mut win_shared).unwrap();
+
+        // dalek completes with wincrypto's public key
+        let win_pub_bytes: [u8; 32] = win_pub.try_into().unwrap();
+        let dalek_peer = PublicKey::from(win_pub_bytes);
+        let dalek_shared = dalek_secret.diffie_hellman(&dalek_peer);
+
+        assert_eq!(
+            &win_shared[..],
+            dalek_shared.as_bytes(),
+            "wincrypto and x25519-dalek must produce the same shared secret"
+        );
+    }
+}

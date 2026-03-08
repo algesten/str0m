@@ -18,3 +18,7 @@ time = "0.3"
 windows = { version = "0.62", features = [
   "Win32_Security_Cryptography",
 ] }
+
+[dev-dependencies]
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
