@@ -664,7 +664,9 @@ mod tests {
 
         // wincrypto completes with dalek's public key
         let mut win_shared = Buf::new();
-        win_kx.complete(dalek_pub.as_bytes(), &mut win_shared).unwrap();
+        win_kx
+            .complete(dalek_pub.as_bytes(), &mut win_shared)
+            .unwrap();
 
         // dalek completes with wincrypto's public key
         let win_pub_bytes: [u8; 32] = win_pub.try_into().unwrap();
