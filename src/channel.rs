@@ -413,7 +413,7 @@ mod tests {
         // Simulate two channels with known stream IDs (as if do_allocations ran
         // for a client: even IDs 0, 2).
         let id0 = handler.new_channel(&Default::default());
-        let id1 = handler.new_channel(&Default::default());
+        let _id1 = handler.new_channel(&Default::default());
         // Manually set stream IDs as do_allocations would.
         handler.allocations[0].sctp_stream_id = Some(0);
         handler.allocations[1].sctp_stream_id = Some(2);
@@ -425,7 +425,7 @@ mod tests {
 
         // Allocate a new channel and manually assign a stream ID the way
         // do_allocations would — stream 0 should be skipped (in cooldown).
-        let id2 = handler.new_channel(&Default::default());
+        let _id2 = handler.new_channel(&Default::default());
         // Build the taken list as do_allocations does.
         let taken: Vec<u16> = handler
             .allocations
