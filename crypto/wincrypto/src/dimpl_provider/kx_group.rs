@@ -501,11 +501,16 @@ impl ActiveKeyExchange for X25519KeyExchange {
             return Err("X25519 shared secret is zero (non-contributory)".into());
         }
 
-        // X25519 shared secret is natively little-endian (RFC 7748).
-        // CNG BCRYPT_KDF_RAW_SECRET also returns little-endian.
-        // Unlike NIST curves, do NOT reverse the byte order.
+        // BCryptDeriveKey with BCRYPT_KDF_RAW_SECRET returns the raw secret in
+        // little-endian (least-significant byte first) for ALL curve types.
+        // X25519 is natively little-endian per RFC 7748, but CNG returns it in
+        // the opposite order. Reverse to match the RFC 7748 wire format that
+        // other implementations (x25519-dalek, BoringSSL, etc.) produce.
+        let mut secret = shared_secret;
+        secret.reverse();
+
         out.clear();
-        out.extend_from_slice(&shared_secret);
+        out.extend_from_slice(&secret);
 
         Ok(())
     }
