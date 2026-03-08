@@ -546,7 +546,7 @@ impl RtcConfig {
 
     /// Set which DTLS version to use.
     ///
-    /// Defaults to [`DtlsVersion::Dtls12`].
+    /// Defaults to [`DtlsVersion::Auto`].
     pub fn set_dtls_version(mut self, version: DtlsVersion) -> Self {
         self.dtls_version = version;
         self
@@ -617,7 +617,7 @@ impl Default for RtcConfig {
             send_buffer_video: 1000,
             rtp_mode: false,
             enable_raw_packets: false,
-            dtls_version: DtlsVersion::Dtls12,
+            dtls_version: DtlsVersion::Auto,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
         }
     }
