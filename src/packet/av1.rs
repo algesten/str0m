@@ -344,7 +344,7 @@ impl Depacketizer for Av1Depacketizer {
         let mut reader = (packet, 0);
 
         self.parse_aggregation_header(packet[0]);
-        reader.consume(1);
+        reader.skip_bytes(1);
 
         // if packet does not start with a continuation of an obu fragment
         // from the previous packet new obu starts
@@ -367,14 +367,14 @@ impl Depacketizer for Av1Depacketizer {
         *codec_extra = CodecExtra::Av1(Av1CodecExtra { is_keyframe });
 
         let mut obu_idx = 0;
-        while reader.remaining() > 0 {
+        while reader.remaining_bits() > 0 {
             let is_first_obu = obu_idx == 0;
             let mut is_last_obu = self.obu_count != 0 && obu_idx == (self.obu_count - 1);
 
             // Read the length of obu
             let fragment_obu_length = if self.obu_count == 0 || !is_last_obu {
                 let len = reader
-                    .get_variant()
+                    .get_leb128()
                     .ok_or(PacketError::ErrAv1CorruptedPacket)?;
 
                 if self.obu_count == 0 && len == reader.remaining_bytes() {
@@ -390,8 +390,8 @@ impl Depacketizer for Av1Depacketizer {
             if fragment_obu_length == 0 {
                 return Err(PacketError::ErrAv1CorruptedPacket);
             }
-            if reader.get_offset() > packet.len()
-                || fragment_obu_length > packet.len() - reader.get_offset()
+            if reader.byte_offset() > packet.len()
+                || fragment_obu_length > packet.len() - reader.byte_offset()
             {
                 return Err(PacketError::ErrAv1CorruptedPacket);
             }
@@ -399,16 +399,16 @@ impl Depacketizer for Av1Depacketizer {
             if is_first_obu && self.z {
                 // the previous fragment is lost, drop the buffer
                 if self.obu_buffer.is_empty() {
-                    reader.consume(fragment_obu_length);
+                    reader.skip_bytes(fragment_obu_length);
                     obu_idx = 1;
                     continue;
                 }
             }
 
-            let offset = reader.get_offset();
+            let offset = reader.byte_offset();
             self.obu_buffer
                 .extend_from_slice(&packet[offset..offset + fragment_obu_length]);
-            reader.consume(fragment_obu_length);
+            reader.skip_bytes(fragment_obu_length);
 
             if is_last_obu && self.y {
                 self.obu_length += fragment_obu_length;
@@ -591,7 +591,7 @@ fn parse_obus(payload: &[u8], parsed_obus: &mut Vec<Obu>) -> Result<(), PacketEr
     let mut reader = (payload, 0);
     let mut obu_idx = 0;
 
-    while reader.remaining() > 0 {
+    while reader.remaining_bits() > 0 {
         // Reuse existing Obu entry if available, otherwise grow the Vec
         if obu_idx >= parsed_obus.len() {
             parsed_obus.push(Obu::default());
@@ -612,8 +612,11 @@ fn parse_obus(payload: &[u8], parsed_obus: &mut Vec<Obu>) -> Result<(), PacketEr
 
         if obu.has_size() {
             let obu_size = reader
-                .get_variant()
+                .get_leb128()
                 .ok_or(PacketError::ErrAv1CorruptedPacket)?;
+            if obu_size > reader.remaining_bytes() {
+                return Err(PacketError::ErrAv1CorruptedPacket);
+            }
             let bytes = reader
                 .get_bytes(obu_size)
                 .ok_or(PacketError::ErrAv1CorruptedPacket)?;
