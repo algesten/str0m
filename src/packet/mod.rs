@@ -156,36 +156,36 @@ pub use error::PacketError;
 
 /// Helper to replace Bytes. Provides get_u8 and get_u16 over some buffer of bytes.
 pub(crate) trait BitRead {
-    fn remaining(&self) -> usize;
+    fn remaining_bits(&self) -> usize;
     fn remaining_bytes(&self) -> usize;
-    fn get_offset(&self) -> usize;
+    fn byte_offset(&self) -> usize;
     fn get_u8(&mut self) -> Option<u8>;
     fn get_u16(&mut self) -> Option<u16>;
     fn get_remaining(&mut self) -> &[u8];
-    fn get_bytes(&mut self, size: usize) -> Option<&[u8]>;
-    fn get_variant(&mut self) -> Option<usize>;
-    fn consume(&mut self, bytes: usize);
+    fn get_bytes(&mut self, count: usize) -> Option<&[u8]>;
+    fn get_leb128(&mut self) -> Option<usize>;
+    fn skip_bytes(&mut self, count: usize);
 }
 
 impl BitRead for (&[u8], usize) {
     #[inline(always)]
-    fn remaining(&self) -> usize {
+    fn remaining_bits(&self) -> usize {
         (self.0.len() * 8).saturating_sub(self.1)
     }
 
     #[inline(always)]
     fn remaining_bytes(&self) -> usize {
-        self.remaining() / 8
+        self.remaining_bits() / 8
     }
 
     #[inline(always)]
-    fn get_offset(&self) -> usize {
+    fn byte_offset(&self) -> usize {
         self.1 / 8
     }
 
     #[inline(always)]
     fn get_u8(&mut self) -> Option<u8> {
-        if self.remaining() < 8 {
+        if self.remaining_bits() < 8 {
             return None;
         }
 
@@ -204,7 +204,7 @@ impl BitRead for (&[u8], usize) {
     }
 
     fn get_u16(&mut self) -> Option<u16> {
-        if self.remaining() < 16 {
+        if self.remaining_bits() < 16 {
             return None;
         }
         Some(u16::from_be_bytes([self.get_u8()?, self.get_u8()?]))
@@ -216,20 +216,21 @@ impl BitRead for (&[u8], usize) {
         &self.0[offset..]
     }
 
-    fn get_bytes(&mut self, size: usize) -> Option<&[u8]> {
-        if self.remaining() < (size * 8) {
+    fn get_bytes(&mut self, count: usize) -> Option<&[u8]> {
+        let count_bits = count.saturating_mul(8);
+        if self.remaining_bits() < count_bits {
             return None;
         }
         let offset = self.1 / 8;
-        self.1 += size * 8;
-        Some(&self.0[offset..offset + size])
+        self.1 += count_bits;
+        Some(&self.0[offset..offset + count])
     }
 
-    fn get_variant(&mut self) -> Option<usize> {
+    fn get_leb128(&mut self) -> Option<usize> {
         let mut temp_value: usize = 0;
 
         for i in (0..64).step_by(7) {
-            if self.remaining() < 8 {
+            if self.remaining_bits() < 8 {
                 return None;
             }
             let byte = self.get_u8().unwrap();
@@ -243,12 +244,13 @@ impl BitRead for (&[u8], usize) {
         None
     }
 
-    fn consume(&mut self, bytes: usize) {
-        if self.remaining() < bytes * 8 {
+    fn skip_bytes(&mut self, count: usize) {
+        let bits = count.saturating_mul(8);
+        if self.remaining_bits() < bits {
             return;
         }
 
-        self.1 += bytes * 8;
+        self.1 += bits;
     }
 }
 
