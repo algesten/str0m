@@ -16,28 +16,7 @@ pub(super) static HMAC_PROVIDER: AppleHmacProvider = AppleHmacProvider;
 #[cfg(test)]
 mod test {
     use super::*;
-
-    // Test vectors from RFC 4231: Identifiers and Test Vectors for HMAC-SHA-224, HMAC-SHA-256,
-    // HMAC-SHA-384, and HMAC-SHA-512
-    // https://tools.ietf.org/html/rfc4231
-
-    fn hex_to_vec(hex: &str) -> Vec<u8> {
-        let hex = hex.replace(" ", "").replace("\n", "");
-        let mut v = Vec::new();
-        for i in 0..hex.len() / 2 {
-            let byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap();
-            v.push(byte);
-        }
-        v
-    }
-
-    fn slice_to_hex(data: &[u8]) -> String {
-        let mut s = String::new();
-        for byte in data.iter() {
-            s.push_str(&format!("{:02x}", byte));
-        }
-        s
-    }
+    use crate::dimpl_provider::test_utils::{hex_to_vec, to_hex as slice_to_hex};
 
     // HMAC-SHA-256 Test Vectors from RFC 4231
 
