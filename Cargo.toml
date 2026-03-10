@@ -56,7 +56,7 @@ crc = "3"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m (required dependency)
-dimpl = { version = "0.4.2", default-features = false }
+dimpl = { version = "0.4.3", default-features = false }
 
 time = "0.3"
 
