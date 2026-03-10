@@ -789,11 +789,10 @@ impl Session {
         // Figure out which, if any, queue to poll
         // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
         let (midrid, cluster_id) = self.pacer.poll_queue()?;
-        let media = self
-            .medias
-            .iter()
-            .find(|m| m.mid() == midrid.mid())
-            .expect("index is media");
+        let Some(media) = self.medias.iter().find(|m| m.mid() == midrid.mid()) else {
+            error!("Pacer pointed to mid {} which has no media", midrid.mid());
+            return None;
+        };
 
         let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;
