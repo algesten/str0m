@@ -73,7 +73,8 @@ pub fn aes_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<(), 
     match status {
         kCCSuccess => Ok(()),
         status => Err(CryptoError::Other(format!(
-            "AES-256-ECB encryption failed. Status: {status}"
+            "AES-ECB encryption failed (key_len={}). Status: {status}",
+            key.len()
         ))),
     }
 }

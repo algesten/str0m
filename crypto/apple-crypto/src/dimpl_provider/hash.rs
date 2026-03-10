@@ -103,16 +103,7 @@ impl HashContext for Sha384Context {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    // Test vectors from NIST CAVP
-    // https://csrc.nist.gov/projects/cryptographic-algorithm-validation-program
-    fn slice_to_hex(data: &[u8]) -> String {
-        let mut s = String::new();
-        for byte in data.iter() {
-            s.push_str(&format!("{:02x}", byte));
-        }
-        s
-    }
+    use crate::dimpl_provider::test_utils::to_hex as slice_to_hex;
 
     // SHA-256 Test Vectors
 

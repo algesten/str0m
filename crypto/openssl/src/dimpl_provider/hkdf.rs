@@ -1,27 +1,23 @@
-//! HKDF implementation using Apple CommonCrypto HMAC for TLS 1.3 key derivation.
+//! HKDF implementation using OpenSSL HMAC for TLS 1.3 key derivation.
 
 use dimpl::crypto::{Buf, HashAlgorithm, HkdfProvider};
 
-#[derive(Debug)]
-pub(super) struct AppleHkdfProvider;
+use openssl::hash::MessageDigest;
 
-/// Compute HMAC for the given hash algorithm.
+#[derive(Debug)]
+pub(super) struct OsslHkdfProvider;
+
+/// Compute HMAC for the given hash algorithm using OpenSSL.
 fn hmac(hash: HashAlgorithm, key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
-    match hash {
-        HashAlgorithm::SHA256 => {
-            let result = apple_cryptokit::hmac_sha256(key, data).map_err(|e| format!("{e:?}"))?;
-            Ok(result.to_vec())
-        }
-        HashAlgorithm::SHA384 => {
-            let result = apple_cryptokit::authentication::sha384::hmac_sha384(key, data)
-                .map_err(|e| format!("{e:?}"))?;
-            Ok(result.to_vec())
-        }
-        _ => Err(format!("Unsupported hash for HKDF: {hash:?}")),
-    }
+    let md = match hash {
+        HashAlgorithm::SHA256 => MessageDigest::sha256(),
+        HashAlgorithm::SHA384 => MessageDigest::sha384(),
+        _ => return Err(format!("Unsupported hash for HKDF: {hash:?}")),
+    };
+    super::hmac_openssl(md, key, data)
 }
 
-impl HkdfProvider for AppleHkdfProvider {
+impl HkdfProvider for OsslHkdfProvider {
     fn hkdf_extract(
         &self,
         hash: HashAlgorithm,
@@ -58,8 +54,6 @@ impl HkdfProvider for AppleHkdfProvider {
         out.clear();
 
         // HKDF-Expand per RFC 5869 Section 2.3
-        // T(0) = empty
-        // T(i) = HMAC-Hash(PRK, T(i-1) || info || i)  for i = 1..N
         let hash_len = hash.output_len();
         let n = output_len.div_ceil(hash_len);
         if n > 255 {
@@ -137,13 +131,13 @@ fn build_hkdf_label(
     if context.len() > 255 {
         return Err("Context too long for HKDF-Expand-Label".into());
     }
-    let len_u16 = u16::try_from(output_len)
-        .map_err(|_| format!("Output length {output_len} exceeds u16::MAX"))?;
 
     let info_len = 2 + 1 + full_label_len + 1 + context.len();
     let mut info = Vec::with_capacity(info_len);
 
     // uint16 length
+    let len_u16 = u16::try_from(output_len)
+        .map_err(|_| format!("Output length {output_len} exceeds u16::MAX"))?;
     info.extend_from_slice(&len_u16.to_be_bytes());
     // opaque label
     info.push(full_label_len as u8);
@@ -156,7 +150,7 @@ fn build_hkdf_label(
     Ok(info)
 }
 
-pub(super) static HKDF_PROVIDER: AppleHkdfProvider = AppleHkdfProvider;
+pub(super) static HKDF_PROVIDER: OsslHkdfProvider = OsslHkdfProvider;
 
 #[cfg(test)]
 mod tests {
@@ -173,7 +167,7 @@ mod tests {
         let expected_okm =
             "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865";
 
-        let provider = AppleHkdfProvider;
+        let provider = OsslHkdfProvider;
         let mut prk = Buf::new();
         provider
             .hkdf_extract(HashAlgorithm::SHA256, &salt, &ikm, &mut prk)
@@ -210,7 +204,7 @@ mod tests {
              59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71\
              cc30c58179ec3e87c14c01d5c1f3434f1d87";
 
-        let provider = AppleHkdfProvider;
+        let provider = OsslHkdfProvider;
         let mut prk = Buf::new();
         provider
             .hkdf_extract(HashAlgorithm::SHA256, &salt, &ikm, &mut prk)
@@ -232,7 +226,7 @@ mod tests {
         let expected_okm = "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d\
              9d201395faa4b61a96c8";
 
-        let provider = AppleHkdfProvider;
+        let provider = OsslHkdfProvider;
         let mut prk = Buf::new();
         provider
             .hkdf_extract(HashAlgorithm::SHA256, &[], &ikm, &mut prk)

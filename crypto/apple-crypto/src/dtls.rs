@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use security_framework::access_control::SecAccessControl;
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 
 use str0m_proto::crypto::CryptoError;
@@ -17,9 +16,6 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
     let mut options = GenerateKeyOptions::default();
     options.set_key_type(KeyType::ec());
     options.set_size_in_bits(256);
-    let access_control = SecAccessControl::create_with_flags(0)
-        .map_err(|e| CryptoError::Other(format!("Failed to create access control: {e}")))?;
-    options.set_access_control(access_control);
 
     let private_key = SecKey::new(&options)
         .map_err(|e| CryptoError::Other(format!("Failed to generate key pair: {e}")))?;
@@ -45,7 +41,8 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
     let public_key_bytes = public_key_data.bytes().to_vec();
 
     // Create a simple self-signed certificate - pass the SecKey directly for signing
-    let certificate = build_self_signed_cert(&public_key_bytes, &private_key)?;
+    let now = time::OffsetDateTime::now_utc();
+    let certificate = build_self_signed_cert(&public_key_bytes, &private_key, now)?;
 
     // Apple exports private key as: 04 || X || Y || D (97 bytes for P-256)
     // We need to wrap this into proper PKCS#8 with SEC1 ECPrivateKey that includes public key
@@ -61,9 +58,10 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
 fn build_self_signed_cert(
     public_key_bytes: &[u8],
     private_key: &SecKey,
+    now: time::OffsetDateTime,
 ) -> Result<Vec<u8>, CryptoError> {
     // Build TBSCertificate
-    let tbs = build_tbs_certificate(public_key_bytes)?;
+    let tbs = build_tbs_certificate(public_key_bytes, now)?;
 
     // Sign the TBS certificate using the private key directly
     let signature = sign_with_ecdsa_sha256(&tbs, private_key)?;
@@ -84,7 +82,10 @@ fn build_self_signed_cert(
     Ok(encode_sequence(&cert_content))
 }
 
-fn build_tbs_certificate(public_key_bytes: &[u8]) -> Result<Vec<u8>, CryptoError> {
+fn build_tbs_certificate(
+    public_key_bytes: &[u8],
+    now: time::OffsetDateTime,
+) -> Result<Vec<u8>, CryptoError> {
     let mut tbs = Vec::new();
 
     // Version: v3 (encoded as [0] EXPLICIT INTEGER 2)
@@ -109,7 +110,7 @@ fn build_tbs_certificate(public_key_bytes: &[u8]) -> Result<Vec<u8>, CryptoError
     tbs.extend_from_slice(&issuer);
 
     // Validity: 1 year from now
-    let validity = encode_validity()?;
+    let validity = encode_validity(now)?;
     tbs.extend_from_slice(&validity);
 
     // Subject: CN=WebRTC (same as issuer for self-signed)
@@ -135,10 +136,14 @@ fn encode_tag(tag: u8, content: &[u8]) -> Vec<u8> {
 
 fn encode_length(len: usize, out: &mut Vec<u8>) {
     if len < 128 {
-        // len fits in a single byte
-    } else if len < 256 {
+        // Short form: single byte
+        out.push(len as u8);
+        return;
+    }
+    if len < 256 {
         out.push(0x81);
     } else {
+        debug_assert!(len <= 0xFFFF, "DER length encoding limited to 2 bytes");
         out.push(0x82);
         out.push((len >> 8) as u8);
     }
@@ -187,18 +192,42 @@ fn encode_name(cn: &str) -> Vec<u8> {
     encode_sequence(&rdn)
 }
 
-fn encode_validity() -> Result<Vec<u8>, CryptoError> {
-    // Use GeneralizedTime for dates
-    // Not before: now
-    // Not after: 1 year from now
+fn encode_validity(now: time::OffsetDateTime) -> Result<Vec<u8>, CryptoError> {
+    let not_after = now + time::Duration::days(365);
 
-    // For simplicity, use fixed dates that are valid
-    // Format: YYYYMMDDHHMMSSZ
-    let not_before = b"20240101000000Z";
-    let not_after = b"20251231235959Z";
+    // RFC 5280 §4.1.2.5: UTCTime for dates before 2050, GeneralizedTime for 2050+
+    let encode_time = |t: time::OffsetDateTime| -> Vec<u8> {
+        if t.year() < 2050 {
+            // UTCTime: YYMMDDHHMMSSZ
+            let bytes = format!(
+                "{:02}{:02}{:02}{:02}{:02}{:02}Z",
+                t.year() % 100,
+                t.month() as u8,
+                t.day(),
+                t.hour(),
+                t.minute(),
+                t.second()
+            )
+            .into_bytes();
+            encode_tag(0x17, &bytes)
+        } else {
+            // GeneralizedTime: YYYYMMDDHHMMSSZ
+            let bytes = format!(
+                "{:04}{:02}{:02}{:02}{:02}{:02}Z",
+                t.year(),
+                t.month() as u8,
+                t.day(),
+                t.hour(),
+                t.minute(),
+                t.second()
+            )
+            .into_bytes();
+            encode_tag(0x18, &bytes)
+        }
+    };
 
-    let nb = encode_tag(0x18, not_before); // GeneralizedTime
-    let na = encode_tag(0x18, not_after);
+    let nb = encode_time(now);
+    let na = encode_time(not_after);
 
     Ok(encode_sequence(&[nb, na].concat()))
 }

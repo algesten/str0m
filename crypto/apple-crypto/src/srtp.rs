@@ -69,7 +69,11 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
+        if input.len() < AeadAes128Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "Input too short for AES-128-GCM tag".into(),
+            ));
+        }
         aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
 }
@@ -104,7 +108,11 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
+        if input.len() < AeadAes256Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "Input too short for AES-256-GCM tag".into(),
+            ));
+        }
         aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
 }
@@ -116,10 +124,11 @@ fn aes_gcm_encrypt(
     aad: &[u8],
     output: &mut [u8],
 ) -> Result<(), CryptoError> {
-    assert!(
-        aad.len() >= 12,
-        "Associated data length MUST be at least 12 octets"
-    );
+    if aad.len() < 12 {
+        return Err(CryptoError::Other(
+            "Associated data length MUST be at least 12 octets".into(),
+        ));
+    }
 
     apple_cryptokit::symmetric::aes::aes_gcm_encrypt_to_with_aad(key, iv, input, aad, output)
         .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
@@ -214,11 +223,11 @@ impl SrtpProvider for AppleCryptoSrtpProvider {
     }
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        common_crypto::aes_ecb_round(key, input, output).unwrap();
+        common_crypto::aes_ecb_round(key, input, output).expect("AES-128-ECB round failed");
     }
 
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        common_crypto::aes_ecb_round(key, input, output).unwrap();
+        common_crypto::aes_ecb_round(key, input, output).expect("AES-256-ECB round failed");
     }
 }
 
@@ -237,14 +246,21 @@ fn aes_ctr_round(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), CryptoError> {
+    const MAX_INPUT_LEN: usize = 2048;
+    if input.len() > MAX_INPUT_LEN {
+        return Err(CryptoError::Other(format!(
+            "AES-CTR input length {} exceeds maximum {MAX_INPUT_LEN}",
+            input.len(),
+        )));
+    }
+
     // First, we'll make a copy of the IV with a countered as many times as
     // needed into a new countered_iv.
     let mut iv = *iv;
-    let mut countered_iv = [0u8; 2048];
-    let mut encrypted_countered_iv = [0u8; 2048];
+    let mut countered_iv = [0u8; MAX_INPUT_LEN];
+    let mut encrypted_countered_iv = [0u8; MAX_INPUT_LEN];
     let mut offset = 0;
-    while offset <= input.len() {
-        let mut _count = 0;
+    while offset < input.len() {
         let start = offset;
         let end = offset + 16;
         countered_iv[start..end].copy_from_slice(&iv);

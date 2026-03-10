@@ -38,7 +38,7 @@ unsafe extern "C" {
     static kSecAttrKeySizeInBits: core_foundation::string::CFStringRef;
 }
 
-/// ECDHE key exchange implementation using Security framework.
+/// ECDHE key exchange implementation using Security framework (P-256/P-384).
 struct EcdhKeyExchange {
     private_key: SecKey,
     public_key_bytes: Buf,
@@ -220,9 +220,89 @@ impl SupportedKxGroup for P384 {
     }
 }
 
+/// X25519 key exchange implementation using Apple CryptoKit.
+struct X25519KeyExchange {
+    private_key: apple_cryptokit::asymmetric::curve25519::Curve25519PrivateKey,
+    public_key_bytes: Buf,
+}
+
+impl std::fmt::Debug for X25519KeyExchange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("X25519KeyExchange")
+            .field("public_key_len", &self.public_key_bytes.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl X25519KeyExchange {
+    fn new(mut buf: Buf) -> Result<Self, String> {
+        use apple_cryptokit::asymmetric::KeyAgreement;
+        use apple_cryptokit::asymmetric::curve25519::X25519;
+
+        let (private_key, public_key) = X25519::generate_key_pair()
+            .map_err(|e| format!("X25519 key generation failed: {e:?}"))?;
+
+        buf.clear();
+        buf.extend_from_slice(public_key.as_bytes());
+
+        Ok(Self {
+            private_key,
+            public_key_bytes: buf,
+        })
+    }
+}
+
+impl ActiveKeyExchange for X25519KeyExchange {
+    fn pub_key(&self) -> &[u8] {
+        &self.public_key_bytes
+    }
+
+    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), String> {
+        use apple_cryptokit::asymmetric::KeyAgreement;
+        use apple_cryptokit::asymmetric::curve25519::{Curve25519PublicKey, X25519};
+
+        let peer_bytes: [u8; 32] = peer_pub
+            .try_into()
+            .map_err(|_| "Invalid X25519 public key length".to_string())?;
+        let peer_key = Curve25519PublicKey::from_bytes(peer_bytes);
+
+        let shared_secret = X25519::key_agreement(&self.private_key, &peer_key)
+            .map_err(|e| format!("X25519 key agreement failed: {e:?}"))?;
+
+        // RFC 7748 §6.1: check the shared secret is not zero (low-order point)
+        if shared_secret.as_bytes().iter().all(|&b| b == 0) {
+            return Err("X25519 shared secret is zero (non-contributory)".to_string());
+        }
+
+        out.clear();
+        out.extend_from_slice(shared_secret.as_bytes());
+        Ok(())
+    }
+
+    fn group(&self) -> NamedGroup {
+        NamedGroup::X25519
+    }
+}
+
+/// X25519 key exchange group.
+#[derive(Debug)]
+struct X25519Kx;
+
+impl SupportedKxGroup for X25519Kx {
+    fn name(&self) -> NamedGroup {
+        NamedGroup::X25519
+    }
+
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+        Ok(Box::new(X25519KeyExchange::new(buf)?))
+    }
+}
+
 /// Static instances of supported key exchange groups.
+static KX_GROUP_X25519: X25519Kx = X25519Kx;
 static KX_GROUP_P256: P256 = P256;
 static KX_GROUP_P384: P384 = P384;
 
 /// All supported key exchange groups.
-pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] = &[&KX_GROUP_P256, &KX_GROUP_P384];
+pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] =
+    &[&KX_GROUP_X25519, &KX_GROUP_P256, &KX_GROUP_P384];
