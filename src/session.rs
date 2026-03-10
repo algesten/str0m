@@ -790,7 +790,7 @@ impl Session {
         // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
         let (midrid, cluster_id) = self.pacer.poll_queue()?;
         let Some(media) = self.medias.iter().find(|m| m.mid() == midrid.mid()) else {
-            error!("Pacer pointed to mid {} which has no media", midrid.mid());
+            trace!("Pacer pointed to mid {} which has no media", midrid.mid());
             return None;
         };
 
