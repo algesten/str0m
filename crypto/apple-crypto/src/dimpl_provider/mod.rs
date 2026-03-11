@@ -7,6 +7,7 @@
 
 mod cipher_suite;
 mod hash;
+mod hkdf;
 mod hmac;
 mod kx_group;
 mod sign;
@@ -18,6 +19,7 @@ use dimpl::crypto::{CryptoProvider, SecureRandom};
 pub fn default_provider() -> CryptoProvider {
     CryptoProvider {
         cipher_suites: cipher_suite::ALL_CIPHER_SUITES,
+        dtls13_cipher_suites: cipher_suite::ALL_DTLS13_CIPHER_SUITES,
         kx_groups: kx_group::ALL_KX_GROUPS,
         signature_verification: &sign::SIGNATURE_VERIFIER,
         key_provider: &sign::KEY_PROVIDER,
@@ -25,6 +27,7 @@ pub fn default_provider() -> CryptoProvider {
         hash_provider: &hash::HASH_PROVIDER,
         prf_provider: &tls12::PRF_PROVIDER,
         hmac_provider: &hmac::HMAC_PROVIDER,
+        hkdf_provider: &hkdf::HKDF_PROVIDER,
     }
 }
 

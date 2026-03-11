@@ -47,6 +47,61 @@ pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 
 pub static ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
+/// Detect whether an H264 RTP payload contains a keyframe.
+///
+/// Checks for IDR (Instantaneous Decoding Refresh) NAL units (type 5)
+/// in the RTP payload. Handles single NAL units, STAP-A aggregation
+/// packets, and FU-A fragmentation units.
+///
+/// For FU-A packets, only the start fragment (S=1) is detected as a
+/// keyframe since the NAL type is only reliably available there.
+pub fn detect_h264_keyframe(payload: &[u8]) -> bool {
+    if payload.is_empty() {
+        return false;
+    }
+
+    let nalu_type = payload[0] & NALU_TYPE_BITMASK;
+
+    match nalu_type {
+        // Single NAL unit (types 1-23)
+        1..=23 => nalu_type == IDR_NALU_TYPE,
+
+        // STAP-A: check all aggregated NALUs
+        STAPA_NALU_TYPE => {
+            let mut offset = STAPA_HEADER_SIZE;
+            while offset + STAPA_NALU_LENGTH_SIZE <= payload.len() {
+                let nalu_size = ((payload[offset] as usize) << 8) | payload[offset + 1] as usize;
+                offset += STAPA_NALU_LENGTH_SIZE;
+                if offset + nalu_size > payload.len() {
+                    break;
+                }
+                if let Some(&b0) = payload.get(offset) {
+                    if b0 & NALU_TYPE_BITMASK == IDR_NALU_TYPE {
+                        return true;
+                    }
+                }
+                offset += nalu_size;
+            }
+            false
+        }
+
+        // FU-A: check start fragment for IDR type
+        FUA_NALU_TYPE => {
+            if payload.len() < FUA_HEADER_SIZE {
+                return false;
+            }
+            let b1 = payload[1];
+            // Only the start fragment (S=1) reliably carries the original NAL type
+            if b1 & FU_START_BITMASK == 0 {
+                return false;
+            }
+            b1 & NALU_TYPE_BITMASK == IDR_NALU_TYPE
+        }
+
+        _ => false,
+    }
+}
+
 impl H264Packetizer {
     fn next_ind(nalu: &[u8], start: usize) -> (isize, isize) {
         let mut zero_count = 0;
@@ -784,5 +839,69 @@ mod test {
         let mut extra = CodecExtra::None;
         let mut out = vec![];
         pck.depacketize(PACKET, &mut out, &mut extra).unwrap();
+    }
+
+    #[test]
+    fn test_detect_h264_keyframe() {
+        // Empty payload
+        assert!(!detect_h264_keyframe(&[]));
+
+        // Single IDR NAL unit (type 5)
+        assert!(detect_h264_keyframe(&[0x65, 0x00, 0x00])); // 0x65 & 0x1F = 5
+
+        // Single non-IDR NAL unit (type 1 = coded slice)
+        assert!(!detect_h264_keyframe(&[0x41, 0x00, 0x00])); // 0x41 & 0x1F = 1
+
+        // SPS (type 7) - not a keyframe
+        assert!(!detect_h264_keyframe(&[0x67, 0x00, 0x00]));
+
+        // PPS (type 8) - not a keyframe
+        assert!(!detect_h264_keyframe(&[0x68, 0x00, 0x00]));
+
+        // STAP-A containing IDR
+        // Header: type 24 (STAP-A)
+        // NALU 1: 2 bytes, type 7 (SPS)
+        // NALU 2: 2 bytes, type 5 (IDR)
+        let stapa_with_idr = [
+            0x18, // STAP-A (24)
+            0x00, 0x02, 0x67, 0xAA, // SPS: size=2, type=7
+            0x00, 0x02, 0x65, 0xBB, // IDR: size=2, type=5
+        ];
+        assert!(detect_h264_keyframe(&stapa_with_idr));
+
+        // STAP-A without IDR
+        let stapa_no_idr = [
+            0x18, // STAP-A (24)
+            0x00, 0x02, 0x67, 0xAA, // SPS: size=2, type=7
+            0x00, 0x02, 0x68, 0xBB, // PPS: size=2, type=8
+        ];
+        assert!(!detect_h264_keyframe(&stapa_no_idr));
+
+        // FU-A start fragment with IDR type
+        let fua_start_idr = [
+            0x7C, // FU indicator: type=28 (FU-A)
+            0x85, // FU header: S=1, type=5 (IDR)
+            0x00, 0x00,
+        ];
+        assert!(detect_h264_keyframe(&fua_start_idr));
+
+        // FU-A start fragment with non-IDR type
+        let fua_start_non_idr = [
+            0x7C, // FU indicator: type=28 (FU-A)
+            0x81, // FU header: S=1, type=1 (non-IDR)
+            0x00, 0x00,
+        ];
+        assert!(!detect_h264_keyframe(&fua_start_non_idr));
+
+        // FU-A continuation fragment (S=0) - cannot detect
+        let fua_continuation = [
+            0x7C, // FU indicator: type=28 (FU-A)
+            0x05, // FU header: S=0, type=5 (IDR) but S=0
+            0x00, 0x00,
+        ];
+        assert!(!detect_h264_keyframe(&fua_continuation));
+
+        // FU-A too short
+        assert!(!detect_h264_keyframe(&[0x7C]));
     }
 }

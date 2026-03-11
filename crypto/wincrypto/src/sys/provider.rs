@@ -9,7 +9,7 @@ use std::time::Instant;
 use str0m_proto::crypto::SupportedAes128CmSha1_80;
 use str0m_proto::crypto::{AeadAes128GcmCipher, AeadAes256GcmCipher, Aes128CmSha1_80Cipher};
 use str0m_proto::crypto::{CryptoError, CryptoProvider};
-use str0m_proto::crypto::{DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::{DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider, DtlsVersion};
 use str0m_proto::crypto::{Sha1HmacProvider, Sha256Provider};
 use str0m_proto::crypto::{SrtpProvider, SupportedAeadAes128Gcm, SupportedAeadAes256Gcm};
 
@@ -298,7 +298,19 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         }
     }
 
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    fn new_dtls(
+        &self,
+        cert: &DtlsCert,
+        _now: Instant,
+        dtls_version: DtlsVersion,
+    ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+        if dtls_version != DtlsVersion::Dtls12 {
+            return Err(CryptoError::Other(
+                "WinCrypto DTLS provider only supports DTLS 1.2. \
+                 Use aws-lc-rs or rust-crypto backend for DTLS 1.3/Auto."
+                    .to_string(),
+            ));
+        }
         // For now, generate a new certificate since we need the Windows CERT_CONTEXT
         // In a real implementation, we'd need to reconstruct from the DER bytes
         let win_cert = crate::Certificate::new_self_signed(true, "CN=WebRTC")
@@ -353,9 +365,9 @@ impl DtlsInstance for WinCryptoDtlsInstance {
                 peer_fingerprint,
             }) => {
                 let profile = match srtp_profile_id {
-                    0x0001 => SrtpProfile::Aes128CmSha1_80,
-                    0x0007 => SrtpProfile::AeadAes128Gcm,
-                    0x0008 => SrtpProfile::AeadAes256Gcm,
+                    0x0001 => SrtpProfile::AES128_CM_SHA1_80,
+                    0x0007 => SrtpProfile::AEAD_AES_128_GCM,
+                    0x0008 => SrtpProfile::AEAD_AES_256_GCM,
                     _ => return DtlsOutput::Error(DtlsImplError::from("Unknown SRTP profile")),
                 };
 

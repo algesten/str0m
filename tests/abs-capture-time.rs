@@ -7,7 +7,7 @@ use str0m::rtp::{Extension, ExtensionMap};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn abs_capture_time_negotiation() -> Result<(), RtcError> {

@@ -189,8 +189,7 @@ impl LossController {
             self.reset_observations();
             trace!(
                 "LossController: ALR state changed (was: {}, now: {}), observations reset",
-                was_in_alr,
-                is_in_alr
+                was_in_alr, is_in_alr
             );
         }
 
@@ -1424,7 +1423,8 @@ mod test {
             assert!(
                 estimate > loss_limited && estimate <= Bitrate::mbps(1),
                 "During the recovery window after a loss spike the estimate should increase, but be bounded. loss_limited={}, estimate={}, expected <= 1 Mbps",
-                loss_limited, estimate
+                loss_limited,
+                estimate
             );
             assert_eq!(state, LossControllerState::Decreasing);
         }

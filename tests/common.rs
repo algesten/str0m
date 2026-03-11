@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use netem::{Input as NetemInput, Netem, NetemConfig, Output as NetemOutput};
 
 use pcap_file::pcap::PcapReader;
+use str0m::Candidate;
 use str0m::change::SdpApi;
 use str0m::crypto::CryptoProvider;
 use str0m::format::Codec;
@@ -16,10 +17,9 @@ use str0m::net::Protocol;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
-use str0m::Candidate;
 use str0m::{Event, Input, Output, Rtc, RtcError};
-use tracing::info_span;
 use tracing::Span;
+use tracing::info_span;
 
 /// Peer for test peers - Left or Right.
 /// Used to determine which crypto provider to use based on environment variables.
@@ -374,7 +374,7 @@ impl DerefMut for TestRtc {
 }
 
 pub fn init_log() {
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("off"));
 

@@ -8,11 +8,11 @@ repository = "https://github.com/algesten/str0m"
 readme = "README.md"
 keywords = ["webrtc", "streaming", "video", "audio", "media"]
 categories = ["web-programming", "multimedia", "network-programming"]
-edition = "2021"
+edition = "2024"
 exclude = ["/cargo_deny.sh", "/deny.toml", "/run-fuzz.sh"]
 
 # MSRV
-rust-version = "1.81.0"
+rust-version = "1.85.0"
 
 # Notes on OpenSSL
 # - Vendored (static link source build) ensures version consistency and easier
@@ -46,19 +46,19 @@ _internal_test_exports = ["str0m-proto/_internal_test_exports"]
 [dependencies]
 tracing = "0.1.37"
 fastrand = "2.0.1"
-#sctp-proto = "0.7.1"
-sctp-proto = { git = "https://github.com/algesten/sctp-proto", rev="bc2a9b4eea3407d54111e85761b48e05deef9c5c" }
+sctp-proto = "0.8.1"
 combine = "4.6.6"
 subtle = "2.0.0"
 arrayvec = "0.7.6"
 
 # STUN
-# Pin crc to avoid 3.4 which requires rustc 1.83
-crc = ">=3.0, <3.4"
+crc = "3"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m (required dependency)
-dimpl = { version = "0.2.4", default-features = false }
+dimpl = { version = "0.4.3", default-features = false }
+
+time = "0.3"
 
 str0m-proto = { version = "0.1.2", path = "proto" }
 
@@ -78,6 +78,9 @@ str0m-wincrypto = { version = "0.3.2", path = "crypto/wincrypto", optional = tru
 rouille = { version = "3.6.2", features = [] }
 str0m-rust-crypto = { version = "0.1.2", path = "crypto/rust-crypto" }
 netem = { package = "str0m-netem", version = "0.1.1", path = "netem" }
+
+tempfile = "3"
+url = "2"
 
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }

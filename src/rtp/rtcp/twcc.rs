@@ -1,10 +1,10 @@
-use std::collections::vec_deque;
 use std::collections::VecDeque;
+use std::collections::vec_deque;
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
-use super::{extend_u16, FeedbackMessageType, RtcpHeader, RtcpPacket};
+use super::{FeedbackMessageType, RtcpHeader, RtcpPacket, extend_u16};
 use super::{RtcpType, Ssrc, TransportType};
 
 use crate::rtp_::{TwccClusterId, TwccSeq};

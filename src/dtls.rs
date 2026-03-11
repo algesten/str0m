@@ -3,10 +3,10 @@ use std::io;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::time::Instant;
 
-use crate::crypto::dtls::{DtlsCert, DtlsOutput};
-use crate::crypto::dtls::{DtlsInstance, DtlsProvider};
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
+use crate::crypto::dtls::{DtlsCert, DtlsOutput};
+use crate::crypto::dtls::{DtlsInstance, DtlsProvider, DtlsVersion};
 use crate::crypto::{CryptoError, DtlsError};
 use crate::io::DatagramSend;
 use crate::util::already_happened;
@@ -52,9 +52,11 @@ impl Dtls {
         cert: &DtlsCert,
         dtls_provider: &dyn DtlsProvider,
         sha256_provider: &dyn Sha256Provider,
+        now: Instant,
+        dtls_version: DtlsVersion,
     ) -> Result<Self, DtlsError> {
         let instance = dtls_provider
-            .new_dtls(cert)
+            .new_dtls(cert, now, dtls_version)
             .map_err(DtlsError::CryptoError)?;
 
         // Compute fingerprint from the certificate DER bytes
@@ -135,9 +137,13 @@ impl Dtls {
 
     /// Send application data over DTLS.
     pub fn handle_input(&mut self, data: &[u8]) -> Result<(), DtlsError> {
-        self.instance
-            .send_application_data(data)
-            .map_err(|e| DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))))
+        self.instance.send_application_data(data).map_err(|e| {
+            if matches!(e, dimpl::Error::HandshakePending) {
+                DtlsError::Io(io::Error::new(io::ErrorKind::WouldBlock, e))
+            } else {
+                DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e)))
+            }
+        })
     }
 
     /// Handle a timeout event.

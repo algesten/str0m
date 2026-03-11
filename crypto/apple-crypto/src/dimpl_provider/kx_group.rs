@@ -6,14 +6,14 @@ use core_foundation::dictionary::CFMutableDictionary;
 use core_foundation::error::CFError;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use dimpl::buffer::Buf;
+use dimpl::crypto::Buf;
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 
 use dimpl::crypto::{ActiveKeyExchange, NamedGroup, SupportedKxGroup};
 
 // Security framework key exchange algorithm
 #[link(name = "Security", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     static kSecKeyAlgorithmECDHKeyExchangeStandard: *const std::ffi::c_void;
 
     fn SecKeyCopyKeyExchangeResult(

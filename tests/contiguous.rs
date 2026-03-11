@@ -1,13 +1,13 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
+use str0m::Rtc;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
-use str0m::Rtc;
 use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn contiguous_all_the_way() -> Result<(), RtcError> {

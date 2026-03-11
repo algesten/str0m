@@ -1,8 +1,8 @@
 use std::fmt;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 
-use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
 use crate::crypto::Aes128CmSha1_80Cipher;
+use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
 use crate::crypto::{AeadAes128Gcm, AeadAes256Gcm, Aes128CmSha1_80};
 use crate::crypto::{AeadAes128GcmCipher, AeadAes256GcmCipher};
 use crate::crypto::{CryptoProvider, Sha1HmacProvider, SrtpProvider};
@@ -47,7 +47,7 @@ impl SrtpContext {
         let sha1_hmac_provider = crypto.sha1_hmac_provider;
 
         match profile {
-            SrtpProfile::Aes128CmSha1_80 => {
+            SrtpProfile::AES128_CM_SHA1_80 => {
                 let key =
                     SrtpKey::<{ Aes128CmSha1_80::KEY_LEN }, { Aes128CmSha1_80::SALT_LEN }>::new(
                         mat, left,
@@ -62,7 +62,7 @@ impl SrtpContext {
                     sha1_hmac_provider,
                 }
             }
-            SrtpProfile::AeadAes128Gcm => {
+            SrtpProfile::AEAD_AES_128_GCM => {
                 let key = SrtpKey::<{ AeadAes128Gcm::KEY_LEN }, { AeadAes128Gcm::SALT_LEN }>::new(
                     mat, left,
                 );
@@ -76,7 +76,7 @@ impl SrtpContext {
                     sha1_hmac_provider,
                 }
             }
-            SrtpProfile::AeadAes256Gcm => {
+            SrtpProfile::AEAD_AES_256_GCM => {
                 let key = SrtpKey::<{ AeadAes256Gcm::KEY_LEN }, { AeadAes256Gcm::SALT_LEN }>::new(
                     mat, left,
                 );
@@ -90,6 +90,7 @@ impl SrtpContext {
                     sha1_hmac_provider,
                 }
             }
+            _ => panic!("Unexpected SRTP profile: {profile:?}"),
         }
     }
 
@@ -923,9 +924,9 @@ impl Derived {
 
     fn profile(&self) -> SrtpProfile {
         match self {
-            Derived::Aes128CmSha1_80 { .. } => SrtpProfile::Aes128CmSha1_80,
-            Derived::AeadAes128Gcm { .. } => SrtpProfile::AeadAes128Gcm,
-            Derived::AeadAes256Gcm { .. } => SrtpProfile::AeadAes256Gcm,
+            Derived::Aes128CmSha1_80 { .. } => SrtpProfile::AES128_CM_SHA1_80,
+            Derived::AeadAes128Gcm { .. } => SrtpProfile::AEAD_AES_128_GCM,
+            Derived::AeadAes256Gcm { .. } => SrtpProfile::AEAD_AES_256_GCM,
         }
     }
 }
@@ -1051,7 +1052,8 @@ mod test {
         fn unprotect_rtcp() {
             let key_mat = KeyingMaterial::new(&MAT);
             let crypto = crate::crypto::test_default_provider();
-            let mut ctx_rx = SrtpContext::new(crypto, SrtpProfile::Aes128CmSha1_80, &key_mat, true);
+            let mut ctx_rx =
+                SrtpContext::new(crypto, SrtpProfile::AES128_CM_SHA1_80, &key_mat, true);
             ctx_rx.srtcp_index = 1;
 
             let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();

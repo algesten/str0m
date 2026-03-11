@@ -1,4 +1,5 @@
 use crate::format::CodecSpec;
+use crate::format::Vp9PacketizerMode;
 use crate::media::ToPayload;
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::Frequency;
@@ -14,9 +15,18 @@ pub struct Payloader {
 }
 
 impl Payloader {
-    pub(crate) fn new(spec: CodecSpec) -> Self {
+    pub(crate) fn new(spec: CodecSpec, vp9_mode: Vp9PacketizerMode) -> Self {
+        let mut pack = CodecPacketizer::new(spec.codec, vp9_mode);
+
+        // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
+        if let CodecPacketizer::H265(ref mut h265) = pack {
+            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                h265.with_donl(true);
+            }
+        }
+
         Payloader {
-            pack: spec.codec.into(),
+            pack,
             clock_rate: spec.clock_rate,
         }
     }
@@ -55,8 +65,16 @@ impl Payloader {
             let nackable = !is_audio;
 
             let mut pkt_ext_vals = ext_vals.clone();
+
             if !first {
+                pkt_ext_vals.abs_capture_time = None;
                 pkt_ext_vals.user_values.remove::<VideoLayersAllocation>();
+            }
+
+            if !last {
+                pkt_ext_vals.video_orientation = None;
+                pkt_ext_vals.video_content_type = None;
+                pkt_ext_vals.video_timing = None;
             }
 
             stream.write_rtp(

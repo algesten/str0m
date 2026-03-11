@@ -1,18 +1,18 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
+use str0m::Rtc;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::rtp::Extension;
 use str0m::rtp::ExtensionSerializer;
 use str0m::rtp::ExtensionValues;
-use str0m::Rtc;
 use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{TestRtc, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn user_rtp_header_extension() -> Result<(), RtcError> {

@@ -2,17 +2,18 @@
 name = "str0m-apple-crypto"
 version = "0.1.4"
 description = "Apple CommonCrypto/Security framework backend for str0m WebRTC"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/algesten/str0m"
 readme = "README.md"
 
 # MSRV
-rust-version = "1.81.0"
+rust-version = "1.85.0"
 
 [dependencies]
 str0m-proto = { version = "0.1.2", path = "../../proto" }
-dimpl = { version = "0.2.4", default-features = false }
+dimpl = { version = "0.4.3", default-features = false }
+time = "0.3"
 
 # Apple platform bindings
 apple-cryptokit-rs = "0.2.1"
@@ -20,8 +21,7 @@ core-foundation = "0.10"
 security-framework = "3.5"
 
 # ASN.1/X.509 parsing for certificate handling
-# Pin der to 0.7.9 to avoid base64ct 1.8 which requires edition 2024
-der = "=0.7.9"
+der = "0.7"
 pkcs8 = { version = "0.10", features = ["pem"] }
 sec1 = "0.7"
 spki = "0.7"

@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::dtls::{KeyingMaterial, SrtpProfile};
-use str0m_proto::crypto::CryptoError;
+use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
 use crate::sys::{Certificate, Dtls, DtlsEvent};
 
@@ -38,7 +38,19 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         })
     }
 
-    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    fn new_dtls(
+        &self,
+        cert: &DtlsCert,
+        _now: Instant,
+        dtls_version: DtlsVersion,
+    ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+        if dtls_version != DtlsVersion::Dtls12 {
+            return Err(CryptoError::Other(
+                "WinCrypto DTLS provider only supports DTLS 1.2. \
+                 Use aws-lc-rs or rust-crypto backend for DTLS 1.3/Auto."
+                    .to_string(),
+            ));
+        }
         // Look up the Windows certificate by its DER bytes
         let win_cert = CERT_CACHE
             .lock()
@@ -99,9 +111,9 @@ impl WinCryptoDtlsInstance {
                 peer_cert_der,
             } => {
                 let profile = match srtp_profile_id {
-                    0x0001 => SrtpProfile::Aes128CmSha1_80,
-                    0x0007 => SrtpProfile::AeadAes128Gcm,
-                    0x0008 => SrtpProfile::AeadAes256Gcm,
+                    0x0001 => SrtpProfile::AES128_CM_SHA1_80,
+                    0x0007 => SrtpProfile::AEAD_AES_128_GCM,
+                    0x0008 => SrtpProfile::AEAD_AES_256_GCM,
                     _ => return, // Unknown profile, ignore
                 };
 

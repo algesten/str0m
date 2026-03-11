@@ -16,8 +16,8 @@ use crate::packet::H265ProfileTierLevel;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::{Candidate, IceCreds, VERSION};
 
-use super::parser::sdp_parser;
 use super::SdpError;
+use super::parser::sdp_parser;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdp {
@@ -599,11 +599,7 @@ impl MediaLine {
                             fn trim_and_no_minus(s: &str) -> Option<String> {
                                 let s = s.trim();
 
-                                if s == "-" {
-                                    None
-                                } else {
-                                    Some(s.into())
-                                }
+                                if s == "-" { None } else { Some(s.into()) }
                             }
 
                             if let Some(stream_id) = iter.next() {
@@ -935,6 +931,11 @@ pub enum FormatParam {
     /// H.265/HEVC profile, tier, and level.
     H265ProfileTierLevel(crate::packet::H265ProfileTierLevel),
 
+    /// H.265 sprop-max-don-diff parameter (RFC 7798 §7.1).
+    /// When > 0, DONL fields are included in RTP packets to support
+    /// out-of-order NAL unit decoding. Valid range: 0–32767.
+    SpropMaxDonDiff(u16),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -959,6 +960,11 @@ impl FormatParam {
             "profile" => v.parse().map(Profile).ok(),
             "level-idx" => v.parse().map(LevelIdx).ok(),
             "tier" => v.parse().map(Tier).ok(),
+            "sprop-max-don-diff" => v
+                .parse::<u16>()
+                .ok()
+                .filter(|&v| v <= 32767)
+                .map(SpropMaxDonDiff),
             "apt" => v.parse::<u8>().map(|v| Apt(Pt::from(v))).ok(),
             _ => None,
         }
@@ -1028,6 +1034,7 @@ impl fmt::Display for FormatParam {
                     ptl.level_id()
                 )
             }
+            SpropMaxDonDiff(v) => write!(f, "sprop-max-don-diff={}", *v),
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }
@@ -1476,9 +1483,9 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::VERSION;
     use crate::packet::H265ProfileTierLevel;
     use crate::rtp_::{Extension, Frequency};
-    use crate::VERSION;
 
     use super::*;
 
@@ -1693,7 +1700,10 @@ mod test {
                 }
             ],
         };
-            assert_eq!(&format!("{sdp}"), &format!("v=0\r\n\
+            assert_eq!(
+                &format!("{sdp}"),
+                &format!(
+                    "v=0\r\n\
             o=str0m-{VERSION} 5058682828002148772 2 IN IP4 0.0.0.0\r\n\
             s=-\r\n\
             t=0 0\r\n\
@@ -1760,7 +1770,9 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=fmtp:45 level-idx=5;profile=0;tier=0\r\n\
             a=rtpmap:46 rtx/90000\r\n\
             a=fmtp:46 apt=45\r\n\
-            "));
+            "
+                )
+            );
         }
 
         #[test]
@@ -1922,13 +1934,78 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             let params = FormatParam::parse_pairs(pairs);
 
             // Should have H265ProfileTierLevel and SpropMaxDonDiff
-            assert!(params
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::SpropMaxDonDiff(0)))
+            );
+        }
+
+        /// Test sprop-max-don-diff parsing, display, and round-trip for various values.
+        #[test]
+        fn sprop_max_don_diff_parse_and_display() {
+            // Parse standalone sprop-max-don-diff
+            let param = FormatParam::parse("sprop-max-don-diff", "32");
+            assert!(matches!(param, FormatParam::SpropMaxDonDiff(32)));
+
+            // Display format
+            assert_eq!(param.to_string(), "sprop-max-don-diff=32");
+
+            // Parse value 0 (DONL disabled)
+            let param0 = FormatParam::parse("sprop-max-don-diff", "0");
+            assert!(matches!(param0, FormatParam::SpropMaxDonDiff(0)));
+
+            // Parse max valid value (RFC 7798 §7.1: 0..32767)
+            let param_max = FormatParam::parse("sprop-max-don-diff", "32767");
+            assert!(matches!(param_max, FormatParam::SpropMaxDonDiff(32767)));
+
+            // Out-of-range value (32768) rejected per RFC 7798 §7.1
+            let param_over = FormatParam::parse("sprop-max-don-diff", "32768");
+            assert!(matches!(param_over, FormatParam::Unknown));
+
+            // Invalid value falls back to Unknown
+            let param_bad = FormatParam::parse("sprop-max-don-diff", "notanumber");
+            assert!(matches!(param_bad, FormatParam::Unknown));
+        }
+
+        /// Test that sprop-max-don-diff > 0 round-trips through H.265 fmtp with PTL params.
+        #[test]
+        fn h265_sprop_max_don_diff_nonzero_with_ptl() {
+            let pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "93".to_string()),
+                ("sprop-max-don-diff".to_string(), "32".to_string()),
+            ];
+
+            let params = FormatParam::parse_pairs(pairs);
+
+            // Should have both H265ProfileTierLevel and SpropMaxDonDiff(32)
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::SpropMaxDonDiff(32)))
+            );
+
+            // Verify PTL values are correct
+            if let Some(FormatParam::H265ProfileTierLevel(ptl)) = params
                 .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
-            // TODO: Uncomment when sprop-max-don-diff parsing is added
-            // assert!(params
-            //     .iter()
-            //     .any(|p| matches!(p, FormatParam::SpropMaxDonDiff(0))));
+                .find(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            {
+                assert_eq!(ptl.profile_id(), 1);
+                assert_eq!(ptl.tier_flag(), 0);
+                assert_eq!(ptl.level_id(), 93);
+            }
         }
     }
 
@@ -1952,17 +2029,23 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             let h264_params = FormatParam::parse_pairs(h264_pairs);
 
             // Should NOT have H265ProfileTierLevel
-            assert!(!h264_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !h264_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Should have ProfileLevelId (H.264)
-            assert!(h264_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::ProfileLevelId(_))));
-            assert!(h264_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::PacketizationMode(1))));
+            assert!(
+                h264_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::ProfileLevelId(_)))
+            );
+            assert!(
+                h264_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::PacketizationMode(1)))
+            );
         }
 
         /// Test that VP9's profile-id parameter (standalone) is not confused with H.265's
@@ -1975,14 +2058,18 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             let vp9_params = FormatParam::parse_pairs(vp9_pairs);
 
             // Should NOT have H265ProfileTierLevel (missing tier-flag and level-id)
-            assert!(!vp9_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !vp9_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Should have ProfileId (VP9)
-            assert!(vp9_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::ProfileId(0))));
+            assert!(
+                vp9_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::ProfileId(0)))
+            );
         }
 
         /// Test that AV1's parameters (profile, tier, level-idx) use different naming than
@@ -2001,17 +2088,23 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             // Should NOT have H265ProfileTierLevel
             // (AV1 uses different param names: profile vs profile-id,
             // tier vs tier-flag, level-idx vs level-id)
-            assert!(!av1_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !av1_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Should have AV1-specific params
-            assert!(av1_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::Profile(0))));
-            assert!(av1_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::LevelIdx(5))));
+            assert!(
+                av1_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::Profile(0)))
+            );
+            assert!(
+                av1_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::LevelIdx(5)))
+            );
             assert!(av1_params.iter().any(|p| matches!(p, FormatParam::Tier(0))));
         }
     }
@@ -2035,9 +2128,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             let params = FormatParam::parse_pairs(partial_pairs);
 
             // Should NOT have H265ProfileTierLevel (incomplete)
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
         }
 
         /// Test H.265 parameters in a complete SDP offer/answer scenario.
@@ -2205,11 +2300,13 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             assert!(fmtp.is_some());
 
             if let Some(MediaAttribute::Fmtp { values, .. }) = fmtp {
-                assert!(values
-                    .iter()
-                    .any(|v| matches!(v, FormatParam::H265ProfileTierLevel(p)
-                        if p.profile_id() == 2 && p.tier_flag() == 1 && p.level_id() == 153
-                    )));
+                assert!(
+                    values
+                        .iter()
+                        .any(|v| matches!(v, FormatParam::H265ProfileTierLevel(p)
+                            if p.profile_id() == 2 && p.tier_flag() == 1 && p.level_id() == 153
+                        ))
+                );
             }
 
             // Should have rtx mapping
@@ -2239,9 +2336,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             payload.as_media_attrs(&mut attrs);
 
             // Should NOT have fmtp line (it would be empty)
-            assert!(!attrs
-                .iter()
-                .any(|a| matches!(a, MediaAttribute::Fmtp { .. })));
+            assert!(
+                !attrs
+                    .iter()
+                    .any(|a| matches!(a, MediaAttribute::Fmtp { .. }))
+            );
         }
 
         /// Test H.265 with extreme profile/tier/level values at boundaries.
@@ -2303,15 +2402,21 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             let mixed_params = FormatParam::parse_pairs(mixed_order);
 
             // All should create H265ProfileTierLevel
-            assert!(normal_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
-            assert!(reversed_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
-            assert!(mixed_params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                normal_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
+            assert!(
+                reversed_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
+            assert!(
+                mixed_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // All should have the same values
             for params in [&normal_params, &reversed_params, &mixed_params] {
@@ -2335,9 +2440,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 ("level-id".to_string(), "93".to_string()),
             ];
             let params = FormatParam::parse_pairs(invalid_profile);
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Invalid tier-flag
             let invalid_tier = vec![
@@ -2346,9 +2453,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 ("level-id".to_string(), "93".to_string()),
             ];
             let params = FormatParam::parse_pairs(invalid_tier);
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Invalid level-id
             let invalid_level = vec![
@@ -2357,9 +2466,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 ("level-id".to_string(), "999".to_string()),
             ];
             let params = FormatParam::parse_pairs(invalid_level);
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
         }
     }
 
@@ -2473,9 +2584,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 .expect("should have fmtp");
 
             // Should contain H265ProfileTierLevel
-            assert!(fmtp
-                .iter()
-                .any(|v| matches!(v, FormatParam::H265ProfileTierLevel(p) if p.profile_id() == 2)));
+            assert!(
+                fmtp.iter().any(
+                    |v| matches!(v, FormatParam::H265ProfileTierLevel(p) if p.profile_id() == 2)
+                )
+            );
         }
 
         /// Test that only two of three H.265 params doesn't create PTL.
@@ -2488,9 +2601,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 ("tier-flag".to_string(), "0".to_string()),
             ];
             let params = FormatParam::parse_pairs(missing_level);
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Missing tier-flag
             let missing_tier = vec![
@@ -2498,9 +2613,11 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 ("level-id".to_string(), "93".to_string()),
             ];
             let params = FormatParam::parse_pairs(missing_tier);
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Missing profile-id
             let missing_profile = vec![
@@ -2508,16 +2625,20 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 ("level-id".to_string(), "93".to_string()),
             ];
             let params = FormatParam::parse_pairs(missing_profile);
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
 
             // Only one parameter
             let only_profile = vec![("profile-id".to_string(), "1".to_string())];
             let params = FormatParam::parse_pairs(only_profile);
-            assert!(!params
-                .iter()
-                .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_))));
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H265ProfileTierLevel(_)))
+            );
         }
 
         /// Test H.265 with Chrome-style profile-only in complete SDP.

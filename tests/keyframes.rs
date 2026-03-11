@@ -6,8 +6,8 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
+use common::{Peer, TestRtc, init_log, progress};
 use common::{av1_data, h264_data, h265_data, init_crypto_default, vp8_data, vp9_data};
-use common::{init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {

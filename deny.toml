@@ -26,7 +26,14 @@ exclude = ["rouille", "rand_core"]
 
 [advisories]
 yanked = "deny"
-ignore = []
+ignore = [
+  # DoS via stack exhaustion in time RFC 2822 parsing.
+  # Fix (>=0.3.47) requires Rust 1.88.0, our MSRV is 1.85.0.
+  # str0m only uses `time` transitively via dimpl/rcgen for certificate
+  # generation — no RFC 2822 parsing. A clippy disallowed-types rule in
+  # clippy.toml prevents accidental introduction of Rfc2822.
+  "RUSTSEC-2026-0009",
+]
 
 [bans]
 multiple-versions = "deny"

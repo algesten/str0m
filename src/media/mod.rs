@@ -3,17 +3,18 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
+use crate::RtcError;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
-use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
+use crate::io::{DATAGRAM_MTU, Id};
+use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
 use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::SRTP_OVERHEAD;
-use crate::RtcError;
 
 use crate::format::PayloadParams;
+use crate::format::Vp9PacketizerMode;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
 use crate::streams::{RtpPacket, Streams};
@@ -359,7 +360,16 @@ impl Media {
                 reordering_size_video
             };
 
-            let buffer = DepacketizingBuffer::new(codec.into(), hold_back);
+            let mut depack: CodecDepacketizer = codec.into();
+
+            // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
+            if let CodecDepacketizer::H265(ref mut h265) = depack {
+                if params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                    h265.with_donl(true);
+                }
+            }
+
+            let buffer = DepacketizingBuffer::new(depack, hold_back);
 
             self.depayloaders.insert((pt, rid), buffer);
         }
@@ -401,11 +411,12 @@ impl Media {
         pt: Pt,
         rid: Option<Rid>,
         params: &[PayloadParams],
+        vp9_mode: Vp9PacketizerMode,
     ) -> &mut Payloader {
         self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
-            Payloader::new(params.spec)
+            Payloader::new(params.spec, vp9_mode)
         })
     }
 
@@ -431,6 +442,7 @@ impl Media {
         &mut self,
         streams: &mut Streams,
         params: &[PayloadParams],
+        vp9_mode: Vp9PacketizerMode,
     ) -> Result<(), RtcError> {
         let Some(to_payload) = self.to_payload.pop_front() else {
             return Ok(());
@@ -450,7 +462,7 @@ impl Media {
 
         let pt = *pt;
 
-        let payloader = self.payloader_for(pt, *rid, params);
+        let payloader = self.payloader_for(pt, *rid, params, vp9_mode);
 
         const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs

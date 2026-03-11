@@ -5,7 +5,7 @@ use std::time::Duration;
 use netem::{Bitrate, NetemConfig};
 use str0m::RtcError;
 
-use crate::common::{connect_with_bwe, BweTestContext, Step};
+use crate::common::{BweTestContext, Step, connect_with_bwe};
 use crate::common::{init_crypto_default, init_log};
 
 // Test bitrate layers

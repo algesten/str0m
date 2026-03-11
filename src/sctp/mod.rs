@@ -605,7 +605,8 @@ impl RtcSctp {
                 match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
                     Ok(mut s) => {
                         if !entry.configure_reliability(&mut s) {
-                            continue;
+                            entry.set_state(StreamEntryState::Closed);
+                            return Some(SctpEvent::Close { id: entry.id });
                         }
 
                         let config = entry.config.as_ref().expect("config if AwaitOpen");
@@ -617,16 +618,25 @@ impl RtcSctp {
                             let n = dcep.marshal_to(&mut buf);
                             buf.truncate(n);
 
-                            let l = s
-                                .write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep)
-                                .expect("writing dcep open");
-                            assert!(n == l);
+                            match s.write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep) {
+                                Ok(l) => {
+                                    assert!(n == l);
+                                    entry.set_state(StreamEntryState::AwaitDcepAck);
 
-                            entry.set_state(StreamEntryState::AwaitDcepAck);
-
-                            // Start over with polling, since we might have caused some network traffic by
-                            // writing the DcepOpen.
-                            return self.do_poll();
+                                    // Start over with polling, since we might have caused
+                                    // some network traffic by writing the DcepOpen.
+                                    return self.do_poll();
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to write DCEP open on stream {}: {:?}",
+                                        entry.id, e
+                                    );
+                                    entry.do_close = true;
+                                    entry.set_state(StreamEntryState::Closed);
+                                    return Some(SctpEvent::Close { id: entry.id });
+                                }
+                            }
                         }
 
                         // Continuing means we are opening the stream out-of-band.
@@ -641,7 +651,8 @@ impl RtcSctp {
                                 entry.id
                             );
                             entry.do_close = true;
-                            continue;
+                            entry.set_state(StreamEntryState::Closed);
+                            return Some(SctpEvent::Close { id: entry.id });
                         }
 
                         // Continuing means we are opening the stream out-of-band. The error can happen
@@ -650,7 +661,8 @@ impl RtcSctp {
                     Err(e) => {
                         warn!("Opening stream {} failed: {:?}", entry.id, e);
                         entry.do_close = true;
-                        continue;
+                        entry.set_state(StreamEntryState::Closed);
+                        return Some(SctpEvent::Close { id: entry.id });
                     }
                 }
 
@@ -736,17 +748,26 @@ impl RtcSctp {
 
                             let mut obuf = [0];
                             DcepAck.marshal_to(&mut obuf);
-                            let l = stream
-                                .write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep)
-                                .expect("writing dcep open");
-                            assert!(obuf.len() == l);
+                            match stream.write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep) {
+                                Ok(l) => {
+                                    assert!(obuf.len() == l);
+                                    entry.set_state(StreamEntryState::Open);
 
-                            entry.set_state(StreamEntryState::Open);
-
-                            return Some(SctpEvent::Open {
-                                id: entry.id,
-                                label: dcep.label,
-                            });
+                                    return Some(SctpEvent::Open {
+                                        id: entry.id,
+                                        label: dcep.label,
+                                    });
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to write DCEP ack on stream {}: {:?}",
+                                        entry.id, e
+                                    );
+                                    entry.do_close = true;
+                                    entry.set_state(StreamEntryState::Closed);
+                                    return Some(SctpEvent::Close { id: entry.id });
+                                }
+                            }
                         }
                         StreamEntryState::AwaitDcepAck => {
                             let res: Result<DcepAck, _> = buf.as_slice().try_into();
@@ -968,5 +989,117 @@ impl From<(ReliabilityType, u32)> for Reliability {
             },
             ReliabilityType::Timed => Reliability::MaxPacketLifetime { lifetime: p as u16 },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to connect a client and server RtcSctp pair to Established state.
+    fn connect_client_server() -> (RtcSctp, RtcSctp) {
+        let now = Instant::now();
+        let mut client = RtcSctp::new();
+        let mut server = RtcSctp::new();
+
+        client.init(true, now, None);
+        server.init(false, now, None);
+
+        // Exchange packets until both are Established.
+        for _ in 0..20 {
+            // Drain client transmits -> feed to server
+            while let Some(t) = client.poll_transmit() {
+                if let Some(bufs) = transmit_to_vec(t) {
+                    for buf in bufs {
+                        server.handle_input(now, &buf);
+                    }
+                }
+            }
+            // Process server events
+            while let Some(e) = server.do_poll() {
+                if let SctpEvent::Transmit { packets } = e {
+                    for buf in packets {
+                        client.handle_input(now, &buf);
+                    }
+                }
+            }
+
+            // Drain server transmits -> feed to client
+            while let Some(t) = server.poll_transmit() {
+                if let Some(bufs) = transmit_to_vec(t) {
+                    for buf in bufs {
+                        client.handle_input(now, &buf);
+                    }
+                }
+            }
+            // Process client events
+            while let Some(e) = client.do_poll() {
+                if let SctpEvent::Transmit { packets } = e {
+                    for buf in packets {
+                        server.handle_input(now, &buf);
+                    }
+                }
+            }
+
+            if client.state == RtcSctpState::Established
+                && server.state == RtcSctpState::Established
+            {
+                break;
+            }
+        }
+
+        assert_eq!(client.state, RtcSctpState::Established);
+        assert_eq!(server.state, RtcSctpState::Established);
+
+        (client, server)
+    }
+
+    /// Regression test: when `assoc.open_stream()` returns `ErrStreamAlreadyExist`
+    /// for an in-band (DCEP) data channel, the entry must transition to Closed and
+    /// emit `SctpEvent::Close`. Before the fix, it stayed in `AwaitOpen` and retried
+    /// on every `do_poll()`, causing an infinite loop.
+    #[test]
+    fn err_stream_already_exist_in_band_returns_close() {
+        let (mut client, _server) = connect_client_server();
+
+        let stream_id: u16 = 0;
+
+        // Pre-create the stream in the association so the next open_stream() with the
+        // same ID will return ErrStreamAlreadyExist.
+        let assoc = client.assoc.as_mut().unwrap();
+        assoc
+            .open_stream(stream_id, PayloadProtocolIdentifier::Unknown)
+            .expect("first open_stream should succeed");
+
+        // Manually add an entry in AwaitOpen state with in-band config (negotiated: None).
+        // This simulates a locally-initiated in-band channel whose stream ID conflicts
+        // with one already opened by the remote peer.
+        client.entries.push(StreamEntry {
+            config: Some(ChannelConfig {
+                label: "test".to_string(),
+                ordered: true,
+                reliability: Reliability::Reliable,
+                negotiated: None, // in-band
+                protocol: String::new(),
+            }),
+            state: StreamEntryState::AwaitOpen,
+            id: stream_id,
+            do_close: false,
+            buffered_threshold: BufferedThresholdConfig::Unconfigured,
+        });
+
+        // Before the fix: do_poll() would return None (continue skipped close handling)
+        // and the entry would remain in AwaitOpen, retrying forever.
+        // After the fix: do_poll() should return SctpEvent::Close.
+        let event = client.do_poll();
+
+        assert!(
+            matches!(&event, Some(SctpEvent::Close { id }) if *id == stream_id),
+            "expected SctpEvent::Close for stream {stream_id}, got {event:?}"
+        );
+
+        // Verify entry transitioned to Closed.
+        let entry = client.entries.iter().find(|e| e.id == stream_id).unwrap();
+        assert_eq!(entry.state, StreamEntryState::Closed);
     }
 }

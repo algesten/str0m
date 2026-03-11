@@ -4,13 +4,13 @@ use std::time::{Duration, Instant};
 use super::Pacer;
 use super::PaddingRequest;
 use super::QueueState;
+use crate::Reason;
 use crate::bwe_::ProbeClusterConfig;
 use crate::bwe_::ProbeClusterState;
 use crate::bwe_::{log_pacer_media_debt, log_pacer_padding_debt};
 use crate::pacer::PacerReason;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
 use crate::util::Soonest;
-use crate::Reason;
 
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);

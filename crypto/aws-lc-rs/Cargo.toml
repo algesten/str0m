@@ -6,12 +6,13 @@ description = "aws-lc-rs backend for str0m WebRTC"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/algesten/str0m"
 readme = "README.md"
-edition = "2021"
+edition = "2024"
 
 # MSRV
-rust-version = "1.81.0"
+rust-version = "1.85.0"
 
 [dependencies]
 str0m-proto = { version = "0.1.2", path = "../../proto" }
-dimpl = { version = "0.2.4", default-features = false, features = ["aws-lc-rs", "rcgen"] }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+dimpl = { version = "0.4.3", default-features = false, features = ["aws-lc-rs", "rcgen"] }
+time = "0.3"

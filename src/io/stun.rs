@@ -5,7 +5,7 @@ use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use crc::{Crc, CRC_32_ISO_HDLC};
+use crc::{CRC_32_ISO_HDLC, Crc};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
@@ -19,11 +19,13 @@ pub struct StunTiming {
 }
 
 impl StunTiming {
-    /// Calculate the ICE timeout.
+    /// Calculate the ICE timeout of a successful pair.
     pub fn timeout(&self) -> Duration {
-        (0..=self.max_retransmits)
+        let base_timeout = (2..=self.max_retransmits)
             .map(|n| self.stun_resend_delay(n))
-            .sum::<Duration>()
+            .sum::<Duration>();
+
+        base_timeout + self.stun_resend_delay(self.max_retransmits)
     }
 
     /// Calculate the send delay given how many times we tried.

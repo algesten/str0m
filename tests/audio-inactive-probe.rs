@@ -6,7 +6,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Rtc, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 /// Similar test but with bandwidth estimation enabled to increase probe likelihood
 #[test]

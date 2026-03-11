@@ -17,9 +17,9 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use crate::Reason;
 use crate::rtp_::{Bitrate, DataSize, TwccClusterId, TwccSendRecord, TwccSeq};
 use crate::util::Soonest;
-use crate::Reason;
 
 mod acked_bitrate_estimator;
 mod alr_detector;

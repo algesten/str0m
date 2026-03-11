@@ -6,7 +6,7 @@ use str0m::{Candidate, Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn data_channel_direct() -> Result<(), RtcError> {
@@ -88,15 +88,17 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
         }
     }
 
-    assert!(l
-        .events
-        .iter()
-        .any(|(_, event)| event == &Event::ChannelOpen(cid, "my-chan".into())));
+    assert!(
+        l.events
+            .iter()
+            .any(|(_, event)| event == &Event::ChannelOpen(cid, "my-chan".into()))
+    );
     assert!(r.events.len() > 120);
-    assert!(l
-        .events
-        .iter()
-        .any(|(_, event)| event == &Event::ChannelClose(cid)));
+    assert!(
+        l.events
+            .iter()
+            .any(|(_, event)| event == &Event::ChannelClose(cid))
+    );
 
     // Assert that ChannelOpen happens quickly after IceConnectionStateChange(Completed)
     let ice_completed_time = l

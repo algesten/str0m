@@ -3,7 +3,7 @@ use std::time::Instant;
 use str0m::media::{MediaKind, MediaTime};
 use str0m::rtp::vla::{ResolutionAndFramerate, Serializer as VlaSerializer};
 use str0m::rtp::vla::{SimulcastStreamAllocation, SpatialLayerAllocation};
-use str0m::rtp::vla::{TemporalLayerAllocation, VideoLayersAllocation, URI as VLA_URI};
+use str0m::rtp::vla::{TemporalLayerAllocation, URI as VLA_URI, VideoLayersAllocation};
 use str0m::rtp::{Extension, ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
