@@ -201,9 +201,11 @@ macro_rules! impl_hmac_providers {
         #[cfg(test)]
         mod dimpl_common_hmac_tests {
             use super::*;
-            use $crate::crypto::dimpl::_reexport::{
-                Buf, HashAlgorithm, HkdfProvider, HmacProvider, PrfProvider,
-            };
+            use $crate::crypto::dimpl::_reexport::Buf;
+            use $crate::crypto::dimpl::_reexport::HashAlgorithm;
+            use $crate::crypto::dimpl::_reexport::HkdfProvider;
+            use $crate::crypto::dimpl::_reexport::HmacProvider;
+            use $crate::crypto::dimpl::_reexport::PrfProvider;
 
             fn hex_to_vec(hex: &str) -> Vec<u8> {
                 let hex = hex.replace(" ", "").replace("\n", "");
