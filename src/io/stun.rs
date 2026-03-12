@@ -75,7 +75,7 @@ impl Default for StunTiming {
 pub use super::StunError;
 
 /// STUN transaction ID.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TransId([u8; 12]);
 
 impl fmt::Debug for TransId {

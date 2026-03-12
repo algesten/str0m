@@ -15,6 +15,7 @@
   * Add `abs-capture-time` RTP header extension #864
   * Adjust `IceAgent::ice_timeout` to return timeout of successful pair #875
   * Fix infinite loop on in-band data channel stream conflict #873
+  * Add `Hash`, `PartialOrd` and `Ord` traits to `TransId` #905
   * Fix m-line ordering when using sdp `merge()` #887
 
 # 0.16.2
