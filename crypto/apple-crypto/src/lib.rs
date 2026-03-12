@@ -12,12 +12,11 @@ mod sha1;
 mod sha256;
 mod srtp;
 
-use str0m_proto::crypto::CryptoProvider;
-
 use dtls::AppleCryptoDtlsProvider;
 use sha1::AppleCryptoSha1HmacProvider;
 use sha256::AppleCryptoSha256Provider;
 use srtp::AppleCryptoSrtpProvider;
+use str0m_proto::crypto::CryptoProvider;
 
 /// Create the default Apple CommonCrypto crypto provider.
 ///

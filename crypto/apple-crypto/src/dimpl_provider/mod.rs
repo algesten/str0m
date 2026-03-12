@@ -6,12 +6,19 @@
 #![allow(unsafe_code)]
 
 mod cipher_suite;
+pub mod common;
 mod hash;
-mod hkdf;
 mod hmac;
 mod kx_group;
 mod sign;
-mod tls12;
+
+/// Re-exports for use by the `impl_hmac_providers!` macro.
+#[doc(hidden)]
+#[allow(unused_imports)]
+pub mod _reexport {
+    pub use dimpl::crypto::{Buf, HkdfProvider, HmacProvider, PrfProvider};
+    pub use dimpl::HashAlgorithm;
+}
 
 use dimpl::crypto::{CryptoProvider, SecureRandom};
 
@@ -25,9 +32,9 @@ pub fn default_provider() -> CryptoProvider {
         key_provider: &sign::KEY_PROVIDER,
         secure_random: &SECURE_RANDOM,
         hash_provider: &hash::HASH_PROVIDER,
-        prf_provider: &tls12::PRF_PROVIDER,
+        prf_provider: &hmac::HMAC_PROVIDER,
         hmac_provider: &hmac::HMAC_PROVIDER,
-        hkdf_provider: &hkdf::HKDF_PROVIDER,
+        hkdf_provider: &hmac::HMAC_PROVIDER,
     }
 }
 
