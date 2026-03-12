@@ -7,7 +7,7 @@ use str0m::Rtc;
 use str0m::RtcError;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 /// Test certificate fingerprint format and uniqueness.
 #[test]

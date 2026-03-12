@@ -1,10 +1,11 @@
 use std::time::Instant;
 
 mod common;
+use common::TestRtc;
 use common::init_crypto_default;
 use common::init_log;
 use common::negotiate;
-use common::TestRtc;
+use str0m::Rtc;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::format::CodecSpec;
@@ -14,9 +15,8 @@ use str0m::media::Direction;
 use str0m::media::Frequency;
 use str0m::media::MediaKind;
 use str0m::rtp::{Extension, ExtensionMap};
-use str0m::Rtc;
-use tracing::info_span;
 use tracing::Span;
+use tracing::info_span;
 
 #[test]
 pub fn change_default_pt() {

@@ -1,15 +1,16 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
+use crate::Event;
 use crate::bwe::BweKind;
 use crate::bwe_::Bwe;
 use crate::config::KeyingMaterial;
-use crate::crypto::dtls::SrtpProfile;
 use crate::crypto::CryptoProvider;
+use crate::crypto::dtls::SrtpProfile;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
-use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN, DatagramSend};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
@@ -19,17 +20,16 @@ use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
 use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
-use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
-use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccPacketId};
+use crate::rtp_::SeqNo;
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
+use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
-use crate::util::{already_happened, not_happening, Soonest};
-use crate::Event;
-use crate::{net, Reason};
+use crate::util::{Soonest, already_happened, not_happening};
+use crate::{Reason, net};
 use crate::{RtcConfig, RtcError};
 
 /// Minimum time we delay between sending nacks. This should be
@@ -468,9 +468,7 @@ impl Session {
             // we should not spend any CPU cycles towards decrypting it.
             trace!(
                 "Ignoring dupe packet mid: {} seq_no: {} is_repair: {}",
-                mid,
-                seq_no,
-                is_repair
+                mid, seq_no, is_repair
             );
             return;
         }
@@ -791,11 +789,10 @@ impl Session {
         // Figure out which, if any, queue to poll
         // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
         let (midrid, cluster_id) = self.pacer.poll_queue()?;
-        let media = self
-            .medias
-            .iter()
-            .find(|m| m.mid() == midrid.mid())
-            .expect("index is media");
+        let Some(media) = self.medias.iter().find(|m| m.mid() == midrid.mid()) else {
+            trace!("Pacer pointed to mid {} which has no media", midrid.mid());
+            return None;
+        };
 
         let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;

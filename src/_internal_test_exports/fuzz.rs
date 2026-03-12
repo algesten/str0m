@@ -10,9 +10,9 @@ use crate::rtp_::{Frequency, MediaTime, RtpHeader};
 use crate::streams::register::ReceiverRegister;
 use crate::streams::rtx_cache_buf::EvictingBuffer;
 
+use super::Rng;
 #[allow(unused)]
 use super::setup::{random_config, random_extmap};
-use super::Rng;
 
 pub fn rtx_buffer(data: &[u8]) {
     if data.len() < 4 {

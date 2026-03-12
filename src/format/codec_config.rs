@@ -7,7 +7,7 @@ use crate::rtp_::{Direction, Frequency};
 
 use super::codec::{Codec, CodecSpec};
 use super::format_params::FormatParams;
-use super::payload_params::{Claimed, PayloadParams, PREFERED_RANGES};
+use super::payload_params::{Claimed, PREFERED_RANGES, PayloadParams};
 
 /// Default payload type for PCMU (G.711 μ-law).
 pub(crate) const PT_PCMU: Pt = Pt::new_with_value(0);
@@ -554,10 +554,12 @@ mod test {
         config.update_params(&remote_h264_params, Direction::RecvOnly);
 
         // Verify PT 109 is now locked as RTX for H264
-        assert!(config
-            .params()
-            .iter()
-            .any(|p| p.resend() == Some(109.into()) && p.locked));
+        assert!(
+            config
+                .params()
+                .iter()
+                .any(|p| p.resend() == Some(109.into()) && p.locked)
+        );
 
         // Step 3: Remote offers sendonly Opus PT 109
         // This should NOT crash - PT 109 should be remapped to 111 (Opus default)
@@ -588,10 +590,12 @@ mod test {
         assert!(opus_param.unwrap().locked, "Opus param should be locked");
 
         // Verify H264 RTX PT 109 is still locked
-        assert!(config
-            .params()
-            .iter()
-            .any(|p| p.resend() == Some(109.into()) && p.locked));
+        assert!(
+            config
+                .params()
+                .iter()
+                .any(|p| p.resend() == Some(109.into()) && p.locked)
+        );
     }
 
     #[test]

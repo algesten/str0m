@@ -255,7 +255,7 @@ fn expected(first: SeqNo, last: SeqNo) -> i64 {
 mod test {
     use std::time::{Duration, Instant};
 
-    use crate::streams::register::{expected, packets_lost, ReceiverRegister};
+    use crate::streams::register::{ReceiverRegister, expected, packets_lost};
 
     #[test]
     fn jitter_at_0() {

@@ -9,26 +9,26 @@ use crate::sdp::MediaType;
 use crate::rtp::vla::encode_leb_u63;
 
 mod av1;
-pub use av1::detect_av1_keyframe;
 pub use av1::Av1CodecExtra;
+pub use av1::detect_av1_keyframe;
 use av1::{Av1Depacketizer, Av1Packetizer};
 
 mod g7xx;
 use g7xx::{G711Depacketizer, G711Packetizer, G722Packetizer};
 
 mod h264;
-pub use h264::detect_h264_keyframe;
 pub use h264::H264CodecExtra;
+pub use h264::detect_h264_keyframe;
 pub use h264::{H264Depacketizer, H264Packetizer};
 
 mod h264_profile;
 pub(crate) use h264_profile::H264ProfileLevel;
 
 mod h265;
-pub use h265::detect_h265_keyframe;
 pub use h265::H265CodecExtra;
 use h265::H265Depacketizer;
 pub use h265::H265Packetizer;
+pub use h265::detect_h265_keyframe;
 
 mod h265_profile;
 pub(crate) use h265_profile::H265ProfileTierLevel;
@@ -37,14 +37,14 @@ mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
-pub use vp8::detect_vp8_keyframe;
 pub use vp8::Vp8CodecExtra;
+pub use vp8::detect_vp8_keyframe;
 pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
 mod vp9;
-pub use vp9::detect_vp9_keyframe;
 pub use vp9::Vp9CodecExtra;
 pub use vp9::Vp9PacketizerMode;
+pub use vp9::detect_vp9_keyframe;
 use vp9::{Vp9Depacketizer, Vp9Packetizer};
 
 mod null;
@@ -156,36 +156,36 @@ pub use error::PacketError;
 
 /// Helper to replace Bytes. Provides get_u8 and get_u16 over some buffer of bytes.
 pub(crate) trait BitRead {
-    fn remaining(&self) -> usize;
+    fn remaining_bits(&self) -> usize;
     fn remaining_bytes(&self) -> usize;
-    fn get_offset(&self) -> usize;
+    fn byte_offset(&self) -> usize;
     fn get_u8(&mut self) -> Option<u8>;
     fn get_u16(&mut self) -> Option<u16>;
-    fn get_remaining(&mut self) -> Vec<u8>;
-    fn get_bytes(&mut self, size: usize) -> Option<Vec<u8>>;
-    fn get_variant(&mut self) -> Option<usize>;
-    fn consume(&mut self, bytes: usize);
+    fn get_remaining(&mut self) -> &[u8];
+    fn get_bytes(&mut self, count: usize) -> Option<&[u8]>;
+    fn get_leb128(&mut self) -> Option<usize>;
+    fn skip_bytes(&mut self, count: usize);
 }
 
 impl BitRead for (&[u8], usize) {
     #[inline(always)]
-    fn remaining(&self) -> usize {
+    fn remaining_bits(&self) -> usize {
         (self.0.len() * 8).saturating_sub(self.1)
     }
 
     #[inline(always)]
     fn remaining_bytes(&self) -> usize {
-        self.remaining() / 8
+        self.remaining_bits() / 8
     }
 
     #[inline(always)]
-    fn get_offset(&self) -> usize {
+    fn byte_offset(&self) -> usize {
         self.1 / 8
     }
 
     #[inline(always)]
     fn get_u8(&mut self) -> Option<u8> {
-        if self.remaining() < 8 {
+        if self.remaining_bits() < 8 {
             return None;
         }
 
@@ -204,39 +204,33 @@ impl BitRead for (&[u8], usize) {
     }
 
     fn get_u16(&mut self) -> Option<u16> {
-        if self.remaining() < 16 {
+        if self.remaining_bits() < 16 {
             return None;
         }
         Some(u16::from_be_bytes([self.get_u8()?, self.get_u8()?]))
     }
 
-    fn get_remaining(&mut self) -> Vec<u8> {
-        let mut remaining = Vec::new();
-        while self.remaining() > 7 {
-            remaining.push(self.get_u8().unwrap());
-        }
-
-        remaining
+    fn get_remaining(&mut self) -> &[u8] {
+        let offset = self.1 / 8;
+        self.1 = self.0.len() * 8;
+        &self.0[offset..]
     }
 
-    fn get_bytes(&mut self, size: usize) -> Option<Vec<u8>> {
-        if self.remaining() < (size * 8) {
+    fn get_bytes(&mut self, count: usize) -> Option<&[u8]> {
+        let count_bits = count.saturating_mul(8);
+        if self.remaining_bits() < count_bits {
             return None;
         }
-
-        let mut bytes = Vec::new();
-        while bytes.len() < size {
-            bytes.push(self.get_u8().unwrap());
-        }
-
-        Some(bytes)
+        let offset = self.1 / 8;
+        self.1 += count_bits;
+        Some(&self.0[offset..offset + count])
     }
 
-    fn get_variant(&mut self) -> Option<usize> {
+    fn get_leb128(&mut self) -> Option<usize> {
         let mut temp_value: usize = 0;
 
         for i in (0..64).step_by(7) {
-            if self.remaining() < 8 {
+            if self.remaining_bits() < 8 {
                 return None;
             }
             let byte = self.get_u8().unwrap();
@@ -250,12 +244,13 @@ impl BitRead for (&[u8], usize) {
         None
     }
 
-    fn consume(&mut self, bytes: usize) {
-        if self.remaining() < bytes * 8 {
+    fn skip_bytes(&mut self, count: usize) {
+        let bits = count.saturating_mul(8);
+        if self.remaining_bits() < bits {
             return;
         }
 
-        self.1 += bytes * 8;
+        self.1 += bits;
     }
 }
 

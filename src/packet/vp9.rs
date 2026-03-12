@@ -603,14 +603,14 @@ impl Vp9Depacketizer {
         reader: &mut dyn BitRead,
         mut payload_index: usize,
     ) -> Result<usize, PacketError> {
-        if reader.remaining() == 0 {
+        if reader.remaining_bits() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
         let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
         // PID present?
         if (b & 0x80) != 0 {
-            if reader.remaining() == 0 {
+            if reader.remaining_bits() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
             // M == 1, PID is 15bit
@@ -649,7 +649,7 @@ impl Vp9Depacketizer {
         reader: &mut dyn BitRead,
         mut payload_index: usize,
     ) -> Result<usize, PacketError> {
-        if reader.remaining() == 0 {
+        if reader.remaining_bits() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
         let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
@@ -680,7 +680,7 @@ impl Vp9Depacketizer {
         reader: &mut dyn BitRead,
         mut payload_index: usize,
     ) -> Result<usize, PacketError> {
-        if reader.remaining() == 0 {
+        if reader.remaining_bits() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
         self.tl0picidx = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
@@ -707,7 +707,7 @@ impl Vp9Depacketizer {
                 return Err(PacketError::ErrTooManyPDiff);
             }
 
-            if reader.remaining() == 0 {
+            if reader.remaining_bits() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
             b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
@@ -745,7 +745,7 @@ impl Vp9Depacketizer {
         reader: &mut dyn BitRead,
         mut payload_index: usize,
     ) -> Result<usize, PacketError> {
-        if reader.remaining() == 0 {
+        if reader.remaining_bits() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
 
@@ -764,7 +764,7 @@ impl Vp9Depacketizer {
         }
 
         if self.y {
-            if reader.remaining() < 4 * ns {
+            if reader.remaining_bits() < 4 * ns {
                 return Err(PacketError::ErrShortPacket);
             }
 
@@ -776,7 +776,7 @@ impl Vp9Depacketizer {
         }
 
         if self.g {
-            if reader.remaining() == 0 {
+            if reader.remaining_bits() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
 
@@ -785,7 +785,7 @@ impl Vp9Depacketizer {
         }
 
         for i in 0..self.ng as usize {
-            if reader.remaining() == 0 {
+            if reader.remaining_bits() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
             let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
@@ -795,7 +795,7 @@ impl Vp9Depacketizer {
             self.pgu.push(b & 0x10 != 0);
 
             let r = ((b >> 2) & 0x3) as usize;
-            if reader.remaining() < r {
+            if reader.remaining_bits() < r {
                 return Err(PacketError::ErrShortPacket);
             }
 

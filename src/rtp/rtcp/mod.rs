@@ -6,8 +6,8 @@ use std::collections::VecDeque;
 pub use header::{RtcpHeader, RtcpType};
 
 mod list;
-use list::private::WordSized;
 pub use list::ReportList;
+use list::private::WordSized;
 
 mod fmt;
 pub use fmt::{FeedbackMessageType, PayloadType, TransportType};
@@ -45,9 +45,9 @@ pub use rtcpfb::RtcpFb;
 mod remb;
 pub use remb::Remb;
 
-use super::extend_u16;
 use super::SeqNo;
 use super::Ssrc;
+use super::extend_u16;
 
 pub trait RtcpPacket {
     /// The...
@@ -433,7 +433,7 @@ impl<'a> TryFrom<&'a [u8]> for Rtcp {
                     PayloadType::PictureLossIndication => Rtcp::Pli(buf.try_into()?),
                     PayloadType::SliceLossIndication => return Err("Ignore PayloadType type: SLI"),
                     PayloadType::ReferencePictureSelectionIndication => {
-                        return Err("Ignore PayloadType type: RPSI")
+                        return Err("Ignore PayloadType type: RPSI");
                     }
                     PayloadType::FullIntraRequest => Rtcp::Fir(buf.try_into()?),
                     PayloadType::ApplicationLayer => {
@@ -460,11 +460,7 @@ impl WordSized for Ssrc {
 /// Pad up to the next word (4 byte) boundary.
 fn pad_bytes_to_word(n: usize) -> usize {
     let pad = 4 - n % 4;
-    if pad == 4 {
-        n
-    } else {
-        n + pad
-    }
+    if pad == 4 { n } else { n + pad }
 }
 
 #[cfg(test)]

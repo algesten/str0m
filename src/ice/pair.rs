@@ -2,9 +2,9 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::io::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
 use crate::Candidate;
 use crate::Pii;
+use crate::io::{DEFAULT_MAX_RETRANSMITS, Id, StunTiming, TransId};
 
 use super::CandidateKind;
 
@@ -484,8 +484,6 @@ impl fmt::Debug for CandidatePair {
 
 #[cfg(test)]
 mod tests {
-    use tracing_subscriber::util::SubscriberInitExt;
-
     use super::*;
 
     #[test]

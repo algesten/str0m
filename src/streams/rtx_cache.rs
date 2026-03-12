@@ -4,8 +4,8 @@ use std::time::Instant;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
 use crate::rtp_::SeqNo;
 
-use super::rtx_cache_buf::EvictingBuffer;
 use super::RtpPacket;
+use super::rtx_cache_buf::EvictingBuffer;
 
 const RTX_CACHE_SIZE_QUANTIZER: usize = 25;
 const RTX_CACHE_QUANTIZE_SLOTS: usize = DATAGRAM_MAX_PACKET_SIZE / RTX_CACHE_SIZE_QUANTIZER;

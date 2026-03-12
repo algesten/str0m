@@ -23,7 +23,7 @@ mod pii_log_redaction {
     use std::sync::Once;
     use tracing::{Event as TracingEvent, Subscriber};
     use tracing_subscriber::prelude::*;
-    use tracing_subscriber::{layer::Context, Layer, Registry};
+    use tracing_subscriber::{Layer, Registry, layer::Context};
 
     static INIT: Once = Once::new();
 

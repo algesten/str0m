@@ -400,7 +400,7 @@ mod test {
     mod rate_controller {
         use std::time::Instant;
 
-        use super::{duration_ms, RateControl, Signal};
+        use super::{RateControl, Signal, duration_ms};
 
         fn make_control(estimated_bitrate: u64) -> RateControl {
             RateControl::new(estimated_bitrate.into(), 10_000.into(), 50_000_000.into())
@@ -504,7 +504,8 @@ mod test {
             rate_controller.update(Signal::Normal, 60_000.into(), None, now + duration_ms(1500));
             // NB: This matches libWebRTC but diverges from the spec
             assert_eq!(
-                rate_controller.estimated_bitrate().as_u64(), 66_251,
+                rate_controller.estimated_bitrate().as_u64(),
+                66_251,
                 "After adjusting on overuse we immediately return to increase on the next normal signal"
             );
 

@@ -1,8 +1,8 @@
 use std::str::from_utf8;
 
 use super::list::private::WordSized;
-use super::{pad_bytes_to_word, ReportList, RtcpHeader, RtcpPacket};
 use super::{FeedbackMessageType, RtcpType, Ssrc};
+use super::{ReportList, RtcpHeader, RtcpPacket, pad_bytes_to_word};
 
 /// Multiple source descriptions (SDES).
 #[derive(Debug, Clone, PartialEq, Eq)]

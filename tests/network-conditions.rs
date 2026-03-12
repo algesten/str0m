@@ -9,7 +9,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, negotiate, progress};
 
 /// Test connection with high latency (500ms+).
 #[test]

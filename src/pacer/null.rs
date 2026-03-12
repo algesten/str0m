@@ -4,9 +4,9 @@ use std::time::Instant;
 use super::Pacer;
 use super::PaddingRequest;
 use super::QueueState;
+use crate::Reason;
 use crate::pacer::PacerReason;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
-use crate::Reason;
 
 /// A null pacer that doesn't pace.
 #[derive(Debug)]

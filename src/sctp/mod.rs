@@ -598,16 +598,25 @@ impl RtcSctp {
                             let n = dcep.marshal_to(&mut buf);
                             buf.truncate(n);
 
-                            let l = s
-                                .write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep)
-                                .expect("writing dcep open");
-                            assert!(n == l);
+                            match s.write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep) {
+                                Ok(l) => {
+                                    assert!(n == l);
+                                    entry.set_state(StreamEntryState::AwaitDcepAck);
 
-                            entry.set_state(StreamEntryState::AwaitDcepAck);
-
-                            // Start over with polling, since we might have caused some network traffic by
-                            // writing the DcepOpen.
-                            return self.do_poll();
+                                    // Start over with polling, since we might have caused
+                                    // some network traffic by writing the DcepOpen.
+                                    return self.do_poll();
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to write DCEP open on stream {}: {:?}",
+                                        entry.id, e
+                                    );
+                                    entry.do_close = true;
+                                    entry.set_state(StreamEntryState::Closed);
+                                    return Some(SctpEvent::Close { id: entry.id });
+                                }
+                            }
                         }
 
                         // Continuing means we are opening the stream out-of-band.
@@ -719,17 +728,26 @@ impl RtcSctp {
 
                             let mut obuf = [0];
                             DcepAck.marshal_to(&mut obuf);
-                            let l = stream
-                                .write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep)
-                                .expect("writing dcep open");
-                            assert!(obuf.len() == l);
+                            match stream.write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep) {
+                                Ok(l) => {
+                                    assert!(obuf.len() == l);
+                                    entry.set_state(StreamEntryState::Open);
 
-                            entry.set_state(StreamEntryState::Open);
-
-                            return Some(SctpEvent::Open {
-                                id: entry.id,
-                                label: dcep.label,
-                            });
+                                    return Some(SctpEvent::Open {
+                                        id: entry.id,
+                                        label: dcep.label,
+                                    });
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        "Failed to write DCEP ack on stream {}: {:?}",
+                                        entry.id, e
+                                    );
+                                    entry.do_close = true;
+                                    entry.set_state(StreamEntryState::Closed);
+                                    return Some(SctpEvent::Close { id: entry.id });
+                                }
+                            }
                         }
                         StreamEntryState::AwaitDcepAck => {
                             let res: Result<DcepAck, _> = buf.as_slice().try_into();

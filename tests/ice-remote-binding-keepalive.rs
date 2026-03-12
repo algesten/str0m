@@ -5,7 +5,7 @@ use netem::NetemConfig;
 use str0m::{Event, IceConnectionState, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 /// Test that candidate pairs are kept alive based on incoming binding requests,
 /// even when outgoing binding requests are not being responded to.

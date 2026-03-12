@@ -264,7 +264,7 @@ impl MediaTime {
 
     #[inline(always)]
     fn same_base(t0: MediaTime, t1: MediaTime) -> (MediaTime, MediaTime) {
-        let max = Frequency(t0.1 .0.max(t1.1 .0));
+        let max = Frequency(t0.1.0.max(t1.1.0));
         (t0.rebase(max), t1.rebase(max))
     }
 

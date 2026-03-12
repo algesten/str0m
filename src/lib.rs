@@ -409,7 +409,6 @@
 //! To enable RTP mode
 //!
 //! ```
-//! # #[cfg(feature = "openssl")] {
 //! # use std::time::Instant;
 //! # use str0m::Rtc;
 //! let rtc = Rtc::builder()
@@ -417,7 +416,6 @@
 //!     // This disables `MediaEvent` and the `Writer::write` API.
 //!     .set_rtp_mode(true)
 //!     .build(Instant::now());
-//! # }
 //! ```
 //!
 //! RTP mode gives us some new API points.
@@ -661,7 +659,7 @@ use crypto::Fingerprint;
 
 mod dtls;
 use crate::crypto::dtls::DtlsOutput;
-use crate::crypto::{from_feature_flags, CryptoProvider};
+use crate::crypto::{CryptoProvider, DtlsError, from_feature_flags};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
 
@@ -689,8 +687,8 @@ pub mod config {
 #[doc(hidden)]
 pub mod ice {
     pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{default_local_preference, LocalPreference};
     pub use crate::ice_::{IceAgent, IceAgentEvent};
+    pub use crate::ice_::{LocalPreference, default_local_preference};
     pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
@@ -770,7 +768,7 @@ use media::{MediaAdded, MediaChanged, MediaData};
 pub mod change;
 
 mod util;
-use util::{not_happening, Soonest};
+use util::{Soonest, not_happening};
 
 mod session;
 use session::Session;
@@ -1083,12 +1081,10 @@ impl Rtc {
     /// To configure the instance, use [`RtcConfig`].
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
     /// use std::time::Instant;
     /// use str0m::Rtc;
     ///
     /// let rtc = Rtc::new(Instant::now());
-    /// # }
     /// ```
     pub fn new(start: Instant) -> Self {
         let config = RtcConfig::default();
@@ -1098,13 +1094,11 @@ impl Rtc {
     /// Creates a config builder that configures an [`Rtc`] instance.
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
     /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// let rtc = Rtc::builder()
     ///     .set_ice_lite(true)
     ///     .build(Instant::now());
-    /// # }
     /// ```
     pub fn builder() -> RtcConfig {
         RtcConfig::new()
@@ -1192,7 +1186,6 @@ impl Rtc {
     /// The instance can be manually disconnected using [`Rtc::disconnect()`].
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
     /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new(Instant::now());
@@ -1201,7 +1194,6 @@ impl Rtc {
     ///
     /// rtc.disconnect();
     /// assert!(!rtc.is_alive());
-    /// # }
     /// ```
     pub fn is_alive(&self) -> bool {
         self.alive
@@ -1213,14 +1205,12 @@ impl Rtc {
     /// produce anymore network output or events.
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
     /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new(Instant::now());
     ///
     /// rtc.disconnect();
     /// assert!(!rtc.is_alive());
-    /// # }
     /// ```
     pub fn disconnect(&mut self) {
         if self.alive {
@@ -1243,7 +1233,6 @@ impl Rtc {
     /// however advisable to add at least one local candidate before starting the instance.
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
     /// # use std::time::Instant;
     /// # use str0m::{Rtc, Candidate};
     /// let mut rtc = Rtc::new(Instant::now());
@@ -1252,7 +1241,6 @@ impl Rtc {
     /// let c = Candidate::host(a, "udp").unwrap();
     ///
     /// rtc.add_local_candidate(c);
-    /// # }
     /// ```
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
@@ -1269,7 +1257,6 @@ impl Rtc {
     /// that are "trickled" from the other side.
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
     /// # use std::time::Instant;
     /// # use str0m::{Rtc, Candidate};
     /// let mut rtc = Rtc::new(Instant::now());
@@ -1278,7 +1265,6 @@ impl Rtc {
     /// let c = Candidate::host(a, "udp").unwrap();
     ///
     /// rtc.add_remote_candidate(c);
-    /// }
     /// ```
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
@@ -1468,7 +1454,7 @@ impl Rtc {
                     //
                 }
                 IceAgentEvent::IceConnectionStateChange(v) => {
-                    return Ok(Output::Event(Event::IceConnectionStateChange(v)))
+                    return Ok(Output::Event(Event::IceConnectionStateChange(v)));
                 }
                 IceAgentEvent::DiscoveredRecv { proto, source } => {
                     debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
@@ -1550,6 +1536,11 @@ impl Rtc {
                     self.next_dtls_timeout = Some(t);
                     break;
                 }
+                other => {
+                    return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
+                        format!("Unexpected DTLS output: {other:?}"),
+                    ))));
+                }
             }
         }
 
@@ -1592,7 +1583,7 @@ impl Rtc {
                         warn!("Drop ChannelClose event for id: {:?}", id);
                         continue;
                     };
-                    self.chan.remove_channel(id);
+                    self.chan.remove_channel(id, self.last_now);
                     return Ok(Output::Event(Event::ChannelClose(id)));
                 }
                 SctpEvent::Data { id, binary, data } => {
@@ -1695,20 +1686,12 @@ impl Rtc {
     /// is a timeout.
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
-    /// # use str0m::{Rtc, Input, Output, Reason};
+    /// # use str0m::{Rtc, Reason};
     /// # use std::time::Instant;
-    /// let mut rtc = Rtc::new(Instant::now());
+    /// let rtc = Rtc::new(Instant::now());
     ///
-    /// let output = rtc.poll_output().unwrap();
-    ///
-    /// // Reason updates every time we get an Output::Timeout
-    /// assert!(matches!(output, Output::Timeout(_)));
-    ///
-    /// // If there are no timeouts scheduled, we get NotHappening. The timeout
-    /// // value itself will be in the distant future.
-    /// assert_eq!(rtc.last_timeout_reason(), Reason::DTLS);
-    /// # }
+    /// // Before any call to poll_output(), the reason is the default.
+    /// assert_eq!(rtc.last_timeout_reason(), Reason::NotHappening);
     /// ```
     pub fn last_timeout_reason(&self) -> Reason {
         self.last_timeout_reason
@@ -1839,6 +1822,7 @@ impl Rtc {
         self.last_now = now;
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
+        self.chan.expire_closed_stream_ids(now);
         self.chan.handle_timeout(now, &mut self.sctp);
         self.session.handle_timeout(now)?;
 

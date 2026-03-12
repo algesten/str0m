@@ -99,8 +99,7 @@ impl AlrDetector {
                     self.state = AlrState::InAlr(now);
                     trace!(
                         "ALR: Entered ALR state (ratio={:.3} > threshold={:.3})",
-                        ratio,
-                        self.start_budget_level_ratio
+                        ratio, self.start_budget_level_ratio
                     );
                 }
             }
@@ -110,8 +109,7 @@ impl AlrDetector {
                     self.state = AlrState::NotInAlr;
                     trace!(
                         "ALR: Exited ALR state (ratio={:.3} < threshold={:.3})",
-                        ratio,
-                        self.stop_budget_level_ratio
+                        ratio, self.stop_budget_level_ratio
                     );
                 }
             }

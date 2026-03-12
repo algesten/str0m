@@ -32,7 +32,7 @@ const kCCOptionECBMode: u32 = 2;
 
 // CommonCrypto Function Declarations
 
-extern "C" {
+unsafe extern "C" {
     // CCCrypt (one-shot encryption/decryption)
 
     fn CCCrypt(

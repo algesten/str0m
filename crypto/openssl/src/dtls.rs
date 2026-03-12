@@ -16,7 +16,7 @@ use openssl::ssl::{HandshakeError, MidHandshakeSslStream, Ssl};
 use openssl::ssl::{SslContext, SslContextBuilder, SslMethod};
 use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::extension::{BasicConstraints, ExtendedKeyUsage, KeyUsage};
-use openssl::x509::{X509Builder, X509NameBuilder, X509};
+use openssl::x509::{X509, X509Builder, X509NameBuilder};
 
 use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
@@ -425,6 +425,7 @@ fn srtp_profile_openssl_name(profile: SrtpProfile) -> &'static str {
         SrtpProfile::AES128_CM_SHA1_80 => "SRTP_AES128_CM_SHA1_80",
         SrtpProfile::AEAD_AES_128_GCM => "SRTP_AEAD_AES_128_GCM",
         SrtpProfile::AEAD_AES_256_GCM => "SRTP_AEAD_AES_256_GCM",
+        _ => panic!("Unexpected SRTP profile: {profile:?}"),
     }
 }
 

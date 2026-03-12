@@ -6,16 +6,15 @@ description = "Pure Rust crypto backend for str0m WebRTC"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/algesten/str0m"
 readme = "README.md"
-edition = "2021"
+edition = "2024"
 
 # MSRV
-rust-version = "1.81.0"
+rust-version = "1.85.0"
 
 [dependencies]
 str0m-proto = { version = "0.1.2", path = "../../proto" }
-dimpl = { version = "0.3.0", default-features = false, features = ["rust-crypto", "rcgen"] }
-# Pin time to avoid time-core 0.1.8+ which requires edition 2024 (rustc 1.85+)
-time = ">=0.3, <0.3.37"
+dimpl = { version = "0.4.3", default-features = false, features = ["rust-crypto", "rcgen"] }
+time = "0.3"
 hmac = { version = "0.12.1" }
 aes-gcm = { version = "0.10" }
 aes = { version = "0.8" }

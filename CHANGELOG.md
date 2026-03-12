@@ -1,5 +1,12 @@
 # Unreleased
 
+  * Update to dimpl 0.4.3 #902
+  * Update ~dimpl to 0.4.2~ (see 902) and sctp-proto to 0.8.1 #892
+  * MSRV 1.85, Edition 2024 and bump deps #891
+  * Reduce allocations in AV1 packetizer/depacketizer #889
+  * Workaround DCEP panics due to reuse race condition #883
+  * sprop-max-don-diff SDP parameter #885
+  * Reduce number of RTP header extensions sent on every packet #880
   * Add RTP-level keyframe detection for VP8, VP9, AV1, H264 and H265 #869
   * VP9 switch packetizer to non-flexible mode (F=0) #868
   * Fix H265 SDP negotiation level handling #872
@@ -9,6 +16,7 @@
   * Adjust `IceAgent::ice_timeout` to return timeout of successful pair #875
   * Fix infinite loop on in-band data channel stream conflict #873
   * Add `Hash`, `PartialOrd` and `Ord` traits to `TransId` #905
+  * Fix m-line ordering when using sdp `merge()` #887
 
 # 0.16.2
 
