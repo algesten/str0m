@@ -20,8 +20,8 @@ use super::{CryptoError, DtlsVersion};
 #[doc(hidden)]
 #[allow(unused_imports)]
 pub mod _reexport {
-    pub use dimpl::crypto::{Buf, HkdfProvider, HmacProvider, PrfProvider};
     pub use dimpl::HashAlgorithm;
+    pub use dimpl::crypto::{Buf, HkdfProvider, HmacProvider, PrfProvider};
 }
 
 /// Implement this trait with a single HMAC function, then invoke
@@ -337,17 +337,19 @@ macro_rules! impl_hmac_providers {
                 // Test vector from https://github.com/xomexh/TLS-PRF
                 let mut output = Buf::new();
                 let mut scratch = Buf::new();
-                assert!(provider()
-                    .prf_tls12(
-                        &hex_as_bytes!(b"9bbe436ba940f017b17652849a71db35"),
-                        "test label",
-                        &hex_as_bytes!(b"a0ba9f936cda311827a6f796ffd5198c"),
-                        &mut output,
-                        100,
-                        &mut scratch,
-                        HashAlgorithm::SHA256,
-                    )
-                    .is_ok());
+                assert!(
+                    provider()
+                        .prf_tls12(
+                            &hex_as_bytes!(b"9bbe436ba940f017b17652849a71db35"),
+                            "test label",
+                            &hex_as_bytes!(b"a0ba9f936cda311827a6f796ffd5198c"),
+                            &mut output,
+                            100,
+                            &mut scratch,
+                            HashAlgorithm::SHA256,
+                        )
+                        .is_ok()
+                );
                 assert_eq!(
                     output.as_ref(),
                     &hex_as_bytes!(
@@ -556,7 +558,7 @@ impl DimplCryptoDtlsInstance {
             _ => {
                 return Err(CryptoError::Other(format!(
                     "Unsupported DTLS version: {dtls_version}"
-                )))
+                )));
             }
         };
 
