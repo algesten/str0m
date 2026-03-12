@@ -6,19 +6,10 @@
 #![allow(unsafe_code)]
 
 mod cipher_suite;
-pub mod common;
 mod hash;
 mod hmac;
 mod kx_group;
 mod sign;
-
-/// Re-exports for use by the `impl_hmac_providers!` macro.
-#[doc(hidden)]
-#[allow(unused_imports)]
-pub mod _reexport {
-    pub use dimpl::crypto::{Buf, HkdfProvider, HmacProvider, PrfProvider};
-    pub use dimpl::HashAlgorithm;
-}
 
 use dimpl::crypto::{CryptoProvider, SecureRandom};
 

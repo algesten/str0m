@@ -1,7 +1,8 @@
 //! HMAC implementations using Apple CommonCrypto.
 
-use crate::dimpl_provider::common::{impl_hmac_providers, DimplCommonHmacProvider};
 use dimpl::HashAlgorithm;
+use str0m_proto::crypto::dimpl::DimplCommonHmacProvider;
+use str0m_proto::impl_hmac_providers;
 
 #[derive(Debug, Default)]
 pub(super) struct AppleHmacProvider;

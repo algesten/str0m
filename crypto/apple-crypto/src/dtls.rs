@@ -10,7 +10,7 @@ use str0m_proto::crypto::CryptoError;
 use str0m_proto::crypto::DtlsVersion;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsInstance, DtlsProvider};
 
-use crate::dimpl_provider::common::{build_pkcs8, build_self_signed_certificate};
+use str0m_proto::crypto::dimpl::{build_pkcs8, build_self_signed_certificate};
 
 // Certificate Generation
 
@@ -90,12 +90,13 @@ impl DtlsProvider for AppleCryptoDtlsProvider {
         now: Instant,
         dtls_version: DtlsVersion,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
-        crate::dimpl_provider::common::DimplCryptoDtlsInstance::try_new(
+        str0m_proto::crypto::dimpl::DimplCryptoDtlsInstance::try_new(
             "AppleCryptoDtlsInstance",
             cert,
             now,
             dtls_version,
             self.is_test(),
+            crate::dimpl_provider::default_provider(),
         )
     }
 }

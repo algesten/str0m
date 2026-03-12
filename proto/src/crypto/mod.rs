@@ -5,6 +5,8 @@ pub use provider::{DtlsVersion, Sha1HmacProvider, Sha256Provider};
 pub use provider::{SrtpProvider, SupportedAeadAes128Gcm};
 pub use provider::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
+pub mod dimpl;
+
 mod error;
 pub use error::{CryptoError, DtlsError};
 
