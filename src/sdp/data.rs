@@ -638,6 +638,17 @@ impl MediaLine {
 
         v
     }
+
+    /// Get the max-message-size attribute value, if present
+    pub fn max_message_size(&self) -> Option<usize> {
+        self.attrs.iter().find_map(|a| {
+            if let MediaAttribute::MaxMessageSize(size) = a {
+                Some(*size)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1564,11 +1575,9 @@ mod test {
                         MediaAttribute::IceOptions("trickle".into()),
                         MediaAttribute::Fingerprint(Fingerprint {
                             hash_func: "sha-256".into(),
-                            bytes: vec![
-                                140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128,
-                                168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115,
-                                70, 96, 32, 220,
-                            ],
+                            bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8,
+                                        128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73,
+                                        37, 115, 70, 96, 32, 220]
                         }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("0".into()),
@@ -1581,7 +1590,7 @@ mod test {
                         MediaAttribute::SendRecv,
                         MediaAttribute::Msid(Msid {
                             stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(),
-                            track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into(),
+                            track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into()
                         }),
                         MediaAttribute::RtcpMux,
                         MediaAttribute::RtpMap {
@@ -1589,36 +1598,35 @@ mod test {
                             value: RtpMap {
                                 codec: "opus".into(),
                                 clock_rate: Frequency::FORTY_EIGHT_KHZ,
-                                channels: Some(2),
-                            },
+                                channels: Some(2)
+                            }
                         },
                         MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },
                         MediaAttribute::Fmtp {
                             pt: 111.into(),
-                            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+                            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)]
                         },
                         MediaAttribute::Ssrc {
                             ssrc: 3_948_621_874.into(),
                             attr: "cname".into(),
-                            value: "xeXs3aE9AOBn00yJ".into(),
+                            value: "xeXs3aE9AOBn00yJ".into()
                         },
                         MediaAttribute::Ssrc {
                             ssrc: 3_948_621_874.into(),
                             attr: "msid".into(),
-                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1"
-                                .into(),
+                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK \
+                            f78dde68-7055-4e20-bb37-433803dd1ed1".into()
                         },
                         MediaAttribute::Ssrc {
                             ssrc: 3_948_621_874.into(),
                             attr: "mslabel".into(),
-                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(),
+                            value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into()
                         },
                         MediaAttribute::Ssrc {
                             ssrc: 3_948_621_874.into(),
                             attr: "label".into(),
-                            value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into(),
-                        },
-                    ],
+                            value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into()
+                        }],
                 },
                 MediaLine {
                     typ: MediaType::Video,
@@ -1633,11 +1641,9 @@ mod test {
                         MediaAttribute::IceOptions("trickle".into()),
                         MediaAttribute::Fingerprint(Fingerprint {
                             hash_func: "sha-256".into(),
-                            bytes: vec![
-                                140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128,
-                                168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115,
-                                70, 96, 32, 220,
-                            ],
+                            bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8,
+                                        128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73,
+                                        37, 115, 70, 96, 32, 220]
                         }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("1".into()),
@@ -1655,7 +1661,7 @@ mod test {
                         MediaAttribute::SendRecv,
                         MediaAttribute::Msid(Msid {
                             stream_id: "-".into(),
-                            track_id: "4018fd65-ac50-4861-89a4-1f2cc35bbb5e".into(),
+                            track_id: "4018fd65-ac50-4861-89a4-1f2cc35bbb5e".into()
                         }),
                         MediaAttribute::RtcpMux,
                         MediaAttribute::RtcpRsize,
@@ -1664,8 +1670,8 @@ mod test {
                             value: RtpMap {
                                 codec: Codec::Av1,
                                 clock_rate: Frequency::NINETY_KHZ,
-                                channels: None,
-                            },
+                                channels: None
+                            }
                         },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "goog-remb".into() },
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "transport-cc".into() },
@@ -1674,21 +1680,22 @@ mod test {
                         MediaAttribute::RtcpFb { pt: 45.into(), value: "nack pli".into() },
                         MediaAttribute::Fmtp {
                             pt: 45.into(),
-                            values: vec![
-                                FormatParam::LevelIdx(5),
-                                FormatParam::Profile(0),
-                                FormatParam::Tier(0),
-                            ],
+                            values: vec![FormatParam::LevelIdx(5),
+                                         FormatParam::Profile(0),
+                                         FormatParam::Tier(0)]
                         },
                         MediaAttribute::RtpMap {
                             pt: 46.into(),
                             value: RtpMap {
                                 codec: Codec::Rtx,
                                 clock_rate: Frequency::NINETY_KHZ,
-                                channels: None,
-                            },
+                                channels: None
+                            }
                         },
-                        MediaAttribute::Fmtp { pt: 46.into(), values: vec![FormatParam::Apt(45.into())] }
+                        MediaAttribute::Fmtp {
+                            pt: 46.into(),
+                            values: vec![FormatParam::Apt(45.into())]
+                        }
                     ],
                 }
             ],
@@ -1708,8 +1715,8 @@ mod test {
             a=ice-ufrag:S5hk\r\n\
             a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
             a=ice-options:trickle\r\n\
-            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:\
-5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27\
+            :96:CA:08:49:25:73:46:60:20:DC\r\n\
             a=setup:actpass\r\n\
             a=mid:0\r\n\
             a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n\
