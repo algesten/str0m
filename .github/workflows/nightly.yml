@@ -42,6 +42,35 @@ jobs:
           R_CRYPTO: ${{ matrix.r_crypto }}
         run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto --lib --bins --tests
 
+  windows-crypto-dimpl-test:
+    name: Windows dimpl - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        l_crypto: ["rust-crypto", "aws", "wincrypto_dimpl"]
+        r_crypto: ["rust-crypto", "aws", "wincrypto_dimpl"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: dimpl-${{ matrix.l_crypto }}-${{ matrix.r_crypto }}
+
+      - name: Test L:${{ matrix.l_crypto }} <-> R:${{ matrix.r_crypto }}
+        env:
+          L_CRYPTO: ${{ matrix.l_crypto }}
+          R_CRYPTO: ${{ matrix.r_crypto }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,wincrypto_dimpl --lib --bins --tests
+
   linux-crypto-test:
     name: Linux - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
     runs-on: ubuntu-latest

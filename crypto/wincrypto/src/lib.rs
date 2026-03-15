@@ -1,8 +1,14 @@
-//! Windows SChannel + CNG implementation of cryptographic functions.
-//! DTLS via Windows SChannel.
+//! Windows CNG implementation of cryptographic functions.
+//! DTLS via SChannel (`dtls12` feature, default) or dimpl.
 
-#[macro_use]
-extern crate tracing;
+#[cfg(not(feature = "dtls12"))]
+mod dimpl_provider;
+
+#[cfg(feature = "dtls12")]
+mod schannel_dtls;
+
+#[cfg(not(feature = "dtls12"))]
+mod dimpl_dtls;
 
 mod srtp;
 use srtp::WinCryptoSrtpProvider;
