@@ -11,11 +11,14 @@ edition = "2024"
 rust-version = "1.85.0"
 
 [dependencies]
-tracing = "0.1.37"
-str0m-proto = { version = "0.1.1", path = "../../proto" }
+str0m-proto = { version = "0.1.2", path = "../../proto" }
+dimpl = { version = "0.4.2", default-features = false }
+time = "0.3"
+
 windows = { version = "0.62", features = [
   "Win32_Security_Cryptography",
-  "Win32_Security_Authentication_Identity",
-  "Win32_Security_Credentials",
-  "Win32_System_Rpc",
 ] }
+
+[dev-dependencies]
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
