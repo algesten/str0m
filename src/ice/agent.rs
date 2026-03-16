@@ -624,14 +624,20 @@ impl IceAgent {
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
 
-                debug!("Add local candidate: {:?}", Pii(&c));
+                let new_idx = self.local_candidates.len();
+
+                debug!("Add local candidate ({new_idx}): {:?}", Pii(&c));
                 self.local_candidates.push(c);
-                self.local_candidates.len() - 1
+
+                new_idx
             }
         } else {
-            debug!("Add local candidate: {:?}", Pii(&c));
+            let new_idx = self.local_candidates.len();
+
+            debug!("Add local candidate ({new_idx}): {:?}", Pii(&c));
             self.local_candidates.push(c);
-            self.local_candidates.len() - 1
+
+            new_idx
         };
 
         // These are the indexes of the remote candidates this candidate should be paired with.
@@ -740,9 +746,12 @@ impl IceAgent {
                 other.set_discarded(false);
                 idx
             } else {
-                debug!("Add remote candidate: {:?}", Pii(&c));
+                let new_idx = self.remote_candidates.len();
+
+                debug!("Add remote candidate ({new_idx}): {:?}", Pii(&c));
                 self.remote_candidates.push(c);
-                self.remote_candidates.len() - 1
+
+                new_idx
             }
         };
 
