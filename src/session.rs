@@ -109,6 +109,9 @@ pub(crate) struct Session {
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
+    // Pending PsfbApp (PSFB FMT=15) messages to emit as events.
+    pending_psfb_apps: VecDeque<crate::rtp_::PsfbApp>,
+
     #[cfg(feature = "_internal_test_exports")]
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
 }
@@ -173,6 +176,7 @@ impl Session {
             } else {
                 None
             },
+            pending_psfb_apps: VecDeque::new(),
             #[cfg(feature = "_internal_test_exports")]
             pending_probe: None,
         }
@@ -303,6 +307,11 @@ impl Session {
         trace!("Created feedback TWCC: {:?}", twcc);
         self.feedback_tx.push_front(Rtcp::Twcc(twcc));
         Some(())
+    }
+
+    /// Enqueue a PsfbApp (PSFB FMT=15) message for transmission.
+    pub fn send_psfb_app(&mut self, psfb: crate::rtp_::PsfbApp) {
+        self.feedback_tx.push_back(Rtcp::PsfbApp(psfb));
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
@@ -603,6 +612,11 @@ impl Session {
                 continue;
             }
 
+            if let RtcpFb::PsfbApp(psfb) = fb {
+                self.pending_psfb_apps.push_back(psfb);
+                continue;
+            }
+
             if fb.is_for_rx() {
                 let Some(stream) = self.streams.stream_rx(&fb.ssrc()) else {
                     continue;
@@ -648,6 +662,10 @@ impl Session {
             if let Some(p) = raw_packets.pop_front() {
                 return Some(Event::RawPacket(p));
             }
+        }
+
+        if let Some(psfb) = self.pending_psfb_apps.pop_front() {
+            return Some(Event::PsfbApp(psfb));
         }
 
         // This must be before pending_packet.take() since we need to emit the unpaused event

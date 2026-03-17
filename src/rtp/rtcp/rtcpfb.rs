@@ -1,4 +1,4 @@
-use super::{DlrrItem, FirEntry, NackEntry, ReceptionReport, Remb, ReportBlock, ReportList};
+use super::{DlrrItem, FirEntry, NackEntry, PsfbApp, ReceptionReport, Remb, ReportBlock, ReportList};
 use super::{Rrtr, Rtcp, Sdes, SenderInfo, Ssrc, Twcc};
 
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
@@ -16,6 +16,7 @@ pub enum RtcpFb {
     Fir(FirEntry),                     // rx -> tx
     Twcc(Twcc),                        // rx -> tx
     Remb(Remb),                        // rx -> tx
+    PsfbApp(PsfbApp),                  // rx -> tx
 }
 
 impl RtcpFb {
@@ -72,6 +73,9 @@ impl RtcpFb {
                 Rtcp::Remb(v) => {
                     q.push(RtcpFb::Remb(v));
                 }
+                Rtcp::PsfbApp(v) => {
+                    q.push(RtcpFb::PsfbApp(v));
+                }
             }
         }
         q.into_iter()
@@ -90,6 +94,7 @@ impl RtcpFb {
             RtcpFb::Fir(v) => v.ssrc,
             RtcpFb::Twcc(v) => v.ssrc,
             RtcpFb::Remb(v) => v.ssrcs.first().map(|ssrc| (*ssrc).into()).unwrap_or(v.ssrc),
+            RtcpFb::PsfbApp(v) => v.media_ssrc,
         }
     }
 }
