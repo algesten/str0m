@@ -3,24 +3,11 @@ use crate::rtp::Ssrc;
 use super::RtcpType;
 use super::{FeedbackMessageType, PayloadType, RtcpHeader, RtcpPacket};
 
-/*
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |V=2|P| FMT=15  |   PT=206      |             length            |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                  SSRC of packet sender                        |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                  SSRC of media source                         |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                  Application-dependent data                   |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-*/
-
 /// Payload-Specific Feedback Application Layer message (PSFB FMT=15, PT=206).
 ///
-/// This is a catch-all for FMT=15 RTCP PSFB messages that are not REMB.
-/// Used by Teams for VSR (Video Source Request) among other things.
+/// Generic container for FMT=15 RTCP PSFB messages that are not REMB.
+/// Carries an opaque application-dependent payload after the standard
+/// sender and media SSRC fields (RFC 4585 Section 6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PsfbApp {
     /// SSRC of the sender of this feedback message.
@@ -118,5 +105,53 @@ mod tests {
 
         let header = psfbapp.header();
         assert_eq!(header.rtcp_type, RtcpType::PayloadSpecificFeedback);
+    }
+
+    #[test]
+    fn test_psfbapp_non_aligned_payload() {
+        // Payload not aligned to 4 bytes — should still round-trip
+        let input = PsfbApp {
+            sender_ssrc: 100.into(),
+            media_ssrc: 200.into(),
+            payload: vec![0xAA, 0xBB, 0xCC], // 3 bytes, needs 1 byte padding
+        };
+
+        let mut buf = [0u8; 256];
+        let written = input.write_to(&mut buf);
+
+        // Total should be 4 (header) + 4 (sender) + 4 (media) + 4 (padded payload) = 16
+        assert_eq!(written, 16);
+
+        let parsed = PsfbApp::try_from(&buf[4..written]).unwrap();
+        assert_eq!(parsed.sender_ssrc, input.sender_ssrc);
+        assert_eq!(parsed.media_ssrc, input.media_ssrc);
+        // Parsed payload includes padding byte
+        assert_eq!(parsed.payload.len(), 4);
+        assert_eq!(&parsed.payload[..3], &[0xAA, 0xBB, 0xCC]);
+        assert_eq!(parsed.payload[3], 0); // padding
+    }
+
+    #[test]
+    fn test_psfbapp_empty_payload() {
+        let input = PsfbApp {
+            sender_ssrc: 1.into(),
+            media_ssrc: 2.into(),
+            payload: vec![],
+        };
+
+        let mut buf = [0u8; 256];
+        let written = input.write_to(&mut buf);
+        assert_eq!(written, 12); // header + sender + media, no payload
+
+        let parsed = PsfbApp::try_from(&buf[4..written]).unwrap();
+        assert_eq!(parsed.sender_ssrc, input.sender_ssrc);
+        assert_eq!(parsed.media_ssrc, input.media_ssrc);
+        assert!(parsed.payload.is_empty());
+    }
+
+    #[test]
+    fn test_psfbapp_too_short_rejected() {
+        let buf = [0u8; 7]; // Less than 8 bytes
+        assert!(PsfbApp::try_from(&buf[..]).is_err());
     }
 }
