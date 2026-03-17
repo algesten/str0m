@@ -743,6 +743,7 @@ pub mod rtp {
         pub use crate::rtp_::{Dlrr, NackEntry, ReceptionReport, ReportBlock};
         pub use crate::rtp_::{FirEntry, ReceiverReport, SenderInfo, SenderReport, Twcc};
         pub use crate::rtp_::{ReportList, Rrtr, Rtcp, Sdes, SdesType};
+        pub use crate::rtp_::PsfbApp;
     }
     use self::rtcp::Rtcp;
 
@@ -984,6 +985,11 @@ pub enum Event {
 
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
+
+    /// Incoming RTCP Payload-Specific Feedback Application Layer message (PSFB FMT=15, PT=206).
+    ///
+    /// Used for application-specific feedback such as VSR (Video Source Request).
+    PsfbApp(rtp::rtcp::PsfbApp),
 
     /// Debug output of incoming and outgoing RTCP/RTP packets.
     ///
@@ -1979,6 +1985,13 @@ impl Rtc {
         let n = self.change_counter;
         self.change_counter += 1;
         n
+    }
+
+    /// Enqueue a PsfbApp (RTCP PSFB FMT=15, PT=206) message for transmission.
+    ///
+    /// Used for application-specific feedback such as VSR (Video Source Request).
+    pub fn send_psfb_app(&mut self, psfb: rtp::rtcp::PsfbApp) {
+        self.session.send_psfb_app(psfb);
     }
 
     /// The codec configs for sending/receiving data.
