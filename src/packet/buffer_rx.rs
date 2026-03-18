@@ -634,11 +634,13 @@ mod test {
                             version: 2,
                             has_padding: false,
                             has_extension: true,
+                            csrc_count: 0,
                             marker,
                             payload_type: Pt::new_with_value(98),
                             sequence_number: seq,
                             timestamp: time,
                             ssrc: Ssrc::from(2930203832),
+                            csrc: [0; 15],
                             ext_vals: ExtensionValues {
                                 transport_cc: Some(cc),
                                 ..Default::default()

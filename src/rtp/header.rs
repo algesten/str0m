@@ -12,7 +12,8 @@ pub struct RtpHeader {
     pub has_padding: bool,
     /// RTP packet has "RTP header extensions".
     pub has_extension: bool,
-    // pub csrc_count: usize, // "contributing source" (other ssrc)
+    /// Number of contributing source identifiers.
+    pub csrc_count: usize,
     /// For video, this marker signifies the end of a series of packets that
     /// together form a single video frame.
     /// For audio, it marks the beginning of a talkspurt, which is a burst of
@@ -27,7 +28,8 @@ pub struct RtpHeader {
     pub timestamp: u32,
     /// Sender source identifier.
     pub ssrc: Ssrc,
-    // pub csrc: [u32; 15],
+    /// Contributing source identifiers (CSRC). Up to 15 values per RFC 3550.
+    pub csrc: [u32; 15],
     /// The extension values parsed using the mapping via SDP.
     pub ext_vals: ExtensionValues,
     /// Length of header.
@@ -36,9 +38,11 @@ pub struct RtpHeader {
 
 impl RtpHeader {
     pub(crate) fn write_to(&self, buf: &mut [u8], exts: &ExtensionMap) -> usize {
+        assert!(self.csrc_count <= 15, "CSRC count must be <= 15");
         buf[0] = 0b10_0_0_0000
             | if self.has_padding { 1 << 5 } else { 0 }
-            | if self.has_extension { 1 << 4 } else { 0 };
+            | if self.has_extension { 1 << 4 } else { 0 }
+            | (self.csrc_count as u8);
 
         assert!(*self.payload_type <= 127);
         buf[1] = *self.payload_type & 0b0111_1111 | if self.marker { 1 << 7 } else { 0 };
@@ -47,10 +51,17 @@ impl RtpHeader {
         buf[4..8].copy_from_slice(&self.timestamp.to_be_bytes());
         buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
 
-        let exts_form = exts.form(&self.ext_vals);
-        buf[12..14].copy_from_slice(&exts_form.serialize());
+        let csrc_len = self.csrc_count * 4;
+        for i in 0..self.csrc_count {
+            let offset = 12 + i * 4;
+            buf[offset..offset + 4].copy_from_slice(&self.csrc[i].to_be_bytes());
+        }
 
-        let ext_buf = &mut buf[16..];
+        let ext_start = 12 + csrc_len;
+        let exts_form = exts.form(&self.ext_vals);
+        buf[ext_start..ext_start + 2].copy_from_slice(&exts_form.serialize());
+
+        let ext_buf = &mut buf[ext_start + 4..];
         let mut ext_len = exts.write_to(ext_buf, &self.ext_vals, exts_form);
 
         let pad = 4 - ext_len % 4;
@@ -62,9 +73,9 @@ impl RtpHeader {
         }
 
         let bede_len = (ext_len / 4) as u16;
-        buf[14..16].copy_from_slice(&bede_len.to_be_bytes());
+        buf[ext_start + 2..ext_start + 4].copy_from_slice(&bede_len.to_be_bytes());
 
-        16 + ext_len
+        ext_start + 4 + ext_len
     }
 
     fn do_pad(buf: &mut [u8], from: usize, pad: usize) {
@@ -164,9 +175,14 @@ impl RtpHeader {
         }
 
         let mut csrc = [0_u32; 15];
-        for i in 0..csrc_count {
-            let n = u32::from_be_bytes([buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]);
-            csrc[i] = n;
+        for (i, item) in csrc.iter_mut().enumerate().take(csrc_count) {
+            let offset = i * 4;
+            *item = u32::from_be_bytes([
+                buf[offset],
+                buf[offset + 1],
+                buf[offset + 2],
+                buf[offset + 3],
+            ]);
         }
 
         let buf: &[u8] = &buf[csrc_len..];
@@ -210,13 +226,13 @@ impl RtpHeader {
             version,
             has_padding,
             has_extension,
-            // csrc_count,
+            csrc_count,
             marker,
             payload_type,
             sequence_number,
             timestamp,
             ssrc: ssrc.into(),
-            // csrc,
+            csrc,
             ext_vals: ext,
             header_len,
         };
@@ -317,11 +333,13 @@ impl Default for RtpHeader {
             version: 2,
             has_padding: false,
             has_extension: true,
+            csrc_count: 0,
             marker: false,
             payload_type: 1.into(),
             sequence_number: 0,
             timestamp: 0,
             ssrc: 0.into(),
+            csrc: [0; 15],
             ext_vals: ExtensionValues::default(),
             header_len: 16,
         }
@@ -561,11 +579,13 @@ mod test {
                 version: 2,
                 has_padding: true,
                 has_extension: true,
+                csrc_count: 0,
                 marker: false,
                 payload_type: 111.into(),
                 sequence_number: 47000,
                 timestamp: 10000,
                 ssrc: 777459193.into(),
+                csrc: [0; 15],
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
                     abs_send_time: Some(abs1),
@@ -587,11 +607,13 @@ mod test {
                 version: 2,
                 has_padding: true,
                 has_extension: true,
+                csrc_count: 0,
                 marker: false,
                 payload_type: 111.into(),
                 sequence_number: 47001,
                 timestamp: 12000,
                 ssrc: 777459193.into(),
+                csrc: [0; 15],
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
                     abs_send_time: Some(abs2),
@@ -613,11 +635,13 @@ mod test {
                 version: 2,
                 has_padding: true,
                 has_extension: true,
+                csrc_count: 0,
                 marker: false,
                 payload_type: 111.into(),
                 sequence_number: 47002,
                 timestamp: 14000,
                 ssrc: 777459193.into(),
+                csrc: [0; 15],
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
                     abs_send_time: Some(abs3),
@@ -661,11 +685,13 @@ mod test {
                 version: 2,
                 has_padding: true,
                 has_extension: true,
+                csrc_count: 0,
                 marker: false,
                 payload_type: 111.into(),
                 sequence_number: 47000,
                 timestamp: 10000,
                 ssrc: 777459193.into(),
+                csrc: [0; 15],
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
                     abs_send_time: Some(abs1),
@@ -687,11 +713,13 @@ mod test {
                 version: 2,
                 has_padding: true,
                 has_extension: true,
+                csrc_count: 0,
                 marker: false,
                 payload_type: 111.into(),
                 sequence_number: 47001,
                 timestamp: 12000,
                 ssrc: 777459193.into(),
+                csrc: [0; 15],
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
                     abs_send_time: Some(abs2),
@@ -713,11 +741,13 @@ mod test {
                 version: 2,
                 has_padding: true,
                 has_extension: true,
+                csrc_count: 0,
                 marker: false,
                 payload_type: 111.into(),
                 sequence_number: 47002,
                 timestamp: 14000,
                 ssrc: 777459193.into(),
+                csrc: [0; 15],
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
                     abs_send_time: Some(abs3),
@@ -727,6 +757,164 @@ mod test {
                     ..Default::default()
                 },
                 header_len: 36
+            }
+        );
+    }
+
+    #[test]
+    fn test_write_rtp_headers_with_csrc() {
+        fn mk_header(csrc_count: usize, csrc: [u32; 15], exts: &ExtensionMap) -> Vec<u8> {
+            let header = RtpHeader {
+                csrc_count,
+                payload_type: 33.into(),
+                sequence_number: 47_000,
+                timestamp: 10_000,
+                ssrc: 44.into(),
+                csrc,
+                ext_vals: ExtensionValues {
+                    audio_level: Some(-42),
+                    voice_activity: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut buf = vec![0; DATAGRAM_MAX_PACKET_SIZE];
+            let n = header.write_to(&mut buf[..], exts);
+            buf.truncate(n);
+            buf
+        }
+
+        let mut exts = ExtensionMap::empty();
+        exts.set(3, Extension::AudioLevel);
+
+        // 3 CSRC entries, one-byte extension form
+        let buf1 = mk_header(
+            3,
+            [
+                100,
+                0x12_34_56_78,
+                0xFFFF_FFFF,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            ],
+            &exts,
+        );
+        let p1 = &[
+            147, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, // fixed header (CC=3)
+            0, 0, 0, 100, 0x12, 0x34, 0x56, 0x78, 0xFF, 0xFF, 0xFF, 0xFF, // CSRC values
+            0xBE, 0xDE, 0, 1, 48, 170, 0, 0, // extension
+        ];
+        assert_eq!(&buf1, p1);
+
+        // 15 CSRC entries (maximum)
+        let buf2 = mk_header(
+            15,
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+            &exts,
+        );
+        let p2 = &[
+            159, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, // fixed header (CC=15)
+            0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, // CSRC 1-4
+            0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0, 8, // CSRC 5-8
+            0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0, 12, // CSRC 9-12
+            0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15, // CSRC 13-15
+            0xBE, 0xDE, 0, 1, 48, 170, 0, 0, // extension
+        ];
+        assert_eq!(&buf2, p2);
+    }
+
+    #[test]
+    fn test_parse_rtp_headers_with_csrc() {
+        let mut exts = ExtensionMap::empty();
+        exts.set(3, Extension::AudioLevel);
+
+        // 3 CSRC entries with one-byte extension form (produced by test_write_rtp_headers_with_csrc)
+        let buf1 = [
+            147, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 0, 0, 0, 100, 0x12, 0x34, 0x56, 0x78,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xBE, 0xDE, 0, 1, 48, 170, 0, 0,
+        ];
+
+        let h1 = RtpHeader::parse(&buf1, &exts).unwrap();
+
+        assert_eq!(
+            h1,
+            RtpHeader {
+                version: 2,
+                has_padding: false,
+                has_extension: true,
+                csrc_count: 3,
+                marker: false,
+                payload_type: 33.into(),
+                sequence_number: 47_000,
+                timestamp: 10_000,
+                ssrc: 44.into(),
+                csrc: [
+                    100,
+                    0x12_34_56_78,
+                    0xFFFF_FFFF,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ],
+                ext_vals: ExtensionValues {
+                    audio_level: Some(-42),
+                    voice_activity: Some(true),
+                    ..Default::default()
+                },
+                header_len: 32,
+            }
+        );
+
+        // 15 CSRC entries (maximum)
+        let buf2 = [
+            159, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, // fixed header (CC=15)
+            0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, // CSRC 1-4
+            0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0, 8, // CSRC 5-8
+            0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0, 12, // CSRC 9-12
+            0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15, // CSRC 13-15
+            0xBE, 0xDE, 0, 1, 48, 170, 0, 0, // extension
+        ];
+
+        let h2 = RtpHeader::parse(&buf2, &exts).unwrap();
+
+        assert_eq!(
+            h2,
+            RtpHeader {
+                version: 2,
+                has_padding: false,
+                has_extension: true,
+                csrc_count: 15,
+                marker: false,
+                payload_type: 33.into(),
+                sequence_number: 47_000,
+                timestamp: 10_000,
+                ssrc: 44.into(),
+                csrc: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+                ext_vals: ExtensionValues {
+                    audio_level: Some(-42),
+                    voice_activity: Some(true),
+                    ..Default::default()
+                },
+                header_len: 80,
             }
         );
     }

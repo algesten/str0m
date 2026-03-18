@@ -265,6 +265,28 @@ impl StreamTx {
         nackable: bool,
         payload: Vec<u8>,
     ) -> Result<(), PacketError> {
+        self.write_rtp_with_csrc(
+            pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload, 0, [0; 15],
+        )
+    }
+
+    /// Like [`Self::write_rtp`], but with an additional `csrc` parameter for
+    /// contributing source identifiers (up to 15 per RFC 3550).
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_rtp_with_csrc(
+        &mut self,
+        pt: Pt,
+        seq_no: SeqNo,
+        time: u32,
+        wallclock: Instant,
+        marker: bool,
+        ext_vals: ExtensionValues,
+        nackable: bool,
+        payload: Vec<u8>,
+        csrc_count: usize,
+        csrc: [u32; 15],
+    ) -> Result<(), PacketError> {
+        assert!(csrc_count <= 15, "CSRC count must be <= 15");
         let first_call = self.rtp_and_wallclock.is_none();
 
         if first_call && seq_no.roc() > 0 {
@@ -281,11 +303,13 @@ impl StreamTx {
         self.rtp_and_wallclock = Some((time, wallclock));
 
         let header = RtpHeader {
+            csrc_count,
             sequence_number: *seq_no as u16,
             marker,
             payload_type: pt,
             timestamp: time,
             ssrc: self.ssrc,
+            csrc,
             ext_vals,
             ..Default::default()
         };
