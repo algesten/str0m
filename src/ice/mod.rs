@@ -19,7 +19,7 @@ pub use error::IceError;
 mod test {
     use super::agent::IceAgentStats;
     use super::*;
-    use crate::io::{Protocol, StunMessage, StunPacket};
+    use crate::io::{Protocol, StunMessage, StunPacket, Transmit};
 
     use std::collections::HashMap;
     use std::net::IpAddr;
@@ -703,6 +703,158 @@ mod test {
     }
 
     #[test]
+    pub fn pair_replacement_in_attempt_window_stays_connected() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
+
+        // Only the controlling side initially knows the remote candidate. This makes
+        // the controlled side discover a peer-reflexive remote from inbound STUN.
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // Exchange initial ICE credentials without consuming any binding requests.
+        let now = a1.time;
+        a1.handle_timeout(now);
+        drain_manual_test_events(&mut a2, &mut a1);
+        advance_manual_test_time(&mut a1);
+        advance_manual_test_time(&mut a2);
+
+        let now = a2.time;
+        a2.handle_timeout(now);
+        drain_manual_test_events(&mut a1, &mut a2);
+        advance_manual_test_time(&mut a1);
+        advance_manual_test_time(&mut a2);
+
+        a1.events.clear();
+        a2.events.clear();
+
+        // The controlling side starts checking the signalled host candidate.
+        let now = a1.time;
+        a1.handle_timeout(now);
+        drain_manual_test_events(&mut a2, &mut a1);
+        advance_manual_test_time(&mut a1);
+        advance_manual_test_time(&mut a2);
+
+        let initial_request = a1
+            .poll_transmit()
+            .expect("controlling agent should emit an initial binding request");
+        {
+            let message = StunMessage::parse(&initial_request.contents).unwrap();
+            assert!(message.is_binding_request());
+            assert!(!message.use_candidate());
+        }
+        deliver_manual_test_transmit(&mut a1, &mut a2, initial_request);
+
+        let initial_reply = a2
+            .poll_transmit()
+            .expect("controlled agent should answer the initial binding request");
+        {
+            let message = StunMessage::parse(&initial_reply.contents).unwrap();
+            assert!(message.is_successful_binding_response());
+        }
+        deliver_manual_test_transmit(&mut a2, &mut a1, initial_reply);
+        assert!(a1.has_event(|e| matches!(e, IceAgentEvent::NominatedSend { .. })));
+
+        // Now the controlling side sends the nominated USE-CANDIDATE request.
+        let now = a1.time;
+        a1.handle_timeout(now);
+        drain_manual_test_events(&mut a2, &mut a1);
+        advance_manual_test_time(&mut a1);
+        advance_manual_test_time(&mut a2);
+
+        let nominate_request = a1
+            .poll_transmit()
+            .expect("controlling agent should emit a nominated binding request");
+        {
+            let message = StunMessage::parse(&nominate_request.contents).unwrap();
+            assert!(message.is_binding_request());
+            assert!(message.use_candidate());
+        }
+        deliver_manual_test_transmit(&mut a1, &mut a2, nominate_request);
+
+        // The controlled side answers that request and then sends a reverse binding
+        // request to confirm the nomination, which moves the pair into Attempt.
+        let now = a2.time;
+        a2.handle_timeout(now);
+        drain_manual_test_events(&mut a1, &mut a2);
+        advance_manual_test_time(&mut a1);
+        advance_manual_test_time(&mut a2);
+        assert!(a2.state().is_connected());
+
+        let mut nominate_reply = None;
+        let reverse_request = loop {
+            let trans = a2
+                .poll_transmit()
+                .expect("controlled agent should emit a reply and a reverse binding request");
+            let message = StunMessage::parse(&trans.contents).unwrap();
+            if message.is_successful_binding_response() {
+                nominate_reply = Some(trans);
+                continue;
+            }
+
+            assert!(message.is_binding_request());
+            assert!(
+                !message.use_candidate(),
+                "controlled agent must not send USE-CANDIDATE",
+            );
+            break trans;
+        };
+        let nominate_reply =
+            nominate_reply.expect("controlled agent should reply to the nominated request");
+
+        // Before the reverse binding response arrives, the signalling layer delivers the
+        // controller's real remote candidate. This replaces the prflx pair during Attempt.
+        a2.add_remote_candidate(c1);
+        let now = a2.time;
+        a2.handle_timeout(now);
+        drain_manual_test_events(&mut a1, &mut a2);
+        advance_manual_test_time(&mut a1);
+        advance_manual_test_time(&mut a2);
+
+        assert!(a2.state().is_connected());
+        assert!(!a2.has_event(|e| matches!(
+            e,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Checking)
+        )));
+
+        // Finish the delayed round trip and ensure the controlled side stays connected.
+        deliver_manual_test_transmit(&mut a2, &mut a1, nominate_reply);
+        deliver_manual_test_transmit(&mut a2, &mut a1, reverse_request);
+
+        let reverse_reply = loop {
+            let trans = a1
+                .poll_transmit()
+                .expect("controlling agent should reply to the reverse binding request");
+            let message = StunMessage::parse(&trans.contents).unwrap();
+            if message.is_successful_binding_response() {
+                break trans;
+            }
+
+            panic!("unexpected STUN transmit while waiting for reverse reply: {message:?}");
+        };
+        deliver_manual_test_transmit(&mut a1, &mut a2, reverse_reply);
+
+        for _ in 0..20 {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(a1.state().is_connected());
+        assert!(a2.state().is_connected());
+        assert!(!a2.has_event(|e| matches!(
+            e,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Checking)
+        )));
+    }
+
+    #[test]
     pub fn identical_host_and_server_reflexive_candidates_dont_create_new_pairs_on_inbound_stun_request()
      {
         let mut a1 = TestAgent::new(info_span!("L"));
@@ -1215,6 +1367,45 @@ mod test {
             });
             t.events.push((time - t.start_time, v));
         }
+    }
+
+    // These helpers intentionally bypass `progress()` so the regression test above
+    // can hold specific STUN packets and inject the signalled host candidate in the
+    // exact Attempt window being tested.
+    fn drain_manual_test_events(from: &mut TestAgent, to: &mut TestAgent) {
+        let time = to.time;
+        while let Some(v) = to.span.in_scope(|| to.agent.poll_event()) {
+            println!("Polled event: {v:?}");
+            use IceAgentEvent::*;
+            from.span.in_scope(|| {
+                if let IceRestart(v) = &v {
+                    from.agent.set_remote_credentials(v.clone())
+                }
+            });
+            to.events.push((time - to.start_time, v));
+        }
+    }
+
+    fn advance_manual_test_time(agent: &mut TestAgent) {
+        agent.time = agent
+            .span
+            .in_scope(|| agent.agent.poll_timeout())
+            .unwrap_or(agent.time);
+    }
+
+    fn deliver_manual_test_transmit(from: &mut TestAgent, to: &mut TestAgent, trans: Transmit) {
+        let message =
+            StunMessage::parse(&trans.contents).expect("IceAgent to only emit StunMessages");
+        let packet = StunPacket {
+            proto: trans.proto,
+            source: trans.source,
+            destination: trans.destination,
+            message,
+        };
+        to.span.in_scope(|| to.agent.handle_packet(to.time, packet));
+        drain_manual_test_events(from, to);
+        advance_manual_test_time(from);
+        advance_manual_test_time(to);
     }
 
     impl Deref for TestAgent {
