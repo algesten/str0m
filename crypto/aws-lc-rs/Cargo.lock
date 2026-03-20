@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-aws-lc-rs"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "aws-lc-rs",
  "dimpl",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "base64ct",
  "dimpl",
