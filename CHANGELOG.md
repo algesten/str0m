@@ -17,7 +17,7 @@
   * Fix infinite loop on in-band data channel stream conflict #873
   * Add `Hash`, `PartialOrd` and `Ord` traits to `TransId` #905
   * Fix m-line ordering when using sdp `merge()` #887
-  * Fix jitter in SenderReports and `MediaEgressStats` #907
+  * Fix jitter calculation in ReceiverReports #907
 
 # 0.16.2
 
