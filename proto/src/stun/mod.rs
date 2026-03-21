@@ -8,14 +8,15 @@ use std::time::Duration;
 use crc::{CRC_32_ISO_HDLC, Crc};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
+use tracing::warn;
 
-pub(crate) const DEFAULT_MAX_RETRANSMITS: usize = 9;
+pub const DEFAULT_MAX_RETRANSMITS: usize = 9;
 
 #[derive(Debug)] // Purposely not `Clone` / `Copy` to ensure we always use the latest one everywhere.
 pub struct StunTiming {
-    pub(crate) initial_rto: Duration,
-    pub(crate) max_retransmits: usize,
-    pub(crate) max_rto: Duration,
+    pub initial_rto: Duration,
+    pub max_retransmits: usize,
+    pub max_rto: Duration,
 }
 
 impl StunTiming {
@@ -72,7 +73,8 @@ impl Default for StunTiming {
     }
 }
 
-pub use super::StunError;
+mod error;
+pub use error::StunError;
 
 /// STUN transaction ID.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -117,7 +119,7 @@ pub struct StunMessage<'a> {
 
 impl<'a> StunMessage<'a> {
     /// Parse a STUN message from a slice of bytes.
-    pub fn parse(buf: &[u8]) -> Result<StunMessage, StunError> {
+    pub fn parse(buf: &'a [u8]) -> Result<StunMessage<'a>, StunError> {
         if buf.len() < 4 {
             return Err(StunError::Parse("Buffer too short".into()));
         }
@@ -199,11 +201,11 @@ impl<'a> StunMessage<'a> {
         })
     }
 
-    pub(crate) fn method(&self) -> Method {
+    pub fn method(&self) -> Method {
         self.method
     }
 
-    pub(crate) fn class(&self) -> Class {
+    pub fn class(&self) -> Class {
         self.class
     }
 
@@ -336,7 +338,7 @@ impl<'a> StunMessage<'a> {
     }
 
     /// Constructs a new BINDING request using the provided data.
-    pub(crate) fn binding_request(
+    pub fn binding_request(
         username: &'a str,
         trans_id: TransId,
         controlling: bool,
@@ -364,7 +366,7 @@ impl<'a> StunMessage<'a> {
     }
 
     /// Constructs a new STUN BINDING success reply using the builder.
-    pub(crate) fn binding_reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
+    pub fn binding_reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
         StunMessageBuilder::new()
             .binding()
             .success()
@@ -475,7 +477,7 @@ impl<'a> StunMessage<'a> {
 const MAGIC: &[u8] = &[0x21, 0x12, 0xA4, 0x42];
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Class {
+pub enum Class {
     Request,
     Indication,
     Success,
@@ -508,7 +510,7 @@ impl Class {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Method {
+pub enum Method {
     Binding,
     // TURN specific
     Allocate,
@@ -659,7 +661,7 @@ impl<'a> Attributes<'a> {
 
 use std::{io, str};
 
-use crate::util::NonCryptographicRng;
+use crate::NonCryptographicRng;
 
 const PAD: [u8; 4] = [0, 0, 0, 0];
 impl<'a> Attributes<'a> {
@@ -1416,15 +1418,32 @@ impl fmt::Debug for DebugHex<'_> {
     }
 }
 
+/// An incoming STUN packet.
+#[derive(Debug)]
+pub struct StunPacket<'a> {
+    /// The protocol the socket this received data originated from is using.
+    pub proto: crate::Protocol,
+    /// The socket this received data originated from.
+    pub source: SocketAddr,
+    /// The destination socket of the datagram.
+    pub destination: SocketAddr,
+    /// The STUN message.
+    pub message: StunMessage<'a>,
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
     fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
-        crate::crypto::test_default_provider()
-            .sha1_hmac_provider
-            .sha1_hmac(key, payloads)
+        use hmac::{Hmac, Mac};
+        use sha1::Sha1;
+        let mut mac = Hmac::<Sha1>::new_from_slice(key).unwrap();
+        for p in payloads {
+            mac.update(p);
+        }
+        mac.finalize().into_bytes().into()
     }
 
     #[test]

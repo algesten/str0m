@@ -1,6 +1,5 @@
 use crate::Candidate;
-
-use super::CandidateKind;
+use crate::CandidateKind;
 
 /// Standard local preference calculation for a candidate.
 ///

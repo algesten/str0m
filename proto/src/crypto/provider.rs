@@ -85,18 +85,7 @@ impl fmt::Display for CryptoProvider {
 // Marker Trait
 // ============================================================================
 
-/// Marker trait for types that are safe to use in crypto provider components.
-///
-/// This trait combines the common bounds required for crypto provider trait objects:
-/// - [`Send`] + [`Sync`]: Thread-safe
-/// - [`Debug`]: Support debugging
-///
-/// Note: We don't require `UnwindSafe` because some error types (like `dimpl::Error`)
-/// may not implement it, but they're still safe to use in our context.
-pub trait CryptoSafe: Send + Sync + Debug {}
-
-/// Blanket implementation: any type satisfying the bounds implements [`CryptoSafe`].
-impl<T: Send + Sync + Debug> CryptoSafe for T {}
+pub use crate::{CryptoSafe, Sha1HmacProvider};
 
 // ============================================================================
 // Main Provider Traits
@@ -118,12 +107,6 @@ pub trait SrtpProvider: CryptoSafe {
 
     /// Perform AES-256-ECB round for key derivation.
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
-}
-
-/// SHA1 HMAC provider for STUN message integrity.
-pub trait Sha1HmacProvider: CryptoSafe {
-    /// Compute HMAC-SHA1(key, payloads) and return the result.
-    fn sha1_hmac(&self, key: &[u8], payloads: &[&[u8]]) -> [u8; 20];
 }
 
 /// SHA-256 hash provider.

@@ -9,7 +9,6 @@ use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::io::Id;
 use crate::media::{Media, Rids, Simulcast};
 use crate::packet::MediaKind;
 use crate::rtp_::MidRid;
@@ -20,6 +19,7 @@ use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
 use crate::{Candidate, IceCreds};
+use str0m_proto::Id;
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, Streams};

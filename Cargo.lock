@@ -1036,6 +1036,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "is"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "str0m-proto",
+ "tracing",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1951,9 +1960,9 @@ dependencies = [
  "_str0m_test",
  "arrayvec",
  "combine",
- "crc",
  "dimpl",
  "fastrand",
+ "is",
  "pcap-file",
  "rand 0.9.2",
  "regex",
@@ -2029,10 +2038,14 @@ name = "str0m-proto"
 version = "0.2.0"
 dependencies = [
  "base64ct",
+ "crc",
  "dimpl",
+ "fastrand",
  "openssl",
+ "serde",
  "subtle",
  "time",
+ "tracing",
 ]
 
 [[package]]

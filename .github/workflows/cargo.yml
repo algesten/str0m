@@ -120,6 +120,8 @@ jobs:
         dir:
           - name: proto
             os: ubuntu-latest
+          - name: is
+            os: ubuntu-latest
           - name: netem
             os: ubuntu-latest
           - name: crypto/apple-crypto
