@@ -208,11 +208,6 @@ impl CandidatePair {
         !matches!(self.nomination_state, NominationState::None)
     }
 
-    #[cfg(test)]
-    pub fn nomination_state(&self) -> NominationState {
-        self.nomination_state
-    }
-
     pub fn nominate(&mut self, force_success: bool) {
         assert!(self.nomination_state == NominationState::None);
         if force_success {
