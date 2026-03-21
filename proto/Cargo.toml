@@ -12,20 +12,31 @@ edition = "2024"
 rust-version = "1.85.0"
 
 [features]
-default = []
+default = ["dtls"]
+dtls = ["dep:dimpl"]
 openssl = ["dep:openssl"]
+pii = []
 
 # When we are running in test mode
 _internal_test_exports = []
 
 [dependencies]
-# DTLS made for str0m (required dependency for types and traits)
-dimpl = { version = "0.4.3", default-features = false }
+# DTLS made for str0m (optional dependency for types and traits)
+dimpl = { version = "0.4.3", default-features = false, optional = true }
 
 time = "0.3"
 base64ct = "1"
 
 subtle = "2.0.0"
 
+fastrand = "2.0.1"
+crc = "3"
+serde = { version = "1.0.152", features = ["derive"] }
+tracing = "0.1.37"
+
 # For openssl errors
 openssl = { version = "0.10.70", optional = true }
+
+[dev-dependencies]
+hmac = "0.12"
+sha1 = "0.10"

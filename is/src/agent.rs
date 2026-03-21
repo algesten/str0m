@@ -7,16 +7,15 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::Sha1HmacProvider;
-use crate::ice_::preference::default_local_preference;
-use crate::io::{DATAGRAM_MTU, Transmit};
-use crate::io::{DATAGRAM_MTU_WARN, Id, StunClass, StunMethod, StunTiming};
-use crate::io::{Protocol, StunPacket};
-use crate::io::{StunMessage, TransId};
-use crate::util::{NonCryptographicRng, Pii};
+use crate::Sha1HmacProvider;
+use crate::preference::default_local_preference;
+use str0m_proto::stun::{Class as StunClass, Method as StunMethod, StunTiming};
+use str0m_proto::stun::{StunMessage, StunPacket, TransId};
+use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN, Id, Transmit};
+use str0m_proto::{NonCryptographicRng, Pii, Protocol};
 
-use super::candidate::{Candidate, CandidateKind};
-use super::pair::{CandidatePair, CheckState, PairId};
+use crate::candidate::{Candidate, CandidateKind};
+use crate::pair::{CandidatePair, CheckState, PairId};
 
 /// Handles the ICE protocol for a given peer.
 ///
@@ -286,8 +285,16 @@ impl IceCreds {
 }
 
 impl IceAgent {
-    /// Create a new [`IceAgent`] with a specific set of credentials and SHA1-HMAC provider.
-    pub fn new(
+    /// Create a new [`IceAgent`] using the default SHA1-HMAC provider.
+    ///
+    /// Available when the `sha1` feature is enabled (on by default).
+    #[cfg(feature = "sha1")]
+    pub fn new(local_credentials: IceCreds) -> Self {
+        Self::with_hmac(local_credentials, &crate::DefaultSha1HmacProvider)
+    }
+
+    /// Create a new [`IceAgent`] with a specific SHA1-HMAC provider.
+    pub fn with_hmac(
         local_credentials: IceCreds,
         sha1_hmac_provider: &'static dyn Sha1HmacProvider,
     ) -> Self {
@@ -1835,10 +1842,14 @@ impl fmt::Debug for LocalPreferenceHolder {
 
 #[cfg(test)]
 mod test {
-    use crate::ice_::test::host;
-
     use super::*;
+    use crate::DefaultSha1HmacProvider;
     use std::{iter, net::SocketAddr};
+
+    fn host(s: impl Into<String>, proto: impl TryInto<Protocol>) -> Candidate {
+        let s: String = s.into();
+        Candidate::host(s.parse().unwrap(), proto).unwrap()
+    }
 
     impl IceAgent {
         pub(crate) fn num_candidate_pairs(&self) -> usize {
@@ -1853,12 +1864,8 @@ mod test {
         }
     }
 
-    /// Create a new test IceAgent with random credentials and OpenSSL provider.
     fn new_test_agent() -> IceAgent {
-        IceAgent::new(
-            IceCreds::new(),
-            crate::crypto::test_default_provider().sha1_hmac_provider,
-        )
+        IceAgent::new(IceCreds::new())
     }
 
     fn ipv4_1() -> SocketAddr {
@@ -2395,11 +2402,8 @@ mod test {
     fn serialize_stun_msg(msg: StunMessage<'_>, password: &str) -> Vec<u8> {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
-        let sha1_hmac = |key: &[u8], payloads: &[&[u8]]| {
-            crate::crypto::test_default_provider()
-                .sha1_hmac_provider
-                .sha1_hmac(key, payloads)
-        };
+        let sha1_hmac =
+            |key: &[u8], payloads: &[&[u8]]| DefaultSha1HmacProvider.sha1_hmac(key, payloads);
         let n = msg
             .to_bytes(Some(password.as_bytes()), &mut buf, sha1_hmac)
             .expect("IO error writing STUN message");

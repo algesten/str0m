@@ -3,10 +3,10 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::Candidate;
-use crate::Pii;
-use crate::io::{DEFAULT_MAX_RETRANSMITS, Id, StunTiming, TransId};
-
-use super::CandidateKind;
+use crate::CandidateKind;
+use str0m_proto::Id;
+use str0m_proto::Pii;
+use str0m_proto::stun::{DEFAULT_MAX_RETRANSMITS, StunTiming, TransId};
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
 const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);

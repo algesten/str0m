@@ -1,6 +1,4 @@
-use super::IceError;
-use crate::io::{Protocol, TcpType};
-use crate::sdp::parse_candidate;
+use crate::IceError;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::hash_map::DefaultHasher;
@@ -8,6 +6,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
+use str0m_proto::{Protocol, TcpType};
 
 /// ICE candidates are network addresses used to connect to a peer.
 ///
@@ -127,9 +126,9 @@ impl Candidate {
     /// # Example
     ///
     /// ```
-    /// # use str0m::Candidate;
-    /// # use str0m::error::IceError;
-    /// # use str0m::net::{Protocol, TcpType};
+    /// # use is::Candidate;
+    /// # use is::IceError;
+    /// # use str0m_proto::TcpType;
     /// # use std::net::SocketAddr;
     ///
     /// let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
@@ -195,7 +194,7 @@ impl Candidate {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn parsed(
+    pub fn from_parts(
         foundation: String,
         component_id: u16,
         proto: Protocol,
@@ -318,9 +317,12 @@ impl Candidate {
         ))
     }
 
-    /// Creates a new ICE candidate from a string.
+    /// Creates a new ICE candidate from a candidate attribute string.
+    ///
+    /// Expects the format from RFC 5245 section 15.1, e.g.
+    /// `candidate:1 1 udp 2113929471 203.0.113.100 10100 typ host`.
     pub fn from_sdp_string(s: &str) -> Result<Self, IceError> {
-        parse_candidate(s).map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
+        crate::parse::parse_candidate(s)
     }
 
     /// Creates a peer reflexive ICE candidate.
@@ -533,11 +535,11 @@ impl Candidate {
         self.discarded
     }
 
-    pub(crate) fn set_ufrag(&mut self, ufrag: &str) {
+    pub fn set_ufrag(&mut self, ufrag: &str) {
         self.ufrag = Some(ufrag.into());
     }
 
-    pub(crate) fn ufrag(&self) -> Option<&str> {
+    pub fn ufrag(&self) -> Option<&str> {
         self.ufrag.as_deref()
     }
 

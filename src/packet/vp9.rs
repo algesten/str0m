@@ -222,7 +222,7 @@ impl Packetizer for Vp9Packetizer {
             }
             #[cfg(not(test))]
             {
-                use crate::util::NonCryptographicRng;
+                use str0m_proto::NonCryptographicRng;
                 self.picture_id = NonCryptographicRng::u16() & 0x7FFF;
             }
             self.initialized = true;

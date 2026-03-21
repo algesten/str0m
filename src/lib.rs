@@ -646,9 +646,10 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use str0m_proto::Pii;
 use streams::RtpPacket;
 use streams::StreamPaused;
-use util::{InstantExt, Pii};
+use util::InstantExt;
 
 /// Cryptographic provider traits and implementations.
 ///
@@ -663,11 +664,9 @@ use crate::crypto::{CryptoProvider, DtlsError, from_feature_flags};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
 
-#[path = "ice/mod.rs"]
-mod ice_;
-use ice_::IceAgent;
-use ice_::IceAgentEvent;
-pub use ice_::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
+use is::IceAgent;
+use is::IceAgentEvent;
+pub use is::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
 
 #[path = "config.rs"]
 mod config_mod;
@@ -682,14 +681,13 @@ pub mod config {
 /// Low level ICE access.
 // The ICE API is not necessary to interact with directly for "regular"
 // use of str0m. This is exported for other libraries that want to
-// reuse str0m's ICE implementation. In the future we might turn this
-// into a separate crate.
+// reuse str0m's ICE implementation. This is now in the `is` crate.
 #[doc(hidden)]
 pub mod ice {
-    pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{IceAgent, IceAgentEvent};
-    pub use crate::ice_::{LocalPreference, default_local_preference};
-    pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
+    pub use is::IceCreds;
+    pub use is::{IceAgent, IceAgentEvent};
+    pub use is::{LocalPreference, default_local_preference};
+    pub use str0m_proto::stun::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
 mod io;
@@ -1119,7 +1117,7 @@ impl Rtc {
         let session = Session::new(&config);
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
-        let mut ice = IceAgent::new(local_creds, crypto_provider.sha1_hmac_provider);
+        let mut ice = IceAgent::with_hmac(local_creds, crypto_provider.sha1_hmac_provider);
         if config.ice_lite {
             ice.set_ice_lite(config.ice_lite);
         }
@@ -1861,7 +1859,7 @@ impl Rtc {
 
         match r.contents.inner {
             Stun(stun) => {
-                let packet = io::StunPacket {
+                let packet = str0m_proto::stun::StunPacket {
                     proto: r.proto,
                     source: r.source,
                     destination: r.destination,

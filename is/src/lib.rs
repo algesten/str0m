@@ -1,6 +1,9 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 
+#[macro_use]
+extern crate tracing;
+
 mod agent;
 pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds, LocalPreference};
 
@@ -15,11 +18,19 @@ pub use preference::default_local_preference;
 mod error;
 pub use error::IceError;
 
+mod parse;
+
+mod hmac_provider;
+#[cfg(feature = "sha1")]
+pub use hmac_provider::DefaultSha1HmacProvider;
+pub use str0m_proto::Sha1HmacProvider;
+
 #[cfg(test)]
-mod test {
-    use super::agent::IceAgentStats;
-    use super::*;
-    use crate::io::{Protocol, StunMessage, StunPacket, Transmit};
+pub(crate) mod test {
+    use crate::agent::IceAgentStats;
+    use crate::*;
+    use str0m_proto::Protocol;
+    use str0m_proto::stun::{StunMessage, StunPacket};
 
     use std::collections::HashMap;
     use std::net::IpAddr;
@@ -1145,10 +1156,9 @@ mod test {
     impl TestAgent {
         pub fn new(span: Span) -> Self {
             let now = Instant::now();
-            let provider = crate::crypto::test_default_provider();
             TestAgent {
                 start_time: now,
-                agent: IceAgent::new(IceCreds::new(), provider.sha1_hmac_provider),
+                agent: IceAgent::new(IceCreds::new()),
                 span,
                 events: vec![],
                 progress_count: 0,
@@ -1516,7 +1526,7 @@ mod test {
         mappings: &mut HashMap<(SocketAddr, SocketAddr), u16>,
     ) -> u16 {
         let outside_port = loop {
-            let port = rand::random();
+            let port = str0m_proto::NonCryptographicRng::u16();
 
             if mappings.values().any(|p| *p == port) {
                 continue;

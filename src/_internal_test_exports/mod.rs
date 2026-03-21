@@ -2,10 +2,10 @@
 
 use crate::Rtc;
 use crate::format::PayloadParams;
-use crate::ice_::IceCreds;
 use crate::media::Media;
 use crate::media::Mid;
 use crate::rtp::{ExtensionMap, RtpHeader};
+use is::IceCreds;
 
 pub mod fuzz;
 mod rng;

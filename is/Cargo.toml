@@ -1,0 +1,27 @@
+[package]
+name = "is"
+version = "0.1.0"
+authors = ["Martin Algesten <martin@algesten.se>", "Thomas Eizinger <thomas@eizinger.io>"]
+description = "ICE (Interactive Connectivity Establishment) in Sans-IO style"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
+edition = "2024"
+rust-version = "1.85.0"
+
+[features]
+default = ["sha1"]
+sha1 = ["dep:hmac", "dep:sha1_"]
+pii = ["str0m-proto/pii"]
+_internal_test_exports = ["str0m-proto/_internal_test_exports"]
+
+[dependencies]
+str0m-proto = { version = "0.2.0", path = "../proto", default-features = false }
+tracing = "0.1.37"
+serde = { version = "1.0.152", features = ["derive"] }
+hmac = { version = "0.12", optional = true }
+sha1_ = { package = "sha1", version = "0.10", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
