@@ -86,6 +86,7 @@ impl fmt::Debug for TransId {
     }
 }
 
+#[allow(clippy::new_without_default)]
 impl TransId {
     /// A new random transaction id.
     pub fn new() -> Self {
@@ -931,7 +932,7 @@ impl<'a> Attributes<'a> {
                             return Err(StunError::Parse("Expected 0 at top of error code".into()));
                         }
                         let class = buf[6] as u16 * 100;
-                        if class < 300 || class > 699 {
+                        if !(300..=699).contains(&class) {
                             return Err(StunError::Parse(format!(
                                 "Error class is not in range: {class}"
                             )));
