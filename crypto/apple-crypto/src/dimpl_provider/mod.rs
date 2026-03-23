@@ -40,3 +40,13 @@ impl SecureRandom for AppleSecureRandom {
 }
 
 static SECURE_RANDOM: AppleSecureRandom = AppleSecureRandom;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn validate_dimpl_provider() -> Result<(), String> {
+        super::default_provider()
+            .validate()
+            .map_err(|err| format!("{err:?}"))
+    }
+}
