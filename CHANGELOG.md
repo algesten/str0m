@@ -1,4 +1,6 @@
 # Unreleased
+  
+  * Expose CSRC property in RTP Header #910
 
   * Fix jitter calculation in ReceiverReports #907
 
