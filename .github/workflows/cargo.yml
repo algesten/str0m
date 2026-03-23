@@ -111,18 +111,18 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
       - name: Build fuzz targets
-        run: cargo fuzz build
+        run: cargo fuzz build --fuzz-dir crates/fuzz
 
   related-crates:
     strategy:
       matrix:
         rust: [stable, beta, 1.85.0]
         dir:
-          - name: proto
+          - name: crates/proto
             os: ubuntu-latest
-          - name: is
+          - name: crates/is
             os: ubuntu-latest
-          - name: netem
+          - name: crates/netem
             os: ubuntu-latest
           - name: crypto/apple-crypto
             os: macos-latest

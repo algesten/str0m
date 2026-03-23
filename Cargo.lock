@@ -1040,10 +1040,14 @@ name = "is"
 version = "0.1.0"
 dependencies = [
  "crc",
+ "hmac",
  "serde",
+ "serde_json",
+ "sha1",
  "str0m-proto",
  "subtle",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

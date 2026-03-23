@@ -15,8 +15,8 @@ rust-version = "1.85.0"
 vendored = ["openssl/vendored"]
 
 [dependencies]
-tracing = "0.1.37"
-str0m-proto = { version = "0.2.0", path = "../../proto", features = ["openssl"] }
-openssl = { version = "0.10.70" }
-openssl-sys = { version = "0.9.80" }
-libc = { version = "0.2" }
+tracing.workspace = true
+str0m-proto = { workspace = true, features = ["dtls", "openssl"] }
+openssl.workspace = true
+openssl-sys.workspace = true
+libc.workspace = true

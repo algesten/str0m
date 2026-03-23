@@ -5,7 +5,7 @@
 NUM_CPUS=$(sysctl -n hw.ncpu)
 
 if [ "$1" == "" ]; then
-    cargo +nightly fuzz list
+    cargo +nightly fuzz list --fuzz-dir crates/fuzz
 else
-    cargo +nightly fuzz run $1 --jobs $NUM_CPUS -- --stop-after-first-failure -max_len=200000
+    cargo +nightly fuzz run $1 --fuzz-dir crates/fuzz --jobs $NUM_CPUS -- --stop-after-first-failure -max_len=200000
 fi

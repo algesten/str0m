@@ -11,24 +11,24 @@ readme = "README.md"
 rust-version = "1.85.0"
 
 [dependencies]
-str0m-proto = { version = "0.2.0", path = "../../proto" }
-dimpl = { version = "0.4.3", default-features = false }
-time = "0.3"
+str0m-proto = { workspace = true, features = ["dtls"] }
+dimpl.workspace = true
+time.workspace = true
 
 # Apple platform bindings
-apple-cryptokit-rs = "0.2.1"
-core-foundation = "0.10"
-security-framework = "3.5"
+apple-cryptokit-rs.workspace = true
+core-foundation.workspace = true
+security-framework.workspace = true
 
 # ASN.1/X.509 parsing for certificate handling
-der = "0.7"
-pkcs8 = { version = "0.10", features = ["pem"] }
-sec1 = "0.7"
-spki = "0.7"
-x509-cert = { version = "0.2", default-features = false }
+der.workspace = true
+pkcs8.workspace = true
+sec1.workspace = true
+spki.workspace = true
+x509-cert.workspace = true
 
 # Constant-time comparison for crypto
-subtle = "2.0.0"
+subtle.workspace = true
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
