@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Preserve nomination on redundant pair replacement #908
+
 # 0.17.0
 
   * Update to dimpl 0.4.3 #902
@@ -19,7 +21,6 @@
   * Fix infinite loop on in-band data channel stream conflict #873
   * Add `Hash`, `PartialOrd` and `Ord` traits to `TransId` #905
   * Fix m-line ordering when using sdp `merge()` #887
-  * Preserve nomination on redundant pair replacement #908
 
 # 0.16.2
 
