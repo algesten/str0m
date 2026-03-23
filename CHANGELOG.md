@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix jitter calculation in ReceiverReports #907
+
 # 0.17.0
 
   * Update to dimpl 0.4.3 #902
