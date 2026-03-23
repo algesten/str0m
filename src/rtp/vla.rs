@@ -311,21 +311,20 @@ impl ExtensionSerializer for Serializer {
                         let temporal_layer_count_minus_one =
                             (spatial.temporal_layers.len() - 1) as u8;
                         if tl_index % 4 == 0 {
-                            tl_index = 0;
+                            if tl_index > 0 {
+                                index += 1;
+                            }
                             buf[index] = 0;
                         }
 
-                        buf[index] |= temporal_layer_count_minus_one << (8 - ((tl_index + 1) * 2));
+                        buf[index] |= temporal_layer_count_minus_one << (6 - (tl_index % 4) * 2);
                         tl_index += 1;
                     }
                 }
             }
 
             if wrote_temporal_layer_count {
-                // Ensure byte aligned
-                if tl_index % 4 != 0 {
-                    index += 1;
-                }
+                index += 1;
             } else {
                 buf[index] = 0;
                 index += 1;
@@ -897,6 +896,207 @@ mod test {
                         },
                     ],
                 }],
+            }),
+        );
+    }
+
+    #[test]
+    fn test_parse_vla_4_simulcast_streams_with_1_spatial_layer_each() {
+        assert_ser_deser(
+            &[
+                0b0011_0001,
+                // 4 temporal layer counts (minus 1), 2 bits each: all have 2 temporal layers
+                0b0101_0101,
+                // 8 temporal layer bitrates
+                // 100, 101, 110, 111 are single-byte LEB128
+                100,
+                101,
+                110,
+                111,
+                // 130 = LEB128 [0x82, 0x01], 131 = LEB128 [0x83, 0x01]
+                0x82,
+                0x01,
+                0x83,
+                0x01,
+                // 200 = LEB128 [0xC8, 0x01], 201 = LEB128 [0xC9, 0x01]
+                0xC8,
+                0x01,
+                0xC9,
+                0x01,
+            ],
+            Some(VideoLayersAllocation {
+                current_simulcast_stream_index: 0,
+                simulcast_streams: vec![
+                    SimulcastStreamAllocation {
+                        spatial_layers: vec![SpatialLayerAllocation {
+                            temporal_layers: vec![
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 100,
+                                },
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 101,
+                                },
+                            ],
+                            resolution_and_framerate: None,
+                        }],
+                    },
+                    SimulcastStreamAllocation {
+                        spatial_layers: vec![SpatialLayerAllocation {
+                            temporal_layers: vec![
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 110,
+                                },
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 111,
+                                },
+                            ],
+                            resolution_and_framerate: None,
+                        }],
+                    },
+                    SimulcastStreamAllocation {
+                        spatial_layers: vec![SpatialLayerAllocation {
+                            temporal_layers: vec![
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 130,
+                                },
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 131,
+                                },
+                            ],
+                            resolution_and_framerate: None,
+                        }],
+                    },
+                    SimulcastStreamAllocation {
+                        spatial_layers: vec![SpatialLayerAllocation {
+                            temporal_layers: vec![
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 200,
+                                },
+                                TemporalLayerAllocation {
+                                    cumulative_kbps: 201,
+                                },
+                            ],
+                            resolution_and_framerate: None,
+                        }],
+                    },
+                ],
+            }),
+        );
+    }
+
+    #[test]
+    fn test_parse_vla_2_simulcast_streams_with_3_spatial_layers_each() {
+        assert_ser_deser(
+            &[
+                0b0001_0111,
+                // 6 temporal layer counts (minus 1), 2 bits each: all have 2 temporal layers
+                // First byte: 4 counts
+                0b0101_0101,
+                // Second byte: 2 counts + zero padding
+                0b0101_0000,
+                // 12 temporal layer bitrates
+                // Stream 1: 100, 101, 110, 111, 120, 121 are single-byte LEB128
+                100,
+                101,
+                110,
+                111,
+                120,
+                121,
+                // Stream 2: values >= 128, each needs 2-byte LEB128
+                // 200 = [0xC8, 0x01], 201 = [0xC9, 0x01]
+                0xC8,
+                0x01,
+                0xC9,
+                0x01,
+                // 210 = [0xD2, 0x01], 211 = [0xD3, 0x01]
+                0xD2,
+                0x01,
+                0xD3,
+                0x01,
+                // 220 = [0xDC, 0x01], 221 = [0xDD, 0x01]
+                0xDC,
+                0x01,
+                0xDD,
+                0x01,
+            ],
+            Some(VideoLayersAllocation {
+                current_simulcast_stream_index: 0,
+                simulcast_streams: vec![
+                    SimulcastStreamAllocation {
+                        spatial_layers: vec![
+                            SpatialLayerAllocation {
+                                temporal_layers: vec![
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 100,
+                                    },
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 101,
+                                    },
+                                ],
+                                resolution_and_framerate: None,
+                            },
+                            SpatialLayerAllocation {
+                                temporal_layers: vec![
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 110,
+                                    },
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 111,
+                                    },
+                                ],
+                                resolution_and_framerate: None,
+                            },
+                            SpatialLayerAllocation {
+                                temporal_layers: vec![
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 120,
+                                    },
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 121,
+                                    },
+                                ],
+                                resolution_and_framerate: None,
+                            },
+                        ],
+                    },
+                    SimulcastStreamAllocation {
+                        spatial_layers: vec![
+                            SpatialLayerAllocation {
+                                temporal_layers: vec![
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 200,
+                                    },
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 201,
+                                    },
+                                ],
+                                resolution_and_framerate: None,
+                            },
+                            SpatialLayerAllocation {
+                                temporal_layers: vec![
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 210,
+                                    },
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 211,
+                                    },
+                                ],
+                                resolution_and_framerate: None,
+                            },
+                            SpatialLayerAllocation {
+                                temporal_layers: vec![
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 220,
+                                    },
+                                    TemporalLayerAllocation {
+                                        cumulative_kbps: 221,
+                                    },
+                                ],
+                                resolution_and_framerate: None,
+                            },
+                        ],
+                    },
+                ],
             }),
         );
     }
