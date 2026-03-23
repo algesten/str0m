@@ -685,9 +685,9 @@ pub mod config {
 #[doc(hidden)]
 pub mod ice {
     pub use is::IceCreds;
+    pub use is::stun::{StunMessage, StunMessageBuilder, StunPacket, TransId};
     pub use is::{IceAgent, IceAgentEvent};
     pub use is::{LocalPreference, default_local_preference};
-    pub use is::stun::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
 mod io;
