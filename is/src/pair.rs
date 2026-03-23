@@ -227,7 +227,13 @@ impl CandidatePair {
             // None is the default, no need to copy
             NominationState::None => {}
             // Attempt can't be copied because we don't have sent binding requests in the new pair.
-            NominationState::Attempt => {}
+            // The old pair had a nominated binding request in flight. We can't copy
+            // Attempt directly because the new pair doesn't have the corresponding
+            // transaction ID in its binding_attempts. Reset to Nominated so the next
+            // binding cycle issues a fresh attempt that can promote back to Success.
+            NominationState::Attempt => {
+                self.nomination_state = NominationState::Nominated;
+            }
         }
     }
 

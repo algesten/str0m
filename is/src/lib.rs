@@ -127,6 +127,7 @@ pub(crate) mod test {
     use crate::stun::{StunMessage, StunPacket};
     use crate::*;
     use str0m_proto::Protocol;
+    use str0m_proto::Transmit;
 
     use std::collections::HashMap;
     use std::net::IpAddr;
@@ -812,6 +813,89 @@ pub(crate) mod test {
     }
 
     #[test]
+    pub fn pair_replacement_in_attempt_window_stays_connected() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
+
+        // Only the controlling side initially knows the remote candidate. This makes
+        // the controlled side discover a peer-reflexive remote from inbound STUN.
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // Exchange initial ICE credentials without consuming any binding requests.
+        progress_without_network(&mut a1, &mut a2);
+        progress_without_network(&mut a2, &mut a1);
+
+        a1.events.clear();
+        a2.events.clear();
+
+        // The controlling side starts checking the signalled host candidate.
+        progress_without_network(&mut a1, &mut a2);
+        let initial_request = progress_one_message(&mut a1, &mut a2);
+        assert!(initial_request.is_binding_request);
+        assert!(!initial_request.use_candidate);
+
+        let initial_reply = progress_one_message(&mut a2, &mut a1);
+        assert!(initial_reply.is_successful_binding_response);
+        assert!(a1.has_event(|e| matches!(e, IceAgentEvent::NominatedSend { .. })));
+
+        // Now the controlling side sends the nominated USE-CANDIDATE request.
+        progress_without_network(&mut a1, &mut a2);
+
+        let nominate_request = progress_one_message(&mut a1, &mut a2);
+        assert!(nominate_request.is_binding_request);
+        assert!(nominate_request.use_candidate);
+
+        // The controlled side answers that request and then sends a reverse binding
+        // request to confirm the nomination. The reply is queued when the request
+        // arrives, then the reverse binding request is queued on the next timeout.
+        progress_without_network(&mut a2, &mut a1);
+        assert!(a2.state().is_connected());
+
+        let nominate_reply = a2.poll_next_stun_message();
+        assert!(nominate_reply.is_successful_binding_response);
+        let reverse_request = a2.poll_next_stun_message();
+        assert!(reverse_request.is_binding_request);
+
+        // Before the reverse binding response arrives, the signalling layer delivers the
+        // controller's real remote candidate. This replaces the prflx pair during Attempt.
+        a2.add_remote_candidate(c1);
+        progress_without_network(&mut a2, &mut a1);
+
+        assert!(a2.state().is_connected());
+        assert!(!a2.has_event(|e| matches!(
+            e,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Checking)
+        )));
+
+        // Finish the delayed round trip and ensure the controlled side stays connected.
+        deliver_transmit(&mut a2, &mut a1, &nominate_reply.transmit);
+        deliver_transmit(&mut a2, &mut a1, &reverse_request.transmit);
+
+        let reverse_reply = progress_one_message(&mut a1, &mut a2);
+        assert!(reverse_reply.is_successful_binding_response);
+
+        for _ in 0..20 {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(a1.state().is_connected());
+        assert!(a2.state().is_connected());
+        assert!(!a2.has_event(|e| matches!(
+            e,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Checking)
+        )));
+    }
+
+    #[test]
     pub fn identical_host_and_server_reflexive_candidates_dont_create_new_pairs_on_inbound_stun_request()
      {
         let mut a1 = TestAgent::new(info_span!("L"));
@@ -1150,6 +1234,13 @@ pub(crate) mod test {
         assert_eq!(c1, c2);
     }
 
+    pub struct TestStunMessage {
+        transmit: Transmit,
+        is_binding_request: bool,
+        is_successful_binding_response: bool,
+        use_candidate: bool,
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
@@ -1251,6 +1342,26 @@ pub(crate) mod test {
         fn has_event(&self, predicate: impl Fn(&IceAgentEvent) -> bool) -> bool {
             self.events.iter().any(|(_, e)| predicate(e))
         }
+
+        fn advance_time(&mut self) {
+            self.time = self
+                .span
+                .in_scope(|| self.agent.poll_timeout())
+                .unwrap_or(self.time);
+        }
+
+        fn poll_next_stun_message(&mut self) -> TestStunMessage {
+            let transmit = self.poll_transmit().expect("agent should emit a transmit");
+            let message =
+                StunMessage::parse(&transmit.contents).expect("IceAgent to only emit StunMessages");
+
+            TestStunMessage {
+                is_binding_request: message.is_binding_request(),
+                is_successful_binding_response: message.is_successful_binding_response(),
+                use_candidate: message.use_candidate(),
+                transmit,
+            }
+        }
     }
 
     pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
@@ -1323,6 +1434,54 @@ pub(crate) mod test {
             });
             t.events.push((time - t.start_time, v));
         }
+    }
+
+    // These helpers intentionally bypass `progress()` so the regression test above
+    // can hold specific STUN packets and inject the signalled host candidate in the
+    // exact Attempt window being tested.
+    fn progress_without_network(from: &mut TestAgent, to: &mut TestAgent) {
+        let now = from.time;
+        from.handle_timeout(now);
+        drain_manual_test_events(to, from);
+        from.advance_time();
+        to.advance_time();
+    }
+
+    fn drain_manual_test_events(from: &mut TestAgent, to: &mut TestAgent) {
+        let time = to.time;
+        while let Some(v) = to.span.in_scope(|| to.agent.poll_event()) {
+            println!("Polled event: {v:?}");
+            use IceAgentEvent::*;
+            from.span.in_scope(|| {
+                if let IceRestart(v) = &v {
+                    from.agent.set_remote_credentials(v.clone())
+                }
+            });
+            to.events.push((time - to.start_time, v));
+        }
+    }
+
+    fn progress_one_message(from: &mut TestAgent, to: &mut TestAgent) -> TestStunMessage {
+        let msg = from.poll_next_stun_message();
+
+        deliver_transmit(from, to, &msg.transmit);
+
+        msg
+    }
+
+    fn deliver_transmit(from: &mut TestAgent, to: &mut TestAgent, trans: &Transmit) {
+        let message =
+            StunMessage::parse(&trans.contents).expect("IceAgent to only emit StunMessages");
+        let packet = StunPacket {
+            proto: trans.proto,
+            source: trans.source,
+            destination: trans.destination,
+            message,
+        };
+        to.span.in_scope(|| to.agent.handle_packet(to.time, packet));
+        drain_manual_test_events(from, to);
+        from.advance_time();
+        to.advance_time();
     }
 
     impl Deref for TestAgent {
