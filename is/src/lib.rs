@@ -124,9 +124,9 @@ pub use str0m_proto::Sha1HmacProvider;
 #[cfg(test)]
 pub(crate) mod test {
     use crate::agent::IceAgentStats;
+    use crate::stun::{StunMessage, StunPacket};
     use crate::*;
     use str0m_proto::Protocol;
-    use crate::stun::{StunMessage, StunPacket};
 
     use std::collections::HashMap;
     use std::net::IpAddr;
