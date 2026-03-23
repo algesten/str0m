@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
-pub use str0m_proto::stun::StunError;
+pub use is::StunError;
 
 /// Errors from parsing network data.
 #[derive(Debug)]

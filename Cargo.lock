@@ -1039,8 +1039,10 @@ dependencies = [
 name = "is"
 version = "0.1.0"
 dependencies = [
+ "crc",
  "serde",
  "str0m-proto",
+ "subtle",
  "tracing",
 ]
 
@@ -2038,14 +2040,12 @@ name = "str0m-proto"
 version = "0.2.0"
 dependencies = [
  "base64ct",
- "crc",
  "dimpl",
  "fastrand",
  "openssl",
  "serde",
  "subtle",
  "time",
- "tracing",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
-pub use str0m_proto::stun::StunMessage;
+pub use is::stun::StunMessage;
 
 pub use str0m_proto::DATAGRAM_MTU;
 pub use str0m_proto::DATAGRAM_MTU_WARN;

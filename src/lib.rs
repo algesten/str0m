@@ -687,7 +687,7 @@ pub mod ice {
     pub use is::IceCreds;
     pub use is::{IceAgent, IceAgentEvent};
     pub use is::{LocalPreference, default_local_preference};
-    pub use str0m_proto::stun::{StunMessage, StunMessageBuilder, StunPacket, TransId};
+    pub use is::stun::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
 mod io;
@@ -1859,7 +1859,7 @@ impl Rtc {
 
         match r.contents.inner {
             Stun(stun) => {
-                let packet = str0m_proto::stun::StunPacket {
+                let packet = is::stun::StunPacket {
                     proto: r.proto,
                     source: r.source,
                     destination: r.destination,

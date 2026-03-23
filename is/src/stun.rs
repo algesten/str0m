@@ -8,7 +8,6 @@ use std::time::Duration;
 use crc::{CRC_32_ISO_HDLC, Crc};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
-use tracing::warn;
 
 pub const DEFAULT_MAX_RETRANSMITS: usize = 9;
 
@@ -73,8 +72,7 @@ impl Default for StunTiming {
     }
 }
 
-mod error;
-pub use error::StunError;
+pub use super::error::StunError;
 
 /// STUN transaction ID.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -662,7 +660,7 @@ impl<'a> Attributes<'a> {
 
 use std::{io, str};
 
-use crate::NonCryptographicRng;
+use str0m_proto::NonCryptographicRng;
 
 const PAD: [u8; 4] = [0, 0, 0, 0];
 impl<'a> Attributes<'a> {
@@ -1423,7 +1421,7 @@ impl fmt::Debug for DebugHex<'_> {
 #[derive(Debug)]
 pub struct StunPacket<'a> {
     /// The protocol the socket this received data originated from is using.
-    pub proto: crate::Protocol,
+    pub proto: str0m_proto::Protocol,
     /// The socket this received data originated from.
     pub source: SocketAddr,
     /// The destination socket of the datagram.
