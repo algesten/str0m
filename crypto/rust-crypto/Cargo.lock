@@ -957,7 +957,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "base64ct",
  "dimpl",
@@ -967,7 +967,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-rust-crypto"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "aes",
  "aes-gcm",

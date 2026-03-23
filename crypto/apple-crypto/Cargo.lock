@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-apple-crypto"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "apple-cryptokit-rs",
  "core-foundation",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "base64ct",
  "dimpl",

@@ -1,6 +1,6 @@
 [package]
 name = "str0m-aws-lc-rs"
-version = "0.1.2"
+version = "0.2.0"
 authors = ["Martin Algesten <martin@algesten.se>"]
 description = "aws-lc-rs backend for str0m WebRTC"
 license = "MIT OR Apache-2.0"
@@ -12,7 +12,7 @@ edition = "2024"
 rust-version = "1.85.0"
 
 [dependencies]
-str0m-proto = { version = "0.1.2", path = "../../proto" }
+str0m-proto = { version = "0.2.0", path = "../../proto" }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
 dimpl = { version = "0.4.3", default-features = false, features = ["aws-lc-rs", "rcgen"] }
 time = "0.3"
