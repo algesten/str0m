@@ -30,13 +30,7 @@ base64ct = "1"
 subtle = "2.0.0"
 
 fastrand = "2.0.1"
-crc = "3"
 serde = { version = "1.0.152", features = ["derive"] }
-tracing = "0.1.37"
 
 # For openssl errors
 openssl = { version = "0.10.70", optional = true }
-
-[dev-dependencies]
-hmac = "0.12"
-sha1 = "0.10"

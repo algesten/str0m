@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::Sha1HmacProvider;
 use crate::preference::default_local_preference;
-use str0m_proto::stun::{Class as StunClass, Method as StunMethod, StunTiming};
-use str0m_proto::stun::{StunMessage, StunPacket, TransId};
+use crate::stun::{Class as StunClass, Method as StunMethod, StunTiming};
+use crate::stun::{StunMessage, StunPacket, TransId};
 use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN, Id, Transmit};
 use str0m_proto::{NonCryptographicRng, Pii, Protocol};
 

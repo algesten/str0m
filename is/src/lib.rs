@@ -110,6 +110,9 @@ pub use preference::default_local_preference;
 
 mod error;
 pub use error::IceError;
+pub use error::StunError;
+
+pub mod stun;
 
 mod parse;
 
@@ -123,7 +126,7 @@ pub(crate) mod test {
     use crate::agent::IceAgentStats;
     use crate::*;
     use str0m_proto::Protocol;
-    use str0m_proto::stun::{StunMessage, StunPacket};
+    use crate::stun::{StunMessage, StunPacket};
 
     use std::collections::HashMap;
     use std::net::IpAddr;
