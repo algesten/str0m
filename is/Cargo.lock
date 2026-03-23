@@ -115,11 +115,13 @@ dependencies = [
 name = "is"
 version = "0.1.0"
 dependencies = [
+ "crc",
  "hmac",
  "serde",
  "serde_json",
  "sha1",
  "str0m-proto",
+ "subtle",
  "tracing",
  "tracing-subscriber",
 ]
@@ -305,12 +307,10 @@ name = "str0m-proto"
 version = "0.2.0"
 dependencies = [
  "base64ct",
- "crc",
  "fastrand",
  "serde",
  "subtle",
  "time",
- "tracing",
 ]
 
 [[package]]
