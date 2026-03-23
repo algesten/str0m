@@ -23,8 +23,10 @@ pub struct ReceiverRegister {
     /// Received at last reception report generation.
     received_prior: i64,
 
-    /// Estimated jitter. This is in the media time base, so divided by
-    /// 90_000 or 48_000 to normalize.
+    /// Interarrival jitter in **microseconds**.
+    ///
+    /// RTCP carries jitter in **RTP timestamp units** so use
+    /// [`ReceiverRegister::jitter_in_rtp_ts`] for the wire value.
     jitter: f32,
 }
 
