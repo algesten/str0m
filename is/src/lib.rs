@@ -127,6 +127,7 @@ pub(crate) mod test {
     use crate::stun::{StunMessage, StunPacket};
     use crate::*;
     use str0m_proto::Protocol;
+    use str0m_proto::Transmit;
 
     use std::collections::HashMap;
     use std::net::IpAddr;
@@ -1233,6 +1234,13 @@ pub(crate) mod test {
         assert_eq!(c1, c2);
     }
 
+    pub struct TestStunMessage {
+        transmit: Transmit,
+        is_binding_request: bool,
+        is_successful_binding_response: bool,
+        use_candidate: bool,
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
@@ -1242,13 +1250,6 @@ pub(crate) mod test {
         pub time: Instant,
         pub drop_sent_packets: bool,
         pub nat: Option<Nat>,
-    }
-
-    struct TestStunMessage {
-        transmit: Transmit,
-        is_binding_request: bool,
-        is_successful_binding_response: bool,
-        use_candidate: bool,
     }
 
     impl TestAgent {

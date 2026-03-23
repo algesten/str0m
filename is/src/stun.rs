@@ -1437,7 +1437,7 @@ mod test {
 
     fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
         use hmac::{Hmac, Mac};
-        use sha1::Sha1;
+        use sha1_::Sha1;
         let mut mac = Hmac::<Sha1>::new_from_slice(key).unwrap();
         for p in payloads {
             mac.update(p);
