@@ -726,26 +726,20 @@ mod test {
 
         // The controlling side starts checking the signalled host candidate.
         progress_without_network(&mut a1, &mut a2);
+        let initial_request = progress_one_message(&mut a1, &mut a2);
+        assert!(initial_request.is_binding_request);
+        assert!(!initial_request.use_candidate);
 
-        let initial_request = a1.expect_binding_request(
-            false,
-            "controlling agent should emit an initial binding request",
-        );
-        deliver_manual_test_transmit(&mut a1, &mut a2, initial_request);
-
-        let initial_reply = a2
-            .expect_binding_response("controlled agent should answer the initial binding request");
-        deliver_manual_test_transmit(&mut a2, &mut a1, initial_reply);
+        let initial_reply = progress_one_message(&mut a2, &mut a1);
+        assert!(initial_reply.is_successful_binding_response);
         assert!(a1.has_event(|e| matches!(e, IceAgentEvent::NominatedSend { .. })));
 
         // Now the controlling side sends the nominated USE-CANDIDATE request.
         progress_without_network(&mut a1, &mut a2);
 
-        let nominate_request = a1.expect_binding_request(
-            true,
-            "controlling agent should emit a nominated binding request",
-        );
-        deliver_manual_test_transmit(&mut a1, &mut a2, nominate_request);
+        let nominate_request = progress_one_message(&mut a1, &mut a2);
+        assert!(nominate_request.is_binding_request);
+        assert!(nominate_request.use_candidate);
 
         // The controlled side answers that request and then sends a reverse binding
         // request to confirm the nomination. The reply is queued when the request
@@ -753,12 +747,10 @@ mod test {
         progress_without_network(&mut a2, &mut a1);
         assert!(a2.state().is_connected());
 
-        let nominate_reply =
-            a2.expect_binding_response("controlled agent should reply to the nominated request");
-        let reverse_request = a2.expect_binding_request(
-            false,
-            "controlled agent should emit a reverse binding request",
-        );
+        let nominate_reply = a2.poll_next_stun_message();
+        assert!(nominate_reply.is_successful_binding_response);
+        let reverse_request = a2.poll_next_stun_message();
+        assert!(reverse_request.is_binding_request);
 
         // Before the reverse binding response arrives, the signalling layer delivers the
         // controller's real remote candidate. This replaces the prflx pair during Attempt.
@@ -772,13 +764,11 @@ mod test {
         )));
 
         // Finish the delayed round trip and ensure the controlled side stays connected.
-        deliver_manual_test_transmit(&mut a2, &mut a1, nominate_reply);
-        deliver_manual_test_transmit(&mut a2, &mut a1, reverse_request);
+        deliver_transmit(&mut a2, &mut a1, &nominate_reply.transmit);
+        deliver_transmit(&mut a2, &mut a1, &reverse_request.transmit);
 
-        let reverse_reply = a1.expect_binding_response(
-            "controlling agent should reply to the reverse binding request",
-        );
-        deliver_manual_test_transmit(&mut a1, &mut a2, reverse_reply);
+        let reverse_reply = progress_one_message(&mut a1, &mut a2);
+        assert!(reverse_reply.is_successful_binding_response);
 
         for _ in 0..20 {
             if a1.state().is_connected() && a2.state().is_connected() {
@@ -1251,8 +1241,8 @@ mod test {
                 .unwrap_or(self.time);
         }
 
-        fn poll_next_stun_message(&mut self, context: &'static str) -> TestStunMessage {
-            let transmit = self.poll_transmit().expect(context);
+        fn poll_next_stun_message(&mut self) -> TestStunMessage {
+            let transmit = self.poll_transmit().expect("agent should emit a transmit");
             let message =
                 StunMessage::parse(&transmit.contents).expect("IceAgent to only emit StunMessages");
 
@@ -1262,23 +1252,6 @@ mod test {
                 use_candidate: message.use_candidate(),
                 transmit,
             }
-        }
-
-        fn expect_binding_request(
-            &mut self,
-            use_candidate: bool,
-            context: &'static str,
-        ) -> Transmit {
-            let message = self.poll_next_stun_message(context);
-            assert!(message.is_binding_request);
-            assert_eq!(message.use_candidate, use_candidate);
-            message.transmit
-        }
-
-        fn expect_binding_response(&mut self, context: &'static str) -> Transmit {
-            let message = self.poll_next_stun_message(context);
-            assert!(message.is_successful_binding_response);
-            message.transmit
         }
     }
 
@@ -1379,7 +1352,15 @@ mod test {
         }
     }
 
-    fn deliver_manual_test_transmit(from: &mut TestAgent, to: &mut TestAgent, trans: Transmit) {
+    fn progress_one_message(from: &mut TestAgent, to: &mut TestAgent) -> TestStunMessage {
+        let msg = from.poll_next_stun_message();
+
+        deliver_transmit(from, to, &msg.transmit);
+
+        msg
+    }
+
+    fn deliver_transmit(from: &mut TestAgent, to: &mut TestAgent, trans: &Transmit) {
         let message =
             StunMessage::parse(&trans.contents).expect("IceAgent to only emit StunMessages");
         let packet = StunPacket {
