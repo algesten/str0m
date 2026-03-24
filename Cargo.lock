@@ -1037,7 +1037,7 @@ dependencies = [
 
 [[package]]
 name = "is"
-version = "0.1.0"
+version = "0.7.0"
 dependencies = [
  "crc",
  "hmac",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64ct",
  "dimpl",
