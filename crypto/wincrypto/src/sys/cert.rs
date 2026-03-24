@@ -102,7 +102,7 @@ impl Certificate {
                 // Dimpl currently requires the Certificate and Private Key as
                 // DER-encoded bytes. This will allow plaintext export so the
                 // private key can be exported in PKCS#8 format after creation.
-                #[cfg(feature = "prefer_dimpl")]
+                #[cfg(feature = "dimpl")]
                 {
                     use windows::Win32::Security::Cryptography::NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
                     use windows::Win32::Security::Cryptography::NCRYPT_EXPORT_POLICY_PROPERTY;
@@ -193,7 +193,7 @@ impl Certificate {
         crate::sys::sha256(&der_bytes)
     }
 
-    #[cfg(any(test, not(feature = "prefer_dimpl")))]
+    #[cfg(any(test, not(feature = "dimpl")))]
     pub fn context(&self) -> *const CERT_CONTEXT {
         self.cert_context
     }
@@ -202,7 +202,7 @@ impl Certificate {
     ///
     /// Only available when the certificate was created via `new_self_signed`
     /// with a key handle (EC-DSA keys).
-    #[cfg(feature = "prefer_dimpl")]
+    #[cfg(feature = "dimpl")]
     pub fn export_private_key_pkcs8_der(&self) -> Result<Vec<u8>, WinCryptoError> {
         use windows::Win32::Security::Cryptography::NCRYPT_PKCS8_PRIVATE_KEY_BLOB;
         use windows::Win32::Security::Cryptography::NCryptExportKey;
@@ -393,7 +393,7 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "prefer_dimpl"))]
+#[cfg(all(test, feature = "dimpl"))]
 mod dimpl_tests {
     #[test]
     fn export_pkcs8_ec_dsa() {

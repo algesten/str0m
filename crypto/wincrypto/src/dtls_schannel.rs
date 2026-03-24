@@ -46,8 +46,8 @@ impl DtlsProvider for WinCryptoDtlsProvider {
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         if !matches!(dtls_version, DtlsVersion::Dtls12 | DtlsVersion::Auto) {
             return Err(CryptoError::Other(
-                "WinCrypto DTLS provider only supports DTLS 1.2 without prefer_dimpl. \
-                 Enable the prefer_dimpl feature for DTLS 1.3."
+                "WinCrypto DTLS provider only supports DTLS 1.2 without dimpl. \
+                 Enable the str0m-wincrypto-dimpl feature for DTLS 1.3/Auto."
                     .to_string(),
             ));
         }

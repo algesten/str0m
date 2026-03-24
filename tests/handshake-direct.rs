@@ -66,6 +66,8 @@ fn default_crypto_name() -> &'static str {
     return "openssl-dimpl";
     #[cfg(feature = "openssl")]
     return "openssl";
+    #[cfg(feature = "wincrypto-dimpl")]
+    return "wincrypto-dimpl";
     #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     return "wincrypto";
     #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
