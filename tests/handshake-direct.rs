@@ -94,7 +94,7 @@ fn run_handshake_test(client_dtls: DtlsVersion, server_dtls: DtlsVersion) -> Res
         || (matches!(client_dtls, DtlsVersion::Auto) && dtls12_only(&server_crypto_name))
     {
         println!(
-            "\n=== SKIPPED: client={} ({}), server={} ({}) — DTLS 1.3/Auto not supported ===",
+            "\n=== SKIPPED: client={} ({}), server={} ({}) — DTLS 1.3 not supported ===",
             client_dtls, client_crypto_name, server_dtls, server_crypto_name
         );
         return Ok(());

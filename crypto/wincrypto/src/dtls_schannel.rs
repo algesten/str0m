@@ -44,13 +44,14 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         _now: Instant,
         dtls_version: DtlsVersion,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
-        if dtls_version != DtlsVersion::Dtls12 {
+        if !matches!(dtls_version, DtlsVersion::Dtls12 | DtlsVersion::Auto) {
             return Err(CryptoError::Other(
-                "WinCrypto DTLS provider only supports DTLS 1.2. \
-                 Use aws-lc-rs or rust-crypto backend for DTLS 1.3/Auto."
+                "WinCrypto DTLS provider only supports DTLS 1.2 without prefer_dimpl. \
+                 Enable the prefer_dimpl feature for DTLS 1.3."
                     .to_string(),
             ));
         }
+
         // Look up the Windows certificate by its DER bytes
         let win_cert = CERT_CACHE
             .lock()

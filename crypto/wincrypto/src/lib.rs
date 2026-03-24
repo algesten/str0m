@@ -1,6 +1,7 @@
 //! Windows SChannel + CNG implementation of cryptographic functions.
 //! DTLS via Windows SChannel.
 
+#[cfg(not(feature = "prefer_dimpl"))]
 #[macro_use]
 extern crate tracing;
 
@@ -13,6 +14,10 @@ use sha1::WinCryptoSha1HmacProvider;
 mod sha256;
 use sha256::WinCryptoSha256Provider;
 
+#[cfg(feature = "prefer_dimpl")]
+mod dimpl_provider;
+#[cfg_attr(feature = "prefer_dimpl", path = "dtls_dimpl.rs")]
+#[cfg_attr(not(feature = "prefer_dimpl"), path = "dtls_schannel.rs")]
 mod dtls;
 use dtls::WinCryptoDtlsProvider;
 

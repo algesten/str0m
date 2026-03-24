@@ -98,6 +98,24 @@ impl Certificate {
                     CERT_KEY_SPEC(0),
                     NCRYPT_SILENT_FLAG,
                 )?;
+
+                // Dimpl currently requires the Certificate and Private Key as
+                // DER-encoded bytes. This will allow plaintext export so the
+                // private key can be exported in PKCS#8 format after creation.
+                #[cfg(feature = "prefer_dimpl")]
+                {
+                    use windows::Win32::Security::Cryptography::NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
+                    use windows::Win32::Security::Cryptography::NCRYPT_EXPORT_POLICY_PROPERTY;
+                    use windows::Win32::Security::Cryptography::NCryptSetProperty;
+                    let export_policy = NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
+                    NCryptSetProperty(
+                        key_handle.into(),
+                        NCRYPT_EXPORT_POLICY_PROPERTY,
+                        &export_policy.to_le_bytes(),
+                        NCRYPT_SILENT_FLAG,
+                    )?;
+                }
+
                 NCryptFinalizeKey(key_handle, NCRYPT_FLAGS(0))?;
 
                 let key_prov_info = CRYPT_KEY_PROV_INFO {
@@ -175,8 +193,52 @@ impl Certificate {
         crate::sys::sha256(&der_bytes)
     }
 
+    #[cfg(any(test, not(feature = "prefer_dimpl")))]
     pub fn context(&self) -> *const CERT_CONTEXT {
         self.cert_context
+    }
+
+    /// Export the private key in PKCS#8 DER format.
+    ///
+    /// Only available when the certificate was created via `new_self_signed`
+    /// with a key handle (EC-DSA keys).
+    #[cfg(feature = "prefer_dimpl")]
+    pub fn export_private_key_pkcs8_der(&self) -> Result<Vec<u8>, WinCryptoError> {
+        use windows::Win32::Security::Cryptography::NCRYPT_PKCS8_PRIVATE_KEY_BLOB;
+        use windows::Win32::Security::Cryptography::NCryptExportKey;
+        let key_handle = self
+            .key_handle
+            .ok_or_else(|| WinCryptoError::Generic("No private key handle available".into()))?;
+
+        // SAFETY: NCryptExportKey borrows the key handle and output buffer for
+        // the duration of each call; both outlive this block.
+        unsafe {
+            // Query the required buffer size.
+            let mut size = 0u32;
+            NCryptExportKey(
+                key_handle,
+                None,
+                NCRYPT_PKCS8_PRIVATE_KEY_BLOB,
+                None,
+                None,
+                &mut size,
+                NCRYPT_SILENT_FLAG,
+            )?;
+
+            let mut buf = vec![0u8; size as usize];
+            NCryptExportKey(
+                key_handle,
+                None,
+                NCRYPT_PKCS8_PRIVATE_KEY_BLOB,
+                None,
+                Some(&mut buf),
+                &mut size,
+                NCRYPT_SILENT_FLAG,
+            )?;
+
+            buf.truncate(size as usize);
+            Ok(buf)
+        }
     }
 }
 
@@ -328,5 +390,24 @@ mod tests {
         let cert = super::Certificate::new_self_signed(true, "cn=WebRTC").unwrap();
         let fingerprint = cert.sha256_fingerprint().unwrap();
         assert_eq!(fingerprint.len(), 32);
+    }
+}
+
+#[cfg(all(test, feature = "prefer_dimpl"))]
+mod dimpl_tests {
+    #[test]
+    fn export_pkcs8_ec_dsa() {
+        let cert = super::Certificate::new_self_signed(true, "cn=WebRTC-PKCS8").unwrap();
+        let pkcs8 = cert.export_private_key_pkcs8_der().unwrap();
+        // PKCS#8 DER starts with a SEQUENCE tag (0x30).
+        assert_eq!(pkcs8[0], 0x30);
+        assert!(!pkcs8.is_empty());
+    }
+
+    #[test]
+    fn export_pkcs8_no_key_handle() {
+        let cert = super::Certificate::new_self_signed(false, "cn=WebRTC-RSA").unwrap();
+        // RSA path doesn't store a key_handle, so export should fail.
+        assert!(cert.export_private_key_pkcs8_der().is_err());
     }
 }

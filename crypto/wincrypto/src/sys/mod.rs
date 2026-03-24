@@ -15,7 +15,9 @@ pub use sha256::*;
 mod srtp;
 pub use srtp::*;
 
+#[cfg(not(feature = "prefer_dimpl"))]
 mod dtls;
+#[cfg(not(feature = "prefer_dimpl"))]
 pub use dtls::*;
 
 #[derive(Debug)]
