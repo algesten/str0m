@@ -7,11 +7,9 @@
 
 mod cipher_suite;
 mod hash;
-mod hkdf;
 mod hmac;
 mod kx_group;
 mod sign;
-mod tls12;
 
 use dimpl::crypto::{CryptoProvider, SecureRandom};
 
@@ -25,9 +23,7 @@ pub fn default_provider() -> CryptoProvider {
         key_provider: &sign::KEY_PROVIDER,
         secure_random: &SECURE_RANDOM,
         hash_provider: &hash::HASH_PROVIDER,
-        prf_provider: &tls12::PRF_PROVIDER,
         hmac_provider: &hmac::HMAC_PROVIDER,
-        hkdf_provider: &hkdf::HKDF_PROVIDER,
     }
 }
 
@@ -44,3 +40,13 @@ impl SecureRandom for AppleSecureRandom {
 }
 
 static SECURE_RANDOM: AppleSecureRandom = AppleSecureRandom;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn validate_dimpl_provider() -> Result<(), String> {
+        super::default_provider()
+            .validate()
+            .map_err(|err| format!("{err:?}"))
+    }
+}
