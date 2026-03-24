@@ -16,14 +16,15 @@ pii = ["str0m-proto/pii"]
 _internal_test_exports = ["str0m-proto/_internal_test_exports"]
 
 [dependencies]
-str0m-proto = { version = "0.2.0", path = "../proto", default-features = false }
-tracing = "0.1.37"
-serde = { version = "1.0.152", features = ["derive"] }
-crc = "3"
-subtle = "2.0.0"
-hmac = { version = "0.12", optional = true }
+str0m-proto = { workspace = true, default-features = false }
+tracing.workspace = true
+serde.workspace = true
+crc.workspace = true
+subtle.workspace = true
+hmac = { workspace = true, optional = true }
+# Package rename not supported with workspace inheritance
 sha1_ = { package = "sha1", version = "0.10", optional = true }
 
 [dev-dependencies]
-serde_json = "1.0"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
+serde_json.workspace = true
+tracing-subscriber.workspace = true

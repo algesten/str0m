@@ -6,6 +6,7 @@
 name = "_str0m_test"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
-str0m = { path = "..", default-features = false, features = ["_internal_test_exports"] }
+str0m = { workspace = true, default-features = false, features = ["_internal_test_exports"] }

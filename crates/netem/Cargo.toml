@@ -12,5 +12,5 @@ edition = "2024"
 rust-version = "1.85.0"
 
 [dependencies]
-fastrand = "2"
-str0m-proto = { version = "0.2.0", path = "../proto" }
+fastrand.workspace = true
+str0m-proto.workspace = true

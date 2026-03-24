@@ -26,10 +26,13 @@ jobs:
       - run: cargo install cargo-fuzz
 
       - name: Build fuzz targets
-        run: cargo fuzz build
+        run: cargo fuzz build --fuzz-dir crates/fuzz
 
       - name: Run Cargo Fuzz
         run: |
-          cargo fuzz list | while read target; do
-            cargo fuzz run "$target" --jobs $(nproc) -- -max_total_time=$FUZZ_TIMEOUT --stop-after-first-failure -max_len=200000
+          cargo fuzz list --fuzz-dir crates/fuzz | while read target; do
+            cargo fuzz run "$target" --fuzz-dir crates/fuzz \
+              --jobs $(nproc) -- \
+              -max_total_time=$FUZZ_TIMEOUT \
+              --stop-after-first-failure -max_len=200000
           done

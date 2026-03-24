@@ -23,6 +23,79 @@ rust-version = "1.85.0"
 # For large deployments sharing OS images, OS updates can be easier for
 # security patching than updating statically linked software.
 
+[workspace]
+members = [
+  "crates/proto",
+  "crates/is",
+  "crates/netem",
+  "crates/_str0m_test",
+  "crypto/aws-lc-rs",
+  "crypto/rust-crypto",
+  "crypto/openssl",
+  "crypto/apple-crypto",
+  "crypto/wincrypto",
+]
+exclude = ["crates/fuzz"]
+
+[workspace.dependencies]
+# Internal crates
+str0m = { version = "0.17.0", path = ".", default-features = false }
+str0m-proto = { version = "0.2.0", path = "crates/proto", default-features = false }
+is = { version = "0.1.0", path = "crates/is", default-features = false }
+str0m-netem = { version = "0.2.0", path = "crates/netem" }
+str0m-aws-lc-rs = { version = "0.2.0", path = "crypto/aws-lc-rs" }
+str0m-rust-crypto = { version = "0.2.0", path = "crypto/rust-crypto" }
+str0m-openssl = { version = "0.2.0", path = "crypto/openssl" }
+str0m-apple-crypto = { version = "0.2.0", path = "crypto/apple-crypto" }
+str0m-wincrypto = { version = "0.4.0", path = "crypto/wincrypto" }
+_str0m_test = { version = "0.1.0", path = "crates/_str0m_test" }
+
+# Core dependencies
+tracing = "0.1.37"
+fastrand = "2.0.1"
+sctp-proto = "0.8.1"
+combine = "4.6.6"
+subtle = "2.0.0"
+arrayvec = "0.7.6"
+serde = { version = "1.0.152", features = ["derive"] }
+dimpl = { version = "0.4.3", default-features = false }
+time = "0.3"
+
+# Proto dependencies
+base64ct = "1"
+openssl = "0.10.70"
+
+# IS dependencies
+crc = "3"
+hmac = "0.12.1"
+sha1 = "0.10"
+
+# Crypto backend dependencies
+aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
+aes-gcm = "0.10"
+aes = "0.8"
+ctr = "0.9"
+p256 = { version = "0.13", features = ["ecdh"] }
+sha2 = "0.10"
+openssl-sys = "0.9.80"
+libc = "0.2"
+der = "0.7"
+pkcs8 = { version = "0.10", features = ["pem"] }
+sec1 = "0.7"
+spki = "0.7"
+x509-cert = { version = "0.2", default-features = false }
+
+# Dev/test dependencies
+rouille = "3.6.2"
+tempfile = "3"
+url = "2"
+serde_json = "1.0"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
+systemstat = "0.2.2"
+pcap-file = "2.0.0"
+regex = "1.11.1"
+rand = "0.9.0"
+
 [features]
 default = ["aws-lc-rs", "examples"]
 aws-lc-rs = ["dep:str0m-aws-lc-rs"]
@@ -44,52 +117,50 @@ _internal_dont_use_log_stats = []
 _internal_test_exports = ["str0m-proto/_internal_test_exports", "is/_internal_test_exports"]
 
 [dependencies]
-tracing = "0.1.37"
-fastrand = "2.0.1"
-sctp-proto = "0.8.1"
-combine = "4.6.6"
-subtle = "2.0.0"
-arrayvec = "0.7.6"
-
-serde = { version = "1.0.152", features = ["derive"] }
+tracing.workspace = true
+fastrand.workspace = true
+sctp-proto.workspace = true
+combine.workspace = true
+subtle.workspace = true
+arrayvec.workspace = true
+serde.workspace = true
+time.workspace = true
 
 # DTLS made for str0m (required dependency)
-dimpl = { version = "0.4.3", default-features = false }
+dimpl.workspace = true
 
-time = "0.3"
-
-str0m-proto = { version = "0.2.0", path = "proto", features = ["dtls"] }
-is = { version = "0.1.0", path = "is", default-features = false }
+str0m-proto = { workspace = true, features = ["dtls"] }
+is.workspace = true
 
 # Crypto providers
-str0m-aws-lc-rs = { version = "0.2.0", path = "crypto/aws-lc-rs", optional = true }
-str0m-rust-crypto = { version = "0.2.0", path = "crypto/rust-crypto", optional = true }
-str0m-openssl = { version = "0.2.0", path = "crypto/openssl", optional = true }
+str0m-aws-lc-rs = { workspace = true, optional = true }
+str0m-rust-crypto = { workspace = true, optional = true }
+str0m-openssl = { workspace = true, optional = true }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-str0m-apple-crypto = { version = "0.2.0", path = "crypto/apple-crypto", optional = true }
+str0m-apple-crypto = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Windows Crypto (CNG + SChannel)
-str0m-wincrypto = { version = "0.4.0", path = "crypto/wincrypto", optional = true }
+str0m-wincrypto = { workspace = true, optional = true }
 
 [dev-dependencies]
-rouille = { version = "3.6.2", features = [] }
-str0m-rust-crypto = { version = "0.2.0", path = "crypto/rust-crypto" }
-netem = { package = "str0m-netem", version = "0.2.0", path = "netem" }
+rouille.workspace = true
+str0m-rust-crypto.workspace = true
+tempfile.workspace = true
+url.workspace = true
+serde_json.workspace = true
+tracing-subscriber.workspace = true
+systemstat.workspace = true
+pcap-file.workspace = true
+regex.workspace = true
+rand.workspace = true
 
-tempfile = "3"
-url = "2"
-
-serde_json = "1.0"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
-systemstat = "0.2.2"
-pcap-file = "2.0.0"
-regex = "1.11.1"
-rand = "0.9.0"
+# Package rename not supported with workspace inheritance
+netem = { package = "str0m-netem", version = "0.2.0", path = "crates/netem" }
 
 # dummy package that enables "_internal_test_exports"
-_str0m_test = { path = "_str0m_test" }
+_str0m_test.workspace = true
 
 [[example]]
 name = "chat"

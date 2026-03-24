@@ -12,7 +12,7 @@ edition = "2024"
 rust-version = "1.85.0"
 
 [dependencies]
-str0m-proto = { version = "0.2.0", path = "../../proto" }
-aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
-dimpl = { version = "0.4.3", default-features = false, features = ["aws-lc-rs", "rcgen"] }
-time = "0.3"
+str0m-proto = { workspace = true, features = ["dtls"] }
+aws-lc-rs.workspace = true
+dimpl = { workspace = true, features = ["aws-lc-rs", "rcgen"] }
+time.workspace = true
