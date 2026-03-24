@@ -1,6 +1,11 @@
 //! OpenSSL implementation of cryptographic functions.
 //! DTLS via OpenSSL's native DTLS implementation.
 
+mod cert;
+#[cfg(feature = "prefer_dimpl")]
+mod dimpl_provider;
+#[cfg_attr(feature = "prefer_dimpl", path = "dtls_dimpl.rs")]
+#[cfg_attr(not(feature = "prefer_dimpl"), path = "dtls_ossl.rs")]
 mod dtls;
 mod sha1;
 mod sha256;
@@ -12,6 +17,7 @@ use sha256::OsslSha256Provider;
 use srtp::OsslSrtpProvider;
 use str0m_proto::crypto::CryptoProvider;
 
+#[cfg(not(feature = "prefer_dimpl"))]
 #[macro_use]
 extern crate tracing;
 
