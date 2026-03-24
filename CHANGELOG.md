@@ -1,9 +1,8 @@
 # Unreleased
-  
+
+  * Refactor out new crate "is" (ice agent) #912
   * Expose CSRC property in RTP Header #910
-
   * Fix jitter calculation in ReceiverReports #907
-
   * Preserve nomination on redundant pair replacement #908
 
 # 0.17.0
