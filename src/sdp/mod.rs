@@ -4,13 +4,11 @@ use std::ops::Deref;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 mod data;
+#[cfg(test)]
+pub(crate) use data::RtpMap;
 pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
 pub(crate) use data::{RestrictionId, Simulcast, SimulcastGroups, SimulcastLayer};
-pub(crate) use parser::parse_candidate;
-
-#[cfg(test)]
-pub(crate) use data::RtpMap;
 
 mod parser;
 
