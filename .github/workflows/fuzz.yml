@@ -31,5 +31,8 @@ jobs:
       - name: Run Cargo Fuzz
         run: |
           cargo fuzz list --fuzz-dir crates/fuzz | while read target; do
-            cargo fuzz run "$target" --fuzz-dir crates/fuzz --jobs $(nproc) -- -max_total_time=$FUZZ_TIMEOUT --stop-after-first-failure -max_len=200000
+            cargo fuzz run "$target" --fuzz-dir crates/fuzz \
+              --jobs $(nproc) -- \
+              -max_total_time=$FUZZ_TIMEOUT \
+              --stop-after-first-failure -max_len=200000
           done
