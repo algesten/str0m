@@ -16,9 +16,9 @@ dimpl.workspace = true
 time.workspace = true
 
 # Apple platform bindings
-apple-cryptokit-rs.workspace = true
-core-foundation.workspace = true
-security-framework.workspace = true
+apple-cryptokit-rs = "0.2.1"
+core-foundation = "0.10"
+security-framework = "3.5"
 
 # ASN.1/X.509 parsing for certificate handling
 der.workspace = true

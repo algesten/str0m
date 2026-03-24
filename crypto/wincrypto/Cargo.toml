@@ -13,4 +13,9 @@ rust-version = "1.85.0"
 [dependencies]
 tracing.workspace = true
 str0m-proto = { workspace = true, features = ["dtls"] }
-windows.workspace = true
+windows = { version = "0.62", features = [
+  "Win32_Security_Cryptography",
+  "Win32_Security_Authentication_Identity",
+  "Win32_Security_Credentials",
+  "Win32_System_Rpc",
+] }

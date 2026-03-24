@@ -79,20 +79,11 @@ p256 = { version = "0.13", features = ["ecdh"] }
 sha2 = "0.10"
 openssl-sys = "0.9.80"
 libc = "0.2"
-apple-cryptokit-rs = "0.2.1"
-core-foundation = "0.10"
-security-framework = "3.5"
 der = "0.7"
 pkcs8 = { version = "0.10", features = ["pem"] }
 sec1 = "0.7"
 spki = "0.7"
 x509-cert = { version = "0.2", default-features = false }
-windows = { version = "0.62", features = [
-  "Win32_Security_Cryptography",
-  "Win32_Security_Authentication_Identity",
-  "Win32_Security_Credentials",
-  "Win32_System_Rpc",
-] }
 
 # Dev/test dependencies
 rouille = "3.6.2"
