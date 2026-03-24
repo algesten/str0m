@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Implement wincrypto-dimpl feature #
+  * Implement wincrypto-dimpl feature #920
   * Implement openssl-dimpl feature #919
   * Update to dimpl 0.5.0 #916
   * Refactor out new crate "is" (ice agent) #912
