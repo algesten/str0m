@@ -21,6 +21,10 @@ jobs:
             os: ubuntu-latest
           - name: openssl
             os: macos-latest
+          - name: openssl-dimpl
+            os: ubuntu-latest
+          - name: openssl-dimpl
+            os: macos-latest
           - name: aws-lc-rs
             os: ubuntu-latest
           - name: aws-lc-rs

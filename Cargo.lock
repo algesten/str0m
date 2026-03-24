@@ -2032,6 +2032,8 @@ dependencies = [
 name = "str0m-openssl"
 version = "0.2.0"
 dependencies = [
+ "arrayvec",
+ "dimpl",
  "libc",
  "openssl",
  "openssl-sys",

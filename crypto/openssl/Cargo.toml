@@ -13,6 +13,7 @@ rust-version = "1.85.0"
 
 [features]
 vendored = ["openssl/vendored"]
+dimpl = ["dep:dimpl"]
 
 [dependencies]
 tracing.workspace = true
@@ -20,3 +21,8 @@ str0m-proto = { workspace = true, features = ["dtls", "openssl"] }
 openssl.workspace = true
 openssl-sys.workspace = true
 libc.workspace = true
+dimpl = { workspace = true, optional = true }
+
+[dev-dependencies]
+arrayvec = "0.7"
+
