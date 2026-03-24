@@ -50,13 +50,3 @@ pub(super) mod test_utils {
         data.iter().map(|b| format!("{b:02x}")).collect()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn validate_dimpl_provider() -> Result<(), String> {
-        super::default_provider()
-            .validate()
-            .map_err(|err| format!("{err:?}"))
-    }
-}

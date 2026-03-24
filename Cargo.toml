@@ -101,14 +101,11 @@ default = ["aws-lc-rs", "examples"]
 aws-lc-rs = ["dep:str0m-aws-lc-rs"]
 rust-crypto = ["dep:str0m-rust-crypto"]
 openssl = ["dep:str0m-openssl"]
+openssl-dimpl = ["dep:str0m-openssl", "str0m-openssl/dimpl"]
 wincrypto = ["dep:str0m-wincrypto"]
 apple-crypto = ["dep:str0m-apple-crypto"]
 vendored = ["str0m-openssl?/vendored"]
 unversioned = []
-
-# For crypto providers that have dimpl and non-dimpl DTLS support, use dimpl.
-# This has no effect for providers that always dimpl.
-prefer_dimpl = ["str0m-openssl?/prefer_dimpl"]
 
 # Redacts personally identifiable information (PII) from logs debug and above
 pii = ["str0m-proto/pii", "is/pii"]

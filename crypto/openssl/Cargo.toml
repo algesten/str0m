@@ -13,7 +13,7 @@ rust-version = "1.85.0"
 
 [features]
 vendored = ["openssl/vendored"]
-prefer_dimpl = ["dep:dimpl"]
+dimpl = ["dep:dimpl"]
 
 [dependencies]
 tracing.workspace = true
