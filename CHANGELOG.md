@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Implement wincrypto-dimpl feature #
+  * Implement openssl-dimpl feature #919
+  * Update to dimpl 0.5.0 #916
   * Refactor out new crate "is" (ice agent) #912
   * Expose CSRC property in RTP Header #910
   * Fix jitter calculation in ReceiverReports #907
