@@ -46,7 +46,10 @@ pub fn from_feature_flags() -> CryptoProvider {
     #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
     return str0m_apple_crypto::default_provider();
 
-    #[cfg(all(any(feature = "wincrypto", feature = "wincrypto-dimpl"), target_os = "windows"))]
+    #[cfg(all(
+        any(feature = "wincrypto", feature = "wincrypto-dimpl"),
+        target_os = "windows"
+    ))]
     return str0m_wincrypto::default_provider();
 
     panic!(

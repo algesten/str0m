@@ -413,7 +413,11 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
         "wincrypto-dimpl" => str0m_wincrypto::default_provider(),
 
         // If both wincrypto and wincrypto-dimpl are declared, only wincrypto-dimpl is available.
-        #[cfg(all(feature = "wincrypto", not(feature = "wincrypto-dimpl"), target_os = "windows"))]
+        #[cfg(all(
+            feature = "wincrypto",
+            not(feature = "wincrypto-dimpl"),
+            target_os = "windows"
+        ))]
         "wincrypto" => str0m_wincrypto::default_provider(),
 
         #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
@@ -431,7 +435,11 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
             #[cfg(feature = "openssl-dimpl")]
             available.push("openssl-dimpl");
             // If both wincrypto and wincrypto-dimpl are declared, only wincrypto-dimpl is available.
-            #[cfg(all(feature = "wincrypto", not(feature = "wincrypto-dimpl"), target_os = "windows"))]
+            #[cfg(all(
+                feature = "wincrypto",
+                not(feature = "wincrypto-dimpl"),
+                target_os = "windows"
+            ))]
             available.push("wincrypto");
             #[cfg(all(feature = "wincrypto-dimpl", target_os = "windows"))]
             available.push("wincrypto-dimpl");
