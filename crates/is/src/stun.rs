@@ -572,7 +572,8 @@ pub struct Attributes<'a> {
     use_candidate: bool,                     // 0x0025
     ice_controlled: Option<u64>,             // 0x8029
     ice_controlling: Option<u64>,            // 0x802a
-    network_cost: Option<(u16, u16)>,        // 0xc057 https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
+    // 0xc057 https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
+    network_cost: Option<(u16, u16)>,
 }
 
 impl<'a> fmt::Debug for Attributes<'a> {

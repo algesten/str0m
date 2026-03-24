@@ -914,17 +914,27 @@ mod tests {
     fn serialize() {
         let socket_addr = "1.2.3.4:9876".parse().unwrap();
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
-        assert_eq!(
-            no_hash(serde_json::to_string(&candidate).unwrap()),
-            r#"{"candidate":"candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":null}"#
-        );
+        let json = no_hash(serde_json::to_string(&candidate).unwrap());
+        let got: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let expected = serde_json::json!({
+            "candidate": "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host",
+            "sdpMid": null,
+            "sdpMLineIndex": 0,
+            "usernameFragment": null
+        });
+        assert_eq!(got, expected);
 
         // Add a username fragment
         candidate.ufrag = Some("ufrag".to_string());
-        assert_eq!(
-            no_hash(serde_json::to_string(&candidate).unwrap()),
-            r#"{"candidate":"candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
-        );
+        let json = no_hash(serde_json::to_string(&candidate).unwrap());
+        let got: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let expected = serde_json::json!({
+            "candidate": "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag",
+            "sdpMid": null,
+            "sdpMLineIndex": 0,
+            "usernameFragment": "ufrag"
+        });
+        assert_eq!(got, expected);
     }
 
     fn no_hash(mut s: String) -> String {
@@ -936,8 +946,13 @@ mod tests {
 
     #[test]
     fn deserialize() {
-        let json = r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":"ignored","sdpMLineIndex":123,"usernameFragment":"ufrag"}"#;
-        let candidate: Candidate = serde_json::from_str(json).unwrap();
+        let json = serde_json::json!({
+            "candidate": "candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag",
+            "sdpMid": "ignored",
+            "sdpMLineIndex": 123,
+            "usernameFragment": "ufrag"
+        }).to_string();
+        let candidate: Candidate = serde_json::from_str(&json).unwrap();
         assert_eq!(candidate.ufrag(), Some("ufrag"));
         assert_eq!(candidate.addr().to_string(), "1.2.3.4:9876");
         assert_eq!(candidate.base().to_string(), "1.2.3.4:9876");
