@@ -307,12 +307,13 @@
 //! | `aws-lc-rs`    | `str0m-aws-lc-rs`     | dimpl + AWS-LC-RS            | All       |
 //! | `rust-crypto`  | `str0m-rust-crypto`   | dimpl + RustCrypto           | All       |
 //! | `openssl`      | `str0m-openssl`       | OpenSSL native DTLS          | All       |
-//! | `apple-crypto` | `str0m-apple-crypto`  | dimpl + Apple CommonCrypto   | macOS/iOS |
+//! | `openssl-dimpl`| `str0m-openssl`       | dimpl + OpenSSL              | All       |
+//! | `apple-crypto` | `str0m-apple-crypto`  | dimpl + Apple CryptoKit      | macOS/iOS |
 //! | `wincrypto`    | `str0m-wincrypto`     | Windows SChannel             | Windows   |
 //!
 //! If multiple backend features are enabled, str0m automatically selects the backend in this
-//! priority order: `aws-lc-rs`, `rust-crypto`, `openssl`, `apple-crypto` (Apple platforms only),
-//! `wincrypto` (Windows only).
+//! priority order: `aws-lc-rs`, `rust-crypto`, `openssl-dimpl`, `openssl`, `apple-crypto`
+//! (Apple platforms only), `wincrypto` (Windows only).
 //!
 //! If you disable the default features, you MUST explicitly configure an alternative
 //! crypto backend either process-wide or per-instance.
