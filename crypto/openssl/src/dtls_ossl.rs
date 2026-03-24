@@ -640,10 +640,10 @@ impl DtlsProvider for OsslDtlsProvider {
         dtls_version: DtlsVersion,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         match dtls_version {
-            DtlsVersion::Dtls12 | DtlsVersion::Auto => Ok(Box::new(OsslDtlsInstance::new(cert)?)),
+            DtlsVersion::Dtls12 => Ok(Box::new(OsslDtlsInstance::new(cert)?)),
             _ => Err(CryptoError::Other(
                 "OpenSSL DTLS provider only supports DTLS 1.2 without dimpl. \
-                 Enable the openssl-dimpl feature for DTLS 1.3."
+                 Enable the openssl-dimpl feature for DTLS 1.3/Auto."
                     .to_string(),
             )),
         }
