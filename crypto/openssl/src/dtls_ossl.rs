@@ -639,13 +639,13 @@ impl DtlsProvider for OsslDtlsProvider {
         _now: Instant,
         dtls_version: DtlsVersion,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
-        if matches!(dtls_version, DtlsVersion::Dtls12 | DtlsVersion::Auto) {
-            return Err(CryptoError::Other(
+        match dtls_version {
+            DtlsVersion::Dtls12 | DtlsVersion::Auto => Ok(Box::new(OsslDtlsInstance::new(cert)?)),
+            _ => Err(CryptoError::Other(
                 "OpenSSL DTLS provider only supports DTLS 1.2 without prefer_dimpl. \
                  Enable the prefer_dimpl feature for DTLS 1.3."
                     .to_string(),
-            ));
+            )),
         }
-        Ok(Box::new(OsslDtlsInstance::new(cert)?))
     }
 }
