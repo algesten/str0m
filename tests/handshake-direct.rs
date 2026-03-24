@@ -84,18 +84,19 @@ fn run_handshake_test(client_dtls: DtlsVersion, server_dtls: DtlsVersion) -> Res
     let server_crypto_name =
         std::env::var("R_CRYPTO").unwrap_or_else(|_| default_crypto_name().into());
 
-    // wincrypto only support DTLS 1.2 — skip tests requiring 1.3/Auto.
-    // openssl only supports DTLS 1.2 unless prefer_dimpl is enabled.
-    // Also skip Auto client → 1.2-only server: dimpl advertises X25519 in the hybrid
-    // ClientHello but its DTLS 1.2 engine can't process X25519 in ServerKeyExchange.
-    let dtls12_only = |name: &str| matches!(name, "wincrypto" | "openssl");
-    let needs_13 = |v: DtlsVersion| matches!(v, DtlsVersion::Dtls13);
+    let supported_dtls = |name, version| match name {
+        // OpenSSL supports DTLS 1.2 and Auto, but not 1.3.
+        "openssl" => matches!(version, DtlsVersion::Dtls12 | DtlsVersion::Auto),
+        // Wincrypto only supports explicit DTLS 1.2.
+        "wincrypto" => version == DtlsVersion::Dtls12,
+        _ => true,
+    };
 
-    if (dtls12_only(&client_crypto_name) && needs_13(client_dtls))
-        || (dtls12_only(&server_crypto_name) && needs_13(server_dtls))
+    if !supported_dtls(&client_crypto_name, client_dtls)
+        || !supported_dtls(&server_crypto_name, server_dtls)
     {
         println!(
-            "\n=== SKIPPED: client={} ({}), server={} ({}) — DTLS 1.3 not supported ===",
+            "\n=== SKIPPED: client={} ({}), server={} ({}) — DTLS version not supported ===",
             client_dtls, client_crypto_name, server_dtls, server_crypto_name
         );
         return Ok(());
