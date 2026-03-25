@@ -39,6 +39,8 @@ jobs:
             os: windows-latest
           - name: wincrypto
             os: windows-latest
+          - name: wincrypto-dimpl
+            os: windows-latest
           - name: apple-crypto
             os: macos-latest
 

@@ -13,9 +13,17 @@ rust-version = "1.85.0"
 [dependencies]
 tracing.workspace = true
 str0m-proto = { workspace = true, features = ["dtls"] }
+dimpl = { workspace = true, optional = true }
 windows = { version = "0.62", features = [
   "Win32_Security_Cryptography",
   "Win32_Security_Authentication_Identity",
   "Win32_Security_Credentials",
   "Win32_System_Rpc",
 ] }
+
+[dev-dependencies]
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[features]
+dimpl = ["dep:dimpl"]

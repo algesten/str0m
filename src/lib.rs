@@ -302,18 +302,19 @@
 //!
 //! str0m supports multiple crypto backends via feature flags. The default is `aws-lc-rs`.
 //!
-//! | Feature        | Crate                 | DTLS                         | Platforms |
-//! |----------------|-----------------------|------------------------------|-----------|
-//! | `aws-lc-rs`    | `str0m-aws-lc-rs`     | dimpl + AWS-LC-RS            | All       |
-//! | `rust-crypto`  | `str0m-rust-crypto`   | dimpl + RustCrypto           | All       |
-//! | `openssl`      | `str0m-openssl`       | OpenSSL native DTLS          | All       |
-//! | `openssl-dimpl`| `str0m-openssl`       | dimpl + OpenSSL              | All       |
-//! | `apple-crypto` | `str0m-apple-crypto`  | dimpl + Apple CryptoKit      | macOS/iOS |
-//! | `wincrypto`    | `str0m-wincrypto`     | Windows SChannel             | Windows   |
+//! | Feature           | Crate                 | DTLS                             | Platforms |
+//! |-------------------|-----------------------|----------------------------------|-----------|
+//! | `aws-lc-rs`       | `str0m-aws-lc-rs`     | dimpl + AWS-LC-RS                | All       |
+//! | `rust-crypto`     | `str0m-rust-crypto`   | dimpl + RustCrypto               | All       |
+//! | `openssl`         | `str0m-openssl`       | OpenSSL (DTLS 1.2 only)          | All       |
+//! | `openssl-dimpl`   | `str0m-openssl`       | dimpl + OpenSSL crypto           | All       |
+//! | `apple-crypto`    | `str0m-apple-crypto`  | dimpl + Apple CryptoKit          | macOS/iOS |
+//! | `wincrypto`       | `str0m-wincrypto`     | Windows SChannel (DTLS 1.2 only) | Windows   |
+//! | `wincrypto-dimpl` | `str0m-wincrypto`     | dimpl + Windows CNG              | Windows   |
 //!
 //! If multiple backend features are enabled, str0m automatically selects the backend in this
 //! priority order: `aws-lc-rs`, `rust-crypto`, `openssl-dimpl`, `openssl`, `apple-crypto`
-//! (Apple platforms only), `wincrypto` (Windows only).
+//! (Apple platforms only), `wincrypt-dimpl` (Windows only), `wincrypto` (Windows only).
 //!
 //! If you disable the default features, you MUST explicitly configure an alternative
 //! crypto backend either process-wide or per-instance.

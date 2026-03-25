@@ -2074,9 +2074,12 @@ dependencies = [
 name = "str0m-wincrypto"
 version = "0.4.0"
 dependencies = [
+ "dimpl",
+ "rand_core 0.6.4",
  "str0m-proto",
  "tracing",
  "windows",
+ "x25519-dalek",
 ]
 
 [[package]]
