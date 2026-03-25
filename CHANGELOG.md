@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Implement SNAP and sctp-init #811
   * Implement wincrypto-dimpl feature #920
   * Implement openssl-dimpl feature #919
   * Update to dimpl 0.5.0 #916

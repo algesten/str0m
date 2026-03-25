@@ -492,6 +492,12 @@ where
     )
     .map(MediaAttribute::MaxMessageSize);
 
+    // a=sctp-init:<base64-encoded SCTP INIT chunk>
+    // See draft-hancke-tsvwg-snap (§4.2: base64 defined in RFC 4566, i.e. standard with padding)
+    //
+    // The base64 value is stored as-is; decoding happens when consumed.
+    let sctp_init = attribute_line("sctp-init", any_value()).map(MediaAttribute::SctpInit);
+
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:<value>["/"<direction>] <URI> <extensionattributes>
     let extmap = attribute_line(
@@ -741,31 +747,37 @@ where
 
     let unused = typed_line('a', any_value()).map(MediaAttribute::Unused);
 
+    // Split into two choice() calls because combine's choice macro supports at most 25 parsers.
     choice((
-        attempt(ice_ufrag),
-        attempt(ice_pwd),
-        attempt(ice_opt),
-        attempt(finger),
-        attempt(setup),
-        attempt(mid),
-        attempt(sctp_port),
-        attempt(max_message_size),
-        attempt(extmap),
-        attempt(direction),
-        attempt(msid),
-        attempt(rtcp),
-        attempt(rtcpmux),
-        attempt(rtcpmuxonly),
-        attempt(rtcprsize),
-        attempt(cand),
-        attempt(endof),
-        attempt(rtpmap),
-        attempt(rtcp_fb),
-        attempt(fmtp),
-        attempt(rid),
-        attempt(simulcast),
-        attempt(ssrc_group),
-        attempt(ssrc),
+        attempt(choice((
+            attempt(ice_ufrag),
+            attempt(ice_pwd),
+            attempt(ice_opt),
+            attempt(finger),
+            attempt(setup),
+            attempt(mid),
+            attempt(sctp_port),
+            attempt(max_message_size),
+            attempt(sctp_init),
+            attempt(extmap),
+            attempt(direction),
+            attempt(msid),
+            attempt(rtcp),
+        ))),
+        attempt(choice((
+            attempt(rtcpmux),
+            attempt(rtcpmuxonly),
+            attempt(rtcprsize),
+            attempt(cand),
+            attempt(endof),
+            attempt(rtpmap),
+            attempt(rtcp_fb),
+            attempt(fmtp),
+            attempt(rid),
+            attempt(simulcast),
+            attempt(ssrc_group),
+            attempt(ssrc),
+        ))),
         unused,
     ))
 }

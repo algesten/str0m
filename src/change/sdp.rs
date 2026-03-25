@@ -15,6 +15,7 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
+use crate::sctp::RtcSctp;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
@@ -99,13 +100,26 @@ impl<'a> SdpApi<'a> {
         // Ensure setup=active/passive is corresponding remote and init dtls.
         init_dtls(self.rtc, &offer)?;
 
-        // Modify session with offer
+        // Extract a=sctp-init from remote offer before apply_offer consumes it.
+        let remote_sctp_init = offer.sctp_init().map(|v| v.to_owned());
+
+        let has_snap = process_remote_sctp_init(&mut self.rtc.sctp, remote_sctp_init.as_deref())?;
+
+        // Modify session with offer.
         apply_offer(&mut self.rtc.session, offer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
+
+        // Generate local sctp-init for the answer:
+        // When the remote included a=sctp-init, we reciprocate (§5.4).
+        if has_snap && !self.rtc.sctp.is_inited() && !self.rtc.sctp.ensure_local_snap_init() {
+            warn!("Failed to generate SNAP INIT chunk, degrading to non-SNAP");
+        }
+
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+            let init_data = self.rtc.sctp.build_snap_init_data();
+            self.rtc.try_init_sctp(client, init_data)?;
         }
 
         let params = AsSdpParams::new(self.rtc, None);
@@ -171,6 +185,16 @@ impl<'a> SdpApi<'a> {
             }
         }
 
+        // Extract a=sctp-init from remote answer before apply_answer consumes it.
+        let remote_sctp_init = answer.sctp_init().map(|v| v.to_owned());
+
+        let expected_snap_answer =
+            !self.rtc.sctp.is_inited() && self.rtc.sctp.local_sctp_init_for_sdp().is_some();
+
+        // Validate or cache the remote value before mutating the session. This
+        // keeps a bad re-offer/re-answer from partially applying local state.
+        let has_snap = process_remote_sctp_init(&mut self.rtc.sctp, remote_sctp_init.as_deref())?;
+
         // Split out new channels, since that is not handled by the Session.
         let new_channels = pending.changes.take_new_channels();
 
@@ -179,8 +203,15 @@ impl<'a> SdpApi<'a> {
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
+
+        if expected_snap_answer && !has_snap {
+            debug!("Remote answer did not accept SNAP, falling back to regular SCTP handshake");
+            self.rtc.sctp.disable_pending_snap();
+        }
+
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+            let init_data = self.rtc.sctp.build_snap_init_data();
+            self.rtc.try_init_sctp(client, init_data)?;
         }
 
         for (id, config) in new_channels {
@@ -636,6 +667,15 @@ fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
         rtc.ice.set_controlling(!rtc.ice.ice_lite());
     }
 
+    // Generate local sctp-init for SNAP if enabled and we have/will have an app m-line.
+    if rtc.sctp.snap_enabled()
+        && (rtc.session.app().is_some() || changes.contains_add_app())
+        && !rtc.sctp.is_inited()
+        && !rtc.sctp.ensure_local_snap_init()
+    {
+        warn!("Failed to generate SNAP INIT chunk, degrading to non-SNAP");
+    }
+
     let params = AsSdpParams::new(rtc, Some(changes));
     let sdp = as_sdp(&rtc.session, params);
 
@@ -709,6 +749,60 @@ fn init_dtls(rtc: &mut Rtc, remote_sdp: &Sdp) -> Result<(), RtcError> {
     Ok(())
 }
 
+/// Shared logic for processing a remote `a=sctp-init` attribute from an offer or answer.
+///
+/// Returns `true` if this is a new SNAP negotiation (remote init was accepted),
+/// `false` otherwise.
+///
+/// The remote init bytes are stored in `RtcSctp.snap_init` for §5.6
+/// re-offer validation.
+///
+/// When the remote includes `a=sctp-init`, we always accept and reciprocate —
+/// Section 5.4 of draft-hancke-tsvwg-snap says the answerer MAY include the
+/// attribute, and doing so is beneficial.
+///
+/// When an initial answer omits or rejects `a=sctp-init`, callers are expected
+/// to fall back to a regular SCTP handshake.
+fn process_remote_sctp_init(
+    sctp: &mut RtcSctp,
+    remote_init: Option<&str>,
+) -> Result<bool, RtcError> {
+    if let Some(remote_init_str) = remote_init {
+        if sctp.is_inited() {
+            // §5.6: SCTP already established — remote MUST re-send the
+            // same sctp-init value on subsequent offers/answers.
+            match sctp.snap_remote_init_string() {
+                Some(cached) if cached == remote_init_str => {
+                    debug!("Remote re-sent expected a=sctp-init for established association");
+                }
+                Some(_) => {
+                    return Err(RtcError::RemoteSdp(
+                        "Changed a=sctp-init for existing SCTP association".into(),
+                    ));
+                }
+                None => {
+                    // SCTP was established without SNAP but the remote is now
+                    // sending a=sctp-init. We can't transition to SNAP
+                    // mid-session, so just ignore it.
+                    debug!("Ignoring a=sctp-init for non-SNAP established SCTP association");
+                }
+            }
+            Ok(false)
+        } else if sctp.set_remote_snap_init_string(remote_init_str) {
+            Ok(true)
+        } else {
+            debug!("Ignoring malformed a=sctp-init");
+            Ok(false)
+        }
+    } else if sctp.is_snap_established() {
+        Err(RtcError::RemoteSdp(
+            "Missing a=sctp-init for established SNAP SCTP association".into(),
+        ))
+    } else {
+        Ok(false)
+    }
+}
+
 fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     let (media_lines, mids, stream_ids) = {
         let mut v = as_media_lines(session);
@@ -754,6 +848,16 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
                 m.as_media_line(attrs, &ssrcs, &session.exts, &params)
             })
             .collect::<Vec<_>>();
+
+        // Add a=sctp-init to the application m-line if SNAP is configured.
+        if let Some(sctp_init) = &params.local_sctp_init {
+            for line in &mut lines {
+                if line.typ.is_channel() {
+                    line.attrs
+                        .push(sdp::MediaAttribute::SctpInit(sctp_init.clone()));
+                }
+            }
+        }
 
         if let Some(pending) = params.pending {
             pending.apply_to(&mut lines);
@@ -1419,6 +1523,7 @@ struct AsSdpParams<'a, 'b> {
     pub fingerprint: &'a Fingerprint,
     pub setup: Setup,
     pub pending: Option<&'b Changes>,
+    pub local_sctp_init: Option<String>,
 }
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
@@ -1456,6 +1561,7 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
                 None => Setup::ActPass,
             },
             pending,
+            local_sctp_init: rtc.sctp.local_sctp_init_for_sdp(),
         }
     }
 
