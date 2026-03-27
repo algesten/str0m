@@ -37,7 +37,8 @@ impl DtlsProvider for RustCryptoDtlsProvider {
         };
 
         // Create a default dimpl Config with RustCrypto crypto provider
-        let mut builder = dimpl::Config::builder();
+        // ICE verifies return routability before DTLS, making server cookies redundant.
+        let mut builder = dimpl::Config::builder().use_server_cookie(false);
         if self.is_test() {
             // We need the DTLS impl to be deterministic for the BWE tests.
             builder = builder.dangerously_set_rng_seed(42);
