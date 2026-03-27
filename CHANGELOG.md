@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Disable server cookie for all dimpl crypto impl #923
   * Implement SNAP and sctp-init #811
   * Implement wincrypto-dimpl feature #920
   * Implement openssl-dimpl feature #919
