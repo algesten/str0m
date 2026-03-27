@@ -373,8 +373,7 @@ impl RtcSctp {
             // Established non-SNAP association — MUST NOT inject sctp-init.
             return None;
         }
-        let bytes = d.local_init.as_ref()?;
-        Some(b64_encode(bytes))
+        d.local_init.as_ref().map(|b| b64_encode(b))
     }
 
     /// Get the cached remote INIT string, if set.
