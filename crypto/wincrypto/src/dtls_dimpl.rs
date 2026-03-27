@@ -32,7 +32,8 @@ impl DtlsProvider for WinCryptoDtlsProvider {
             private_key: cert.private_key.clone(),
         };
 
-        let mut builder = Config::builder();
+        // ICE verifies return routability before DTLS, making server cookies redundant.
+        let mut builder = Config::builder().use_server_cookie(false);
         if self.is_test() {
             builder = builder.dangerously_set_rng_seed(42);
         }
