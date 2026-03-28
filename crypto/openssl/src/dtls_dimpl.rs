@@ -63,7 +63,8 @@ impl DtlsProvider for OsslDtlsProvider {
             DtlsVersion::Auto => dimpl::Dtls::new_auto(config, dimpl_cert, now),
             _ => {
                 return Err(CryptoError::Other(format!(
-                    "Unknown DTLS version: {}", dtls_config.version
+                    "Unknown DTLS version: {}",
+                    dtls_config.version
                 )));
             }
         };

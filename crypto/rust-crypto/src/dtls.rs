@@ -64,7 +64,8 @@ impl DtlsProvider for RustCryptoDtlsProvider {
             DtlsVersion::Auto => dimpl::Dtls::new_auto(config, dimpl_cert, now),
             _ => {
                 return Err(CryptoError::Other(format!(
-                    "Unsupported DTLS version: {}", dtls_config.version
+                    "Unsupported DTLS version: {}",
+                    dtls_config.version
                 )));
             }
         };
