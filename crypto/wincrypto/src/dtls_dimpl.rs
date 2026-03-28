@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use str0m_proto::crypto::CryptoError;
-use str0m_proto::crypto::DtlsVersion;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::{DtlsConfig, DtlsVersion};
 
 use dimpl::{Config, Dtls, DtlsCertificate};
 
@@ -25,7 +25,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         &self,
         cert: &DtlsCert,
         now: Instant,
-        dtls_version: DtlsVersion,
+        dtls_config: &DtlsConfig,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         let dimpl_cert = DtlsCertificate {
             certificate: cert.certificate.clone(),
@@ -38,19 +38,28 @@ impl DtlsProvider for WinCryptoDtlsProvider {
             builder = builder.dangerously_set_rng_seed(42);
         }
 
+        if let Some(suites) = &dtls_config.dtls12_cipher_suites {
+            let mapped: Vec<_> = suites.iter().map(|s| s.into_dimpl()).collect();
+            builder = builder.dtls12_cipher_suites(&mapped);
+        }
+        if let Some(suites) = &dtls_config.dtls13_cipher_suites {
+            let mapped: Vec<_> = suites.iter().map(|s| s.into_dimpl()).collect();
+            builder = builder.dtls13_cipher_suites(&mapped);
+        }
+
         let config = builder
             .with_crypto_provider(crate::dimpl_provider::default_provider())
             .build()
             .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {e}")))?;
 
         let config = Arc::new(config);
-        let dtls = match dtls_version {
+        let dtls = match dtls_config.version {
             DtlsVersion::Dtls12 => Dtls::new_12(config, dimpl_cert, now),
             DtlsVersion::Dtls13 => Dtls::new_13(config, dimpl_cert, now),
             DtlsVersion::Auto => Dtls::new_auto(config, dimpl_cert, now),
             _ => {
                 return Err(CryptoError::Other(format!(
-                    "Unsupported DTLS version: {dtls_version}"
+                    "Unsupported DTLS version: {}", dtls_config.version
                 )));
             }
         };

@@ -14,7 +14,9 @@ pub mod dtls {
     pub use dimpl::KeyingMaterial;
     pub use dimpl::SrtpProfile;
     // Note: dimpl::Error is renamed to DtlsImplError to avoid conflict with str0m's DtlsError
-    pub use super::provider::DtlsVersion;
+    pub use super::provider::{
+        Dtls12CipherSuite, Dtls13CipherSuite, DtlsConfig, DtlsVersion,
+    };
     pub use dimpl::{Error as DtlsImplError, Output as DtlsOutput};
 }
 
