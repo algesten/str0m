@@ -3,11 +3,15 @@
 //! This module implements the dimpl crypto provider traits using
 //! OpenSSL for cryptographic operations.
 
+#[cfg(not(feature = "fips140"))]
+mod chacha20;
 mod cipher_suite;
 mod hash;
 mod hmac;
 mod kx_group;
 mod sign;
+#[cfg(not(feature = "fips140"))]
+mod x25519;
 
 use dimpl::crypto::{CryptoProvider, SecureRandom};
 
