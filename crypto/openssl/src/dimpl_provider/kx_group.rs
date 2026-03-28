@@ -133,19 +133,27 @@ impl SupportedKxGroup for P384 {
 
 static KX_GROUP_P256: P256 = P256;
 static KX_GROUP_P384: P384 = P384;
+#[cfg(not(feature = "fips140"))]
 static KX_GROUP_X25519: X25519 = X25519;
 
+#[cfg(not(feature = "fips140"))]
 pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] =
     &[&KX_GROUP_P256, &KX_GROUP_P384, &KX_GROUP_X25519];
+#[cfg(feature = "fips140")]
+pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] =
+    &[&KX_GROUP_P256, &KX_GROUP_P384];
 
 // ============================================================================
 // X25519 Key Exchange
+// Not available in FIPS 140 mode — X25519 is not permitted per O365 TLS policy.
 // ============================================================================
 
 /// X25519 key exchange group.
+#[cfg(not(feature = "fips140"))]
 #[derive(Debug)]
 struct X25519;
 
+#[cfg(not(feature = "fips140"))]
 impl SupportedKxGroup for X25519 {
     fn name(&self) -> NamedGroup {
         NamedGroup::X25519
@@ -157,11 +165,13 @@ impl SupportedKxGroup for X25519 {
 }
 
 /// X25519 key exchange using OpenSSL's EVP_PKEY_X25519.
+#[cfg(not(feature = "fips140"))]
 struct X25519KeyExchange {
     private_key: PKey<openssl::pkey::Private>,
     public_key_bytes: Buf,
 }
 
+#[cfg(not(feature = "fips140"))]
 impl std::fmt::Debug for X25519KeyExchange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("X25519KeyExchange")
@@ -170,6 +180,7 @@ impl std::fmt::Debug for X25519KeyExchange {
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 impl X25519KeyExchange {
     fn new(mut buf: Buf) -> Result<Self, String> {
         let private_key =
@@ -189,6 +200,7 @@ impl X25519KeyExchange {
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 impl ActiveKeyExchange for X25519KeyExchange {
     fn pub_key(&self) -> &[u8] {
         &self.public_key_bytes
@@ -219,6 +231,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_key_exchange_roundtrip() {
         let alice = X25519KeyExchange::new(Buf::new()).unwrap();
         let bob = X25519KeyExchange::new(Buf::new()).unwrap();
@@ -244,6 +257,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_invalid_peer_key_rejected() {
         let alice = X25519KeyExchange::new(Buf::new()).unwrap();
         let mut out = Buf::new();
@@ -253,6 +267,7 @@ mod tests {
 
     /// Each X25519 key generation should produce a unique keypair.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_keys_are_unique() {
         let a = X25519KeyExchange::new(Buf::new()).unwrap();
         let b = X25519KeyExchange::new(Buf::new()).unwrap();
@@ -261,6 +276,7 @@ mod tests {
 
     /// X25519 group metadata is correct.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_group_metadata() {
         let kx = X25519KeyExchange::new(Buf::new()).unwrap();
         assert_eq!(kx.group(), NamedGroup::X25519);
@@ -269,6 +285,7 @@ mod tests {
 
     /// The same local keypair produces different shared secrets with different peers.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_different_peers_different_secrets() {
         let alice = X25519KeyExchange::new(Buf::new()).unwrap();
         let bob = X25519KeyExchange::new(Buf::new()).unwrap();
@@ -294,6 +311,7 @@ mod tests {
 
     /// X25519 via the SupportedKxGroup trait interface.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_via_supported_kx_group_trait() {
         let group: &dyn SupportedKxGroup = &KX_GROUP_X25519;
         assert_eq!(group.name(), NamedGroup::X25519);
@@ -408,6 +426,7 @@ mod tests {
         let names: Vec<_> = ALL_KX_GROUPS.iter().map(|g| g.name()).collect();
         assert!(names.contains(&NamedGroup::Secp256r1));
         assert!(names.contains(&NamedGroup::Secp384r1));
+        #[cfg(not(feature = "fips140"))]
         assert!(names.contains(&NamedGroup::X25519));
     }
 

@@ -14,6 +14,7 @@ rust-version = "1.85.0"
 [features]
 vendored = ["openssl/vendored"]
 dimpl = ["dep:dimpl"]
+fips140 = []
 
 [dependencies]
 tracing.workspace = true

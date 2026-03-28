@@ -313,6 +313,7 @@ impl SupportedKxGroup for P384 {
 
 // =============================================================================
 // X25519 key exchange using Windows CNG (requires Windows 10 1607+)
+// Not available in FIPS 140 mode — X25519 is not permitted per O365 TLS policy.
 // =============================================================================
 
 /// Wrapper to allow BCRYPT_ALG_HANDLE in a LazyLock (Send + Sync).
@@ -320,11 +321,15 @@ impl SupportedKxGroup for P384 {
 /// documented by Microsoft Learn for the BCrypt APIs; this wrapper never
 /// dereferences it directly and only passes it back to those APIs.
 /// Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/
+#[cfg(not(feature = "fips140"))]
 struct X25519Alg(BCRYPT_ALG_HANDLE);
+#[cfg(not(feature = "fips140"))]
 unsafe impl Send for X25519Alg {}
+#[cfg(not(feature = "fips140"))]
 unsafe impl Sync for X25519Alg {}
 
 /// Cached algorithm provider for X25519 ECDH.
+#[cfg(not(feature = "fips140"))]
 static X25519_PROVIDER: LazyLock<X25519Alg> = LazyLock::new(|| {
     // SAFETY: Microsoft Learn documents `BCryptOpenAlgorithmProvider` and
     // `BCryptSetProperty` as borrowing the output handle and property buffer
@@ -358,6 +363,7 @@ static X25519_PROVIDER: LazyLock<X25519Alg> = LazyLock::new(|| {
 });
 
 /// X25519 key exchange using Windows CNG Curve25519 support.
+#[cfg(not(feature = "fips140"))]
 struct X25519KeyExchange {
     key_handle: Owned<BCRYPT_KEY_HANDLE>,
     public_key_bytes: Buf,
@@ -367,15 +373,19 @@ struct X25519KeyExchange {
 // Learn for the BCrypt APIs; this wrapper never dereferences it directly and
 // only passes it back to those APIs.
 // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/
+#[cfg(not(feature = "fips140"))]
 unsafe impl Send for X25519KeyExchange {}
+#[cfg(not(feature = "fips140"))]
 unsafe impl Sync for X25519KeyExchange {}
 
+#[cfg(not(feature = "fips140"))]
 impl std::fmt::Debug for X25519KeyExchange {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("X25519KeyExchange").finish_non_exhaustive()
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 impl X25519KeyExchange {
     fn new(mut buf: Buf) -> Result<Self, String> {
         let alg_handle = X25519_PROVIDER.0;
@@ -414,6 +424,7 @@ impl X25519KeyExchange {
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 impl ActiveKeyExchange for X25519KeyExchange {
     fn pub_key(&self) -> &[u8] {
         &self.public_key_bytes
@@ -472,6 +483,7 @@ impl ActiveKeyExchange for X25519KeyExchange {
 }
 
 /// Export X25519 public key as 32 raw bytes.
+#[cfg(not(feature = "fips140"))]
 fn export_x25519_public_key(key_handle: BCRYPT_KEY_HANDLE) -> Result<Vec<u8>, String> {
     // SAFETY: Microsoft Learn documents `BCryptExportKey` as borrowing the key
     // handle and optional output buffer for the duration of each call; both
@@ -513,6 +525,7 @@ fn export_x25519_public_key(key_handle: BCRYPT_KEY_HANDLE) -> Result<Vec<u8>, St
 }
 
 /// Import an X25519 public key from 32 raw bytes.
+#[cfg(not(feature = "fips140"))]
 fn import_x25519_public_key(
     alg_handle: BCRYPT_ALG_HANDLE,
     pub_key: &[u8],
@@ -550,9 +563,11 @@ fn import_x25519_public_key(
 }
 
 /// X25519 key exchange group.
+#[cfg(not(feature = "fips140"))]
 #[derive(Debug)]
 struct X25519Kx;
 
+#[cfg(not(feature = "fips140"))]
 impl SupportedKxGroup for X25519Kx {
     fn name(&self) -> NamedGroup {
         NamedGroup::X25519
@@ -563,12 +578,17 @@ impl SupportedKxGroup for X25519Kx {
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 static KX_GROUP_X25519: X25519Kx = X25519Kx;
 static KX_GROUP_P256: P256 = P256;
 static KX_GROUP_P384: P384 = P384;
 
+#[cfg(not(feature = "fips140"))]
 pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] =
     &[&KX_GROUP_X25519, &KX_GROUP_P256, &KX_GROUP_P384];
+#[cfg(feature = "fips140")]
+pub(super) static ALL_KX_GROUPS: &[&dyn SupportedKxGroup] =
+    &[&KX_GROUP_P256, &KX_GROUP_P384];
 
 #[cfg(test)]
 mod tests {
@@ -576,6 +596,7 @@ mod tests {
 
     /// Two wincrypto X25519 exchanges must produce identical shared secrets.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_roundtrip_symmetric() {
         let alice = X25519Kx.start_exchange(Buf::new()).unwrap();
         let bob = X25519Kx.start_exchange(Buf::new()).unwrap();
@@ -601,6 +622,7 @@ mod tests {
     /// This catches byte-order bugs: BCryptDeriveKey returns the raw secret in
     /// reversed byte order, and we must reverse it to match RFC 7748.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn x25519_interop_with_dalek() {
         use rand_core::OsRng;
         use x25519_dalek::{EphemeralSecret, PublicKey};

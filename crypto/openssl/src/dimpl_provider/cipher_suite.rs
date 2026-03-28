@@ -315,28 +315,36 @@ static TLS13_AES_256_GCM_SHA384: Tls13Aes256GcmSha384 = Tls13Aes256GcmSha384;
 pub(super) static ALL_DTLS13_CIPHER_SUITES: &[&dyn SupportedDtls13CipherSuite] = &[
     &TLS13_AES_128_GCM_SHA256,
     &TLS13_AES_256_GCM_SHA384,
+    #[cfg(not(feature = "fips140"))]
     &TLS13_CHACHA20_POLY1305_SHA256,
 ];
 
 // ============================================================================
 // ChaCha20-Poly1305 AEAD (DTLS 1.3)
+// Not available in FIPS mode — ChaCha20 is not a FIPS 140 approved algorithm.
 // ============================================================================
 
+#[cfg(not(feature = "fips140"))]
 const CHACHA20_POLY1305_TAG_LEN: usize = 16;
+#[cfg(not(feature = "fips140"))]
 const CHACHA20_POLY1305_KEY_LEN: usize = 32;
+#[cfg(not(feature = "fips140"))]
 const CHACHA20_POLY1305_IV_LEN: usize = 12;
 
 /// ChaCha20-Poly1305 cipher implementation using OpenSSL.
+#[cfg(not(feature = "fips140"))]
 struct ChaCha20Poly1305 {
     key: [u8; CHACHA20_POLY1305_KEY_LEN],
 }
 
+#[cfg(not(feature = "fips140"))]
 impl std::fmt::Debug for ChaCha20Poly1305 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChaCha20Poly1305").finish_non_exhaustive()
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 impl ChaCha20Poly1305 {
     fn new(key: &[u8]) -> Result<Self, String> {
         let key: [u8; CHACHA20_POLY1305_KEY_LEN] = key
@@ -346,6 +354,7 @@ impl ChaCha20Poly1305 {
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 impl Drop for ChaCha20Poly1305 {
     fn drop(&mut self) {
         for b in self.key.iter_mut() {
@@ -355,6 +364,7 @@ impl Drop for ChaCha20Poly1305 {
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 impl Cipher for ChaCha20Poly1305 {
     fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
         aead_encrypt(
@@ -380,9 +390,11 @@ impl Cipher for ChaCha20Poly1305 {
 }
 
 /// TLS_CHACHA20_POLY1305_SHA256 cipher suite (TLS 1.3 / DTLS 1.3).
+#[cfg(not(feature = "fips140"))]
 #[derive(Debug)]
 struct Tls13ChaCha20Poly1305Sha256;
 
+#[cfg(not(feature = "fips140"))]
 impl SupportedDtls13CipherSuite for Tls13ChaCha20Poly1305Sha256 {
     fn suite(&self) -> Dtls13CipherSuite {
         Dtls13CipherSuite::CHACHA20_POLY1305_SHA256
@@ -443,6 +455,7 @@ impl SupportedDtls13CipherSuite for Tls13ChaCha20Poly1305Sha256 {
     }
 }
 
+#[cfg(not(feature = "fips140"))]
 static TLS13_CHACHA20_POLY1305_SHA256: Tls13ChaCha20Poly1305Sha256 = Tls13ChaCha20Poly1305Sha256;
 
 /// AES-ECB single block encryption for record number protection.
@@ -578,6 +591,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_encrypt_decrypt_roundtrip() {
         let key = [0x42u8; 32];
         let nonce = Nonce([0x01u8; 12]);
@@ -606,6 +620,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_wrong_key_fails_decrypt() {
         let key1 = [0x42u8; 32];
         let key2 = [0x43u8; 32];
@@ -631,6 +646,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_invalid_key_size_rejected() {
         assert!(ChaCha20Poly1305::new(&[0u8; 16]).is_err());
         assert!(ChaCha20Poly1305::new(&[0u8; 31]).is_err());
@@ -641,6 +657,7 @@ mod tests {
 
     /// RFC 8439 Section 2.8.2 — AEAD construction test vector.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_rfc8439_aead_test_vector() {
         let key = hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f");
         let nonce_bytes = hex("070000004041424344454647");
@@ -686,6 +703,7 @@ If I could offer you only one tip for the future, sunscreen would be it.";
 
     /// Verify that modifying the AAD causes decryption to fail.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_aad_tamper_detected() {
         let key = [0x42u8; 32];
         let nonce = Nonce([0x01u8; 12]);
@@ -712,6 +730,7 @@ If I could offer you only one tip for the future, sunscreen would be it.";
 
     /// Verify that a wrong nonce causes decryption to fail.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_wrong_nonce_fails() {
         let key = [0x42u8; 32];
         let nonce1 = Nonce([0x01u8; 12]);
@@ -737,6 +756,7 @@ If I could offer you only one tip for the future, sunscreen would be it.";
 
     /// Corrupted ciphertext tag byte should cause decryption failure.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_tag_corruption_detected() {
         let key = [0x42u8; 32];
         let nonce = Nonce([0x01u8; 12]);
@@ -764,6 +784,7 @@ If I could offer you only one tip for the future, sunscreen would be it.";
 
     /// Corrupted ciphertext body byte should cause decryption failure.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_ciphertext_corruption_detected() {
         let key = [0x42u8; 32];
         let nonce = Nonce([0x01u8; 12]);
@@ -790,6 +811,7 @@ If I could offer you only one tip for the future, sunscreen would be it.";
 
     /// Empty plaintext should produce tag-only output.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_empty_plaintext() {
         let key = [0x42u8; 32];
         let nonce = Nonce([0x01u8; 12]);
@@ -815,6 +837,7 @@ If I could offer you only one tip for the future, sunscreen would be it.";
 
     /// Truncated ciphertext (shorter than tag) should fail.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn chacha20_poly1305_truncated_ciphertext_rejected() {
         let key = [0x42u8; 32];
         let nonce = Nonce([0x01u8; 12]);
@@ -948,14 +971,18 @@ If I could offer you only one tip for the future, sunscreen would be it.";
         let result_128b = TLS13_AES_128_GCM_SHA256.encrypt_sn(&sn_key, &sample);
         assert_eq!(result_128, result_128b);
 
-        let sn_key_32 = [0x42u8; 32];
-        let result_chacha = TLS13_CHACHA20_POLY1305_SHA256.encrypt_sn(&sn_key_32, &sample);
-        let result_chacha_b = TLS13_CHACHA20_POLY1305_SHA256.encrypt_sn(&sn_key_32, &sample);
-        assert_eq!(result_chacha, result_chacha_b);
+        #[cfg(not(feature = "fips140"))]
+        {
+            let sn_key_32 = [0x42u8; 32];
+            let result_chacha = TLS13_CHACHA20_POLY1305_SHA256.encrypt_sn(&sn_key_32, &sample);
+            let result_chacha_b = TLS13_CHACHA20_POLY1305_SHA256.encrypt_sn(&sn_key_32, &sample);
+            assert_eq!(result_chacha, result_chacha_b);
+        }
     }
 
     /// RFC 9001 Appendix A.5 ChaCha20 header protection test vector.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn tls13_chacha20_encrypt_sn_rfc9001_vector() {
         let sn_key: [u8; 32] = [
             0x25, 0xa2, 0x82, 0xb9, 0xe8, 0x2f, 0x06, 0xf2, 0x1f, 0x48, 0x89, 0x17, 0xa4, 0xfc,
@@ -973,6 +1000,7 @@ If I could offer you only one tip for the future, sunscreen would be it.";
 
     /// Verify DTLS 1.3 suite metadata is consistent.
     #[test]
+    #[cfg(not(feature = "fips140"))]
     fn tls13_chacha20_suite_metadata() {
         assert_eq!(
             TLS13_CHACHA20_POLY1305_SHA256.suite(),
@@ -1128,19 +1156,22 @@ If I could offer you only one tip for the future, sunscreen would be it.";
         assert_eq!(tmp.as_ref(), b"dtls13 factory");
 
         // ChaCha20-Poly1305 via factory
-        let mut cipher = TLS13_CHACHA20_POLY1305_SHA256
-            .create_cipher(&[0x42u8; 32])
-            .unwrap();
-        let mut buf = Buf::new();
-        buf.extend_from_slice(b"dtls13 chacha");
-        cipher
-            .encrypt(&mut buf, Aad([0u8; 13].into()), nonce)
-            .unwrap();
-        let mut backing = buf.as_ref().to_vec();
-        let mut tmp = TmpBuf::new(&mut backing);
-        cipher
-            .decrypt(&mut tmp, Aad([0u8; 13].into()), nonce)
-            .unwrap();
-        assert_eq!(tmp.as_ref(), b"dtls13 chacha");
+        #[cfg(not(feature = "fips140"))]
+        {
+            let mut cipher = TLS13_CHACHA20_POLY1305_SHA256
+                .create_cipher(&[0x42u8; 32])
+                .unwrap();
+            let mut buf = Buf::new();
+            buf.extend_from_slice(b"dtls13 chacha");
+            cipher
+                .encrypt(&mut buf, Aad([0u8; 13].into()), nonce)
+                .unwrap();
+            let mut backing = buf.as_ref().to_vec();
+            let mut tmp = TmpBuf::new(&mut backing);
+            cipher
+                .decrypt(&mut tmp, Aad([0u8; 13].into()), nonce)
+                .unwrap();
+            assert_eq!(tmp.as_ref(), b"dtls13 chacha");
+        }
     }
 }
