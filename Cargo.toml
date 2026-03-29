@@ -41,7 +41,7 @@ exclude = ["crates/fuzz"]
 # Internal crates
 str0m = { version = "0.18.0", path = ".", default-features = false }
 str0m-proto = { version = "0.4.0", path = "crates/proto", default-features = false }
-is = { version = "0.7.0", path = "crates/is", default-features = false }
+is = { version = "0.8.0", path = "crates/is", default-features = false }
 str0m-netem = { version = "0.2.0", path = "crates/netem" }
 str0m-aws-lc-rs = { version = "0.3.0", path = "crypto/aws-lc-rs" }
 str0m-rust-crypto = { version = "0.3.0", path = "crypto/rust-crypto" }

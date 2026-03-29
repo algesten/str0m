@@ -1,6 +1,6 @@
 [package]
 name = "is"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Martin Algesten <martin@algesten.se>", "Thomas Eizinger <thomas@eizinger.io>"]
 description = "ICE (Interactive Connectivity Establishment) in Sans-IO style"
 license = "MIT OR Apache-2.0"
