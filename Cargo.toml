@@ -48,7 +48,7 @@ str0m-rust-crypto = { version = "0.3.0", path = "crypto/rust-crypto" }
 str0m-openssl = { version = "0.3.0", path = "crypto/openssl" }
 str0m-apple-crypto = { version = "0.3.0", path = "crypto/apple-crypto" }
 str0m-wincrypto = { version = "0.5.0", path = "crypto/wincrypto" }
-_str0m_test = { version = "0.1.0", path = "crates/_str0m_test" }
+_str0m_test = { path = "crates/_str0m_test" }
 
 # Core dependencies
 tracing = "0.1.37"
@@ -163,7 +163,7 @@ rand.workspace = true
 netem = { package = "str0m-netem", version = "0.2.0", path = "crates/netem" }
 
 # dummy package that enables "_internal_test_exports"
-_str0m_test.workspace = true
+_str0m_test = { path = "crates/_str0m_test" }
 
 [[example]]
 name = "chat"
