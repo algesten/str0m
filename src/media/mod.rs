@@ -530,6 +530,11 @@ impl Media {
         self.depayloaders.remove(&(payload_type, rid));
     }
 
+    pub(crate) fn reset_depayloaders_for_rid(&mut self, rid: Option<Rid>) {
+        self.depayloaders
+            .retain(|(_, existing_rid), _| *existing_rid != rid);
+    }
+
     pub(crate) fn set_rid_rx(&mut self, rids: Rids) {
         self.rids_rx = rids;
     }

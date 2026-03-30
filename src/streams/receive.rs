@@ -389,7 +389,8 @@ impl StreamRx {
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
-        if self.paused {
+        let was_paused = self.paused;
+        if was_paused {
             self.paused = false;
             self.need_paused_event = true;
         }
@@ -412,7 +413,7 @@ impl StreamRx {
         // Calculate the extended timestamp
         let mut time_u32 = extend_u32(previous_time, header.timestamp);
 
-        if self.paused && Some(time_u32) < previous_time {
+        if was_paused && Some(time_u32) < previous_time {
             // In 32-bit RTP timestamps, adding 2^31 (MAX/2) flips to the other half of timestamp space
             // This forces extend_u32 to produce a value in the next cycle
             const HALF_CYCLE: u32 = 1u32 << 31;
@@ -848,4 +849,35 @@ impl StreamRxStats {
 pub(crate) struct RegisterUpdateReceipt {
     pub time: MediaTime,
     pub is_new_packet: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paused_timestamp_repair_moves_time_forward() {
+        let now = already_happened();
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let previous_time = 1;
+        stream.last_time = Some(MediaTime::new(previous_time, Frequency::NINETY_KHZ));
+        stream.paused = true;
+
+        let header = RtpHeader {
+            payload_type: Pt::new_with_value(96),
+            sequence_number: 42,
+            timestamp: 0,
+            ssrc: 7.into(),
+            ..Default::default()
+        };
+
+        let seq_no = stream.extend_seq(&header, false, |_| None);
+        let receipt = stream.update_register(now, &header, Frequency::NINETY_KHZ, false, seq_no);
+
+        assert!(
+            receipt.time.numer() > previous_time,
+            "expected repaired media time to move forward"
+        );
+        assert!(!stream.paused);
+    }
 }
