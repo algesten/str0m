@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Drop stale depacketizer state on stream pause and restore paused timestamp repair #929
+
 # 0.18.0
 
   * Disable server cookie for all dimpl crypto impl #923
