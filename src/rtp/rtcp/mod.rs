@@ -91,7 +91,7 @@ pub enum Rtcp {
     /// Receiver Estimated Maximum Bitrate. Feedback to the sender about the maximum bitrate.
     Remb(Remb),
     /// Payload-Specific Feedback Application Layer (FMT=15, PT=206) that is not REMB.
-    /// Used for application-specific feedback such as VSR (Video Source Request).
+    /// Used for application-specific PSFB feedback (RFC 4585 Section 6.4).
     PsfbApp(PsfbApp),
 }
 

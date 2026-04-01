@@ -988,7 +988,7 @@ pub enum Event {
 
     /// Incoming RTCP Payload-Specific Feedback Application Layer message (PSFB FMT=15, PT=206).
     ///
-    /// Used for application-specific feedback such as VSR (Video Source Request).
+    /// Used for application-specific PSFB feedback (RFC 4585 Section 6.4).
     PsfbApp(rtp::rtcp::PsfbApp),
 
     /// Debug output of incoming and outgoing RTCP/RTP packets.
@@ -1989,7 +1989,7 @@ impl Rtc {
 
     /// Enqueue a PsfbApp (RTCP PSFB FMT=15, PT=206) message for transmission.
     ///
-    /// Used for application-specific feedback such as VSR (Video Source Request).
+    /// Used for application-specific PSFB feedback (RFC 4585 Section 6.4).
     pub fn send_psfb_app(&mut self, psfb: rtp::rtcp::PsfbApp) {
         self.session.send_psfb_app(psfb);
     }

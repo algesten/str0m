@@ -3,24 +3,11 @@ use crate::rtp::Ssrc;
 use super::RtcpType;
 use super::{FeedbackMessageType, PayloadType, RtcpHeader, RtcpPacket};
 
-/*
-    0                   1                   2                   3
-    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |V=2|P| FMT=15  |   PT=206      |             length            |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                  SSRC of packet sender                        |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                  SSRC of media source                         |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                  Application-dependent data                   |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-*/
-
 /// Payload-Specific Feedback Application Layer message (PSFB FMT=15, PT=206).
 ///
-/// This is a catch-all for FMT=15 RTCP PSFB messages that are not REMB.
-/// Used by Teams for VSR (Video Source Request) among other things.
+/// Generic container for FMT=15 RTCP PSFB messages that are not REMB.
+/// Carries an opaque application-dependent payload after the standard
+/// sender and media SSRC fields (RFC 4585 Section 6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PsfbApp {
     /// SSRC of the sender of this feedback message.
