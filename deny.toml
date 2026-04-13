@@ -34,6 +34,10 @@ ignore = [
   # generation — no RFC 2822 parsing. A clippy disallowed-types rule in
   # clippy.toml prevents accidental introduction of Rfc2822.
   "RUSTSEC-2026-0009",
+  # Partially fixed in the crate graph, but old unfixable version pulled in via
+  # multipart (via rouille). Rouille is only used in examples and multipart's
+  # usage does not meet the prerequisites for the vulnerability.
+  "RUSTSEC-2026-0097",
 ]
 
 [bans]
