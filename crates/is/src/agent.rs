@@ -966,6 +966,30 @@ impl IceAgent {
         self.set_connection_state(IceConnectionState::Checking, "ice restart");
     }
 
+    /// Re-create all candidate pairs from the current candidates.
+    ///
+    /// This is similar to an ICE restart but also retains all remote candidates.
+    pub fn recreate_candidate_pairs(&mut self) {
+        self.candidate_pairs.clear();
+
+        let local_idxs: Vec<_> = self
+            .local_candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.discarded())
+            .map(|(i, _)| i)
+            .collect();
+        let remote_idxs: Vec<_> = self
+            .remote_candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.discarded())
+            .map(|(i, _)| i)
+            .collect();
+
+        self.form_pairs(&local_idxs, &remote_idxs);
+    }
+
     /// Discard candidate pairs that contain the candidate identified by a local index.
     fn discard_candidate_pairs_by_local(&mut self, local_idx: usize) {
         trace!("Discard pairs for local candidate index: {:?}", local_idx);
