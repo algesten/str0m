@@ -988,6 +988,7 @@ impl IceAgent {
             .collect();
 
         self.form_pairs(&local_idxs, &remote_idxs);
+        self.set_connection_state(IceConnectionState::Checking, "recreate candidate pairs");
     }
 
     /// Discard candidate pairs that contain the candidate identified by a local index.
