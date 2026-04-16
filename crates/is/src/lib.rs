@@ -119,7 +119,7 @@ mod parse;
 mod hmac_provider;
 #[cfg(feature = "sha1")]
 pub use hmac_provider::DefaultSha1HmacProvider;
-pub use str0m_proto::Sha1HmacProvider;
+pub use str0m_proto::{Protocol, Sha1HmacProvider};
 
 #[cfg(test)]
 pub(crate) mod test {
