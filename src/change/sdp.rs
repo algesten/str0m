@@ -717,7 +717,7 @@ fn add_ice_details(
         };
 
         rtc.ice
-            .ice_restart(new_local_creds.clone(), keep_local_candidates);
+            .ice_restart(new_local_creds.clone(), keep_local_candidates, false);
     }
 
     rtc.ice.set_remote_credentials(creds);

@@ -933,8 +933,16 @@ impl IceAgent {
     /// current session running off a 4G, and we connect to a WiFi. The session
     /// should continue sending data over the 4G until we redone the ICE gathering
     /// process.
+    ///
+    /// If both `keep_local_candidates` and `keep_remote_candidates` are `true`,
+    /// the current candidate pairs will be cleared and newly formed.
     #[allow(unused)]
-    pub fn ice_restart(&mut self, local_credentials: IceCreds, keep_local_candidates: bool) {
+    pub fn ice_restart(
+        &mut self,
+        local_credentials: IceCreds,
+        keep_local_candidates: bool,
+        keep_remote_candidates: bool,
+    ) {
         // An ICE agent MAY restart ICE for existing data streams.  An ICE
         // restart causes all previous states of the data streams, excluding the
         // roles of the agents, to be flushed.  The only difference between an
@@ -942,8 +950,11 @@ impl IceAgent {
         // data can continue to be sent using existing data sessions, and a new
         // data session always requires the roles to be determined.
 
-        self.remote_credentials = None;
-        self.remote_candidates.clear();
+        if !keep_remote_candidates {
+            self.remote_credentials = None;
+            self.remote_candidates.clear();
+        }
+
         self.candidate_pairs.clear();
         self.has_exceeded_max_candidate_pairs = false;
         self.transmit.clear();
@@ -964,6 +975,25 @@ impl IceAgent {
 
         self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
         self.set_connection_state(IceConnectionState::Checking, "ice restart");
+
+        if keep_local_candidates && keep_remote_candidates {
+            let local_idxs: Vec<_> = self
+                .local_candidates
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| !v.discarded())
+                .map(|(i, _)| i)
+                .collect();
+            let remote_idxs: Vec<_> = self
+                .remote_candidates
+                .iter()
+                .enumerate()
+                .filter(|(_, v)| !v.discarded())
+                .map(|(i, _)| i)
+                .collect();
+
+            self.form_pairs(&local_idxs, &remote_idxs);
+        }
     }
 
     /// Discard candidate pairs that contain the candidate identified by a local index.
