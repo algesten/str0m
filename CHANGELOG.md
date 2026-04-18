@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix frame drops in Firefox due missing RTX SSRC #940
   * Drop stale depacketizer state on stream pause and restore paused timestamp repair #929
 
 # 0.18.0
