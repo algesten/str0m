@@ -355,6 +355,30 @@ impl<'a> SdpApi<'a> {
         }
     }
 
+    /// Stop an already existing media.
+    ///
+    /// The next generated offer emits the m-line with port 0 and excludes
+    /// it from the BUNDLE group, per [RFC 8843] §7.5.3. The remote
+    /// transceiver transitions to the "stopped" state and the m-line slot
+    /// becomes eligible for recycling.
+    ///
+    /// Unlike [`SdpApi::set_direction()`] with [`Direction::Inactive`],
+    /// a stopped m-line cannot be reactivated.
+    ///
+    /// If the media doesn't exist, or is already stopped, [`SdpApi::apply()`]
+    /// will not require a negotiation.
+    ///
+    /// [RFC 8843]: https://datatracker.ietf.org/doc/html/rfc8843#section-7.5.3
+    pub fn stop_media(&mut self, mid: Mid) {
+        let changed = self.rtc.session.stop_media(mid);
+
+        if changed {
+            self.changes
+                .0
+                .push(Change::Direction(mid, Direction::Inactive));
+        }
+    }
+
     /// Add a new reliable ordered data channel and get the `id` that will be used.
     ///
     /// Use `add_channel_with_config` when unreliable or unordered data channels are preferred.
@@ -1219,7 +1243,7 @@ fn update_media(
                 media.mid()
             );
         }
-        media.mark_disabled();
+        media.mark_stopped();
         media.set_direction(Direction::Inactive);
         return;
     }

@@ -1044,6 +1044,20 @@ impl Session {
         true
     }
 
+    pub fn stop_media(&mut self, mid: Mid) -> bool {
+        let Some(media) = self.media_by_mid_mut(mid) else {
+            return false;
+        };
+        if media.disabled() {
+            return false;
+        }
+
+        media.mark_stopped();
+        self.set_direction(mid, Direction::Inactive);
+
+        true
+    }
+
     pub fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
         // TODO: It's possible to have different set of feedback enabled for different
         // payload types. I.e. we could have FIR enabled for H264, but not for VP8.

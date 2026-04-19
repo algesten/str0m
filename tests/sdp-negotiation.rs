@@ -17,6 +17,7 @@ use str0m::format::PayloadParams;
 use str0m::media::Direction;
 use str0m::media::Frequency;
 use str0m::media::MediaKind;
+use str0m::media::Pt;
 use str0m::rtp::{Extension, ExtensionMap};
 use str0m::{Event, RtcError};
 use tracing::Span;
@@ -183,6 +184,90 @@ pub fn answer_no_match() {
     assert!(!r.codec_config()[0]._is_locked());
     // No remote PTs.
     assert_eq!(r.media(mid).unwrap().remote_pts(), &[]);
+}
+
+#[test]
+pub fn stop_media() {
+    init_log();
+    init_crypto_default();
+
+    // L and R negotiate a video m-line, then L stops it. The next offer
+    // must emit port 0 and leave the m-line out of the BUNDLE group.
+    let (mut l, mut r) = with_params(
+        //
+        info_span!("L"),
+        &[vp8(100)],
+        info_span!("R"),
+        &[vp8(100)],
+    );
+
+    let mid = l._mids()[0];
+
+    assert!(!l.media(mid).unwrap().stopped());
+    assert_eq!(l.media(mid).unwrap().direction(), Direction::SendRecv);
+
+    // Stop and create a subsequent offer from L
+    let (offer, pending) = l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.stop_media(mid);
+        change.apply().unwrap()
+    });
+
+    // Stopping an already-stopped m-line is a no-op
+    l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.stop_media(mid);
+        assert!(change.apply().is_none());
+    });
+
+    // Check that the offer SDP has port 0 and drops the mid from BUNDLE.
+    // The PT list is preserved so the m-line satisfies the SDP grammar
+    // (RFC 4566 §5.14 requires at least one fmt).
+    let offer_sdp = offer.to_sdp_string();
+    assert!(
+        offer_sdp.contains("m=video 0 UDP/TLS/RTP/SAVPF 100\r\n"),
+        "Expected stopped m-line with port 0 and PT 100, got:\n{}",
+        offer_sdp
+    );
+    assert!(
+        !offer_sdp.contains(&format!("a=group:BUNDLE {mid}")),
+        "Stopped m-line should not be in BUNDLE group:\n{}",
+        offer_sdp
+    );
+
+    // Test left side. Stopped, direction Inactive, PTs preserved.
+    assert!(l.media(mid).unwrap().stopped());
+    assert_eq!(l.media(mid).unwrap().direction(), Direction::Inactive);
+    assert_eq!(
+        l.media(mid).unwrap().remote_pts(),
+        &[Pt::new_with_value(100)]
+    );
+
+    // R accepts the offer and generates an answer
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+
+    // The answer also has port 0 (with preserved PT list) for the stopped m-line
+    let answer_sdp = answer.to_sdp_string();
+    assert!(
+        answer_sdp.contains("m=video 0 UDP/TLS/RTP/SAVPF 100\r\n"),
+        "Expected stopped m-line with port 0 and PT 100 in answer, got:\n{}",
+        answer_sdp
+    );
+
+    // L accepts the answer
+    l.span.in_scope(|| {
+        l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    });
+
+    // Test right side. Same stopped state as L.
+    assert!(r.media(mid).unwrap().stopped());
+    assert_eq!(r.media(mid).unwrap().direction(), Direction::Inactive);
+    assert_eq!(
+        r.media(mid).unwrap().remote_pts(),
+        &[Pt::new_with_value(100)]
+    );
 }
 
 #[test]
