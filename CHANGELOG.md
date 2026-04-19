@@ -2,6 +2,7 @@
 
   * Add `SdpApi::stop_media()` to stop an existing m-line #941
   * Update chat example to use `SdpApi::stop_media()` when clients are removed #941
+  * Accept recycled m-line indexes when the previous m-line was stopped #941
   * Always use ActPass when sending an SDP offer (RFC 8842 Section 5.2/5.5) #893
   * Fix frame drops in Firefox due missing RTX SSRC #940
   * Drop stale depacketizer state on stream pause and restore paused timestamp repair #929
