@@ -309,8 +309,8 @@ enum TrackOutState {
     ToOpen,
     Negotiating(Mid),
     Open(Mid),
-    ToInactivate(Mid),
-    Inactive(Mid),
+    ToStop(Mid),
+    NegotiatingStop(Mid),
 }
 
 impl TrackOut {
@@ -319,8 +319,8 @@ impl TrackOut {
             TrackOutState::ToOpen => None,
             TrackOutState::Negotiating(m)
             | TrackOutState::Open(m)
-            | TrackOutState::ToInactivate(m)
-            | TrackOutState::Inactive(m) => Some(m),
+            | TrackOutState::ToStop(m)
+            | TrackOutState::NegotiatingStop(m) => Some(m),
         }
     }
 }
@@ -497,11 +497,12 @@ impl Client {
         }
 
         // An Open track whose origin client disconnected needs its m-line
-        // transitioned to Inactive so the remote peer can see this change
+        // stopped so the remote transceiver transitions to "stopped" and
+        // releases its inbound-rtp stats entry.
         for track in &mut self.tracks_out {
             if let TrackOutState::Open(m) = track.state {
                 if track.track_in.upgrade().is_none() {
-                    track.state = TrackOutState::ToInactivate(m);
+                    track.state = TrackOutState::ToStop(m);
                 }
             }
         }
@@ -523,9 +524,9 @@ impl Client {
                         track.state = TrackOutState::Negotiating(mid);
                     }
                 }
-                TrackOutState::ToInactivate(mid) => {
-                    change.set_direction(mid, Direction::Inactive);
-                    track.state = TrackOutState::Inactive(mid);
+                TrackOutState::ToStop(mid) => {
+                    change.stop_media(mid);
+                    track.state = TrackOutState::NegotiatingStop(mid);
                 }
                 _ => {}
             }
@@ -573,8 +574,12 @@ impl Client {
         // Keep local track state in sync, cancelling any pending negotiation
         // so we can redo it after this offer is handled.
         for track in &mut self.tracks_out {
-            if let TrackOutState::Negotiating(_) = track.state {
-                track.state = TrackOutState::ToOpen;
+            match track.state {
+                TrackOutState::Negotiating(_) => track.state = TrackOutState::ToOpen,
+                TrackOutState::NegotiatingStop(m) => {
+                    track.state = TrackOutState::ToStop(m);
+                }
+                _ => {}
             }
         }
 
@@ -601,6 +606,11 @@ impl Client {
                     track.state = TrackOutState::Open(m);
                 }
             }
+
+            // Drop tracks whose stop negotiation completed. The m-line is
+            // now port=0 and eligible for recycling by a later add_media.
+            self.tracks_out
+                .retain(|t| !matches!(t.state, TrackOutState::NegotiatingStop(_)));
         }
     }
 
