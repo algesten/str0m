@@ -431,7 +431,7 @@ impl<'a> StunMessage<'a> {
         }
 
         // Custom attributes
-        self.attrs.to_bytes(&mut buf, &self.trans_id.0)?;
+        self.attrs.to_bytes(&mut buf, &self.trans_id)?;
 
         if include_message_integrity {
             // Message integrity
@@ -473,7 +473,7 @@ impl<'a> StunMessage<'a> {
     }
 }
 
-const MAGIC: &[u8] = &[0x21, 0x12, 0xA4, 0x42];
+const MAGIC: &[u8; 4] = &[0x21, 0x12, 0xA4, 0x42];
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Class {
@@ -766,7 +766,7 @@ impl<'a> Attributes<'a> {
             + error_code
     }
 
-    fn to_bytes(self, out: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
+    fn to_bytes(self, out: &mut dyn Write, trans_id: &TransId) -> io::Result<()> {
         if let Some(v) = self.username {
             out.write_all(&Self::USERNAME.to_be_bytes())?;
             encode_str(Self::USERNAME, v, out)?;
@@ -1093,7 +1093,7 @@ fn decode_str(typ: u16, max_bytes: usize, buf: &[u8], len: usize) -> Result<&str
     }
 }
 
-fn encode_xor(addr: SocketAddr, buf: &mut [u8; 20], trans_id: &[u8]) -> usize {
+fn encode_xor(addr: SocketAddr, buf: &mut [u8; 20], trans_id: &TransId) -> usize {
     let port = addr.port() ^ 0x2112;
     buf[2..4].copy_from_slice(&port.to_be_bytes());
     buf[1] = if addr.is_ipv4() { 1 } else { 2 };
@@ -1112,7 +1112,7 @@ fn encode_xor(addr: SocketAddr, buf: &mut [u8; 20], trans_id: &[u8]) -> usize {
                 ip_buf[i] = bytes[i] ^ MAGIC[i];
             }
             for i in 4..16 {
-                ip_buf[i] = bytes[i] ^ trans_id[i - 4];
+                ip_buf[i] = bytes[i] ^ trans_id.0[i - 4];
             }
             20
         }
@@ -1120,17 +1120,23 @@ fn encode_xor(addr: SocketAddr, buf: &mut [u8; 20], trans_id: &[u8]) -> usize {
 }
 
 fn decode_xor(buf: &[u8], trans_id: TransId) -> Result<SocketAddr, StunError> {
-    let port = (((buf[2] as u16) << 8) | (buf[3] as u16)) ^ 0x2112;
+    if buf.len() < 4 {
+        return Err(StunError::Parse(format!(
+            "XOR buffer is too short: {} < 4",
+            buf.len()
+        )));
+    }
+    let port = u16::from_be_bytes([buf[2], buf[3]]) ^ 0x2112;
     let ip_buf = &buf[4..];
     let ip = match buf[1] {
-        1 => {
+        1 if ip_buf.len() >= 4 => {
             let mut bytes = [0_u8; 4];
             for i in 0..4 {
                 bytes[i] = ip_buf[i] ^ MAGIC[i];
             }
             IpAddr::V4(bytes.into())
         }
-        2 => {
+        2 if ip_buf.len() >= 16 => {
             let mut bytes = [0_u8; 16];
             for i in 0..4 {
                 bytes[i] = ip_buf[i] ^ MAGIC[i];
@@ -1140,8 +1146,11 @@ fn decode_xor(buf: &[u8], trans_id: TransId) -> Result<SocketAddr, StunError> {
             }
             IpAddr::V6(bytes.into())
         }
-        e => {
-            return Err(StunError::Parse(format!("Invalid address family: {e:?}")));
+        v => {
+            return Err(StunError::Parse(format!(
+                "Unknown IP version ({v}) or insufficient buffer length for it ({})",
+                ip_buf.len()
+            )));
         }
     };
 
@@ -1434,7 +1443,7 @@ pub struct StunPacket<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
     fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
         use hmac::{Hmac, Mac};
@@ -1538,7 +1547,7 @@ network_cost: (10, 10) \
         let mut buf = vec![];
         let trans_id = TransId::new();
         attrs
-            .to_bytes(&mut buf, &trans_id.0)
+            .to_bytes(&mut buf, &trans_id)
             .expect("To serialize attributes");
         assert_eq!(
             buf.len(),
@@ -1911,5 +1920,87 @@ network_cost: (10, 10) \
         assert_eq!(message.class(), Class::Indication);
         assert_eq!(message.trans_id(), trans_id);
         assert_eq!(message.attrs.data, Some(data_payload));
+    }
+
+    #[test]
+    fn decode_xor_buffer_shorter_than_4_is_error() {
+        let trans_id = TransId::new();
+        for buf in [&[][..], &[0x00][..], &[0x00, 0x01, 0x02][..]] {
+            let err = decode_xor(buf, trans_id).expect_err("short buffer must error");
+            assert!(
+                matches!(err, StunError::Parse(_)),
+                "expected Parse error, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_xor_ipv4_family_with_short_ip_buf_is_error() {
+        let trans_id = TransId::new();
+        // Family = IPv4 (0x01), valid port bytes, but fewer than 4 IP octets.
+        for buf in [
+            &[0x00, 0x01, 0x11, 0x22][..],
+            &[0x00, 0x01, 0x11, 0x22, 0xaa][..],
+            &[0x00, 0x01, 0x11, 0x22, 0xaa, 0xbb, 0xcc][..],
+        ] {
+            let err = decode_xor(buf, trans_id).expect_err("short ipv4 payload must error");
+            assert!(
+                matches!(err, StunError::Parse(_)),
+                "expected Parse error, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_xor_ipv6_family_with_short_ip_buf_is_error() {
+        let trans_id = TransId::new();
+        // Family = IPv6 (0x02), valid port bytes, but fewer than 16 IP octets.
+        let mut buf = vec![0x00, 0x02, 0x11, 0x22];
+        buf.extend_from_slice(&[0xaa; 15]);
+        let err = decode_xor(&buf, trans_id).expect_err("short ipv6 payload must error");
+        assert!(
+            matches!(err, StunError::Parse(_)),
+            "expected Parse error, got {err:?}"
+        );
+
+        // Zero IP bytes for IPv6 family is also insufficient.
+        let err = decode_xor(&[0x00, 0x02, 0x11, 0x22], trans_id)
+            .expect_err("empty ipv6 payload must error");
+        assert!(matches!(err, StunError::Parse(_)));
+    }
+
+    #[test]
+    fn decode_xor_unknown_family_is_error() {
+        let trans_id = TransId::new();
+        let buf = [0x00, 0x03, 0x11, 0x22, 0xaa, 0xbb, 0xcc, 0xdd];
+        let err = decode_xor(&buf, trans_id).expect_err("unknown family must error");
+        assert!(matches!(err, StunError::Parse(_)));
+    }
+
+    #[test]
+    fn encode_decode_xor_ipv4_roundtrip() {
+        let trans_id = TransId::new();
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 15), 54321));
+        let mut buf = [0u8; 20];
+        let len = encode_xor(addr, &mut buf, &trans_id);
+        assert_eq!(len, 8);
+        let decoded = decode_xor(&buf[..len], trans_id).expect("ipv4 roundtrip");
+        assert_eq!(decoded, addr);
+    }
+
+    #[test]
+    fn encode_decode_xor_ipv6_roundtrip() {
+        let trans_id = TransId::new();
+        let addr = SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x1234),
+            54321,
+            0,
+            0,
+        ));
+        let mut buf = [0u8; 20];
+        let len = encode_xor(addr, &mut buf, &trans_id);
+        assert_eq!(len, 20);
+        let decoded = decode_xor(&buf[..len], trans_id).expect("ipv6 roundtrip");
+        assert_eq!(decoded, addr);
     }
 }

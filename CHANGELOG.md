@@ -3,6 +3,7 @@
   * Always use ActPass when sending an SDP offer (RFC 8842 Section 5.2/5.5) #893
   * Fix frame drops in Firefox due missing RTX SSRC #940
   * Drop stale depacketizer state on stream pause and restore paused timestamp repair #929
+  * Reduce bounds checks in STUN encode/decode #931
 
 # 0.18.0
 
