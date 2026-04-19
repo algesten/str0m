@@ -309,13 +309,18 @@ enum TrackOutState {
     ToOpen,
     Negotiating(Mid),
     Open(Mid),
+    ToInactivate(Mid),
+    Inactive(Mid),
 }
 
 impl TrackOut {
     fn mid(&self) -> Option<Mid> {
         match self.state {
             TrackOutState::ToOpen => None,
-            TrackOutState::Negotiating(m) | TrackOutState::Open(m) => Some(m),
+            TrackOutState::Negotiating(m)
+            | TrackOutState::Open(m)
+            | TrackOutState::ToInactivate(m)
+            | TrackOutState::Inactive(m) => Some(m),
         }
     }
 }
@@ -491,21 +496,38 @@ impl Client {
             return false;
         }
 
+        // An Open track whose origin client disconnected needs its m-line
+        // transitioned to Inactive so the remote peer can see this change
+        for track in &mut self.tracks_out {
+            if let TrackOutState::Open(m) = track.state {
+                if track.track_in.upgrade().is_none() {
+                    track.state = TrackOutState::ToInactivate(m);
+                }
+            }
+        }
+
         let mut change = self.rtc.sdp_api();
 
         for track in &mut self.tracks_out {
-            if let TrackOutState::ToOpen = track.state {
-                if let Some(track_in) = track.track_in.upgrade() {
-                    let stream_id = track_in.origin.to_string();
-                    let mid = change.add_media(
-                        track_in.kind,
-                        Direction::SendOnly,
-                        Some(stream_id),
-                        None,
-                        None,
-                    );
-                    track.state = TrackOutState::Negotiating(mid);
+            match track.state {
+                TrackOutState::ToOpen => {
+                    if let Some(track_in) = track.track_in.upgrade() {
+                        let stream_id = track_in.origin.to_string();
+                        let mid = change.add_media(
+                            track_in.kind,
+                            Direction::SendOnly,
+                            Some(stream_id),
+                            None,
+                            None,
+                        );
+                        track.state = TrackOutState::Negotiating(mid);
+                    }
                 }
+                TrackOutState::ToInactivate(mid) => {
+                    change.set_direction(mid, Direction::Inactive);
+                    track.state = TrackOutState::Inactive(mid);
+                }
+                _ => {}
             }
         }
 
