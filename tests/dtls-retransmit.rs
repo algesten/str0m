@@ -14,6 +14,16 @@
 //! that a single `poll_output` pass emits the retransmit as a `Transmit`.
 //! Without the fix, the pass instead returns `Timeout` and the retransmit
 //! is stranded.
+//!
+//! The scenario asserted here is specific to dimpl's tx-queue semantics,
+//! so the test is compiled only under dimpl-backed crypto providers.
+#![cfg(any(
+    feature = "aws-lc-rs",
+    feature = "rust-crypto",
+    feature = "openssl-dimpl",
+    feature = "wincrypto-dimpl",
+    feature = "apple-crypto",
+))]
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
