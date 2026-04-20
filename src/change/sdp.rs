@@ -942,7 +942,7 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     update_session(session, &offer);
 
     let bundle_mids = offer.bundle_mids();
-    let new_lines = sync_medias(session, &offer).map_err(RtcError::RemoteSdp)?;
+    let new_lines = sync_medias(session, &offer, true).map_err(RtcError::RemoteSdp)?;
 
     add_new_lines(session, &new_lines, true, bundle_mids).map_err(RtcError::RemoteSdp)?;
 
@@ -961,7 +961,7 @@ fn apply_answer(
     update_session(session, &answer);
 
     let bundle_mids = answer.bundle_mids();
-    let new_lines = sync_medias(session, &answer).map_err(RtcError::RemoteSdp)?;
+    let new_lines = sync_medias(session, &answer, false).map_err(RtcError::RemoteSdp)?;
 
     // The new_lines from the answer must correspond to what we sent in the offer.
     if let Some(err) = pending.ensure_correct_answer(&new_lines) {
@@ -1085,6 +1085,7 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 fn sync_medias<'a>(
     session: &mut Session,
     sdp: &'a Sdp,
+    is_offer: bool,
 ) -> Result<Vec<(usize, &'a MediaLine)>, String> {
     let mut new_lines = Vec::with_capacity(sdp.media_lines.len());
     let bundle_mids = sdp.bundle_mids();
@@ -1120,9 +1121,15 @@ fn sync_medias<'a>(
 
                 // Unknown mid at an index held by a disabled Media means
                 // the remote has recycled the slot (RFC 8829 §5.2.2).
-                // Retire the disabled Media so the replacement takes its
-                // place at the same index.
+                // Recycling is only permitted in offers; an answer that
+                // rewires a mid at a stopped slot is malformed.
                 if let Some(pos) = session.medias.iter().position(|l| l.index() == idx) {
+                    if !is_offer {
+                        return Err(format!(
+                            "Answer recycles stopped m-line (not permitted per RFC 8829 §5.2.2): {}",
+                            m.mid()
+                        ));
+                    }
                     if !session.medias[pos].disabled() {
                         return index_err(m.mid());
                     }
