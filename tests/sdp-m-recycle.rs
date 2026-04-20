@@ -151,7 +151,10 @@ pub fn stop_media_recycled_slot_state() {
     let new_mid = new_mid_in_sdp(&recycled_offer_sdp, old_mid);
 
     l.span.in_scope(|| {
-        l.rtc.sdp_api().accept_offer(recycled_offer).expect("accept");
+        l.rtc
+            .sdp_api()
+            .accept_offer(recycled_offer)
+            .expect("accept");
     });
 
     // L side: old mid is retired, new mid is live and not stopped.
@@ -169,7 +172,10 @@ pub fn stop_media_recycled_slot_state() {
 
     let new_media_l = l.media(new_mid).expect("new Media on L");
     assert!(!new_media_l.stopped(), "recycled Media must not be stopped");
-    assert!(!new_media_l.disabled(), "recycled Media must not be disabled");
+    assert!(
+        !new_media_l.disabled(),
+        "recycled Media must not be disabled"
+    );
     assert_eq!(
         new_media_l.kind(),
         MediaKind::Video,
@@ -219,8 +225,12 @@ pub fn stop_media_and_recycle_then_negotiate_again() {
         rewrite_offer_to_recycle_stopped_slot(&offer_from_r.0.to_sdp_string(), old_mid);
     let recycled_offer = SdpOffer::from_sdp_string(&recycled_offer_sdp).expect("parses");
 
-    l.span
-        .in_scope(|| l.rtc.sdp_api().accept_offer(recycled_offer).expect("accept"));
+    l.span.in_scope(|| {
+        l.rtc
+            .sdp_api()
+            .accept_offer(recycled_offer)
+            .expect("accept")
+    });
 
     // L must be able to create another offer cleanly. This would fail if
     // `as_media_lines` disagrees with the post-recycle `medias` list.
@@ -245,8 +255,15 @@ pub fn stop_media_and_recycle_then_negotiate_again() {
         follow_up_sdp
     );
     // The follow-up SDP must have exactly 2 m-lines (recycled + new).
-    let m_line_count = follow_up_sdp.lines().filter(|l| l.starts_with("m=")).count();
-    assert_eq!(m_line_count, 2, "expected 2 m-lines in follow-up offer, got:\n{}", follow_up_sdp);
+    let m_line_count = follow_up_sdp
+        .lines()
+        .filter(|l| l.starts_with("m="))
+        .count();
+    assert_eq!(
+        m_line_count, 2,
+        "expected 2 m-lines in follow-up offer, got:\n{}",
+        follow_up_sdp
+    );
     assert!(!l._mids().contains(&old_mid));
 }
 
@@ -455,7 +472,11 @@ fn new_mid_in_sdp(sdp: &str, old_mid: Mid) -> Mid {
             if m == old_str {
                 continue;
             }
-            assert!(found.is_none(), "more than one non-old mid in sdp:\n{}", sdp);
+            assert!(
+                found.is_none(),
+                "more than one non-old mid in sdp:\n{}",
+                sdp
+            );
             found = Some(m.into());
         }
     }
