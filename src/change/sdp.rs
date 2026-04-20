@@ -355,6 +355,30 @@ impl<'a> SdpApi<'a> {
         }
     }
 
+    /// Stop an already existing media.
+    ///
+    /// The next generated offer emits the m-line with port 0 and excludes
+    /// it from the BUNDLE group, per [RFC 8843] §7.5.3. The remote
+    /// transceiver transitions to the "stopped" state and the m-line slot
+    /// becomes eligible for recycling.
+    ///
+    /// Unlike [`SdpApi::set_direction()`] with [`Direction::Inactive`],
+    /// a stopped m-line cannot be reactivated.
+    ///
+    /// If the media doesn't exist, or is already stopped, [`SdpApi::apply()`]
+    /// will not require a negotiation.
+    ///
+    /// [RFC 8843]: https://datatracker.ietf.org/doc/html/rfc8843#section-7.5.3
+    pub fn stop_media(&mut self, mid: Mid) {
+        let changed = self.rtc.session.stop_media(mid);
+
+        if changed {
+            self.changes
+                .0
+                .push(Change::Direction(mid, Direction::Inactive));
+        }
+    }
+
     /// Add a new reliable ordered data channel and get the `id` that will be used.
     ///
     /// Use `add_channel_with_config` when unreliable or unordered data channels are preferred.
@@ -1054,8 +1078,14 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 /// Compares m-lines in Sdp with that already in the session.
 ///
 /// * Existing m-lines can apply changes (such as direction change).
-/// * New m-lines are returned to the caller.
-fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
+/// * New m-lines are returned to the caller paired with the session
+///   index they should occupy. The index is normally the next free slot,
+///   but can be a recycled slot (RFC 8829 §5.2.2) when the remote has
+///   replaced a previously disabled Media with a new mid.
+fn sync_medias<'a>(
+    session: &mut Session,
+    sdp: &'a Sdp,
+) -> Result<Vec<(usize, &'a MediaLine)>, String> {
     let mut new_lines = Vec::with_capacity(sdp.media_lines.len());
     let bundle_mids = sdp.bundle_mids();
 
@@ -1087,6 +1117,19 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
 
                     continue;
                 }
+
+                // Unknown mid at an index held by a disabled Media means
+                // the remote has recycled the slot (RFC 8829 §5.2.2).
+                // Retire the disabled Media so the replacement takes its
+                // place at the same index.
+                if let Some(pos) = session.medias.iter().position(|l| l.index() == idx) {
+                    if !session.medias[pos].disabled() {
+                        return index_err(m.mid());
+                    }
+                    let retired_mid = session.medias[pos].mid();
+                    session.medias.swap_remove(pos);
+                    session.streams.remove_streams_by_mid(retired_mid);
+                }
             }
             _ => {
                 continue;
@@ -1094,7 +1137,7 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
         }
 
         // Second, discover new m-lines.
-        new_lines.push(m);
+        new_lines.push((idx, m));
     }
 
     fn index_err<T>(mid: Mid) -> Result<T, String> {
@@ -1105,14 +1148,17 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
 }
 
 /// Adds new m-lines as found in an offer or answer.
+///
+/// Each entry in `new_lines` pairs an m-line with the session index it
+/// should occupy.
 fn add_new_lines(
     session: &mut Session,
-    new_lines: &[&MediaLine],
+    new_lines: &[(usize, &MediaLine)],
     is_offer: bool,
     bundle_mids: Option<&[Mid]>,
 ) -> Result<(), String> {
-    for m in new_lines {
-        let idx = session.line_count();
+    for (idx, m) in new_lines {
+        let idx = *idx;
 
         if m.typ.is_media() {
             let mut media = Media::from_remote_media_line(m, idx, is_offer);
@@ -1219,7 +1265,7 @@ fn update_media(
                 media.mid()
             );
         }
-        media.mark_disabled();
+        media.mark_stopped();
         media.set_direction(Direction::Inactive);
         return;
     }
@@ -1633,7 +1679,7 @@ impl Changes {
     }
 
     /// Tests the given lines (from answer) corresponds to changes.
-    fn ensure_correct_answer(&self, lines: &[&MediaLine]) -> Option<String> {
+    fn ensure_correct_answer(&self, lines: &[(usize, &MediaLine)]) -> Option<String> {
         if self.count_new_medias() != lines.len() {
             return Some(format!(
                 "Differing m-line count in offer vs answer: {} != {}",
@@ -1642,7 +1688,7 @@ impl Changes {
             ));
         }
 
-        'next: for l in lines {
+        'next: for (_, l) in lines {
             let mid = l.mid();
 
             for m in &self.0 {

@@ -102,6 +102,13 @@ pub struct Media {
     /// If this is empty, the m-line is disabled/rejected (port=0 in SDP).
     remote_pts: Vec<Pt>,
 
+    /// Set when this m-line has been stopped via
+    /// [`SdpApi::stop_media`](crate::change::SdpApi::stop_media) or
+    /// rejected by the remote peer. Independent of `remote_pts` so that
+    /// an explicit stop preserves the negotiated PT list in SDP output
+    /// (the SDP grammar requires at least one fmt on a port=0 m-line).
+    stopped: bool,
+
     /// Remote extmaps negotiated for this media.
     ///
     /// The corresponding entries must exist in Session::codec_config.
@@ -282,16 +289,29 @@ impl Media {
 
     /// Whether this m-line is disabled/rejected (port=0 in SDP).
     ///
-    /// An m-line is disabled if there are no negotiated codecs,
-    /// either because no codecs matched or because the remote rejected the m-line.
+    /// An m-line is disabled if it has been stopped (via
+    /// [`SdpApi::stop_media`](crate::change::SdpApi::stop_media) or by the
+    /// remote peer), or if no codecs matched during negotiation.
     ///
     /// SDP level property.
     pub fn disabled(&self) -> bool {
-        self.remote_pts.is_empty()
+        self.stopped || self.remote_pts.is_empty()
     }
 
-    pub(crate) fn mark_disabled(&mut self) {
-        self.remote_pts.clear();
+    /// Whether this m-line has been stopped.
+    ///
+    /// Unlike [`disabled`](Self::disabled) this does not include the "no
+    /// codecs matched" case - only explicit stop via
+    /// [`SdpApi::stop_media`](crate::change::SdpApi::stop_media) or a
+    /// port=0 m-line received from the remote peer. A stopped m-line
+    /// cannot be reactivated; its slot can however be recycled by a
+    /// subsequent new m-line (RFC 8829 §5.2.2).
+    pub fn stopped(&self) -> bool {
+        self.stopped
+    }
+
+    pub(crate) fn mark_stopped(&mut self) {
+        self.stopped = true;
     }
 
     pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
@@ -558,6 +578,7 @@ impl Default for Media {
             msid: Msid::random(),
             kind: MediaKind::Video,
             remote_pts: vec![],
+            stopped: false,
             remote_exts: ExtensionMap::empty(),
             remote_created: false,
             dir: Direction::SendRecv,

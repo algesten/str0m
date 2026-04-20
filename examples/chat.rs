@@ -309,13 +309,18 @@ enum TrackOutState {
     ToOpen,
     Negotiating(Mid),
     Open(Mid),
+    ToStop(Mid),
+    NegotiatingStop(Mid),
 }
 
 impl TrackOut {
     fn mid(&self) -> Option<Mid> {
         match self.state {
             TrackOutState::ToOpen => None,
-            TrackOutState::Negotiating(m) | TrackOutState::Open(m) => Some(m),
+            TrackOutState::Negotiating(m)
+            | TrackOutState::Open(m)
+            | TrackOutState::ToStop(m)
+            | TrackOutState::NegotiatingStop(m) => Some(m),
         }
     }
 }
@@ -491,21 +496,39 @@ impl Client {
             return false;
         }
 
+        // An Open track whose origin client disconnected needs its m-line
+        // stopped so the remote transceiver transitions to "stopped" and
+        // releases its inbound-rtp stats entry.
+        for track in &mut self.tracks_out {
+            if let TrackOutState::Open(m) = track.state {
+                if track.track_in.upgrade().is_none() {
+                    track.state = TrackOutState::ToStop(m);
+                }
+            }
+        }
+
         let mut change = self.rtc.sdp_api();
 
         for track in &mut self.tracks_out {
-            if let TrackOutState::ToOpen = track.state {
-                if let Some(track_in) = track.track_in.upgrade() {
-                    let stream_id = track_in.origin.to_string();
-                    let mid = change.add_media(
-                        track_in.kind,
-                        Direction::SendOnly,
-                        Some(stream_id),
-                        None,
-                        None,
-                    );
-                    track.state = TrackOutState::Negotiating(mid);
+            match track.state {
+                TrackOutState::ToOpen => {
+                    if let Some(track_in) = track.track_in.upgrade() {
+                        let stream_id = track_in.origin.to_string();
+                        let mid = change.add_media(
+                            track_in.kind,
+                            Direction::SendOnly,
+                            Some(stream_id),
+                            None,
+                            None,
+                        );
+                        track.state = TrackOutState::Negotiating(mid);
+                    }
                 }
+                TrackOutState::ToStop(mid) => {
+                    change.stop_media(mid);
+                    track.state = TrackOutState::NegotiatingStop(mid);
+                }
+                _ => {}
             }
         }
 
@@ -551,8 +574,12 @@ impl Client {
         // Keep local track state in sync, cancelling any pending negotiation
         // so we can redo it after this offer is handled.
         for track in &mut self.tracks_out {
-            if let TrackOutState::Negotiating(_) = track.state {
-                track.state = TrackOutState::ToOpen;
+            match track.state {
+                TrackOutState::Negotiating(_) => track.state = TrackOutState::ToOpen,
+                TrackOutState::NegotiatingStop(m) => {
+                    track.state = TrackOutState::ToStop(m);
+                }
+                _ => {}
             }
         }
 
@@ -579,6 +606,11 @@ impl Client {
                     track.state = TrackOutState::Open(m);
                 }
             }
+
+            // Drop tracks whose stop negotiation completed. The m-line is
+            // now port=0 and eligible for recycling by a later add_media.
+            self.tracks_out
+                .retain(|t| !matches!(t.state, TrackOutState::NegotiatingStop(_)));
         }
     }
 

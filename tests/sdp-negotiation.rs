@@ -17,6 +17,8 @@ use str0m::format::PayloadParams;
 use str0m::media::Direction;
 use str0m::media::Frequency;
 use str0m::media::MediaKind;
+use str0m::media::Mid;
+use str0m::media::Pt;
 use str0m::rtp::{Extension, ExtensionMap};
 use str0m::{Event, RtcError};
 use tracing::Span;
@@ -183,6 +185,256 @@ pub fn answer_no_match() {
     assert!(!r.codec_config()[0]._is_locked());
     // No remote PTs.
     assert_eq!(r.media(mid).unwrap().remote_pts(), &[]);
+}
+
+#[test]
+pub fn stop_media() {
+    init_log();
+    init_crypto_default();
+
+    // L and R negotiate a video m-line, then L stops it. The next offer
+    // must emit port 0 and leave the m-line out of the BUNDLE group.
+    let (mut l, mut r) = with_params(
+        //
+        info_span!("L"),
+        &[vp8(100)],
+        info_span!("R"),
+        &[vp8(100)],
+    );
+
+    let mid = l._mids()[0];
+
+    assert!(!l.media(mid).unwrap().stopped());
+    assert_eq!(l.media(mid).unwrap().direction(), Direction::SendRecv);
+
+    // Stop and create a subsequent offer from L
+    let (offer, pending) = l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.stop_media(mid);
+        change.apply().unwrap()
+    });
+
+    // Stopping an already-stopped m-line is a no-op
+    l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.stop_media(mid);
+        assert!(change.apply().is_none());
+    });
+
+    // Check that the offer SDP has port 0 and drops the mid from BUNDLE.
+    // The PT list is preserved so the m-line satisfies the SDP grammar
+    // (RFC 4566 §5.14 requires at least one fmt).
+    let offer_sdp = offer.to_sdp_string();
+    assert!(
+        offer_sdp.contains("m=video 0 UDP/TLS/RTP/SAVPF 100\r\n"),
+        "Expected stopped m-line with port 0 and PT 100, got:\n{}",
+        offer_sdp
+    );
+    assert!(
+        !offer_sdp.contains(&format!("a=group:BUNDLE {mid}")),
+        "Stopped m-line should not be in BUNDLE group:\n{}",
+        offer_sdp
+    );
+
+    // Test left side. Stopped, direction Inactive, PTs preserved.
+    assert!(l.media(mid).unwrap().stopped());
+    assert_eq!(l.media(mid).unwrap().direction(), Direction::Inactive);
+    assert_eq!(
+        l.media(mid).unwrap().remote_pts(),
+        &[Pt::new_with_value(100)]
+    );
+
+    // R accepts the offer and generates an answer
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+
+    // The answer also has port 0 (with preserved PT list) for the stopped m-line
+    let answer_sdp = answer.to_sdp_string();
+    assert!(
+        answer_sdp.contains("m=video 0 UDP/TLS/RTP/SAVPF 100\r\n"),
+        "Expected stopped m-line with port 0 and PT 100 in answer, got:\n{}",
+        answer_sdp
+    );
+
+    // L accepts the answer
+    l.span.in_scope(|| {
+        l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    });
+
+    // Test right side. Same stopped state as L.
+    assert!(r.media(mid).unwrap().stopped());
+    assert_eq!(r.media(mid).unwrap().direction(), Direction::Inactive);
+    assert_eq!(
+        r.media(mid).unwrap().remote_pts(),
+        &[Pt::new_with_value(100)]
+    );
+}
+
+#[test]
+pub fn stop_media_then_remote_recycles_slot() {
+    init_log();
+    init_crypto_default();
+
+    // L stops its video m-line, then receives an offer that recycles the
+    // resulting port=0 slot with a new mid (RFC 8829 §5.2.2).
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let old_mid = l._mids()[0];
+
+    negotiate(&mut l, &mut r, |change| {
+        change.stop_media(old_mid);
+    });
+
+    assert!(l.media(old_mid).unwrap().stopped());
+    assert!(r.media(old_mid).unwrap().stopped());
+
+    // str0m's own SdpApi doesn't produce recycling offers, so take an
+    // offer from R (which appends a new m-line) and rewrite it so the
+    // new m-line lives at the index of the stopped one - what a browser
+    // would emit per RFC 8829 §5.2.2.
+    let offer_from_r = r
+        .span
+        .in_scope(|| {
+            let mut change = r.rtc.sdp_api();
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            change.apply()
+        })
+        .expect("R has a change to apply");
+
+    let offer_sdp = offer_from_r.0.to_sdp_string();
+    let recycled_offer_sdp = rewrite_offer_to_recycle_stopped_slot(&offer_sdp, old_mid);
+
+    let recycled_offer =
+        SdpOffer::from_sdp_string(&recycled_offer_sdp).expect("recycled offer parses");
+
+    let answer = l.span.in_scope(|| {
+        l.rtc
+            .sdp_api()
+            .accept_offer(recycled_offer)
+            .expect("accept")
+    });
+
+    let answer_sdp = answer.to_sdp_string();
+
+    // RFC 3264 §6: the answer must have the same m-line count as the
+    // offer. Without recycling, str0m appends a second m-line and the
+    // answer is invalid.
+    let count_m_lines = |s: &str| s.lines().filter(|l| l.starts_with("m=")).count();
+    let offer_m_lines = count_m_lines(&recycled_offer_sdp);
+    let answer_m_lines = count_m_lines(&answer_sdp);
+    assert_eq!(
+        answer_m_lines, offer_m_lines,
+        "answer m-line count ({answer_m_lines}) differs from offer m-line count ({offer_m_lines})\n\n\
+         rewritten offer:\n{recycled_offer_sdp}\n\nanswer:\n{answer_sdp}",
+    );
+}
+
+#[test]
+pub fn recycling_rejected_for_non_stopped_slot() {
+    init_log();
+    init_crypto_default();
+
+    // L holds an active video m-line. An offer arrives that tries to
+    // recycle that active slot with a new mid (no prior stop). str0m must
+    // refuse rather than install a second Media at the same index.
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let active_mid = l._mids()[0];
+
+    // Sanity: the mid is active, not stopped.
+    assert!(!l.media(active_mid).unwrap().stopped());
+    assert!(!l.media(active_mid).unwrap().disabled());
+
+    // Take an ordinary offer from R adding a new m-line, then rewrite it
+    // so the new m-line squats the slot of L's active mid.
+    let offer_from_r = r
+        .span
+        .in_scope(|| {
+            let mut change = r.rtc.sdp_api();
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            change.apply()
+        })
+        .expect("R has a change to apply");
+
+    let offer_sdp = offer_from_r.0.to_sdp_string();
+    let bad_offer_sdp = rewrite_offer_to_recycle_stopped_slot(&offer_sdp, active_mid);
+    let bad_offer = SdpOffer::from_sdp_string(&bad_offer_sdp).expect("offer parses");
+
+    let result = l.span.in_scope(|| l.rtc.sdp_api().accept_offer(bad_offer));
+
+    assert!(
+        result.is_err(),
+        "accept_offer must reject a recycling attempt against a non-stopped slot, got Ok:\n{}",
+        bad_offer_sdp
+    );
+}
+
+/// Moves the trailing (newly added) m-line into the slot occupied by the
+/// m-line for `old_mid`, and updates the BUNDLE group accordingly. When
+/// `old_mid` belongs to a stopped m-line (port=0) this produces the offer
+/// shape a browser emits when recycling the slot per RFC 8829 §5.2.2.
+fn rewrite_offer_to_recycle_stopped_slot(sdp: &str, old_mid: Mid) -> String {
+    // Split into sections, each starting with "m=". The first section is
+    // the session-level block before any m-line.
+    let mut sections: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for line in sdp.split_inclusive("\r\n") {
+        if line.starts_with("m=") && !current.is_empty() {
+            sections.push(std::mem::take(&mut current));
+        }
+        current.push_str(line);
+    }
+    if !current.is_empty() {
+        sections.push(current);
+    }
+
+    let session_block = sections.remove(0);
+
+    // Find the stopped section and the trailing new section.
+    let old_mid_attr = format!("a=mid:{old_mid}\r\n");
+    let stopped_idx = sections
+        .iter()
+        .position(|s| s.contains(&old_mid_attr))
+        .expect("stopped section present");
+    let new_section = sections.pop().expect("new section present");
+
+    sections[stopped_idx] = new_section;
+
+    // Parse the new mid so we can rewrite the BUNDLE group.
+    let new_mid = sections[stopped_idx]
+        .lines()
+        .find_map(|l| l.strip_prefix("a=mid:"))
+        .expect("new section has a=mid:")
+        .trim()
+        .to_string();
+
+    let old_mid_str = old_mid.to_string();
+    let session_block = session_block
+        .lines()
+        .map(|l| {
+            if let Some(rest) = l.strip_prefix("a=group:BUNDLE ") {
+                let mut mids: Vec<&str> = rest
+                    .split_whitespace()
+                    .filter(|m| *m != old_mid_str)
+                    .collect();
+                if !mids.contains(&new_mid.as_str()) {
+                    mids.push(new_mid.as_str());
+                }
+                format!("a=group:BUNDLE {}", mids.join(" "))
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        + "\r\n";
+
+    let mut out = session_block;
+    for s in sections {
+        out.push_str(&s);
+    }
+    out
 }
 
 #[test]
