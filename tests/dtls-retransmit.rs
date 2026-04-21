@@ -27,6 +27,7 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
+use netem::{NetemConfig, Probability, RandomLoss};
 use str0m::{Candidate, Input, Output, Reason, Rtc};
 use tracing::info_span;
 
@@ -101,4 +102,66 @@ fn dtls_retransmit_emitted_in_same_poll_pass() {
         got_transmit,
         "poll_output should emit the DTLS retransmit in the same pass that runs handle_timeout"
     );
+}
+
+/// End-to-end: a DTLS handshake between two peers must complete even
+/// when the link drops packets. Before the fix, dropped handshake
+/// packets stalled for seconds at a time because each lost flight's
+/// retransmit was deferred to the next unrelated wake-up — on a lossy
+/// link the handshake could miss its connect deadline entirely.
+#[test]
+fn dtls_handshake_completes_under_packet_loss() {
+    init_crypto_default();
+
+    let now = Instant::now();
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), Rtc::new(now));
+    let mut r = TestRtc::new_with_rtc(info_span!("R"), Rtc::new(now));
+
+    // 30% random loss in both directions from the very first packet.
+    let lossy = NetemConfig::new()
+        .loss(RandomLoss::new(Probability::new(0.3)))
+        .seed(1);
+    l.set_netem(lossy.clone());
+    r.set_netem(lossy);
+
+    let host_l = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
+    let host_r = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
+    l.add_local_candidate(host_l.clone());
+    l.add_remote_candidate(host_r.clone());
+    r.add_local_candidate(host_r);
+    r.add_remote_candidate(host_l);
+
+    let finger_l = l.direct_api().local_dtls_fingerprint().clone();
+    let finger_r = r.direct_api().local_dtls_fingerprint().clone();
+    l.direct_api().set_remote_fingerprint(finger_r);
+    r.direct_api().set_remote_fingerprint(finger_l);
+
+    let creds_l = l.direct_api().local_ice_credentials();
+    let creds_r = r.direct_api().local_ice_credentials();
+    l.direct_api().set_remote_ice_credentials(creds_r);
+    r.direct_api().set_remote_ice_credentials(creds_l);
+
+    l.direct_api().set_ice_controlling(true);
+    r.direct_api().set_ice_controlling(false);
+
+    l.direct_api().start_dtls(true).unwrap();
+    r.direct_api().start_dtls(false).unwrap();
+    l.direct_api().start_sctp(true);
+    r.direct_api().start_sctp(false);
+
+    // Drive both sides forward. The DTLS default connect timeout is 10s,
+    // so a bounded iteration cap that allows well past that is enough to
+    // tell whether the handshake is making progress at all.
+    let mut iterations = 0;
+    while !(l.is_connected() && r.is_connected()) {
+        progress(&mut l, &mut r).unwrap();
+        iterations += 1;
+        assert!(
+            iterations < 5000,
+            "DTLS handshake did not complete under 30% packet loss \
+             (l_connected={}, r_connected={})",
+            l.is_connected(),
+            r.is_connected()
+        );
+    }
 }
