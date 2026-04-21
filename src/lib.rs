@@ -1494,6 +1494,16 @@ impl Rtc {
             }
         }
 
+        // Handle DTLS timeout before polling output so any retransmit packets
+        // queued by dimpl and the re-armed flight timer are picked up by the
+        // poll loop below in the same iteration.
+        if let Some(timeout) = self.next_dtls_timeout {
+            if timeout <= self.last_now {
+                let _ = self.dtls.handle_timeout(self.last_now);
+                self.next_dtls_timeout = None;
+            }
+        }
+
         // Poll DTLS output - collect packets, handle events
         let mut just_connected = false;
         loop {
@@ -1657,14 +1667,6 @@ impl Rtc {
         }
 
         let stats = self.stats.as_mut();
-
-        // Handle DTLS timeout
-        if let Some(timeout) = self.next_dtls_timeout {
-            if timeout <= self.last_now {
-                let _ = self.dtls.handle_timeout(self.last_now);
-                self.next_dtls_timeout = None;
-            }
-        }
 
         let time_and_reason = (None, Reason::NotHappening)
             .soonest((self.next_dtls_timeout, Reason::DTLS))
