@@ -65,11 +65,11 @@ struct WinCryptoSha256Provider;
 
 impl Sha256Provider for WinCryptoSha256Provider {
     fn sha256(&self, data: &[u8]) -> [u8; 32] {
-        use windows::core::Owned;
-        use windows::Win32::Security::Cryptography::BCryptHashData;
         use windows::Win32::Security::Cryptography::BCRYPT_HASH_HANDLE;
         use windows::Win32::Security::Cryptography::BCRYPT_SHA256_ALG_HANDLE;
+        use windows::Win32::Security::Cryptography::BCryptHashData;
         use windows::Win32::Security::Cryptography::{BCryptCreateHash, BCryptFinishHash};
+        use windows::core::Owned;
 
         let mut hash = [0u8; 32];
         unsafe {
@@ -306,8 +306,8 @@ impl DtlsProvider for WinCryptoDtlsProvider {
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         if dtls_version != DtlsVersion::Dtls12 {
             return Err(CryptoError::Other(
-                "WinCrypto DTLS provider only supports DTLS 1.2. \
-                 Use aws-lc-rs or rust-crypto backend for DTLS 1.3/Auto."
+                "WinCrypto DTLS provider only supports DTLS 1.2/Auto. \
+                 Use aws-lc-rs or rust-crypto backend for DTLS 1.3."
                     .to_string(),
             ));
         }

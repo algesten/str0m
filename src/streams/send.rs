@@ -131,6 +131,9 @@ pub struct StreamTx {
     /// that the receiver has bound the Mid/Rid tuple to the SSRC and no longer
     /// needs to be sent on every packet
     remote_acked_ssrc: bool,
+
+    // Same as `remote_acked_ssrc`, but for the RTX SSRC
+    remote_acked_rtx_ssrc: bool,
 }
 
 impl StreamTx {
@@ -163,6 +166,7 @@ impl StreamTx {
             rtx_ratio: (0.0, already_happened()),
             pt_for_padding: None,
             remote_acked_ssrc: false,
+            remote_acked_rtx_ssrc: false,
         }
     }
 
@@ -265,6 +269,28 @@ impl StreamTx {
         nackable: bool,
         payload: Vec<u8>,
     ) -> Result<(), PacketError> {
+        self.write_rtp_with_csrc(
+            pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload, 0, [0; 15],
+        )
+    }
+
+    /// Like [`Self::write_rtp`], but with an additional `csrc` parameter for
+    /// contributing source identifiers (up to 15 per RFC 3550).
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_rtp_with_csrc(
+        &mut self,
+        pt: Pt,
+        seq_no: SeqNo,
+        time: u32,
+        wallclock: Instant,
+        marker: bool,
+        ext_vals: ExtensionValues,
+        nackable: bool,
+        payload: Vec<u8>,
+        csrc_count: usize,
+        csrc: [u32; 15],
+    ) -> Result<(), PacketError> {
+        assert!(csrc_count <= 15, "CSRC count must be <= 15");
         let first_call = self.rtp_and_wallclock.is_none();
 
         if first_call && seq_no.roc() > 0 {
@@ -281,11 +307,13 @@ impl StreamTx {
         self.rtp_and_wallclock = Some((time, wallclock));
 
         let header = RtpHeader {
+            csrc_count,
             sequence_number: *seq_no as u16,
             marker,
             payload_type: pt,
             timestamp: time,
             ssrc: self.ssrc,
+            csrc,
             ext_vals,
             ..Default::default()
         };
@@ -330,6 +358,7 @@ impl StreamTx {
         let rid = self.midrid.rid();
         let ssrc_rtx = self.rtx;
         let remote_acked_ssrc = self.remote_acked_ssrc;
+        let remote_acked_rtx_ssrc = self.remote_acked_rtx_ssrc;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
             (next, false)
@@ -358,8 +387,6 @@ impl StreamTx {
         // back for this SSRC. That feedback indicates the receiver must have
         // received a packet with the SSRC and header extension(s), so the sender
         // then stops attaching the MID and RID.
-
-        // This is true also for RTX.
         if !remote_acked_ssrc {
             header_ref.ext_vals.mid = Some(mid);
             header_ref.ext_vals.rid = rid;
@@ -434,6 +461,10 @@ impl StreamTx {
 
                 header.ext_vals.rid = None;
                 header.ext_vals.rid_repair = rid;
+
+                if !remote_acked_rtx_ssrc {
+                    header.ext_vals.mid = Some(mid);
+                }
 
                 header
             }
@@ -743,8 +774,16 @@ impl StreamTx {
         use RtcpFb::*;
         match fb {
             ReceptionReport(r) => {
-                // Receiver has bound MidRid to SSRC
-                self.remote_acked_ssrc = true;
+                if let Some(rtx_ssrc) = self.rtx {
+                    if rtx_ssrc == r.ssrc {
+                        // Receiver has bound MidRid to RTX SSRC
+                        self.remote_acked_rtx_ssrc = true;
+                    }
+                } else if r.ssrc == self.ssrc {
+                    // Receiver has bound MidRid to SSRC
+                    self.remote_acked_ssrc = true;
+                }
+
                 self.stats.update_with_rr(now, self.last_sent_seq_no, r)
             }
             Nack(_, list) => {

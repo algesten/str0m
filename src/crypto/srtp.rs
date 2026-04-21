@@ -39,13 +39,13 @@ impl SrtpProfile {
 }
 
 pub enum SrtpCrypto {
-    #[cfg(feature = "openssl")]
+    #[cfg(any(feature = "openssl", feature = "openssl-dimpl"))]
     OpenSsl(super::ossl::OsslSrtpCryptoImpl),
-    #[cfg(not(feature = "openssl"))]
+    #[cfg(not(any(feature = "openssl", feature = "openssl-dimpl")))]
     OpenSsl(DummySrtpCryptoImpl),
-    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+    #[cfg(all(any(feature = "wincrypto", feature = "wincrypto-dimpl"), target_os = "windows"))]
     WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl),
-    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
+    #[cfg(not(all(any(feature = "wincrypto", feature = "wincrypto-dimpl"), target_os = "windows")))]
     WinCrypto(DummySrtpCryptoImpl),
     #[cfg(feature = "dimpl")]
     AwsLc(super::aws_lc::AwsLcImpl),
@@ -55,22 +55,22 @@ pub enum SrtpCrypto {
 
 #[allow(clippy::unit_arg)]
 impl SrtpCrypto {
-    #[cfg(feature = "openssl")]
+    #[cfg(any(feature = "openssl", feature = "openssl-dimpl"))]
     pub fn new_openssl() -> SrtpCrypto {
         Self::OpenSsl(super::ossl::OsslSrtpCryptoImpl)
     }
 
-    #[cfg(not(feature = "openssl"))]
+    #[cfg(not(any(feature = "openssl", feature = "openssl-dimpl")))]
     pub fn new_openssl() -> SrtpCrypto {
         Self::OpenSsl(DummySrtpCryptoImpl(CryptoProvider::OpenSsl))
     }
 
-    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+    #[cfg(all(any(feature = "wincrypto", feature = "wincrypto-dimpl"), target_os = "windows"))]
     pub fn new_wincrypto() -> SrtpCrypto {
         Self::WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl)
     }
 
-    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
+    #[cfg(not(all(any(feature = "wincrypto", feature = "wincrypto-dimpl"), target_os = "windows")))]
     pub fn new_wincrypto() -> SrtpCrypto {
         Self::WinCrypto(DummySrtpCryptoImpl(CryptoProvider::WinCrypto))
     }

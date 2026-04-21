@@ -1,0 +1,30 @@
+[package]
+name = "is"
+version = "0.8.0"
+authors = ["Martin Algesten <martin@algesten.se>", "Thomas Eizinger <thomas@eizinger.io>"]
+description = "ICE (Interactive Connectivity Establishment) in Sans-IO style"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
+edition = "2024"
+rust-version = "1.85.0"
+
+[features]
+default = ["sha1"]
+sha1 = ["dep:hmac", "dep:sha1_"]
+pii = ["str0m-proto/pii"]
+_internal_test_exports = ["str0m-proto/_internal_test_exports"]
+
+[dependencies]
+str0m-proto = { workspace = true, default-features = false }
+tracing.workspace = true
+serde.workspace = true
+crc.workspace = true
+subtle.workspace = true
+hmac = { workspace = true, optional = true }
+# Package rename not supported with workspace inheritance
+sha1_ = { package = "sha1", version = "0.10", optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true
+tracing-subscriber.workspace = true

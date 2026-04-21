@@ -4,10 +4,6 @@ mod bit_pattern;
 
 pub(crate) use bit_pattern::BitPattern;
 
-mod pii;
-
-pub(crate) use pii::Pii;
-
 pub(crate) mod value_history;
 
 mod time_tricks;
@@ -88,33 +84,4 @@ pub(crate) fn calculate_rtt(ntp_time: Duration, delay: u32, last_report: u32) ->
 
     let nanos = (rtt_fraction * 1_000_000_000.0) as u32;
     Some(Duration::new(rtt_seconds as u64, nanos))
-}
-
-pub struct NonCryptographicRng;
-
-impl NonCryptographicRng {
-    #[inline(always)]
-    pub fn u8() -> u8 {
-        fastrand::u8(..)
-    }
-
-    #[inline(always)]
-    pub fn u16() -> u16 {
-        fastrand::u16(..)
-    }
-
-    #[inline(always)]
-    pub fn u32() -> u32 {
-        fastrand::u32(..)
-    }
-
-    #[inline(always)]
-    pub fn u64() -> u64 {
-        fastrand::u64(..)
-    }
-
-    #[inline(always)]
-    pub fn f32() -> f32 {
-        fastrand::f32()
-    }
 }

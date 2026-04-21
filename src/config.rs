@@ -46,6 +46,7 @@ pub struct RtcConfig {
     pub(crate) enable_raw_packets: bool,
     pub(crate) dtls_version: DtlsVersion,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
+    pub(crate) snap_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -544,6 +545,29 @@ impl RtcConfig {
         self
     }
 
+    /// Enable SNAP (SCTP Negotiation Acceleration Protocol).
+    ///
+    /// When enabled, the `a=sctp-init` attribute is included in outgoing SDP
+    /// offers, allowing the SCTP association to skip the 4-way handshake
+    /// and go directly to established state. This saves up to two network
+    /// round-trip times when establishing data channels.
+    ///
+    /// If the remote answer does not accept SNAP, str0m logs a warning and
+    /// falls back to the regular SCTP handshake.
+    ///
+    /// When this is `false`, outgoing SDP offers will not include `a=sctp-init`.
+    /// However, incoming offers that contain `a=sctp-init` will still be
+    /// reciprocated in answers, since str0m always supports the extension at
+    /// the protocol level (per §5.4 of draft-hancke-tsvwg-snap).
+    ///
+    /// See [draft-hancke-tsvwg-snap](https://datatracker.ietf.org/doc/draft-hancke-tsvwg-snap/).
+    ///
+    /// Default: `false`
+    pub fn set_snap_enabled(mut self, enabled: bool) -> Self {
+        self.snap_enabled = enabled;
+        self
+    }
+
     /// Set which DTLS version to use.
     ///
     /// Defaults to [`DtlsVersion::Dtls12`].
@@ -619,6 +643,7 @@ impl Default for RtcConfig {
             enable_raw_packets: false,
             dtls_version: DtlsVersion::Dtls12,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
+            snap_enabled: false,
         }
     }
 }

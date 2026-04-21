@@ -5,6 +5,7 @@
 #![allow(unsafe_code)]
 #![cfg(target_vendor = "apple")]
 
+mod cert;
 mod common_crypto;
 mod dimpl_provider;
 mod dtls;

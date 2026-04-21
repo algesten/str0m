@@ -1,0 +1,64 @@
+[package]
+name = "str0m-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.str0m]
+path = "../.."
+features = ["_internal_test_exports"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "rtx_buffer"
+path = "fuzz_targets/rtx_buffer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rtp_header"
+path = "fuzz_targets/rtp_header.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rtp_packet"
+path = "fuzz_targets/rtp_packet.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sdp_offer"
+path = "fuzz_targets/sdp_offer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sdp_answer"
+path = "fuzz_targets/sdp_answer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "depack"
+path = "fuzz_targets/depack.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "receive_register"
+path = "fuzz_targets/receive_register.rs"
+test = false
+doc = false

@@ -1,17 +1,16 @@
-use combine::error::*;
-use combine::parser::char::*;
-use combine::parser::combinator::*;
-use combine::stream::StreamErrorFor;
-use combine::*;
-use combine::{ParseError, Parser, Stream};
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use crate::crypto::Fingerprint;
 use crate::io::TcpType;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
-use crate::sdp::SdpError;
 use crate::{Candidate, CandidateKind};
+use combine::error::*;
+use combine::parser::char::*;
+use combine::parser::combinator::*;
+use combine::stream::StreamErrorFor;
+use combine::*;
+use combine::{ParseError, Parser, Stream};
 
 use super::data::*;
 
@@ -203,16 +202,6 @@ where
     ))
 }
 
-/// Parse a candidate string into a [Candidate].
-///
-/// Does not parse an `a=` prefix or trailing newline.
-pub fn parse_candidate(s: &str) -> Result<Candidate, SdpError> {
-    candidate()
-        .parse(s)
-        .map(|(c, _)| c)
-        .map_err(|e| SdpError::ParseError(e.to_string()))
-}
-
 /// Parser for candidate, without attribute prefix (a=).
 fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
 where
@@ -309,7 +298,7 @@ where
                 ufrag,   // (" ufrag ", ufrag)
                 _,       // ("network-cost", network_cost)
             )| {
-                Candidate::parsed(
+                Candidate::from_parts(
                     found,
                     comp_id,
                     proto,
@@ -330,15 +319,6 @@ where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
-    // a=candidate:1 1 udp 2113929471 203.0.113.100 10100 typ host
-    // a=candidate:1 2 udp 2113929470 203.0.113.100 10101 typ host
-    // a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100
-    // a=candidate:1 1 udp 255 192.0.2.100 12100 typ relay raddr 198.51.100.100 rport 11100
-    // a=candidate:3684617590 1 udp 2122260223 10.217.229.219 50028 typ host generation 0 network-id 1 network-cost 900
-    // a=candidate:387183333 1 udp 1686052607 113.185.55.72 31267 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900
-    // a=candidate:2501718406 1 tcp 1518280447 10.217.229.219 9 typ host tcptype active generation 0 network-id 1 network-cost 900
-    // a=candidate:387183333 1 udp 1686052607 113.185.55.72 41775 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900
-
     (string("a="), candidate(), line_end()).map(|(_, c, _)| c)
 }
 
@@ -511,6 +491,12 @@ where
         }),
     )
     .map(MediaAttribute::MaxMessageSize);
+
+    // a=sctp-init:<base64-encoded SCTP INIT chunk>
+    // See draft-hancke-tsvwg-snap (§4.2: base64 defined in RFC 4566, i.e. standard with padding)
+    //
+    // The base64 value is stored as-is; decoding happens when consumed.
+    let sctp_init = attribute_line("sctp-init", any_value()).map(MediaAttribute::SctpInit);
 
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:<value>["/"<direction>] <URI> <extensionattributes>
@@ -761,31 +747,37 @@ where
 
     let unused = typed_line('a', any_value()).map(MediaAttribute::Unused);
 
+    // Split into two choice() calls because combine's choice macro supports at most 25 parsers.
     choice((
-        attempt(ice_ufrag),
-        attempt(ice_pwd),
-        attempt(ice_opt),
-        attempt(finger),
-        attempt(setup),
-        attempt(mid),
-        attempt(sctp_port),
-        attempt(max_message_size),
-        attempt(extmap),
-        attempt(direction),
-        attempt(msid),
-        attempt(rtcp),
-        attempt(rtcpmux),
-        attempt(rtcpmuxonly),
-        attempt(rtcprsize),
-        attempt(cand),
-        attempt(endof),
-        attempt(rtpmap),
-        attempt(rtcp_fb),
-        attempt(fmtp),
-        attempt(rid),
-        attempt(simulcast),
-        attempt(ssrc_group),
-        attempt(ssrc),
+        attempt(choice((
+            attempt(ice_ufrag),
+            attempt(ice_pwd),
+            attempt(ice_opt),
+            attempt(finger),
+            attempt(setup),
+            attempt(mid),
+            attempt(sctp_port),
+            attempt(max_message_size),
+            attempt(sctp_init),
+            attempt(extmap),
+            attempt(direction),
+            attempt(msid),
+            attempt(rtcp),
+        ))),
+        attempt(choice((
+            attempt(rtcpmux),
+            attempt(rtcpmuxonly),
+            attempt(rtcprsize),
+            attempt(cand),
+            attempt(endof),
+            attempt(rtpmap),
+            attempt(rtcp_fb),
+            attempt(fmtp),
+            attempt(rid),
+            attempt(simulcast),
+            attempt(ssrc_group),
+            attempt(ssrc),
+        ))),
         unused,
     ))
 }

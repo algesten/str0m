@@ -21,6 +21,10 @@ jobs:
             os: ubuntu-latest
           - name: openssl
             os: macos-latest
+          - name: openssl-dimpl
+            os: ubuntu-latest
+          - name: openssl-dimpl
+            os: macos-latest
           - name: aws-lc-rs
             os: ubuntu-latest
           - name: aws-lc-rs
@@ -34,6 +38,8 @@ jobs:
           - name: rust-crypto
             os: windows-latest
           - name: wincrypto
+            os: windows-latest
+          - name: wincrypto-dimpl
             os: windows-latest
           - name: apple-crypto
             os: macos-latest
@@ -111,16 +117,18 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
       - name: Build fuzz targets
-        run: cargo fuzz build
+        run: cargo fuzz build --fuzz-dir crates/fuzz
 
   related-crates:
     strategy:
       matrix:
         rust: [stable, beta, 1.85.0]
         dir:
-          - name: proto
+          - name: crates/proto
             os: ubuntu-latest
-          - name: netem
+          - name: crates/is
+            os: ubuntu-latest
+          - name: crates/netem
             os: ubuntu-latest
           - name: crypto/apple-crypto
             os: macos-latest

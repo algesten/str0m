@@ -4,8 +4,8 @@ use std::str::from_utf8;
 
 use serde::{Deserialize, Serialize};
 
-use crate::io::Id;
-use crate::util::NonCryptographicRng;
+use str0m_proto::Id;
+use str0m_proto::NonCryptographicRng;
 
 macro_rules! str_id {
     ($id:ident, $name:literal, $num:tt, $new_len:tt) => {

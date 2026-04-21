@@ -1,6 +1,6 @@
 [package]
 name = "str0m-wincrypto"
-version = "0.3.2"
+version = "0.5.0"
 description = "Supporting crate for str0m"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/algesten/str0m"
@@ -11,11 +11,20 @@ edition = "2024"
 rust-version = "1.85.0"
 
 [dependencies]
-tracing = "0.1.37"
-str0m-proto = { version = "0.1.1", path = "../../proto" }
+tracing.workspace = true
+str0m-proto = { workspace = true, features = ["dtls"] }
+dimpl = { workspace = true, optional = true }
 windows = { version = "0.62", features = [
   "Win32_Security_Cryptography",
   "Win32_Security_Authentication_Identity",
   "Win32_Security_Credentials",
   "Win32_System_Rpc",
 ] }
+
+[dev-dependencies]
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[features]
+dimpl = ["dep:dimpl"]
+fips140 = []

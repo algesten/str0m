@@ -19,6 +19,9 @@ pub enum SctpError {
 
     /// The initial DCEP cant be read as utf-8.
     DcepBadUtf8,
+
+    /// Invalid SNAP token in SCTP INIT string.
+    InvalidSnap,
 }
 
 impl fmt::Display for SctpError {
@@ -31,6 +34,7 @@ impl fmt::Display for SctpError {
             SctpError::DcepOpenTooSmall => write!(f, "DCEP open message too small"),
             SctpError::DcepIncorrectMessageType => write!(f, "DCEP incorrect message type"),
             SctpError::DcepBadUtf8 => write!(f, "DCEP bad UTF-8 string"),
+            SctpError::InvalidSnap => write!(f, "Invalid SNAP token"),
         }
     }
 }

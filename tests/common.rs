@@ -402,10 +402,22 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
         #[cfg(feature = "rust-crypto")]
         "rust-crypto" => str0m_rust_crypto::default_provider(),
 
-        #[cfg(feature = "openssl")]
+        // If both openssl and openssl-dimpl are declared, only openssl-dimpl is available.
+        #[cfg(all(feature = "openssl", not(feature = "openssl-dimpl")))]
         "openssl" => str0m_openssl::default_provider(),
 
-        #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+        #[cfg(feature = "openssl-dimpl")]
+        "openssl-dimpl" => str0m_openssl::default_provider(),
+
+        #[cfg(all(feature = "wincrypto-dimpl", target_os = "windows"))]
+        "wincrypto-dimpl" => str0m_wincrypto::default_provider(),
+
+        // If both wincrypto and wincrypto-dimpl are declared, only wincrypto-dimpl is available.
+        #[cfg(all(
+            feature = "wincrypto",
+            not(feature = "wincrypto-dimpl"),
+            target_os = "windows"
+        ))]
         "wincrypto" => str0m_wincrypto::default_provider(),
 
         #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
@@ -417,10 +429,20 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
             available.push("aws-lc-rs");
             #[cfg(feature = "rust-crypto")]
             available.push("rust-crypto");
-            #[cfg(feature = "openssl")]
+            // If both openssl and openssl-dimpl are declared, only openssl-dimpl is available.
+            #[cfg(all(feature = "openssl", not(feature = "openssl-dimpl")))]
             available.push("openssl");
-            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+            #[cfg(feature = "openssl-dimpl")]
+            available.push("openssl-dimpl");
+            // If both wincrypto and wincrypto-dimpl are declared, only wincrypto-dimpl is available.
+            #[cfg(all(
+                feature = "wincrypto",
+                not(feature = "wincrypto-dimpl"),
+                target_os = "windows"
+            ))]
             available.push("wincrypto");
+            #[cfg(all(feature = "wincrypto-dimpl", target_os = "windows"))]
+            available.push("wincrypto-dimpl");
             #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
             available.push("apple-crypto");
 
@@ -516,6 +538,72 @@ pub fn av1_data() -> PcapData {
 
 pub fn h265_data() -> PcapData {
     load_pcap_data(include_bytes!("data/h265.pcap"))
+}
+
+// ---------------------------------------------------------------------------
+// SNAP (SCTP Negotiation Acceleration Protocol) test helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the `a=sctp-init:<value>` from an SDP string, if present.
+pub fn extract_sctp_init(sdp: &str) -> Option<String> {
+    sdp.lines()
+        .find(|l| l.starts_with("a=sctp-init:"))
+        .map(|l| l.trim_start_matches("a=sctp-init:").to_string())
+}
+
+/// Replace the `a=sctp-init:` attribute value in an SDP string.
+///
+/// Preserves original line endings (`\r\n`).
+pub fn replace_sctp_init(sdp: &str, replacement: &str) -> String {
+    let mut result = String::with_capacity(sdp.len());
+    // split("\r\n") produces an extra empty element after a trailing CRLF;
+    // skip it to avoid appending a spurious double-CRLF at the end.
+    for line in sdp.split("\r\n") {
+        if line.is_empty() && result.ends_with("\r\n") {
+            continue;
+        }
+        if line.starts_with("a=sctp-init:") {
+            result.push_str(&format!("a=sctp-init:{replacement}\r\n"));
+        } else {
+            result.push_str(line);
+            result.push_str("\r\n");
+        }
+    }
+    result
+}
+
+/// Remove the `a=sctp-init:` attribute from an SDP string.
+///
+/// Preserves original line endings (`\r\n`).
+pub fn remove_sctp_init(sdp: &str) -> String {
+    let mut result = String::with_capacity(sdp.len());
+    // split("\r\n") produces an extra empty element after a trailing CRLF;
+    // skip it to avoid appending a spurious double-CRLF at the end.
+    for line in sdp.split("\r\n") {
+        if line.is_empty() && result.ends_with("\r\n") {
+            continue;
+        }
+        if !line.starts_with("a=sctp-init:") {
+            result.push_str(line);
+            result.push_str("\r\n");
+        }
+    }
+    result
+}
+
+/// Generate SNAP init data for out-of-band SCTP negotiation.
+///
+/// Returns `Some((local_init_bytes, SctpInitData))` when `use_snap` is true, `None` otherwise.
+pub fn snap_init_data(use_snap: bool) -> Option<(Vec<u8>, str0m::channel::SctpInitData)> {
+    if use_snap {
+        let mut data = str0m::channel::SctpInitData::new();
+        let local_init = data
+            .local_init_chunk()
+            .expect("generate_snap_token should not fail");
+        Some((local_init, data))
+    } else {
+        None
+    }
 }
 
 pub fn load_pcap_data(data: &[u8]) -> PcapData {

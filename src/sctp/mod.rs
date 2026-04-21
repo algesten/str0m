@@ -7,12 +7,17 @@ use std::panic::UnwindSafe;
 use std::sync::Arc;
 use std::time::Instant;
 
-use sctp_proto::{Association, AssociationHandle, ClientConfig, DatagramEvent, TransportConfig};
+use sctp_proto::{Association, AssociationHandle, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
-use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
+use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig, TransportConfig};
+
+use snap::{b64_encode, webrtc_transport_config};
 
 pub use sctp_proto::Error as ProtoError;
 use sctp_proto::ReliabilityType;
+
+mod snap;
+pub use snap::SctpInitData;
 
 mod dcep;
 use dcep::DcepAck;
@@ -41,6 +46,8 @@ pub(crate) struct RtcSctp {
     last_now: Instant,
     client: bool,
     remote_max_message_size: u32,
+    snap_enabled: bool,
+    snap_init: Option<SctpInitData>,
 }
 
 /// This is okay because there is no way for a user of Rtc to interact with the Sctp subsystem
@@ -241,11 +248,7 @@ impl RtcSctp {
         // Let's try 1120, see if we can avoid warnings.
         config.max_payload_size(1120);
         let mut server_config = ServerConfig::default();
-
-        server_config.transport = Arc::new(
-            TransportConfig::default().with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE),
-        );
-
+        server_config.transport = webrtc_transport_config();
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
         let fake_addr = "1.1.1.1:5000".parse().unwrap();
 
@@ -260,6 +263,8 @@ impl RtcSctp {
             last_now: Instant::now(), // placeholder until init()
             client: false,
             remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
+            snap_enabled: false,
+            snap_init: None,
         }
     }
 
@@ -267,8 +272,18 @@ impl RtcSctp {
         self.state != RtcSctpState::Uninited
     }
 
-    pub fn init(&mut self, client: bool, now: Instant, remote_max_message_size: Option<u32>) {
-        assert!(self.state == RtcSctpState::Uninited);
+    pub fn init(
+        &mut self,
+        client: bool,
+        now: Instant,
+        sctp_init_data: Option<SctpInitData>,
+        remote_max_message_size: Option<u32>,
+    ) -> Result<(), SctpError> {
+        if self.state != RtcSctpState::Uninited {
+            return Err(SctpError::Proto(ProtoError::Other(
+                "SCTP already initialized".into(),
+            )));
+        }
 
         self.client = client;
         self.last_now = now;
@@ -277,35 +292,148 @@ impl RtcSctp {
             self.remote_max_message_size = max_msg_size;
         }
 
-        if client {
-            // For WebRTC, we never want to give up retransmitting
-            // init and data packets. The connectivity is in ICE,
-            // and SCTP should not give up until ICE gives up.
-            let transport = TransportConfig::default()
-                .with_max_init_retransmits(None)
-                .with_max_data_retransmits(None)
-                .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
-                .with_max_send_message_size(self.remote_max_message_size);
+        if let Some(snap_data) = sctp_init_data {
+            // SNAP path: both local and remote INIT chunks must be present.
+            if snap_data.local_init.is_none() || snap_data.remote_init.is_none() {
+                return Err(SctpError::Proto(ProtoError::Other(
+                    "SNAP requires both local and remote SCTP INIT chunks".into(),
+                )));
+            }
 
-            let config = ClientConfig {
-                transport: Arc::new(transport),
-            };
-
-            debug!("New local association");
+            let config = snap_data.into_client_config();
+            debug!(
+                "New {} association (out-of-band: true)",
+                if client { "local" } else { "server" },
+            );
             let (handle, assoc) = self
                 .endpoint
                 .connect(config, self.fake_addr)
-                .expect("be able to create an association");
+                .map_err(|e| SctpError::Proto(ProtoError::Other(e.to_string())))?;
+            self.handle = handle;
+            self.assoc = Some(assoc);
+
+            // With SNAP, both sides exchanged INIT chunks out-of-band. The
+            // sctp-proto association is already in established state (via
+            // `with_snap`). We set our state to Established immediately
+            // even though DTLS may not be connected yet. This is safe
+            // because the `dtls_connected` guard in `do_poll_output`
+            // prevents any SCTP packets from flowing until the DTLS
+            // handshake completes.
+            set_state(&mut self.state, RtcSctpState::Established);
+        } else if client {
+            // Normal client path: initiate the SCTP association.
+            let mut config = SctpInitData::default().into_client_config();
+
+            config.transport = Arc::new(
+                TransportConfig::default()
+                    .with_max_init_retransmits(None)
+                    .with_max_data_retransmits(None)
+                    .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
+                    .with_max_send_message_size(self.remote_max_message_size),
+            );
+
+            debug!("New local association (out-of-band: false)");
+            let (handle, assoc) = self
+                .endpoint
+                .connect(config, self.fake_addr)
+                .map_err(|e| SctpError::Proto(ProtoError::Other(e.to_string())))?;
             self.handle = handle;
             self.assoc = Some(assoc);
             set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
         } else {
+            // Normal server path: wait for the remote to initiate.
             set_state(&mut self.state, RtcSctpState::AwaitRemoteAssociation);
         }
+
+        Ok(())
     }
 
     pub fn is_client(&self) -> bool {
         self.client
+    }
+
+    /// Enable SNAP by pre-populating the init data.
+    pub fn enable_snap(&mut self) {
+        self.snap_enabled = true;
+        self.snap_init.get_or_insert_with(SctpInitData::new);
+    }
+
+    /// Whether local offers should opt in to SNAP.
+    pub fn snap_enabled(&self) -> bool {
+        self.snap_enabled
+    }
+
+    /// Ensure the local SNAP INIT chunk is generated. Returns `false` if
+    /// generation failed (degrades to non-SNAP).
+    pub fn ensure_local_snap_init(&mut self) -> bool {
+        let init_data = self.snap_init.get_or_insert_with(SctpInitData::new);
+        if init_data.local_init_chunk().is_err() {
+            self.snap_init = None;
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Discard pending SNAP negotiation state before SCTP starts.
+    ///
+    /// This preserves local opt-in for future offers.
+    pub fn disable_pending_snap(&mut self) {
+        if !self.is_inited() {
+            self.snap_init = None;
+        }
+    }
+
+    /// Get the local INIT chunk as a base64 string for SDP, if applicable.
+    ///
+    /// Returns `None` when:
+    /// - SNAP is not active
+    /// - SCTP is established without SNAP (non-SNAP association)
+    pub fn local_sctp_init_for_sdp(&self) -> Option<String> {
+        let d = self.snap_init.as_ref()?;
+        if self.is_inited() && d.remote_init.is_none() {
+            // Established non-SNAP association — MUST NOT inject sctp-init.
+            return None;
+        }
+        d.local_init.as_ref().map(|b| b64_encode(b))
+    }
+
+    /// Get the cached remote INIT string, if set.
+    pub fn snap_remote_init_string(&self) -> Option<String> {
+        self.snap_init.as_ref().and_then(|d| d.remote_init_string())
+    }
+
+    /// Whether this is an established SNAP association (has remote init).
+    pub fn is_snap_established(&self) -> bool {
+        self.is_inited()
+            && self
+                .snap_init
+                .as_ref()
+                .and_then(|d| d.remote_init.as_ref())
+                .is_some()
+    }
+
+    /// Set the remote SNAP INIT from a base64 string. Returns `Ok(true)` if
+    /// accepted, `Ok(false)` on decode error (degrades to non-SNAP).
+    pub fn set_remote_snap_init_string(&mut self, value: &str) -> bool {
+        let init_data = self.snap_init.get_or_insert_with(SctpInitData::new);
+        match init_data.set_remote_init_string(value) {
+            Ok(()) => true,
+            Err(_) => {
+                self.disable_pending_snap();
+                false
+            }
+        }
+    }
+
+    /// Build a cloned `SctpInitData` for passing to `init()`, if both local
+    /// and remote INIT chunks are present.
+    pub fn build_snap_init_data(&self) -> Option<SctpInitData> {
+        let d = self.snap_init.as_ref()?;
+        if d.local_init.is_none() || d.remote_init.is_none() {
+            return None;
+        }
+        Some(d.clone())
     }
 
     /// Opens a new stream.
@@ -996,14 +1124,40 @@ impl From<(ReliabilityType, u32)> for Reliability {
 mod tests {
     use super::*;
 
+    #[test]
+    fn partial_snap_init_requires_both_chunks() {
+        let now = Instant::now();
+        let mut sctp = RtcSctp::new();
+        let mut init_data = SctpInitData::new();
+
+        init_data.local_init_chunk().unwrap();
+
+        let err = sctp.init(true, now, Some(init_data), None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("SNAP requires both local and remote SCTP INIT chunks")
+        );
+    }
+
+    #[test]
+    fn malformed_remote_snap_does_not_disable_local_opt_in() {
+        let mut sctp = RtcSctp::new();
+        sctp.enable_snap();
+
+        assert!(!sctp.set_remote_snap_init_string("!!!not-valid-base64!!!"));
+        assert!(sctp.snap_enabled());
+        assert!(sctp.ensure_local_snap_init());
+        assert!(sctp.local_sctp_init_for_sdp().is_some());
+    }
+
     /// Helper to connect a client and server RtcSctp pair to Established state.
     fn connect_client_server() -> (RtcSctp, RtcSctp) {
         let now = Instant::now();
         let mut client = RtcSctp::new();
         let mut server = RtcSctp::new();
 
-        client.init(true, now, None);
-        server.init(false, now, None);
+        client.init(true, now, None, None).unwrap();
+        server.init(false, now, None, None).unwrap();
 
         // Exchange packets until both are Established.
         for _ in 0..20 {
@@ -1041,6 +1195,7 @@ mod tests {
                 }
             }
 
+            // Check if both established
             if client.state == RtcSctpState::Established
                 && server.state == RtcSctpState::Established
             {

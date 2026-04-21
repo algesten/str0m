@@ -10,17 +10,18 @@ use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::io::Id;
 use crate::media::{Media, Rids, Simulcast};
 use crate::packet::MediaKind;
 use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
+use crate::sctp::RtcSctp;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
 use crate::{Candidate, IceCreds};
+use str0m_proto::Id;
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, Streams};
@@ -102,13 +103,27 @@ impl<'a> SdpApi<'a> {
 
         let remote_max_message_size = extract_max_message_size(offer.media_lines.iter());
 
-        // Modify session with offer
+        // Extract a=sctp-init from remote offer before apply_offer consumes it.
+        let remote_sctp_init = offer.sctp_init().map(|v| v.to_owned());
+
+        let has_snap = process_remote_sctp_init(&mut self.rtc.sctp, remote_sctp_init.as_deref())?;
+
+        // Modify session with offer.
         apply_offer(self.rtc, offer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
+
+        // Generate local sctp-init for the answer:
+        // When the remote included a=sctp-init, we reciprocate (§5.4).
+        if has_snap && !self.rtc.sctp.is_inited() && !self.rtc.sctp.ensure_local_snap_init() {
+            warn!("Failed to generate SNAP INIT chunk, degrading to non-SNAP");
+        }
+
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client, remote_max_message_size);
+            let init_data = self.rtc.sctp.build_snap_init_data();
+            self.rtc
+                .try_init_sctp(client, init_data, remote_max_message_size)?;
         }
 
         let params = AsSdpParams::new(self.rtc, None);
@@ -174,6 +189,16 @@ impl<'a> SdpApi<'a> {
             }
         }
 
+        // Extract a=sctp-init from remote answer before apply_answer consumes it.
+        let remote_sctp_init = answer.sctp_init().map(|v| v.to_owned());
+
+        let expected_snap_answer =
+            !self.rtc.sctp.is_inited() && self.rtc.sctp.local_sctp_init_for_sdp().is_some();
+
+        // Validate or cache the remote value before mutating the session. This
+        // keeps a bad re-offer/re-answer from partially applying local state.
+        let has_snap = process_remote_sctp_init(&mut self.rtc.sctp, remote_sctp_init.as_deref())?;
+
         // Split out new channels, since that is not handled by the Session.
         let new_channels = pending.changes.take_new_channels();
 
@@ -184,8 +209,16 @@ impl<'a> SdpApi<'a> {
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
+
+        if expected_snap_answer && !has_snap {
+            debug!("Remote answer did not accept SNAP, falling back to regular SCTP handshake");
+            self.rtc.sctp.disable_pending_snap();
+        }
+
         if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client, remote_max_message_size);
+            let init_data = self.rtc.sctp.build_snap_init_data();
+            self.rtc
+                .try_init_sctp(client, init_data, remote_max_message_size)?;
         }
 
         for (id, config) in new_channels {
@@ -326,6 +359,30 @@ impl<'a> SdpApi<'a> {
 
         if changed {
             self.changes.0.push(Change::Direction(mid, dir));
+        }
+    }
+
+    /// Stop an already existing media.
+    ///
+    /// The next generated offer emits the m-line with port 0 and excludes
+    /// it from the BUNDLE group, per [RFC 8843] §7.5.3. The remote
+    /// transceiver transitions to the "stopped" state and the m-line slot
+    /// becomes eligible for recycling.
+    ///
+    /// Unlike [`SdpApi::set_direction()`] with [`Direction::Inactive`],
+    /// a stopped m-line cannot be reactivated.
+    ///
+    /// If the media doesn't exist, or is already stopped, [`SdpApi::apply()`]
+    /// will not require a negotiation.
+    ///
+    /// [RFC 8843]: https://datatracker.ietf.org/doc/html/rfc8843#section-7.5.3
+    pub fn stop_media(&mut self, mid: Mid) {
+        let changed = self.rtc.session.stop_media(mid);
+
+        if changed {
+            self.changes
+                .0
+                .push(Change::Direction(mid, Direction::Inactive));
         }
     }
 
@@ -641,6 +698,15 @@ fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
         rtc.ice.set_controlling(!rtc.ice.ice_lite());
     }
 
+    // Generate local sctp-init for SNAP if enabled and we have/will have an app m-line.
+    if rtc.sctp.snap_enabled()
+        && (rtc.session.app().is_some() || changes.contains_add_app())
+        && !rtc.sctp.is_inited()
+        && !rtc.sctp.ensure_local_snap_init()
+    {
+        warn!("Failed to generate SNAP INIT chunk, degrading to non-SNAP");
+    }
+
     let params = AsSdpParams::new(rtc, Some(changes));
     let sdp = as_sdp(&rtc.session, params);
 
@@ -714,6 +780,60 @@ fn init_dtls(rtc: &mut Rtc, remote_sdp: &Sdp) -> Result<(), RtcError> {
     Ok(())
 }
 
+/// Shared logic for processing a remote `a=sctp-init` attribute from an offer or answer.
+///
+/// Returns `true` if this is a new SNAP negotiation (remote init was accepted),
+/// `false` otherwise.
+///
+/// The remote init bytes are stored in `RtcSctp.snap_init` for §5.6
+/// re-offer validation.
+///
+/// When the remote includes `a=sctp-init`, we always accept and reciprocate —
+/// Section 5.4 of draft-hancke-tsvwg-snap says the answerer MAY include the
+/// attribute, and doing so is beneficial.
+///
+/// When an initial answer omits or rejects `a=sctp-init`, callers are expected
+/// to fall back to a regular SCTP handshake.
+fn process_remote_sctp_init(
+    sctp: &mut RtcSctp,
+    remote_init: Option<&str>,
+) -> Result<bool, RtcError> {
+    if let Some(remote_init_str) = remote_init {
+        if sctp.is_inited() {
+            // §5.6: SCTP already established — remote MUST re-send the
+            // same sctp-init value on subsequent offers/answers.
+            match sctp.snap_remote_init_string() {
+                Some(cached) if cached == remote_init_str => {
+                    debug!("Remote re-sent expected a=sctp-init for established association");
+                }
+                Some(_) => {
+                    return Err(RtcError::RemoteSdp(
+                        "Changed a=sctp-init for existing SCTP association".into(),
+                    ));
+                }
+                None => {
+                    // SCTP was established without SNAP but the remote is now
+                    // sending a=sctp-init. We can't transition to SNAP
+                    // mid-session, so just ignore it.
+                    debug!("Ignoring a=sctp-init for non-SNAP established SCTP association");
+                }
+            }
+            Ok(false)
+        } else if sctp.set_remote_snap_init_string(remote_init_str) {
+            Ok(true)
+        } else {
+            debug!("Ignoring malformed a=sctp-init");
+            Ok(false)
+        }
+    } else if sctp.is_snap_established() {
+        Err(RtcError::RemoteSdp(
+            "Missing a=sctp-init for established SNAP SCTP association".into(),
+        ))
+    } else {
+        Ok(false)
+    }
+}
+
 fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     let (media_lines, mids, stream_ids) = {
         let mut v = as_media_lines(session);
@@ -759,6 +879,16 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
                 m.as_media_line(attrs, &ssrcs, &session.exts, &params)
             })
             .collect::<Vec<_>>();
+
+        // Add a=sctp-init to the application m-line if SNAP is configured.
+        if let Some(sctp_init) = &params.local_sctp_init {
+            for line in &mut lines {
+                if line.typ.is_channel() {
+                    line.attrs
+                        .push(sdp::MediaAttribute::SctpInit(sctp_init.clone()));
+                }
+            }
+        }
 
         if let Some(pending) = params.pending {
             pending.apply_to(&mut lines);
@@ -953,8 +1083,14 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 /// Compares m-lines in Sdp with that already in the session.
 ///
 /// * Existing m-lines can apply changes (such as direction change).
-/// * New m-lines are returned to the caller.
-fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
+/// * New m-lines are returned to the caller paired with the session
+///   index they should occupy. The index is normally the next free slot,
+///   but can be a recycled slot (RFC 8829 §5.2.2) when the remote has
+///   replaced a previously disabled Media with a new mid.
+fn sync_medias<'a>(
+    session: &mut Session,
+    sdp: &'a Sdp,
+) -> Result<Vec<(usize, &'a MediaLine)>, String> {
     let mut new_lines = Vec::with_capacity(sdp.media_lines.len());
     let bundle_mids = sdp.bundle_mids();
 
@@ -986,6 +1122,19 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
 
                     continue;
                 }
+
+                // Unknown mid at an index held by a disabled Media means
+                // the remote has recycled the slot (RFC 8829 §5.2.2).
+                // Retire the disabled Media so the replacement takes its
+                // place at the same index.
+                if let Some(pos) = session.medias.iter().position(|l| l.index() == idx) {
+                    if !session.medias[pos].disabled() {
+                        return index_err(m.mid());
+                    }
+                    let retired_mid = session.medias[pos].mid();
+                    session.medias.swap_remove(pos);
+                    session.streams.remove_streams_by_mid(retired_mid);
+                }
             }
             _ => {
                 continue;
@@ -993,7 +1142,7 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
         }
 
         // Second, discover new m-lines.
-        new_lines.push(m);
+        new_lines.push((idx, m));
     }
 
     fn index_err<T>(mid: Mid) -> Result<T, String> {
@@ -1004,14 +1153,17 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
 }
 
 /// Adds new m-lines as found in an offer or answer.
+///
+/// Each entry in `new_lines` pairs an m-line with the session index it
+/// should occupy.
 fn add_new_lines(
     session: &mut Session,
-    new_lines: &[&MediaLine],
+    new_lines: &[(usize, &MediaLine)],
     is_offer: bool,
     bundle_mids: Option<&[Mid]>,
 ) -> Result<(), String> {
-    for m in new_lines {
-        let idx = session.line_count();
+    for (idx, m) in new_lines {
+        let idx = *idx;
 
         if m.typ.is_media() {
             let mut media = Media::from_remote_media_line(m, idx, is_offer);
@@ -1118,7 +1270,7 @@ fn update_media(
                 media.mid()
             );
         }
-        media.mark_disabled();
+        media.mark_stopped();
         media.set_direction(Direction::Inactive);
         return;
     }
@@ -1434,6 +1586,7 @@ struct AsSdpParams<'a, 'b> {
     pub fingerprint: &'a Fingerprint,
     pub setup: Setup,
     pub pending: Option<&'b Changes>,
+    pub local_sctp_init: Option<String>,
 }
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
@@ -1461,16 +1614,28 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             )
         };
 
+        // RFC 8842 Section 5.2/5.5: Offerers MUST always use a=setup:actpass.
+        // Answerers use the negotiated role (active/passive).
+        // We distinguish offer vs answer by the presence of `pending` (Some = offer).
+        let setup = if pending.is_some() {
+            // This is an offer — always actpass per RFC 8842
+            Setup::ActPass
+        } else {
+            // This is an answer — use the negotiated DTLS role
+            match rtc.dtls.is_active() {
+                Some(true) => Setup::Active,
+                Some(false) => Setup::Passive,
+                None => Setup::ActPass,
+            }
+        };
+
         AsSdpParams {
             candidates,
             creds,
             fingerprint: rtc.dtls.local_fingerprint(),
-            setup: match rtc.dtls.is_active() {
-                Some(true) => Setup::Active,
-                Some(false) => Setup::Passive,
-                None => Setup::ActPass,
-            },
+            setup,
             pending,
+            local_sctp_init: rtc.sctp.local_sctp_init_for_sdp(),
         }
     }
 
@@ -1531,7 +1696,7 @@ impl Changes {
     }
 
     /// Tests the given lines (from answer) corresponds to changes.
-    fn ensure_correct_answer(&self, lines: &[&MediaLine]) -> Option<String> {
+    fn ensure_correct_answer(&self, lines: &[(usize, &MediaLine)]) -> Option<String> {
         if self.count_new_medias() != lines.len() {
             return Some(format!(
                 "Differing m-line count in offer vs answer: {} != {}",
@@ -1540,7 +1705,7 @@ impl Changes {
             ));
         }
 
-        'next: for l in lines {
+        'next: for (_, l) in lines {
             let mid = l.mid();
 
             for m in &self.0 {
@@ -1684,6 +1849,82 @@ mod test {
 
     fn count_lines(lines: &str, what: &str) -> usize {
         lines.lines().filter(|l| l == &what).count()
+    }
+
+    fn get_setup_from_media_line(line: &MediaLine) -> Setup {
+        line.setup().expect("Expected a=setup attribute in SDP")
+    }
+
+    /// RFC 8842 §5.2: an offer MUST use a=setup:actpass regardless of DTLS role.
+    #[test]
+    fn offer_uses_actpass() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut rtc = Rtc::new(now);
+
+        let mut change = rtc.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, _pending) = change.apply().unwrap();
+
+        let setup = get_setup_from_media_line(&offer.media_lines[0]);
+        assert_eq!(
+            setup,
+            Setup::ActPass,
+            "Offer must use a=setup:actpass per RFC 8842 §5.2"
+        );
+    }
+
+    /// RFC 8842 §5.5: the answerer uses the negotiated DTLS role (active or passive).
+    /// When the offerer uses actpass, the answerer picks passive (DTLS server) and the
+    /// offerer becomes active (DTLS client). The answerer's SDP must reflect passive.
+    #[test]
+    fn answer_uses_negotiated_dtls_role() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut offerer = Rtc::new(now);
+        let mut answerer = Rtc::new(now);
+
+        // Offerer creates the offer.
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, pending) = change.apply().unwrap();
+
+        // Verify the offer itself is actpass.
+        assert_eq!(
+            get_setup_from_media_line(&offer.media_lines[0]),
+            Setup::ActPass,
+            "Offer must use a=setup:actpass"
+        );
+
+        // Answerer accepts and generates the answer.
+        let answer = answerer.sdp_api().accept_offer(offer).unwrap();
+
+        // When the offerer sends actpass, the answerer takes the passive DTLS role
+        // (see init_dtls: ActPass from remote → local takes Passive).
+        // The answerer's SDP must reflect that with a=setup:passive.
+        assert_eq!(
+            get_setup_from_media_line(&answer.media_lines[0]),
+            Setup::Passive,
+            "Answerer's SDP must use a=setup:passive when responding to an actpass offer"
+        );
+
+        // Complete the exchange on the offerer side.
+        offerer.sdp_api().accept_answer(pending, answer).unwrap();
+
+        // Now generate a subsequent offer from the offerer (re-offer).
+        // Even after the DTLS role is settled (offerer is now passive), a new offer
+        // must still carry a=setup:actpass per RFC 8842 §5.2.
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        let (reoffer, _) = change.apply().unwrap();
+
+        assert_eq!(
+            get_setup_from_media_line(&reoffer.media_lines[0]),
+            Setup::ActPass,
+            "Re-offer must still use a=setup:actpass even after DTLS role is settled"
+        );
     }
 
     #[test]

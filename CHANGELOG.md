@@ -1,7 +1,30 @@
 # Unreleased
 
+  * Add `SdpApi::stop_media()` to stop an existing m-line #941
+  * Update chat example to use `SdpApi::stop_media()` when clients are removed #941
+  * Accept recycled m-line indexes when the previous m-line was stopped #941
+  * Always use ActPass when sending an SDP offer (RFC 8842 Section 5.2/5.5) #893
+  * Fix frame drops in Firefox due missing RTX SSRC #940
+  * Drop stale depacketizer state on stream pause and restore paused timestamp repair #929
+  * Reduce bounds checks in STUN encode/decode #931
+
+# 0.18.0
+
+  * Disable server cookie for all dimpl crypto impl #923
+  * Implement SNAP and sctp-init #811
+  * Implement wincrypto-dimpl feature #920
+  * Implement openssl-dimpl feature #919
+  * Update to dimpl 0.5.0 #916
+  * Refactor out new crate "is" (ice agent) #912
+  * Expose CSRC property in RTP Header #910
+  * Fix jitter calculation in ReceiverReports #907
+  * Preserve nomination on redundant pair replacement #908
+
+# 0.17.0
+
   * Update to dimpl 0.4.3 #902
   * Update ~dimpl to 0.4.2~ (see 902) and sctp-proto to 0.8.1 #892
+  * Update ~dimpl to 0.3.0~ (see 902) #874
   * MSRV 1.85, Edition 2024 and bump deps #891
   * Reduce allocations in AV1 packetizer/depacketizer #889
   * Workaround DCEP panics due to reuse race condition #883
@@ -10,11 +33,11 @@
   * Add RTP-level keyframe detection for VP8, VP9, AV1, H264 and H265 #869
   * VP9 switch packetizer to non-flexible mode (F=0) #868
   * Fix H265 SDP negotiation level handling #872
-  * Update dimpl to 0.3.0 #874
   * Avoid sending VLA on every packet #866
   * Add `abs-capture-time` RTP header extension #864
   * Adjust `IceAgent::ice_timeout` to return timeout of successful pair #875
   * Fix infinite loop on in-band data channel stream conflict #873
+  * Add `Hash`, `PartialOrd` and `Ord` traits to `TransId` #905
   * Fix m-line ordering when using sdp `merge()` #887
 
 # 0.16.2

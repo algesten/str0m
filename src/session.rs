@@ -653,6 +653,13 @@ impl Session {
         // This must be before pending_packet.take() since we need to emit the unpaused event
         // before the first packet causing the unpause.
         if let Some(paused) = self.streams.poll_stream_paused() {
+            if paused.paused {
+                if let Some(media) = self.medias.iter_mut().find(|m| m.mid() == paused.mid) {
+                    // Drop held partial depacketizer state so pre-pause fragments can't
+                    // complete into stale MediaData after the stream resumes.
+                    media.reset_depayloaders_for_rid(paused.rid);
+                }
+            }
             return Some(Event::StreamPaused(paused));
         }
 
@@ -949,6 +956,7 @@ impl Session {
         }
     }
 
+    #[allow(dead_code)]
     pub fn line_count(&self) -> usize {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
@@ -1033,6 +1041,20 @@ impl Session {
         if old_dir.is_receiving() && !direction.is_receiving() {
             self.streams.reset_buffers_rx(mid, max_seq_lookup);
         }
+
+        true
+    }
+
+    pub fn stop_media(&mut self, mid: Mid) -> bool {
+        let Some(media) = self.media_by_mid_mut(mid) else {
+            return false;
+        };
+        if media.disabled() {
+            return false;
+        }
+
+        media.mark_stopped();
+        self.set_direction(mid, Direction::Inactive);
 
         true
     }
