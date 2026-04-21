@@ -2,6 +2,7 @@
 
 # 0.18.1
 
+  * dtls: fix to resends during handshake #943
   * Add `SdpApi::stop_media()` to stop an existing m-line #941
   * Update chat example to use `SdpApi::stop_media()` when clients are removed #941
   * Accept recycled m-line indexes when the previous m-line was stopped #941
