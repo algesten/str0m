@@ -283,6 +283,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ccm"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ae3c82e4355234767756212c570e29833699ab63e6ffd161887314cc5b43847"
+dependencies = [
+ "aead",
+ "cipher",
+ "ctr",
+ "subtle",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -560,13 +572,15 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ffb781459bc33976be951aa31815deadcd74fb63781da5a4dc48f7001e567d3"
+checksum = "ef7eed0cf766b110880acdd89a860061dee42ed5f64df0fa43c80203e4f60916"
 dependencies = [
+ "aes",
  "aes-gcm",
  "arrayvec",
  "aws-lc-rs",
+ "ccm",
  "chacha20",
  "chacha20poly1305",
  "der",

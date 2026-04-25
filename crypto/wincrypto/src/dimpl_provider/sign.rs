@@ -62,9 +62,17 @@ impl std::fmt::Debug for EcdsaSigningKey {
 }
 
 impl SigningKeyTrait for EcdsaSigningKey {
-    fn sign(&mut self, data: &[u8], out: &mut Buf) -> Result<(), String> {
+    fn sign(&mut self, data: &[u8], hash_alg: HashAlgorithm, out: &mut Buf) -> Result<(), String> {
+        let key_hash = self.hash_algorithm();
+        if hash_alg != key_hash {
+            return Err(format!(
+                "wincrypto ECDSA key is locked to {:?} but {:?} was requested",
+                key_hash, hash_alg
+            ));
+        }
+
         // Hash the data.
-        let (hash_alg, hash_len) = match self.curve {
+        let (bcrypt_hash_alg, hash_len) = match self.curve {
             EcCurve::P256 => (BCRYPT_SHA256_ALG_HANDLE, 32usize),
             EcCurve::P384 => (BCRYPT_SHA384_ALG_HANDLE, 48usize),
         };
@@ -75,7 +83,7 @@ impl SigningKeyTrait for EcdsaSigningKey {
         // this block.
         // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcrypthash
         unsafe {
-            WinCryptoError::from_ntstatus(BCryptHash(hash_alg, None, data, &mut hash))
+            WinCryptoError::from_ntstatus(BCryptHash(bcrypt_hash_alg, None, data, &mut hash))
                 .map_err(|e| format!("Hash failed: {e}"))?;
         }
 
@@ -121,6 +129,15 @@ impl SigningKeyTrait for EcdsaSigningKey {
         match self.curve {
             EcCurve::P256 => HashAlgorithm::SHA256,
             EcCurve::P384 => HashAlgorithm::SHA384,
+        }
+    }
+
+    fn supported_hash_algorithms(&self) -> &[HashAlgorithm] {
+        // Windows CNG locks the hash to the curve at key-load time;
+        // only one is supported.
+        match self.curve {
+            EcCurve::P256 => &[HashAlgorithm::SHA256],
+            EcCurve::P384 => &[HashAlgorithm::SHA384],
         }
     }
 }
