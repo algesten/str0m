@@ -58,7 +58,7 @@ combine = "4.6.6"
 subtle = "2.0.0"
 arrayvec = "0.7.6"
 serde = { version = "1.0.152", features = ["derive"] }
-dimpl = { version = "0.5.0", default-features = false }
+dimpl = { version = "0.6.1", default-features = false }
 time = "0.3"
 base64ct = "1"
 
