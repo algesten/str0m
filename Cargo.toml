@@ -63,7 +63,7 @@ time = "0.3"
 base64ct = "1"
 
 # Proto dependencies
-openssl = "0.10.70"
+openssl = "0.10.78"
 
 # IS dependencies
 crc = "3"
