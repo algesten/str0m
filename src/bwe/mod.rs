@@ -41,7 +41,7 @@ use macros::log_loss;
 use smoother::EstimateSmoother;
 
 pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
-pub(crate) use probe::{BandwidthLimitedCause, ProbeEstimator};
+pub(crate) use probe::{BandwidthLimitedCause, ProbeEstimator, ProbeFailureCategory};
 pub(crate) use probe::{ProbeClusterState, ProbeControl};
 
 #[cfg(feature = "_internal_test_exports")]
@@ -123,6 +123,16 @@ impl Bwe {
     pub fn set_desired_bitrate(&mut self, v: Bitrate) {
         self.desired_bitrate = v;
     }
+
+    /// Enable or disable event log buffering inside BWE.
+    pub fn set_event_log_active(&mut self, active: bool) {
+        self.bwe.event_log_active = active;
+    }
+
+    /// Drain buffered log events produced during the last update/timeout cycle.
+    pub fn drain_log_events(&mut self) -> std::vec::Drain<'_, BweLogEvent> {
+        self.bwe.bwe_log_events.drain(..)
+    }
 }
 
 struct SendSideBandwidthEstimator {
@@ -135,6 +145,20 @@ struct SendSideBandwidthEstimator {
     alr_detector: AlrDetector,
     link_capacity_estimator: LinkCapacityEstimator,
     last_updated_estimate: Option<Bitrate>,
+
+    // Event log fields — always compiled, cost ~50 bytes when inactive.
+    /// Whether event logging is active.
+    event_log_active: bool,
+    /// Buffered log events to be drained by Session.
+    bwe_log_events: Vec<BweLogEvent>,
+    /// Last logged delay-based estimate (for change detection).
+    last_logged_delay_bps: Option<u32>,
+    /// Last logged delay detector state (for change detection).
+    last_logged_detector_state: Option<BandwidthUsage>,
+    /// Last logged loss-based estimate (for change detection).
+    last_logged_loss_bps: Option<u32>,
+    /// Last known ALR state (for transition detection).
+    last_logged_alr_in: bool,
 }
 
 impl SendSideBandwidthEstimator {
@@ -158,6 +182,12 @@ impl SendSideBandwidthEstimator {
             alr_detector,
             link_capacity_estimator: LinkCapacityEstimator::new(),
             last_updated_estimate: None,
+            event_log_active: false,
+            bwe_log_events: Vec::new(),
+            last_logged_delay_bps: None,
+            last_logged_detector_state: None,
+            last_logged_loss_bps: None,
+            last_logged_alr_in: false,
         }
     }
 
@@ -188,6 +218,14 @@ impl SendSideBandwidthEstimator {
         for (config, bitrate) in self.probe_estimator.update(send_records.iter().copied()) {
             latest_probe_result = Some(bitrate);
 
+            // Log probe success for event log.
+            if self.event_log_active {
+                self.bwe_log_events.push(BweLogEvent::ProbeSuccess {
+                    id: *config.cluster() as u32,
+                    bitrate_bps: bitrate.as_u64() as u32,
+                });
+            }
+
             // Update link capacity estimator for every successful ALR probe, not just the latest.
             // The estimator internally takes the max of all probe results, building up knowledge
             // of proven link capacity. This differs from the delay controller, which only receives
@@ -200,8 +238,8 @@ impl SendSideBandwidthEstimator {
         let mut acked_packets = vec![];
 
         let mut max_rtt = None;
-        let mut count = 0;
-        let mut lost = 0;
+        let mut count: u32 = 0;
+        let mut lost: u32 = 0;
         for record in send_records.iter() {
             count += 1;
             let Ok(acked_packet) = (*record).try_into() else {
@@ -229,6 +267,24 @@ impl SendSideBandwidthEstimator {
         let maybe_estimate =
             self.delay_controller
                 .update(&acked_packets, acked_bitrate, probe_result, now);
+
+        // Log delay-based BWE update if estimate or detector state changed.
+        if self.event_log_active {
+            let detector_state = self.delay_controller.hypothesis();
+            if let Some(delay_estimate) = maybe_estimate {
+                let bps = delay_estimate.as_u64() as u32;
+                if self.last_logged_delay_bps != Some(bps)
+                    || self.last_logged_detector_state != Some(detector_state)
+                {
+                    self.last_logged_delay_bps = Some(bps);
+                    self.last_logged_detector_state = Some(detector_state);
+                    self.bwe_log_events.push(BweLogEvent::DelayBased {
+                        bitrate_bps: bps,
+                        detector_state,
+                    });
+                }
+            }
+        }
 
         let Some(delay_estimate) = maybe_estimate else {
             return;
@@ -259,6 +315,28 @@ impl SendSideBandwidthEstimator {
         // This corresponds to UpdateLossBasedEstimator + UpdateEstimate
         self.loss_controller
             .update_bandwidth_estimate(&send_records, delay_estimate);
+
+        // Log loss-based BWE update if estimate changed.
+        if self.event_log_active {
+            let loss_result = self.loss_controller.loss_based_result();
+            if let Some(loss_estimate) = loss_result.bandwidth_estimate {
+                let bps = loss_estimate.as_u64() as u32;
+                if self.last_logged_loss_bps != Some(bps) {
+                    self.last_logged_loss_bps = Some(bps);
+                    // Compute fraction_loss as 0-255 range (matching WebRTC's convention).
+                    let fraction_loss = if count == 0 {
+                        0u32
+                    } else {
+                        ((lost as u64 * 256) / count as u64).min(255) as u32
+                    };
+                    self.bwe_log_events.push(BweLogEvent::LossBased {
+                        bitrate_bps: bps,
+                        fraction_loss,
+                        total_packets: count,
+                    });
+                }
+            }
+        }
 
         // Loss-based result is capped by delay_based_limit
         let loss_result = self.loss_controller.loss_based_result();
@@ -304,6 +382,15 @@ impl SendSideBandwidthEstimator {
             self.probe_control.set_alr_stop_time(now);
         }
 
+        // Log ALR state transitions for event log.
+        if self.event_log_active {
+            let in_alr = alr_start_time.is_some();
+            if in_alr != self.last_logged_alr_in {
+                self.last_logged_alr_in = in_alr;
+                self.bwe_log_events.push(BweLogEvent::AlrState { in_alr });
+            }
+        }
+
         self.loss_controller.set_alr_start_time(alr_start_time);
 
         // Get link capacity estimate and forward to loss controller.
@@ -311,8 +398,25 @@ impl SendSideBandwidthEstimator {
         self.loss_controller
             .set_link_capacity_estimate(link_capacity);
 
-        // Clean up expired probe cluster state
-        self.probe_estimator.handle_timeout(now);
+        // Clean up expired probe cluster state and collect failures.
+        let probe_failures = self.probe_estimator.handle_timeout(now);
+        if self.event_log_active {
+            for (config, category) in probe_failures {
+                let reason = match category {
+                    ProbeFailureCategory::InvalidSendReceiveInterval => {
+                        ProbeFailureReason::InvalidSendReceiveInterval
+                    }
+                    ProbeFailureCategory::InvalidSendReceiveRatio => {
+                        ProbeFailureReason::InvalidSendReceiveRatio
+                    }
+                    ProbeFailureCategory::Timeout => ProbeFailureReason::Timeout,
+                };
+                self.bwe_log_events.push(BweLogEvent::ProbeFailure {
+                    id: *config.cluster() as u32,
+                    reason,
+                });
+            }
+        }
 
         // Feed the current estimate into subcontrollers, if it changed.
         self.propagate_estimate();
@@ -402,7 +506,9 @@ impl SendSideBandwidthEstimator {
     }
 
     pub fn reset(&mut self, init_bitrate: Bitrate) {
+        let was_active = self.event_log_active;
         *self = Self::new(init_bitrate);
+        self.event_log_active = was_active;
     }
 }
 
@@ -469,7 +575,7 @@ impl TryFrom<&TwccSendRecord> for AckedPacket {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BandwidthUsage {
+pub(crate) enum BandwidthUsage {
     Overuse,
     Normal,
     Underuse,
@@ -483,4 +589,37 @@ impl fmt::Display for BandwidthUsage {
             BandwidthUsage::Underuse => write!(f, "underuse"),
         }
     }
+}
+
+/// Events produced by the BWE system for the RTC event log.
+///
+/// These are buffered inside `SendSideBandwidthEstimator` when event logging is active
+/// and drained by Session after each `bwe.update()` / `bwe.handle_timeout()` call.
+#[derive(Debug, Clone)]
+pub(crate) enum BweLogEvent {
+    /// Delay-based bandwidth estimate changed.
+    DelayBased {
+        bitrate_bps: u32,
+        detector_state: BandwidthUsage,
+    },
+    /// Loss-based bandwidth estimate changed.
+    LossBased {
+        bitrate_bps: u32,
+        fraction_loss: u32,
+        total_packets: u32,
+    },
+    /// Probe cluster completed successfully.
+    ProbeSuccess { id: u32, bitrate_bps: u32 },
+    /// Probe cluster failed.
+    ProbeFailure { id: u32, reason: ProbeFailureReason },
+    /// ALR state changed.
+    AlrState { in_alr: bool },
+}
+
+/// Probe failure reason for event logging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeFailureReason {
+    InvalidSendReceiveInterval,
+    InvalidSendReceiveRatio,
+    Timeout,
 }

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::Event;
 use crate::bwe::BweKind;
-use crate::bwe_::Bwe;
+use crate::bwe_::{Bwe, BweLogEvent};
 use crate::config::KeyingMaterial;
 use crate::crypto::CryptoProvider;
 use crate::crypto::dtls::SrtpProfile;
@@ -29,6 +29,7 @@ use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{Soonest, already_happened, not_happening};
+use crate::rtc_event_log::RtcEventLogCollector;
 use crate::{Reason, net};
 use crate::{RtcConfig, RtcError};
 
@@ -109,12 +110,19 @@ pub(crate) struct Session {
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
+    /// RTC event log collector. None when event logging is not enabled.
+    event_log: Option<RtcEventLogCollector>,
+
+    /// Last known "now" for use in contexts where `now` is not passed as a parameter.
+    /// Updated by `handle_timeout()` and `new()`.
+    last_now: Instant,
+
     #[cfg(feature = "_internal_test_exports")]
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
 }
 
 impl Session {
-    pub fn new(config: &RtcConfig) -> Self {
+    pub fn new(config: &RtcConfig, now: Instant) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
         const MAX_ID: u64 = 2_u64.pow(62) - 1;
@@ -132,7 +140,7 @@ impl Session {
 
         let enable_stats = config.stats_interval.is_some();
 
-        Session {
+        let mut session = Session {
             id,
             medias: vec![],
             streams: Streams::new(enable_stats),
@@ -173,13 +181,48 @@ impl Session {
             } else {
                 None
             },
+            event_log: if config.enable_rtc_event_log {
+                let interval = config.rtc_event_log_interval;
+                Some(if let Some(interval) = interval {
+                    RtcEventLogCollector::new(now, interval)
+                } else {
+                    RtcEventLogCollector::with_defaults(now)
+                })
+            } else {
+                None
+            },
+            last_now: now,
             #[cfg(feature = "_internal_test_exports")]
             pending_probe: None,
+        };
+
+        // Activate BWE event logging if both BWE and event log are enabled.
+        if session.event_log.is_some() {
+            if let Some(bwe) = &mut session.bwe {
+                bwe.set_event_log_active(true);
+            }
         }
+
+        session
     }
 
     pub fn id(&self) -> SessionId {
         self.id
+    }
+
+    pub fn stop_rtc_event_log(&mut self, now: Instant) {
+        if let Some(log) = &mut self.event_log {
+            log.finish(now);
+        }
+        // Keep event_log alive so pending_output can be drained via poll_event().
+        // It will be set to None after all data is drained, or the caller can
+        // simply let Rtc drop.
+    }
+
+    /// Drain pending event log data. Used by poll_output even when Rtc is not alive,
+    /// so EndLogEvent bytes queued by stop_rtc_event_log() can still be delivered.
+    pub fn poll_event_log(&mut self) -> Option<Vec<u8>> {
+        self.event_log.as_mut().and_then(|log| log.poll())
     }
 
     pub fn set_app(&mut self, mid: Mid, index: usize) -> Result<(), String> {
@@ -217,6 +260,8 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+        self.last_now = now;
+
         // Payload any waiting frames
         self.do_payload()?;
 
@@ -247,6 +292,11 @@ impl Session {
 
         self.handle_timeout_bwe(now);
 
+        // Flush event log if interval elapsed or buffer full
+        if let Some(log) = &mut self.event_log {
+            log.flush(now);
+        }
+
         Ok(())
     }
 
@@ -262,6 +312,16 @@ impl Session {
         if let Some(probe_config) = bwe.handle_timeout(now, do_probe) {
             // Only start the probe in the pacer if the estimator accepted it.
             if bwe.start_probe(probe_config, now) {
+                // Log probe cluster created for event log.
+                if let Some(log) = &mut self.event_log {
+                    log.record_probe_cluster_created(
+                        now,
+                        *probe_config.cluster() as u32,
+                        probe_config.target_bitrate().as_u64() as u32,
+                        probe_config.min_packet_count() as u32,
+                    );
+                }
+
                 #[cfg(feature = "_internal_test_exports")]
                 {
                     self.pending_probe = Some(probe_config);
@@ -270,9 +330,152 @@ impl Session {
             }
         }
 
+        // Drain BWE log events (ALR state changes, probe failures from expired probes).
+        self.drain_bwe_log_events(now);
+
         // Check if active probe just completed
         if let Some(cluster_id) = self.pacer.check_probe_complete(now) {
-            bwe.end_probe(now, cluster_id);
+            // bwe field is still available since we only borrow self.bwe
+            if let Some(bwe) = self.bwe.as_mut() {
+                bwe.end_probe(now, cluster_id);
+            }
+        }
+    }
+
+    /// Drain buffered BWE log events and forward them to the event log collector.
+    fn drain_bwe_log_events(&mut self, now: Instant) {
+        let (Some(bwe), Some(log)) = (self.bwe.as_mut(), self.event_log.as_mut()) else {
+            return;
+        };
+
+        for event in bwe.drain_log_events() {
+            match event {
+                BweLogEvent::DelayBased {
+                    bitrate_bps,
+                    detector_state,
+                } => {
+                    log.record_delay_based_bwe(now, bitrate_bps, detector_state);
+                }
+                BweLogEvent::LossBased {
+                    bitrate_bps,
+                    fraction_loss,
+                    total_packets,
+                } => {
+                    log.record_loss_based_bwe(now, bitrate_bps, fraction_loss, total_packets);
+                }
+                BweLogEvent::ProbeSuccess { id, bitrate_bps } => {
+                    log.record_probe_cluster_success(now, id, bitrate_bps);
+                }
+                BweLogEvent::ProbeFailure { id, reason } => {
+                    log.record_probe_cluster_failure(now, id, reason);
+                }
+                BweLogEvent::AlrState { in_alr } => {
+                    log.record_alr_state(now, in_alr);
+                }
+            }
+        }
+    }
+
+    /// Record stream configs for a media mid into the event log.
+    ///
+    /// Called when a `MediaAdded` event is about to be emitted, so the streams
+    /// for this mid are already set up.
+    pub(crate) fn record_stream_configs_for_mid(&mut self, mid: Mid) {
+        if self.event_log.is_none() {
+            return;
+        }
+
+        let Some(media) = self.medias.iter().find(|m| m.mid() == mid) else {
+            return;
+        };
+        let is_audio = media.kind().is_audio();
+        let exts = media.remote_extmap().clone();
+
+        // Collect TX stream SSRCs (uses &self on streams).
+        let tx_ssrcs = self.streams.ssrcs_tx(mid);
+
+        // Collect RX stream SSRCs. ssrcs_rx doesn't exist, so iterate manually.
+        let rx_ssrcs: Vec<(Ssrc, Option<Ssrc>)> = self
+            .streams
+            .streams_rx_by_mid(mid)
+            .map(|s| (s.ssrc(), s.rtx()))
+            .collect();
+
+        let local_ssrc = *self.streams.first_ssrc_local();
+
+        let log = self.event_log.as_mut().unwrap();
+        let now = self.last_now;
+
+        for (ssrc, rtx) in &tx_ssrcs {
+            if is_audio {
+                log.record_audio_send_stream_config(now, **ssrc, &exts);
+            } else {
+                log.record_video_send_stream_config(
+                    now,
+                    **ssrc,
+                    rtx.map(|r| *r),
+                    &exts,
+                );
+            }
+        }
+
+        for (remote_ssrc, rtx) in &rx_ssrcs {
+            if is_audio {
+                log.record_audio_recv_stream_config(
+                    now,
+                    **remote_ssrc,
+                    local_ssrc,
+                    &exts,
+                );
+            } else {
+                log.record_video_recv_stream_config(
+                    now,
+                    **remote_ssrc,
+                    local_ssrc,
+                    rtx.map(|r| *r),
+                    &exts,
+                );
+            }
+        }
+    }
+
+    /// Record a single receive stream config into the event log.
+    pub(crate) fn record_recv_stream_config(
+        &mut self,
+        is_audio: bool,
+        remote_ssrc: u32,
+        rtx_ssrc: Option<u32>,
+        exts: &ExtensionMap,
+    ) {
+        if self.event_log.is_none() {
+            return;
+        }
+        let local_ssrc = *self.streams.first_ssrc_local();
+        let now = self.last_now;
+        let log = self.event_log.as_mut().unwrap();
+        if is_audio {
+            log.record_audio_recv_stream_config(now, remote_ssrc, local_ssrc, exts);
+        } else {
+            log.record_video_recv_stream_config(now, remote_ssrc, local_ssrc, rtx_ssrc, exts);
+        }
+    }
+
+    /// Record a single send stream config into the event log.
+    pub(crate) fn record_send_stream_config(
+        &mut self,
+        is_audio: bool,
+        ssrc: u32,
+        rtx_ssrc: Option<u32>,
+        exts: &ExtensionMap,
+    ) {
+        let Some(log) = &mut self.event_log else {
+            return;
+        };
+        let now = self.last_now;
+        if is_audio {
+            log.record_audio_send_stream_config(now, ssrc, exts);
+        } else {
+            log.record_video_send_stream_config(now, ssrc, rtx_ssrc, exts);
         }
     }
 
@@ -490,6 +693,24 @@ impl Session {
             }
         };
 
+        // Record incoming RTP for event log (before unpad/un_rtx, header as on-the-wire)
+        if let Some(log) = &mut self.event_log {
+            let padding_size = if header.has_padding && !data.is_empty() {
+                data[data.len() - 1] as usize
+            } else {
+                0
+            };
+            let rtx_osn = if is_repair && data.len() >= padding_size + 2 {
+                Some(u16::from_be_bytes([data[0], data[1]]))
+            } else {
+                None
+            };
+            // payload_size = total decrypted data minus padding
+            // (includes RTX OSN prefix for RTX packets, matching Chrome behavior)
+            let payload_size = data.len().saturating_sub(padding_size);
+            log.record_incoming_rtp(now, &header, payload_size, padding_size, rtx_osn);
+        }
+
         if header.has_padding && !RtpHeader::unpad_payload(&mut data) {
             // Unpadding failed. Broken data?
             trace!("unpadding of unprotected payload failed");
@@ -578,6 +799,11 @@ impl Session {
         let srtp: &mut SrtpContext = self.srtp_rx.as_mut()?;
         let unprotected = srtp.unprotect_rtcp(buf)?;
 
+        // Record incoming RTCP for event log (raw bytes, before parsing)
+        if let Some(log) = &mut self.event_log {
+            log.record_incoming_rtcp(now, &unprotected);
+        }
+
         Rtcp::read_packet(&unprotected, &mut self.feedback_rx);
         let mut need_configure_pacer = false;
 
@@ -595,6 +821,7 @@ impl Session {
                 if let (Some(maybe_records), Some(bwe)) = (maybe_records, &mut self.bwe) {
                     bwe.update(maybe_records, now);
                 }
+
                 need_configure_pacer = true;
 
                 // The funky thing about TWCC reports is that they are never stapled
@@ -615,6 +842,10 @@ impl Session {
                 stream.handle_rtcp(now, fb);
             }
         }
+
+        // Drain BWE log events after the feedback loop completes.
+        // This is safe since TWCC reports are never stapled with other RTCP.
+        self.drain_bwe_log_events(now);
 
         // Not in the above if due to lifetime issues, still okay because the method
         // doesn't do anything when BWE isn't configured.
@@ -681,24 +912,48 @@ impl Session {
             return Some(Event::EgressBitrateEstimate(BweKind::Remb(mid, bitrate)));
         }
 
-        for media in &mut self.medias {
-            if media.need_open_event {
+        // Check for MediaAdded events first, then MediaChanged. This intentionally
+        // prioritizes open events over change events across all medias (the original
+        // single-loop checked per-media in iteration order; the split is needed to
+        // release the mutable borrow on self.medias before record_stream_configs).
+        let media_added = self
+            .medias
+            .iter_mut()
+            .find(|m| m.need_open_event)
+            .map(|media| {
                 media.need_open_event = false;
+                (
+                    media.mid(),
+                    media.kind(),
+                    media.direction(),
+                    media.simulcast().map(|s| s.clone().into()),
+                )
+            });
+        if let Some((mid, kind, direction, simulcast)) = media_added {
+            return Some(Event::MediaAdded(MediaAdded {
+                mid,
+                kind,
+                direction,
+                simulcast,
+            }));
+        }
 
-                return Some(Event::MediaAdded(MediaAdded {
-                    mid: media.mid(),
-                    kind: media.kind(),
-                    direction: media.direction(),
-                    simulcast: media.simulcast().map(|s| s.clone().into()),
-                }));
-            }
-
-            if media.need_changed_event {
+        let media_changed = self
+            .medias
+            .iter_mut()
+            .find(|m| m.need_changed_event)
+            .map(|media| {
                 media.need_changed_event = false;
-                return Some(Event::MediaChanged(MediaChanged {
-                    mid: media.mid(),
-                    direction: media.direction(),
-                }));
+                (media.mid(), media.direction())
+            });
+        if let Some((mid, direction)) = media_changed {
+            return Some(Event::MediaChanged(MediaChanged { mid, direction }));
+        }
+
+        // Event log data — polled LAST (bulk, non-urgent)
+        if let Some(log) = &mut self.event_log {
+            if let Some(data) = log.poll() {
+                return Some(Event::RtcEventLog(data));
             }
         }
 
@@ -731,7 +986,7 @@ impl Session {
         }
 
         let x = None
-            .or_else(|| self.poll_feedback())
+            .or_else(|| self.poll_feedback(now))
             .or_else(|| self.poll_packet(now));
 
         if let Some(x) = &x {
@@ -753,7 +1008,7 @@ impl Session {
         self.feedback_tx.clear();
     }
 
-    fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
+    fn poll_feedback(&mut self, now: Instant) -> Option<net::DatagramSend> {
         if self.feedback_tx.is_empty() {
             return None;
         }
@@ -778,6 +1033,11 @@ impl Session {
         }
 
         data.truncate(len);
+
+        // Record outgoing RTCP for event log (raw bytes, before SRTP protect)
+        if let Some(log) = &mut self.event_log {
+            log.record_outgoing_rtcp(now, &data);
+        }
 
         let srtp = self.srtp_tx.as_mut()?;
         let protected = srtp.protect_rtcp(&data);
@@ -821,6 +1081,7 @@ impl Session {
             seq_no,
             is_padding,
             payload_size,
+            rtx_original_seq_no,
         } = receipt;
 
         trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
@@ -833,6 +1094,13 @@ impl Session {
         }
 
         self.pacer.register_send(now, payload_size.into(), midrid);
+
+        // Record outgoing RTP for event log (before SRTP protect, cheap Vec::push)
+        if let Some(log) = &mut self.event_log {
+            let probe_id = cluster_id.map(|c| *c as i32);
+            let rtx_osn = rtx_original_seq_no.map(|s| *s as u16);
+            log.record_outgoing_rtp(now, &header, payload_size, probe_id, rtx_osn);
+        }
 
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
@@ -879,6 +1147,8 @@ impl Session {
             // We should never see this reason.
             .unwrap_or((None, Reason::BweDelayControl));
 
+        let event_log_at = self.event_log.as_ref().and_then(|log| log.poll_timeout());
+
         (feedback_at, Reason::Feedback)
             .soonest((nack_at, Reason::Nack))
             .soonest((twcc_at, Reason::Twcc))
@@ -887,6 +1157,7 @@ impl Session {
             .soonest((paused_at, Reason::PauseCheck))
             .soonest((send_stream_at, Reason::SendStream))
             .soonest(bwe_at)
+            .soonest((event_log_at, Reason::EventLog))
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
@@ -1081,6 +1352,8 @@ pub struct PacketReceipt {
     pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
+    /// For RTX resends, the original sequence number being retransmitted.
+    pub rtx_original_seq_no: Option<SeqNo>,
 }
 
 /// Find the PayloadParams for the given Pt, either when the Pt is the main Pt for the Codec or

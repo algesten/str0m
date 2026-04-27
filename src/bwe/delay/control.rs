@@ -147,6 +147,11 @@ impl DelayController {
         self.trendline_estimator.hypothesis() == BandwidthUsage::Overuse
     }
 
+    /// Current detector hypothesis (Normal/Overuse/Underuse).
+    pub fn hypothesis(&self) -> BandwidthUsage {
+        self.trendline_estimator.hypothesis()
+    }
+
     /// Update smoothed RTT using EWMA (RFC 6298, alpha = 1/8).
     fn update_rtt(&mut self, rtt: Duration) {
         // Keep history as fallback in case smoothed RTT is not yet available

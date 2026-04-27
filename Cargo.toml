@@ -28,6 +28,7 @@ members = [
   "crates/proto",
   "crates/is",
   "crates/netem",
+  "crates/rtc-event-log",
   "crates/_str0m_test",
   "crypto/aws-lc-rs",
   "crypto/rust-crypto",
@@ -48,6 +49,7 @@ str0m-rust-crypto = { version = "0.3.0", path = "crypto/rust-crypto" }
 str0m-openssl = { version = "0.3.0", path = "crypto/openssl" }
 str0m-apple-crypto = { version = "0.3.0", path = "crypto/apple-crypto" }
 str0m-wincrypto = { version = "0.5.0", path = "crypto/wincrypto" }
+str0m-rtc-event-log = { version = "0.1.0", path = "crates/rtc-event-log" }
 _str0m_test = { path = "crates/_str0m_test" }
 
 # Core dependencies
@@ -134,6 +136,7 @@ dimpl.workspace = true
 
 str0m-proto = { workspace = true, features = ["dtls"] }
 is.workspace = true
+str0m-rtc-event-log.workspace = true
 
 # Crypto providers
 str0m-aws-lc-rs = { workspace = true, optional = true }
@@ -150,6 +153,8 @@ str0m-wincrypto = { workspace = true, optional = true }
 [dev-dependencies]
 rouille.workspace = true
 str0m-rust-crypto.workspace = true
+str0m-rtc-event-log.workspace = true
+prost = "0.13"
 tempfile.workspace = true
 url.workspace = true
 serde_json.workspace = true
@@ -171,4 +176,8 @@ required-features = ["examples"]
 
 [[example]]
 name = "http-post"
+required-features = ["examples"]
+
+[[example]]
+name = "rtc-event-log"
 required-features = ["examples"]

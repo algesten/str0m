@@ -204,7 +204,14 @@ impl ProbeEstimator {
     }
 
     /// Finalize probes that are ready.
-    pub fn handle_timeout(&mut self, now: Instant) {
+    ///
+    /// Returns expired probes that failed (cluster config + failure reason).
+    pub fn handle_timeout(
+        &mut self,
+        now: Instant,
+    ) -> Vec<(ProbeClusterConfig, ProbeFailureCategory)> {
+        let mut failures = Vec::new();
+
         self.states.retain(|s| {
             let do_keep = now < s.finalize_at;
             if do_keep {
@@ -212,15 +219,20 @@ impl ProbeEstimator {
             }
 
             let result = s.do_calculate_bitrate();
-            if let ProbeResult::Estimate(_) = result {
-                // Already logged in calculate_bitrate() during update().
-            } else {
-                // Log the final rejection reason for the probe.
-                trace!(%result, "Probe result");
+            match result {
+                ProbeResult::Estimate(_) => {
+                    // Already logged in calculate_bitrate() during update().
+                }
+                _ => {
+                    trace!(%result, "Probe result");
+                    failures.push((s.config, result.failure_category()));
+                }
             }
 
             false
         });
+
+        failures
     }
 
     /// Clear all active probes.
@@ -423,6 +435,38 @@ enum ProbeResult {
     InvalidDataSize,
     /// Missing timing information
     MissingTimingInfo,
+}
+
+impl ProbeResult {
+    /// Map to a high-level failure category matching the proto's FailureReason enum.
+    fn failure_category(&self) -> ProbeFailureCategory {
+        match self {
+            ProbeResult::Estimate(_) => unreachable!("success is not a failure"),
+            ProbeResult::SendIntervalTooLong { .. }
+            | ProbeResult::SendIntervalInvalid { .. }
+            | ProbeResult::RecvIntervalInvalid { .. } => {
+                ProbeFailureCategory::InvalidSendReceiveInterval
+            }
+            ProbeResult::InvalidSendReceiveRatio { .. } => {
+                ProbeFailureCategory::InvalidSendReceiveRatio
+            }
+            // Insufficient data, missing timing, etc. are all treated as timeout
+            // (probe expired before collecting enough data).
+            ProbeResult::ClusterTooSmall { .. }
+            | ProbeResult::InsufficientPackets { .. }
+            | ProbeResult::InsufficientBytes { .. }
+            | ProbeResult::InvalidDataSize
+            | ProbeResult::MissingTimingInfo => ProbeFailureCategory::Timeout,
+        }
+    }
+}
+
+/// High-level probe failure category matching the proto's FailureReason enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeFailureCategory {
+    InvalidSendReceiveInterval,
+    InvalidSendReceiveRatio,
+    Timeout,
 }
 
 impl fmt::Display for ProbeResult {
