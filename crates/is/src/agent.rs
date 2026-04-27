@@ -1386,6 +1386,29 @@ impl IceAgent {
             return;
         }
 
+        // Drop requests that did not arrive on one of our local candidates
+        // before doing anything else. We must not mutate state, send replies
+        // (including 487 Role Conflict) or create peer-reflexive candidates
+        // for traffic that isn't actually directed at one of our interfaces.
+        let local_idx = match self.local_candidates.iter().position(|v| {
+            matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
+                && v.addr() == req.destination
+                && v.proto() == req.proto
+        }) {
+            Some(i) => i,
+            None => {
+                // Receiving traffic for an IP address that neither is a HOST nor RELAY
+                // is most likely a configuration fault where the user forgot to add a
+                // candidate for the local interface. We are network-connected application
+                // so we need to handle this gracefully: Log a message and discard the packet.
+                debug!(
+                    "Discarding STUN request on unknown interface: {}",
+                    Pii(req.destination)
+                );
+                return;
+            }
+        };
+
         if req.use_candidate && self.controlling {
             // the other side is not controlling, and it sent USE-CANDIDATE. that's wrong.
             debug!("STUN request rejected, USE-CANDIDATE when local is controlling");
@@ -1453,31 +1476,6 @@ impl IceAgent {
             self.remote_candidates.push(c);
 
             self.remote_candidates.len() - 1
-        };
-
-        let local_idx = match self.local_candidates.iter().enumerate().find(|(_, v)| {
-            // The local candidate will be
-            // either a host candidate (for cases where the request was not received
-            // through a relay) or a relayed candidate (for cases where it is
-            // received through a relay).  The local candidate can never be a
-            // server-reflexive candidate.
-            matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
-                && v.addr() == req.destination
-                && v.proto() == req.proto
-        }) {
-            Some((i, _)) => i,
-            None => {
-                // Receiving traffic for an IP address that neither is a HOST nor RELAY
-                // is most likely a configuration fault where the user forgot to add a
-                // candidate for the local interface. We are network-connected application
-                // so we need to handle this gracefully: Log a message and discard the packet.
-
-                debug!(
-                    "Discarding STUN request on unknown interface: {}",
-                    Pii(req.destination)
-                );
-                return;
-            }
         };
 
         let maybe_pair = self
