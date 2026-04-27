@@ -147,6 +147,8 @@ struct StunRequest {
     prio: u32,
     use_candidate: bool,
     remote_ufrag: String,
+    ice_controlling: Option<u64>,
+    ice_controlled: Option<u64>,
 }
 
 const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
@@ -1339,6 +1341,8 @@ impl IceAgent {
             prio,
             use_candidate,
             remote_ufrag: remote_ufrag.into(),
+            ice_controlling: message.ice_controlling(),
+            ice_controlled: message.ice_controlled(),
         };
 
         if self.remote_credentials.is_some() {
