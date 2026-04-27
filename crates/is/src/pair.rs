@@ -278,9 +278,12 @@ impl CandidatePair {
         last.trans_id
     }
 
-    /// Tells if this pair caused the binding request for a STUN transaction id.
-    pub fn has_binding_attempt(&self, trans_id: TransId) -> bool {
-        self.binding_attempts.iter().any(|b| b.trans_id == trans_id)
+    /// Returns the binding attempt for the given STUN transaction id, if
+    /// this pair sent it.
+    pub fn binding_attempt(&self, trans_id: TransId) -> Option<&BindingAttempt> {
+        self.binding_attempts
+            .iter()
+            .find(|b| b.trans_id == trans_id)
     }
 
     /// Marks a binding request attempt as having a successful response.

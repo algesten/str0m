@@ -1069,7 +1069,7 @@ impl IceAgent {
                 let belongs_to_a_candidate_pair = self
                     .candidate_pairs
                     .iter()
-                    .any(|pair| pair.has_binding_attempt(message.trans_id()));
+                    .any(|pair| pair.binding_attempt(message.trans_id()).is_some());
 
                 if !belongs_to_a_candidate_pair {
                     trace!(
@@ -1627,7 +1627,7 @@ impl IceAgent {
         let maybe_pair = self
             .candidate_pairs
             .iter_mut()
-            .find(|p| p.has_binding_attempt(trans_id));
+            .find(|p| p.binding_attempt(trans_id).is_some());
 
         self.stats.bind_success_recv += 1;
 
