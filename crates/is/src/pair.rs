@@ -106,6 +106,20 @@ pub struct BindingAttempt {
 
     /// Whether the binding attempt is nominated.
     nominated: bool,
+
+    /// The agent's `controlling` value at request time.
+    ///
+    /// Used to decide whether a 487 (Role Conflict) response is
+    /// stale: if the agent has already swapped role since the
+    /// request was sent, the 487 must be ignored to avoid flapping
+    /// when in-flight requests with the old role get rejected.
+    controlling: bool,
+}
+
+impl BindingAttempt {
+    pub fn controlling(&self) -> bool {
+        self.controlling
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -239,7 +253,12 @@ impl CandidatePair {
     /// Records a new binding request attempt.
     ///
     /// Returns the transaction id to use in the STUN message.
-    pub fn new_attempt(&mut self, now: Instant, timing_config: &StunTiming) -> TransId {
+    pub fn new_attempt(
+        &mut self,
+        now: Instant,
+        timing_config: &StunTiming,
+        controlling: bool,
+    ) -> TransId {
         // calculate a new time
         self.cached_next_attempt_time = None;
 
@@ -253,6 +272,7 @@ impl CandidatePair {
             request_sent: now,
             respone_recv: None,
             nominated: self.is_nominated(),
+            controlling,
         };
 
         self.binding_attempts.push_back(attempt);
@@ -503,7 +523,7 @@ mod tests {
         let mut now = Instant::now();
 
         for _ in 0..20 {
-            let id = pair.new_attempt(now, &stun_timing);
+            let id = pair.new_attempt(now, &stun_timing, false);
 
             now += Duration::from_millis(500);
 
@@ -513,7 +533,7 @@ mod tests {
         let offline_at = now;
 
         while pair.is_still_possible(now, &stun_timing) {
-            pair.new_attempt(now, &stun_timing);
+            pair.new_attempt(now, &stun_timing, false);
             now = pair.next_binding_attempt(now, &stun_timing);
         }
 
