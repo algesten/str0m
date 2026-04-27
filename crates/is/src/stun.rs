@@ -377,6 +377,16 @@ impl<'a> StunMessage<'a> {
             .build(trans_id)
     }
 
+    /// Constructs a STUN BINDING error reply with a 487 Role Conflict
+    /// error code (RFC 8445 §7.3.1.1).
+    pub fn binding_role_conflict_reply(trans_id: TransId) -> StunMessage<'a> {
+        StunMessageBuilder::new()
+            .binding()
+            .failure()
+            .error_code(487, "Role Conflict")
+            .build(trans_id)
+    }
+
     /// Verify the integrity of this message against the provided password.
     #[must_use]
     pub fn verify(&self, password: &[u8], sha1_hmac: impl Fn(&[u8], &[&[u8]]) -> [u8; 20]) -> bool {
