@@ -197,6 +197,10 @@ impl CandidatePair {
         self.prio
     }
 
+    pub fn set_prio(&mut self, prio: u64) {
+        self.prio = prio;
+    }
+
     pub fn state(&self) -> CheckState {
         self.state
     }
