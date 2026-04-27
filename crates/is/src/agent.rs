@@ -2481,6 +2481,53 @@ mod test {
         assert!(stun_message.is_successful_binding_response());
     }
 
+    /// On simultaneous controlling/controlling startup, the lower-tiebreaker
+    /// agent typically receives the peer's request first (server-side swap)
+    /// while its own in-flight requests — sent under the old role — are
+    /// still being 487'd by the peer. Each of those stale 487s must be
+    /// ignored, otherwise the role flaps with every retransmit until the
+    /// in-flight drain finishes.
+    #[test]
+    pub fn ignores_stale_487_after_role_swap() {
+        let mut agent = new_test_agent();
+        agent.set_controlling(true);
+        let remote_creds = IceCreds::new();
+        agent.set_remote_credentials(remote_creds.clone());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+        let mut remote_candidate = Candidate::host(ipv4_3(), "udp").unwrap();
+        remote_candidate.set_ufrag(&remote_creds.ufrag);
+        agent.add_remote_candidate(remote_candidate);
+
+        // Drive one binding request out — recorded as `controlling=true`.
+        agent.handle_timeout(Instant::now());
+        let req_payload = Vec::from(agent.poll_transmit().unwrap().contents);
+        let trans_id = StunMessage::parse(&req_payload).unwrap().trans_id();
+
+        // Simulate that an earlier 487 (or a server-side conflict from an
+        // incoming peer request) already moved us to controlled.
+        agent.set_controlling(false);
+
+        // Now the original request's 487 lands. It is stale: the attempt was
+        // sent as controlling, but we are no longer controlling.
+        let reply = make_role_conflict_reply(trans_id, &remote_creds.pass);
+        agent.handle_packet(
+            Instant::now(),
+            StunPacket {
+                proto: Protocol::Udp,
+                source: ipv4_3(),
+                destination: ipv4_1(),
+                message: StunMessage::parse(&reply).unwrap(),
+            },
+        );
+
+        assert!(
+            !agent.controlling(),
+            "stale 487 must not flip role back to controlling"
+        );
+    }
+
     #[test]
     pub fn discards_packet_from_unknown_candidate() {
         let mut agent = new_test_agent();
@@ -2558,6 +2605,11 @@ mod test {
 
     fn make_authenticated_stun_reply(tx_id: TransId, addr: SocketAddr, password: &str) -> Vec<u8> {
         let reply = StunMessage::binding_reply(tx_id, addr);
+        serialize_stun_msg(reply, password)
+    }
+
+    fn make_role_conflict_reply(tx_id: TransId, password: &str) -> Vec<u8> {
+        let reply = StunMessage::binding_role_conflict_reply(tx_id);
         serialize_stun_msg(reply, password)
     }
 
