@@ -214,11 +214,15 @@ impl<'a> StunMessage<'a> {
     }
 
     /// Whether this STUN message is a _successful_ BINDING response.
-    ///
-    /// STUN binding requests are very simple, they just return the observed address.
-    /// As such, they cannot actually fail which is why we don't have `is_failed_binding_response`.
     pub fn is_successful_binding_response(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Success
+    }
+
+    /// Whether this STUN message is a _failed_ BINDING response.
+    ///
+    /// In ICE, this is used for 487 Role Conflict (RFC 8445 §7.3.1.1).
+    pub fn is_failed_binding_response(&self) -> bool {
+        self.method == Method::Binding && self.class == Class::Failure
     }
 
     /// Whether this STUN message is an ALLOCATE request (TURN).
