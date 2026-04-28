@@ -1388,6 +1388,7 @@ impl Rtc {
         &mut self,
         client: bool,
         sctp_init_data: Option<SctpInitData>,
+        remote_max_message_size: Option<u32>,
     ) -> Result<(), RtcError> {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
@@ -1395,7 +1396,7 @@ impl Rtc {
             return Ok(());
         }
 
-        self.sctp.init(client, self.last_now, sctp_init_data)?;
+        self.sctp.init(client, self.last_now, sctp_init_data, remote_max_message_size)?;
         Ok(())
     }
 
