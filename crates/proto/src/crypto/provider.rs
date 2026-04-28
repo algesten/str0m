@@ -138,6 +138,88 @@ impl fmt::Display for DtlsVersion {
     }
 }
 
+// ============================================================================
+// DTLS Cipher Suites
+// ============================================================================
+
+/// DTLS 1.2 cipher suites.
+///
+/// These are the TLS 1.2 cipher suites used in DTLS, which specify the
+/// full combination of key exchange, authentication, encryption, and hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[allow(non_camel_case_types)]
+pub enum Dtls12CipherSuite {
+    /// TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 (0xC02B).
+    ECDHE_ECDSA_AES128_GCM_SHA256,
+    /// TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384 (0xC02C).
+    ECDHE_ECDSA_AES256_GCM_SHA384,
+    /// TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256 (0xCCA9).
+    ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
+}
+
+#[cfg(feature = "dtls")]
+impl Dtls12CipherSuite {
+    /// Convert to the corresponding dimpl cipher suite.
+    pub fn into_dimpl(self) -> dimpl::crypto::Dtls12CipherSuite {
+        use dimpl::crypto::Dtls12CipherSuite as D;
+        match self {
+            Self::ECDHE_ECDSA_AES128_GCM_SHA256 => D::ECDHE_ECDSA_AES128_GCM_SHA256,
+            Self::ECDHE_ECDSA_AES256_GCM_SHA384 => D::ECDHE_ECDSA_AES256_GCM_SHA384,
+            Self::ECDHE_ECDSA_CHACHA20_POLY1305_SHA256 => D::ECDHE_ECDSA_CHACHA20_POLY1305_SHA256,
+        }
+    }
+}
+
+/// DTLS 1.3 cipher suites.
+///
+/// Unlike DTLS 1.2, TLS 1.3 cipher suites only specify the AEAD algorithm
+/// and hash function. Key exchange is negotiated separately.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[allow(non_camel_case_types)]
+pub enum Dtls13CipherSuite {
+    /// TLS_AES_128_GCM_SHA256 (0x1301).
+    AES_128_GCM_SHA256,
+    /// TLS_AES_256_GCM_SHA384 (0x1302).
+    AES_256_GCM_SHA384,
+    /// TLS_CHACHA20_POLY1305_SHA256 (0x1303).
+    CHACHA20_POLY1305_SHA256,
+}
+
+#[cfg(feature = "dtls")]
+impl Dtls13CipherSuite {
+    /// Convert to the corresponding dimpl cipher suite.
+    pub fn into_dimpl(self) -> dimpl::crypto::Dtls13CipherSuite {
+        use dimpl::crypto::Dtls13CipherSuite as D;
+        match self {
+            Self::AES_128_GCM_SHA256 => D::AES_128_GCM_SHA256,
+            Self::AES_256_GCM_SHA384 => D::AES_256_GCM_SHA384,
+            Self::CHACHA20_POLY1305_SHA256 => D::CHACHA20_POLY1305_SHA256,
+        }
+    }
+}
+
+// ============================================================================
+// DTLS Config
+// ============================================================================
+
+/// Configuration for the DTLS handshake.
+///
+/// Bundles the DTLS version with optional cipher suite preferences.
+/// When cipher suite lists are `None`, all provider-supported suites are used.
+/// When set to `Some`, only the listed suites are offered/accepted (allow-list).
+#[derive(Debug, Clone, Default)]
+#[non_exhaustive]
+pub struct DtlsConfig {
+    /// Which DTLS version to use.
+    pub version: DtlsVersion,
+    /// Allowed DTLS 1.2 cipher suites. `None` means all provider-supported suites.
+    pub dtls12_cipher_suites: Option<Vec<Dtls12CipherSuite>>,
+    /// Allowed DTLS 1.3 cipher suites. `None` means all provider-supported suites.
+    pub dtls13_cipher_suites: Option<Vec<Dtls13CipherSuite>>,
+}
+
 /// Factory for DTLS instances and certificates.
 pub trait DtlsProvider: CryptoSafe {
     /// Generate a new self-signed DTLS certificate.
@@ -146,12 +228,12 @@ pub trait DtlsProvider: CryptoSafe {
     /// In that case, the user must supply a certificate via `RtcConfig::set_dtls_cert`.
     fn generate_certificate(&self) -> Option<DtlsCert>;
 
-    /// Create a new DTLS instance with the given certificate.
+    /// Create a new DTLS instance with the given certificate and configuration.
     fn new_dtls(
         &self,
         cert: &DtlsCert,
         now: Instant,
-        dtls_version: DtlsVersion,
+        dtls_config: &DtlsConfig,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError>;
 
     /// Whether the provider is used in a test context.

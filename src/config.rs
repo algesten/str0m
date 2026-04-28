@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::Rtc;
 use crate::config::DtlsCert;
 use crate::crypto::CryptoProvider;
-use crate::crypto::dtls::DtlsVersion;
+use crate::crypto::dtls::{Dtls12CipherSuite, Dtls13CipherSuite, DtlsConfig, DtlsVersion};
 use crate::format::CodecConfig;
 use crate::format::Vp9PacketizerMode;
 use crate::ice::IceCreds;
@@ -44,7 +44,7 @@ pub struct RtcConfig {
     pub(crate) send_buffer_video: usize,
     pub(crate) rtp_mode: bool,
     pub(crate) enable_raw_packets: bool,
-    pub(crate) dtls_version: DtlsVersion,
+    pub(crate) dtls_config: DtlsConfig,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
 }
@@ -572,13 +572,41 @@ impl RtcConfig {
     ///
     /// Defaults to [`DtlsVersion::Dtls12`].
     pub fn set_dtls_version(mut self, version: DtlsVersion) -> Self {
-        self.dtls_version = version;
+        self.dtls_config.version = version;
         self
     }
 
     /// Get the configured DTLS version.
     pub fn dtls_version(&self) -> DtlsVersion {
-        self.dtls_version
+        self.dtls_config.version
+    }
+
+    /// Restrict which DTLS 1.2 cipher suites are offered and accepted.
+    ///
+    /// Only cipher suites present in both this list and the provider will
+    /// be used. By default all provider-supported DTLS 1.2 cipher suites are used.
+    pub fn set_dtls12_cipher_suites(mut self, suites: &[Dtls12CipherSuite]) -> Self {
+        self.dtls_config.dtls12_cipher_suites = Some(suites.to_vec());
+        self
+    }
+
+    /// Get the configured DTLS 1.2 cipher suite allow-list, if set.
+    pub fn dtls12_cipher_suites(&self) -> Option<&[Dtls12CipherSuite]> {
+        self.dtls_config.dtls12_cipher_suites.as_deref()
+    }
+
+    /// Restrict which DTLS 1.3 cipher suites are offered and accepted.
+    ///
+    /// Only cipher suites present in both this list and the provider will
+    /// be used. By default all provider-supported DTLS 1.3 cipher suites are used.
+    pub fn set_dtls13_cipher_suites(mut self, suites: &[Dtls13CipherSuite]) -> Self {
+        self.dtls_config.dtls13_cipher_suites = Some(suites.to_vec());
+        self
+    }
+
+    /// Get the configured DTLS 1.3 cipher suite allow-list, if set.
+    pub fn dtls13_cipher_suites(&self) -> Option<&[Dtls13CipherSuite]> {
+        self.dtls_config.dtls13_cipher_suites.as_deref()
     }
 
     /// Set the VP9 packetizer mode.
@@ -641,7 +669,7 @@ impl Default for RtcConfig {
             send_buffer_video: 1000,
             rtp_mode: false,
             enable_raw_packets: false,
-            dtls_version: DtlsVersion::Dtls12,
+            dtls_config: DtlsConfig::default(),
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
         }

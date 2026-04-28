@@ -1158,7 +1158,7 @@ impl Rtc {
                 crypto_provider.dtls_provider,
                 crypto_provider.sha256_provider,
                 start,
-                config.dtls_version,
+                &config.dtls_config,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,

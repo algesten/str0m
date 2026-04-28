@@ -14,7 +14,7 @@ use openssl::x509::X509;
 
 use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
-use str0m_proto::crypto::{CryptoError, DtlsVersion};
+use str0m_proto::crypto::{CryptoError, DtlsConfig, DtlsVersion};
 use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
 // ============================================================================
@@ -637,9 +637,9 @@ impl DtlsProvider for OsslDtlsProvider {
         &self,
         cert: &DtlsCert,
         _now: Instant,
-        dtls_version: DtlsVersion,
+        dtls_config: &DtlsConfig,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
-        match dtls_version {
+        match dtls_config.version {
             DtlsVersion::Dtls12 => Ok(Box::new(OsslDtlsInstance::new(cert)?)),
             _ => Err(CryptoError::Other(
                 "OpenSSL DTLS provider only supports DTLS 1.2 without dimpl. \
