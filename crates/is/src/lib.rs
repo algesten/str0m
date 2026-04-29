@@ -297,6 +297,46 @@ pub(crate) mod test {
         );
     }
 
+    // RFC 8445 §7.3.1.1: when both agents claim the controlling role, the
+    // role conflict is resolved deterministically by the tiebreaker — the
+    // higher-tiebreaker agent keeps the role, the other yields. Tiebreakers
+    // here are the random ones picked by the constructor, so we cannot
+    // predict which side wins; we only assert that the conflict resolves:
+    // the connection still establishes and exactly one side ends up
+    // controlled.
+    #[test]
+    pub fn role_conflict_resolves_to_one_controlled_side() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
+        a2.add_remote_candidate(c1);
+
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(true);
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(
+            a1.controlling() ^ a2.controlling(),
+            "role conflict must leave exactly one side controlling, got a1={} a2={}",
+            a1.controlling(),
+            a2.controlling(),
+        );
+        assert!(
+            a1.stats().nomination_send_count > 0 || a2.stats().nomination_send_count > 0,
+            "role conflict must not block nomination",
+        );
+    }
+
     // str0m performs calculations on `now` internally
     // To ensure that these never panic, we run a happy-path of `host-host` that uses a very early `Instant`.
     #[test]
