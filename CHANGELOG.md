@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Expose H265 some already referenced profile structs #948
+
 # 0.18.1
 
   * dtls: fix to resends during handshake #943
