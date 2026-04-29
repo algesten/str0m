@@ -14,9 +14,10 @@ pub struct H265ProfileTierLevel {
 }
 
 impl H265ProfileTierLevel {
-    /// RFC 7798 §7.1 default values when parameters are absent from SDP:
-    /// profile-id=1 (Main), tier-flag=0 (Main tier), level-id=93 (Level 3.1).
-    pub const FALLBACK: Self = Self {
+    // RFC 7798 §7.1 default values when parameters are absent from SDP:
+    // profile-id=1 (Main), tier-flag=0 (Main tier), level-id=93 (Level 3.1).
+    // https://www.rfc-editor.org/rfc/rfc7798#section-7.1
+    pub(crate) const FALLBACK: Self = Self {
         profile: H265Profile::Main,
         tier: H265Tier::Main,
         level: H265Level::Level3_1,
@@ -25,7 +26,7 @@ impl H265ProfileTierLevel {
     /// Construct a new H265ProfileTierLevel from profile_id, tier_flag, and level_id.
     ///
     /// Returns `Some(Self)` only if the provided parameters identify valid values.
-    pub fn new(profile_id: u8, tier_flag: u8, level_id: u8) -> Option<Self> {
+    pub(crate) fn new(profile_id: u8, tier_flag: u8, level_id: u8) -> Option<Self> {
         let profile = H265Profile::from_id(profile_id)?;
         let tier = H265Tier::from_flag(tier_flag)?;
         let level = H265Level::from_id(level_id)?;
@@ -41,7 +42,7 @@ impl H265ProfileTierLevel {
     ///
     /// Expects keys: "profile-id", "tier-flag", "level-id"
     /// Returns None if any required parameter is missing or invalid.
-    pub fn from_fmtp(params: &HashMap<String, String>) -> Option<Self> {
+    pub(crate) fn from_fmtp(params: &HashMap<String, String>) -> Option<Self> {
         let profile_id: u8 = params.get("profile-id")?.parse().ok()?;
         let tier_flag: u8 = params.get("tier-flag")?.parse().ok()?;
         let level_id: u8 = params.get("level-id")?.parse().ok()?;
