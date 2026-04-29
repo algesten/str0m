@@ -2,6 +2,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// H.265/HEVC profile, tier, and level combination.
+///
+/// Represents the three SDP fmtp parameters `profile-id`, `tier-flag`, and `level-id`
+/// as defined in RFC 7798 §7.1 and ITU-T H.265 Annex A.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct H265ProfileTierLevel {
     profile: H265Profile,
@@ -10,10 +14,9 @@ pub struct H265ProfileTierLevel {
 }
 
 impl H265ProfileTierLevel {
-    // RFC 7798 §7.1 default values when parameters are absent from SDP:
-    // profile-id=1 (Main), tier-flag=0 (Main tier), level-id=93 (Level 3.1).
-    // https://www.rfc-editor.org/rfc/rfc7798#section-7.1
-    pub(crate) const FALLBACK: Self = Self {
+    /// RFC 7798 §7.1 default values when parameters are absent from SDP:
+    /// profile-id=1 (Main), tier-flag=0 (Main tier), level-id=93 (Level 3.1).
+    pub const FALLBACK: Self = Self {
         profile: H265Profile::Main,
         tier: H265Tier::Main,
         level: H265Level::Level3_1,
@@ -22,7 +25,7 @@ impl H265ProfileTierLevel {
     /// Construct a new H265ProfileTierLevel from profile_id, tier_flag, and level_id.
     ///
     /// Returns `Some(Self)` only if the provided parameters identify valid values.
-    pub(crate) fn new(profile_id: u8, tier_flag: u8, level_id: u8) -> Option<Self> {
+    pub fn new(profile_id: u8, tier_flag: u8, level_id: u8) -> Option<Self> {
         let profile = H265Profile::from_id(profile_id)?;
         let tier = H265Tier::from_flag(tier_flag)?;
         let level = H265Level::from_id(level_id)?;
@@ -38,7 +41,7 @@ impl H265ProfileTierLevel {
     ///
     /// Expects keys: "profile-id", "tier-flag", "level-id"
     /// Returns None if any required parameter is missing or invalid.
-    pub(crate) fn from_fmtp(params: &HashMap<String, String>) -> Option<Self> {
+    pub fn from_fmtp(params: &HashMap<String, String>) -> Option<Self> {
         let profile_id: u8 = params.get("profile-id")?.parse().ok()?;
         let tier_flag: u8 = params.get("tier-flag")?.parse().ok()?;
         let level_id: u8 = params.get("level-id")?.parse().ok()?;
@@ -47,37 +50,37 @@ impl H265ProfileTierLevel {
     }
 
     /// Returns the H.265 profile (Main, Main10, etc.).
-    pub(crate) fn profile(&self) -> H265Profile {
+    pub fn profile(&self) -> H265Profile {
         self.profile
     }
 
     /// Returns the H.265 tier (Main or High).
-    pub(crate) fn tier(&self) -> H265Tier {
+    pub fn tier(&self) -> H265Tier {
         self.tier
     }
 
     /// Returns the H.265 level (Level 3.1, Level 4.0, etc.).
-    pub(crate) fn level(&self) -> H265Level {
+    pub fn level(&self) -> H265Level {
         self.level
     }
 
     /// Returns a copy with the level replaced.
-    pub(crate) fn with_level(self, level: H265Level) -> Self {
+    pub fn with_level(self, level: H265Level) -> Self {
         Self { level, ..self }
     }
 
     /// Returns the numeric profile_id value for SDP serialization.
-    pub(crate) fn profile_id(&self) -> u8 {
+    pub fn profile_id(&self) -> u8 {
         self.profile.to_id()
     }
 
     /// Returns the numeric tier_flag value for SDP serialization.
-    pub(crate) fn tier_flag(&self) -> u8 {
+    pub fn tier_flag(&self) -> u8 {
         self.tier.to_flag()
     }
 
     /// Returns the numeric level_id value for SDP serialization.
-    pub(crate) fn level_id(&self) -> u8 {
+    pub fn level_id(&self) -> u8 {
         self.level.to_id()
     }
 }
@@ -88,18 +91,30 @@ impl From<(u8, u8, u8)> for H265ProfileTierLevel {
     }
 }
 
+/// H.265 profile as defined in ITU-T H.265 Annex A.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum H265Profile {
+pub enum H265Profile {
+    /// Main profile (profile_id=1).
     Main,
+    /// Main 10 profile (profile_id=2).
     Main10,
+    /// Main Still Picture profile (profile_id=3).
     MainStillPicture,
+    /// Format Range Extensions profile (profile_id=4).
     FormatRangeExtensions,
+    /// High Throughput profile (profile_id=5).
     HighThroughput,
+    /// Multiview Main profile (profile_id=6).
     MultiviewMain,
+    /// Scalable Main profile (profile_id=7).
     ScalableMain,
+    /// 3D Main profile (profile_id=8).
     ThreeDMain,
+    /// Screen Content Coding profile (profile_id=9).
     ScreenContentCoding,
+    /// Screen Content Coding Extensions profile (profile_id=10).
     ScreenContentCodingExtensions,
+    /// High Throughput Screen Content Coding profile (profile_id=11).
     HighThroughputScreenContentCoding,
 }
 
@@ -125,7 +140,7 @@ impl H265Profile {
     }
 
     /// Convert to H.265 profile_id value.
-    pub(crate) fn to_id(self) -> u8 {
+    pub fn to_id(self) -> u8 {
         match self {
             Self::Main => 1,
             Self::Main10 => 2,
@@ -142,9 +157,12 @@ impl H265Profile {
     }
 }
 
+/// H.265 tier (Main or High).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum H265Tier {
+pub enum H265Tier {
+    /// Main tier (tier_flag=0).
     Main,
+    /// High tier (tier_flag=1).
     High,
 }
 
@@ -161,7 +179,7 @@ impl H265Tier {
     }
 
     /// Convert to H.265 tier_flag value.
-    pub(crate) fn to_flag(self) -> u8 {
+    pub fn to_flag(self) -> u8 {
         match self {
             Self::Main => 0,
             Self::High => 1,
@@ -169,31 +187,44 @@ impl H265Tier {
     }
 }
 
-// H.265 Level definitions from ITU-T H.265 Annex A.
-// level_id values are 30x the level number.
-// E.g., Level 3.1 = 93 (3.1 * 30).
+/// H.265 level as defined in ITU-T H.265 Annex A.
+///
+/// Level IDs are 30× the level number (e.g., Level 3.1 = 93).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 #[rustfmt::skip]
-pub(crate) enum H265Level {
-    Level1   = 30_u8,   // 1.0 * 30
-    Level2   = 60_u8,   // 2.0 * 30
-    Level2_1 = 63_u8,   // 2.1 * 30
-    Level3   = 90_u8,   // 3.0 * 30
-    Level3_1 = 93_u8,   // 3.1 * 30
-    Level4   = 120_u8,  // 4.0 * 30
-    Level4_1 = 123_u8,  // 4.1 * 30
-    Level5   = 150_u8,  // 5.0 * 30
-    Level5_1 = 153_u8,  // 5.1 * 30
-    Level5_2 = 156_u8,  // 5.2 * 30
-    Level6   = 180_u8,  // 6.0 * 30
-    Level6_1 = 183_u8,  // 6.1 * 30
-    Level6_2 = 186_u8,  // 6.2 * 30
+pub enum H265Level {
+    /// Level 1.0 (level_id=30).
+    Level1   = 30_u8,
+    /// Level 2.0 (level_id=60).
+    Level2   = 60_u8,
+    /// Level 2.1 (level_id=63).
+    Level2_1 = 63_u8,
+    /// Level 3.0 (level_id=90).
+    Level3   = 90_u8,
+    /// Level 3.1 (level_id=93).
+    Level3_1 = 93_u8,
+    /// Level 4.0 (level_id=120).
+    Level4   = 120_u8,
+    /// Level 4.1 (level_id=123).
+    Level4_1 = 123_u8,
+    /// Level 5.0 (level_id=150).
+    Level5   = 150_u8,
+    /// Level 5.1 (level_id=153).
+    Level5_1 = 153_u8,
+    /// Level 5.2 (level_id=156).
+    Level5_2 = 156_u8,
+    /// Level 6.0 (level_id=180).
+    Level6   = 180_u8,
+    /// Level 6.1 (level_id=183).
+    Level6_1 = 183_u8,
+    /// Level 6.2 (level_id=186).
+    Level6_2 = 186_u8,
 }
 
 impl H265Level {
     /// Returns the ordinal position (0-12) representing capability order.
-    pub(crate) fn ordinal(self) -> usize {
+    pub fn ordinal(self) -> usize {
         match self {
             Self::Level1 => 0,
             Self::Level2 => 1,
@@ -233,7 +264,7 @@ impl H265Level {
     }
 
     /// Convert to H.265 level_id value.
-    pub(crate) fn to_id(self) -> u8 {
+    pub fn to_id(self) -> u8 {
         self as u8
     }
 }

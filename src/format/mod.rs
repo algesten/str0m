@@ -5,6 +5,7 @@
 pub use crate::packet::CodecExtra;
 pub use crate::packet::H264CodecExtra;
 pub use crate::packet::H265CodecExtra;
+pub use crate::packet::{H265Level, H265Profile, H265ProfileTierLevel, H265Tier};
 pub use crate::packet::Vp8CodecExtra;
 pub use crate::packet::Vp9CodecExtra;
 pub use crate::packet::Vp9PacketizerMode;
