@@ -31,7 +31,7 @@ pub use h265::H265Packetizer;
 pub use h265::detect_h265_keyframe;
 
 mod h265_profile;
-pub(crate) use h265_profile::H265ProfileTierLevel;
+pub use h265_profile::{H265Level, H265Profile, H265ProfileTierLevel, H265Tier};
 
 mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};

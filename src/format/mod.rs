@@ -13,6 +13,7 @@ pub use crate::packet::detect_h264_keyframe;
 pub use crate::packet::detect_h265_keyframe;
 pub use crate::packet::detect_vp8_keyframe;
 pub use crate::packet::detect_vp9_keyframe;
+pub use crate::packet::{H265Level, H265Profile, H265ProfileTierLevel, H265Tier};
 
 mod codec;
 mod codec_config;
