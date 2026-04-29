@@ -4,4 +4,4 @@ mod estimator;
 
 pub use cluster::{ProbeClusterConfig, ProbeClusterState, ProbeKind};
 pub use control::{BandwidthLimitedCause, ProbeControl};
-pub use estimator::ProbeEstimator;
+pub use estimator::{ProbeEstimator, ProbeFailureCategory};

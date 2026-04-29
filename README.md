@@ -286,6 +286,46 @@ A production worthy SFU probably needs an even more sophisticated
 strategy weighing in all possible time sources to get a good estimate
 of the remote wallclock for a packet.
 
+## RTC Event Logging
+
+str0m can produce WebRTC-compatible event logs in the `rtc_event_log2` (version 2)
+protobuf format used by Chrome/libWebRTC. RTC event logs can be enabled to capture 
+in-depth inpformation about sent and received packets and the internal state of 
+some WebRTC components. The logs are useful to understand network behavior and to 
+debug issues around connectivity, bandwidth estimation and audio jitter buffers 
+using existing tools in libWebRTC like `event_log_visualizer`.
+
+```rust
+use std::time::Instant;
+use str0m::{Rtc, RtcConfig, Event, Output};
+
+let mut rtc = RtcConfig::new()
+    .enable_rtc_event_log(true)
+    .build(Instant::now());
+
+// In your run loop, write event log chunks to a file:
+loop {
+    match rtc.poll_output().unwrap() {
+        Output::Event(Event::RtcEventLog(data)) => {
+            // Append `data` to your .log file
+        }
+        // ... handle other outputs ...
+        _ => break,
+    }
+}
+
+// Before dropping Rtc, stop logging to flush the EndLogEvent marker:
+rtc.stop_rtc_event_log();
+// Then drain remaining Event::RtcEventLog events from poll_output().
+```
+
+Event logging adds near-zero overhead when disabled (a single branch per packet)
+and minimal overhead when enabled (a `Vec::push()` per packet, serialization
+deferred to the flush interval). See the [`rtc-event-log`][x-rtc-event-log] example
+for a complete working setup.
+
+[x-rtc-event-log]: https://github.com/algesten/str0m/blob/main/examples/rtc-event-log.rs
+
 ## Crypto backends
 
 str0m supports multiple crypto backends via feature flags. The default is `aws-lc-rs`.

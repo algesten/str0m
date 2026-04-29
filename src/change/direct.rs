@@ -235,14 +235,22 @@ impl<'a> DirectApi<'a> {
         mid: Mid,
         rid: Option<Rid>,
     ) -> &mut StreamRx {
-        let Some(_media) = self.rtc.session.media_by_mid(mid) else {
+        let Some(media) = self.rtc.session.media_by_mid(mid) else {
             panic!("No media declared for mid: {}", mid);
         };
+
+        let is_audio = media.kind().is_audio();
+        let exts = media.remote_extmap().clone();
 
         // By default we do not suppress nacks, this has to be called explicitly by the user of direct API.
         let suppress_nack = false;
 
         let midrid = MidRid(mid, rid);
+
+        // Record stream config for event log.
+        self.rtc
+            .session
+            .record_recv_stream_config(is_audio, *ssrc, rtx.map(|r| *r), &exts);
 
         self.rtc
             .session
@@ -291,6 +299,7 @@ impl<'a> DirectApi<'a> {
         };
 
         let is_audio = media.kind().is_audio();
+        let exts = media.remote_extmap().clone();
 
         let midrid = MidRid(mid, rid);
 
@@ -298,6 +307,11 @@ impl<'a> DirectApi<'a> {
         if let Some(rid) = rid {
             media.add_to_rid_tx(rid);
         }
+
+        // Record stream config for event log.
+        self.rtc
+            .session
+            .record_send_stream_config(is_audio, *ssrc, rtx.map(|r| *r), &exts);
 
         let stream = self
             .rtc
