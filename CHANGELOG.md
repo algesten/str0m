@@ -1,7 +1,8 @@
 # Unreleased
 
-  * Expose H265 some already referenced profile structs #948
+  * IceCandidate expose str0m/is-unique local property #951
   * Implement ICE role conflict resolution #950
+  * Expose H265 some already referenced profile structs #948
 
 # 0.18.1
 
