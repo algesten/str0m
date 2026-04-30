@@ -547,7 +547,8 @@ impl Candidate {
         self.ufrag = None;
     }
 
-    pub(crate) fn local(&self) -> SocketAddr {
+    #[doc(hidden)]
+    pub fn local(&self) -> SocketAddr {
         self.local
     }
 
