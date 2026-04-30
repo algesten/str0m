@@ -550,7 +550,8 @@ impl StreamTx {
         }
 
         let seq_no = next.seq_no;
-        if next.kind == NextPacketKind::Regular {
+        let next_kind = next.kind;
+        if next_kind == NextPacketKind::Regular {
             self.last_sent_seq_no = seq_no;
         }
 
@@ -582,11 +583,18 @@ impl StreamTx {
             }
         }
 
+        let rtx_original_seq_no = if let NextPacketKind::Resend(orig) = next_kind {
+            Some(orig)
+        } else {
+            None
+        };
+
         Some(PacketReceipt {
             header,
             seq_no,
             is_padding,
             payload_size: body_len,
+            rtx_original_seq_no,
         })
     }
 

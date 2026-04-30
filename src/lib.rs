@@ -773,6 +773,8 @@ use util::{Soonest, not_happening};
 mod session;
 use session::Session;
 
+mod rtc_event_log;
+
 pub mod stats;
 
 use stats::{CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats};
@@ -950,6 +952,15 @@ pub enum Event {
     /// Should not be enabled outside of tests and troubleshooting.
     RawPacket(Box<RawPacket>),
 
+    /// Serialized RTC event log data (protobuf v2 format).
+    ///
+    /// Write these bytes sequentially to a file to produce a valid
+    /// WebRTC event log parseable by Chrome's tools.
+    ///
+    /// Only emitted when event logging has been enabled via
+    /// [`RtcConfig::enable_rtc_event_log()`].
+    RtcEventLog(Vec<u8>),
+
     /// For internal testing only.
     ///
     /// The probe cluster config when a probe fires.
@@ -1073,6 +1084,9 @@ pub enum Reason {
 
     /// The probe estimator of the BWE subsystem.
     BweProbeEstimator,
+
+    /// RTC event log flushing.
+    EventLog,
 }
 
 impl Rtc {
@@ -1116,7 +1130,7 @@ impl Rtc {
             // this expect message.
             .expect("a crash earlier if no crypto provider was set");
 
-        let session = Session::new(&config);
+        let session = Session::new(&config, start);
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
         let mut ice = IceAgent::with_hmac(local_creds, crypto_provider.sha1_hmac_provider);
@@ -1222,6 +1236,18 @@ impl Rtc {
             debug!("Set alive=false");
             self.alive = false;
         }
+    }
+
+    /// Stop RTC event logging and flush remaining events.
+    ///
+    /// After this call, one or more final `Event::RtcEventLog` events
+    /// will be emitted containing the remaining buffered events and
+    /// the EndLogEvent marker. Drain them via `poll_output()`.
+    ///
+    /// Must be called before dropping the `Rtc` instance to produce a
+    /// complete log file with the EndLogEvent marker.
+    pub fn stop_rtc_event_log(&mut self) {
+        self.session.stop_rtc_event_log(self.last_now);
     }
 
     /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
@@ -1455,6 +1481,12 @@ impl Rtc {
 
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if !self.alive {
+            // Even when not alive, drain any pending event log data (e.g. EndLogEvent
+            // queued by stop_rtc_event_log()). This data is already serialized and
+            // must be delivered so the log file has a proper end marker.
+            if let Some(data) = self.session.poll_event_log() {
+                return Ok(Output::Event(Event::RtcEventLog(data)));
+            }
             self.last_timeout_reason = Reason::NotHappening;
             return Ok(Output::Timeout(not_happening()));
         }

@@ -1,0 +1,13 @@
+[package]
+name = "str0m-rtc-event-log"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85.0"
+description = "WebRTC event log encoder (rtc_event_log2 v2 format) for str0m"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+prost = "0.13"
+
+[build-dependencies]
+prost-build = "0.13"

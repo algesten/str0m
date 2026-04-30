@@ -944,9 +944,17 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     let bundle_mids = offer.bundle_mids();
     let new_lines = sync_medias(session, &offer, true).map_err(RtcError::RemoteSdp)?;
 
+    // Collect mids of new m-lines before they are consumed.
+    let new_mids: Vec<Mid> = new_lines.iter().filter(|m| m.1.typ.is_media()).map(|m| m.1.mid()).collect();
+
     add_new_lines(session, &new_lines, true, bundle_mids).map_err(RtcError::RemoteSdp)?;
 
     ensure_stream_tx(session);
+
+    // Record stream configs for newly added media.
+    for mid in new_mids {
+        session.record_stream_configs_for_mid(mid);
+    }
 
     Ok(())
 }
@@ -968,12 +976,30 @@ fn apply_answer(
         return Err(RtcError::RemoteSdp(err));
     }
 
+    // Collect mids from both new m-lines and pending changes (offerer's pre-allocated streams).
+    // Use the pending mids as the source of truth — these are the mids for which the
+    // offerer created streams. New m-lines come from the same set, so pending_mids
+    // covers both paths without duplication.
+    let pending_mids: Vec<Mid> = pending
+        .0
+        .iter()
+        .filter_map(|c| match c {
+            Change::AddMedia(add) => Some(add.mid),
+            _ => None,
+        })
+        .collect();
+
     add_new_lines(session, &new_lines, false, bundle_mids).map_err(RtcError::RemoteSdp)?;
 
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
 
     ensure_stream_tx(session);
+
+    // Record stream configs for newly added media.
+    for mid in &pending_mids {
+        session.record_stream_configs_for_mid(*mid);
+    }
 
     Ok(())
 }

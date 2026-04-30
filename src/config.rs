@@ -44,6 +44,8 @@ pub struct RtcConfig {
     pub(crate) send_buffer_video: usize,
     pub(crate) rtp_mode: bool,
     pub(crate) enable_raw_packets: bool,
+    pub(crate) enable_rtc_event_log: bool,
+    pub(crate) rtc_event_log_interval: Option<Duration>,
     pub(crate) dtls_version: DtlsVersion,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
@@ -545,6 +547,27 @@ impl RtcConfig {
         self
     }
 
+    /// Enable RTC event logging.
+    ///
+    /// When enabled, str0m will emit [`Event::RtcEventLog(Vec<u8>)`][crate::Event::RtcEventLog]
+    /// events containing serialized protobuf data in WebRTC's rtc_event_log2 format.
+    ///
+    /// Write the bytes sequentially to a file to produce a log parseable by
+    /// Chrome's `webrtc_event_log_visualizer` or any rtc_event_log2 parser.
+    pub fn enable_rtc_event_log(mut self, enabled: bool) -> Self {
+        self.enable_rtc_event_log = enabled;
+        self
+    }
+
+    /// Set the flush interval for event log batches.
+    ///
+    /// Controls how often buffered events are serialized and emitted.
+    /// Default: 2 seconds.
+    pub fn set_rtc_event_log_interval(mut self, interval: Duration) -> Self {
+        self.rtc_event_log_interval = Some(interval);
+        self
+    }
+
     /// Enable SNAP (SCTP Negotiation Acceleration Protocol).
     ///
     /// When enabled, the `a=sctp-init` attribute is included in outgoing SDP
@@ -641,6 +664,8 @@ impl Default for RtcConfig {
             send_buffer_video: 1000,
             rtp_mode: false,
             enable_raw_packets: false,
+            enable_rtc_event_log: false,
+            rtc_event_log_interval: None,
             dtls_version: DtlsVersion::Dtls12,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
