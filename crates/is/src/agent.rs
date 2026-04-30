@@ -344,6 +344,14 @@ impl IceAgent {
         }
     }
 
+    /// Sets the control tie breaker of this agent.
+    ///
+    /// By default, this is randomly generated and per the ICE spec,
+    /// this MUST be the same for the duration of an ICE session.
+    pub fn set_control_tie_breaker(&mut self, tie_breaker: u64) {
+        self.control_tie_breaker = tie_breaker;
+    }
+
     /// The maximum number of candidate pairs to test.
     ///
     /// Any pairs above this limit will be dropped (worst priority first).
