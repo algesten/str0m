@@ -1,6 +1,7 @@
 # Unreleased
 
   * Expose H265 some already referenced profile structs #948
+  * Implement ICE role conflict resolution #950
 
 # 0.18.1
 

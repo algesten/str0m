@@ -214,11 +214,15 @@ impl<'a> StunMessage<'a> {
     }
 
     /// Whether this STUN message is a _successful_ BINDING response.
-    ///
-    /// STUN binding requests are very simple, they just return the observed address.
-    /// As such, they cannot actually fail which is why we don't have `is_failed_binding_response`.
     pub fn is_successful_binding_response(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Success
+    }
+
+    /// Whether this STUN message is a _failed_ BINDING response.
+    ///
+    /// In ICE, this is used for 487 Role Conflict (RFC 8445 §7.3.1.1).
+    pub fn is_failed_binding_response(&self) -> bool {
+        self.method == Method::Binding && self.class == Class::Failure
     }
 
     /// Whether this STUN message is an ALLOCATE request (TURN).
@@ -370,6 +374,16 @@ impl<'a> StunMessage<'a> {
             .binding()
             .success()
             .xor_mapped_address(mapped_address)
+            .build(trans_id)
+    }
+
+    /// Constructs a STUN BINDING error reply with a 487 Role Conflict
+    /// error code (RFC 8445 §7.3.1.1).
+    pub fn binding_role_conflict_reply(trans_id: TransId) -> StunMessage<'a> {
+        StunMessageBuilder::new()
+            .binding()
+            .failure()
+            .error_code(487, "Role Conflict")
             .build(trans_id)
     }
 

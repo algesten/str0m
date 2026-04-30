@@ -147,6 +147,26 @@ struct StunRequest {
     prio: u32,
     use_candidate: bool,
     remote_ufrag: String,
+    ice_controlling: Option<u64>,
+    ice_controlled: Option<u64>,
+}
+
+impl StunRequest {
+    fn role_conflict_tiebreaker(&self, controlling: bool) -> Option<u64> {
+        if controlling {
+            self.ice_controlling
+        } else {
+            self.ice_controlled
+        }
+    }
+}
+
+fn role_name(controlling: bool) -> &'static str {
+    if controlling {
+        "controlling"
+    } else {
+        "controlled"
+    }
 }
 
 const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
@@ -322,6 +342,14 @@ impl IceAgent {
             local_preference: LocalPreferenceHolder(Arc::new(default_local_preference)),
             sha1_hmac_provider,
         }
+    }
+
+    /// Sets the control tie breaker of this agent.
+    ///
+    /// By default, this is randomly generated and per the ICE spec,
+    /// this MUST be the same for the duration of an ICE session.
+    pub fn set_control_tie_breaker(&mut self, tie_breaker: u64) {
+        self.control_tie_breaker = tie_breaker;
     }
 
     /// The maximum number of candidate pairs to test.
@@ -1069,7 +1097,7 @@ impl IceAgent {
                 let belongs_to_a_candidate_pair = self
                     .candidate_pairs
                     .iter()
-                    .any(|pair| pair.has_binding_attempt(message.trans_id()));
+                    .any(|pair| pair.binding_attempt(message.trans_id()).is_some());
 
                 if !belongs_to_a_candidate_pair {
                     trace!(
@@ -1123,6 +1151,8 @@ impl IceAgent {
             self.stun_server_handle_message(now, &packet);
         } else if packet.message.is_successful_binding_response() {
             self.stun_client_handle_response(now, packet.message);
+        } else if packet.message.is_failed_binding_response() {
+            self.stun_client_handle_error(packet.message);
         }
 
         self.emit_event(IceAgentEvent::DiscoveredRecv {
@@ -1339,6 +1369,8 @@ impl IceAgent {
             prio,
             use_candidate,
             remote_ufrag: remote_ufrag.into(),
+            ice_controlling: message.ice_controlling(),
+            ice_controlled: message.ice_controlled(),
         };
 
         if self.remote_credentials.is_some() {
@@ -1384,6 +1416,47 @@ impl IceAgent {
                 Pii(&remote_creds.ufrag)
             );
             return;
+        }
+
+        // Drop requests that did not arrive on one of our local candidates
+        // before doing anything else. We must not mutate state, send replies
+        // (including 487 Role Conflict) or create peer-reflexive candidates
+        // for traffic that isn't actually directed at one of our interfaces.
+        let local_idx = match self.local_candidates.iter().position(|v| {
+            matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
+                && v.addr() == req.destination
+                && v.proto() == req.proto
+        }) {
+            Some(i) => i,
+            None => {
+                // Receiving traffic for an IP address that neither is a HOST nor RELAY
+                // is most likely a configuration fault where the user forgot to add a
+                // candidate for the local interface. We are network-connected application
+                // so we need to handle this gracefully: Log a message and discard the packet.
+                debug!(
+                    "Discarding STUN request on unknown interface: {}",
+                    Pii(req.destination)
+                );
+                return;
+            }
+        };
+
+        // Role conflict detection: if the peer claims the same role as us,
+        // the agent with the higher tiebreaker keeps its role and the loser yields.
+        if let Some(peer_tb) = req.role_conflict_tiebreaker(self.controlling) {
+            debug!(
+                "Role conflict on {} role: ours={}, peer={}",
+                role_name(self.controlling),
+                self.control_tie_breaker,
+                peer_tb,
+            );
+
+            if self.control_tie_breaker >= peer_tb {
+                self.send_role_conflict_reply(&req);
+                return;
+            }
+
+            self.switch_role(!self.controlling);
         }
 
         if req.use_candidate && self.controlling {
@@ -1453,31 +1526,6 @@ impl IceAgent {
             self.remote_candidates.push(c);
 
             self.remote_candidates.len() - 1
-        };
-
-        let local_idx = match self.local_candidates.iter().enumerate().find(|(_, v)| {
-            // The local candidate will be
-            // either a host candidate (for cases where the request was not received
-            // through a relay) or a relayed candidate (for cases where it is
-            // received through a relay).  The local candidate can never be a
-            // server-reflexive candidate.
-            matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
-                && v.addr() == req.destination
-                && v.proto() == req.proto
-        }) {
-            Some((i, _)) => i,
-            None => {
-                // Receiving traffic for an IP address that neither is a HOST nor RELAY
-                // is most likely a configuration fault where the user forgot to add a
-                // candidate for the local interface. We are network-connected application
-                // so we need to handle this gracefully: Log a message and discard the packet.
-
-                debug!(
-                    "Discarding STUN request on unknown interface: {}",
-                    Pii(req.destination)
-                );
-                return;
-            }
         };
 
         let maybe_pair = self
@@ -1572,6 +1620,63 @@ impl IceAgent {
         self.transmit.push_back(trans);
     }
 
+    fn send_role_conflict_reply(&mut self, req: &StunRequest) {
+        let (_, password) = self.stun_credentials(true);
+
+        let reply = StunMessage::binding_role_conflict_reply(req.trans_id);
+
+        debug!(
+            "Reply 487 Role Conflict (keep {} role): {} -> {}",
+            role_name(self.controlling),
+            req.destination,
+            req.source,
+        );
+
+        let mut buf = vec![0_u8; DATAGRAM_MTU];
+
+        let sha1_hmac =
+            |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
+        let n = reply
+            .to_bytes(Some(password.as_bytes()), &mut buf, sha1_hmac)
+            .expect("IO error writing STUN error reply");
+        buf.truncate(n);
+
+        let trans = Transmit {
+            proto: req.proto,
+            source: req.destination,
+            destination: req.source,
+            contents: buf.into(),
+        };
+
+        self.transmit.push_back(trans);
+    }
+
+    /// Switches the controlling/controlled role and recomputes pair priorities
+    /// per RFC 8445 §7.3.1.1.
+    fn switch_role(&mut self, controlling: bool) {
+        if self.controlling == controlling {
+            return;
+        }
+
+        debug!(
+            "Switch role: {} -> {}",
+            role_name(self.controlling),
+            role_name(controlling),
+        );
+
+        self.controlling = controlling;
+
+        for i in 0..self.candidate_pairs.len() {
+            let local_idx = self.candidate_pairs[i].local_idx();
+            let remote_idx = self.candidate_pairs[i].remote_idx();
+            let local_prio = self.local_candidates[local_idx].prio();
+            let remote_prio = self.remote_candidates[remote_idx].prio();
+            let new_prio = CandidatePair::calculate_prio(controlling, remote_prio, local_prio);
+            self.candidate_pairs[i].set_prio(new_prio);
+        }
+        self.candidate_pairs.sort();
+    }
+
     fn stun_client_binding_request(&mut self, now: Instant, pair_idx: usize) {
         let (username, password) = self.stun_credentials(false);
 
@@ -1582,7 +1687,7 @@ impl IceAgent {
         // Only the controlling side sends USE-CANDIDATE.
         let use_candidate = self.controlling && pair.is_nominated();
 
-        let trans_id = pair.new_attempt(now, &self.timing_config);
+        let trans_id = pair.new_attempt(now, &self.timing_config, self.controlling);
 
         self.stats.bind_request_sent += 1;
 
@@ -1621,13 +1726,55 @@ impl IceAgent {
         self.transmit.push_back(trans);
     }
 
+    /// Handle a STUN binding error response.
+    ///
+    /// We only act on 487 (Role Conflict) per RFC 8445 §7.3.1.1: switch to
+    /// the opposite role, but only if the request that triggered the 487 was
+    /// sent under our current role. Otherwise the response is stale —
+    /// in-flight from before an earlier swap — and acting on it would flap.
+    fn stun_client_handle_error(&mut self, message: StunMessage<'_>) {
+        let Some((code, _)) = message.error_code() else {
+            return;
+        };
+        if code != 487 {
+            debug!("Ignoring binding error response with code {code}");
+            return;
+        }
+
+        let trans_id = message.trans_id();
+        let attempt = self
+            .candidate_pairs
+            .iter()
+            .find_map(|p| p.binding_attempt(trans_id));
+
+        let Some(attempt) = attempt else {
+            debug!("Ignore 487 for unknown transaction id");
+            return;
+        };
+
+        if attempt.controlling() != self.controlling {
+            debug!(
+                "Ignore stale 487 (request was sent as {}, we are now {})",
+                role_name(attempt.controlling()),
+                role_name(self.controlling),
+            );
+            return;
+        }
+
+        debug!(
+            "Got 487 Role Conflict, switching from {}",
+            role_name(self.controlling),
+        );
+        self.switch_role(!self.controlling);
+    }
+
     fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
         // Find the candidate pair that this trans_id was sent for.
         let trans_id = message.trans_id();
         let maybe_pair = self
             .candidate_pairs
             .iter_mut()
-            .find(|p| p.has_binding_attempt(trans_id));
+            .find(|p| p.binding_attempt(trans_id).is_some());
 
         self.stats.bind_success_recv += 1;
 
@@ -2342,6 +2489,53 @@ mod test {
         assert!(stun_message.is_successful_binding_response());
     }
 
+    /// On simultaneous controlling/controlling startup, the lower-tiebreaker
+    /// agent typically receives the peer's request first (server-side swap)
+    /// while its own in-flight requests — sent under the old role — are
+    /// still being 487'd by the peer. Each of those stale 487s must be
+    /// ignored, otherwise the role flaps with every retransmit until the
+    /// in-flight drain finishes.
+    #[test]
+    pub fn ignores_stale_487_after_role_swap() {
+        let mut agent = new_test_agent();
+        agent.set_controlling(true);
+        let remote_creds = IceCreds::new();
+        agent.set_remote_credentials(remote_creds.clone());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+        let mut remote_candidate = Candidate::host(ipv4_3(), "udp").unwrap();
+        remote_candidate.set_ufrag(&remote_creds.ufrag);
+        agent.add_remote_candidate(remote_candidate);
+
+        // Drive one binding request out — recorded as `controlling=true`.
+        agent.handle_timeout(Instant::now());
+        let req_payload = Vec::from(agent.poll_transmit().unwrap().contents);
+        let trans_id = StunMessage::parse(&req_payload).unwrap().trans_id();
+
+        // Simulate that an earlier 487 (or a server-side conflict from an
+        // incoming peer request) already moved us to controlled.
+        agent.set_controlling(false);
+
+        // Now the original request's 487 lands. It is stale: the attempt was
+        // sent as controlling, but we are no longer controlling.
+        let reply = make_role_conflict_reply(trans_id, &remote_creds.pass);
+        agent.handle_packet(
+            Instant::now(),
+            StunPacket {
+                proto: Protocol::Udp,
+                source: ipv4_3(),
+                destination: ipv4_1(),
+                message: StunMessage::parse(&reply).unwrap(),
+            },
+        );
+
+        assert!(
+            !agent.controlling(),
+            "stale 487 must not flip role back to controlling"
+        );
+    }
+
     #[test]
     pub fn discards_packet_from_unknown_candidate() {
         let mut agent = new_test_agent();
@@ -2419,6 +2613,11 @@ mod test {
 
     fn make_authenticated_stun_reply(tx_id: TransId, addr: SocketAddr, password: &str) -> Vec<u8> {
         let reply = StunMessage::binding_reply(tx_id, addr);
+        serialize_stun_msg(reply, password)
+    }
+
+    fn make_role_conflict_reply(tx_id: TransId, password: &str) -> Vec<u8> {
+        let reply = StunMessage::binding_role_conflict_reply(tx_id);
         serialize_stun_msg(reply, password)
     }
 
