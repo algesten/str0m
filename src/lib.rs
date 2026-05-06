@@ -1016,7 +1016,9 @@ impl Event {
 pub enum Input<'a> {
     /// A timeout without any network input.
     Timeout(Instant),
-    /// Network input.
+    /// Network input. The [`Instant`] is the time the packet was received from the socket -
+    /// not necessarily "now" (e.g. when UDP demultiplexing runs on a separate thread). It
+    /// drives time forward when more recent than the last "now" the instance has seen.
     Receive(Instant, net::Receive<'a>),
 }
 
@@ -1845,9 +1847,9 @@ impl Rtc {
 
         match input {
             Input::Timeout(now) => self.do_handle_timeout(now)?,
-            Input::Receive(now, r) => {
-                self.do_handle_receive(now, r)?;
-                self.do_handle_timeout(now)?;
+            Input::Receive(recv_time, r) => {
+                self.do_handle_receive(recv_time, r)?;
+                self.do_handle_timeout(recv_time)?;
             }
         }
         Ok(())
