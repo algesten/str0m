@@ -341,6 +341,12 @@ impl PayloadParams {
             score = score.saturating_sub(4);
         }
 
+        // If neither value is specified both sides should assume mono for stereo.
+        let either_stereo_specified = c0.format.stereo.is_some() || c1.format.stereo.is_some();
+        if either_stereo_specified && c0.format.stereo != c1.format.stereo {
+            score = score.saturating_sub(8);
+        }
+
         score
     }
 
