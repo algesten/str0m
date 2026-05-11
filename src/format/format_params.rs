@@ -15,7 +15,7 @@ pub struct FormatParams {
     ///
     /// Allow stereo Opus encoding; actual channel count follows the source track
     ///
-    /// RFC 7587 Section 7.1: https://datatracker.ietf.org/doc/html/rfc7587#section-7.1
+    /// RFC 7587 Section 7.1: <https://datatracker.ietf.org/doc/html/rfc7587#section-7.1>
     pub stereo: Option<bool>,
 
     /// Opus specific parameter.
