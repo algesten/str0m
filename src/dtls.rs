@@ -152,4 +152,11 @@ impl Dtls {
             .handle_timeout(now)
             .map_err(|e| DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))))
     }
+
+    /// Initiate graceful shutdown by sending a close_notify alert.
+    pub fn close(&mut self) -> Result<(), DtlsError> {
+        self.instance
+            .close()
+            .map_err(|e| DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))))
+    }
 }

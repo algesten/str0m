@@ -102,4 +102,8 @@ impl DtlsInstance for AwsLcRsDtlsInstance {
     fn is_active(&self) -> bool {
         self.dtls.is_active()
     }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        self.dtls.close()
+    }
 }

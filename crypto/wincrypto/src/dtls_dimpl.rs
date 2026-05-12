@@ -93,6 +93,10 @@ impl DtlsInstance for WinCryptoDtlsInstance {
     fn is_active(&self) -> bool {
         self.dtls.is_active()
     }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        self.dtls.close()
+    }
 }
 
 // ============================================================================
