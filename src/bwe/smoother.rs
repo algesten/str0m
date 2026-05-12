@@ -12,7 +12,7 @@ const TOLERANCE: f64 = 0.05;
 
 /// Smooths BWE estimates by averaging over a time window.
 pub struct EstimateSmoother {
-    esimates: VecDeque<TimeBitrate>,
+    estimates: VecDeque<TimeBitrate>,
     maybe_emit: bool,
     emitted: Option<Bitrate>,
 }
@@ -20,7 +20,7 @@ pub struct EstimateSmoother {
 impl EstimateSmoother {
     pub fn new() -> Self {
         Self {
-            esimates: VecDeque::new(),
+            estimates: VecDeque::new(),
             maybe_emit: false,
             emitted: None,
         }
@@ -29,23 +29,23 @@ impl EstimateSmoother {
     /// Record a new estimate and update the smoothed average.
     pub fn record(&mut self, now: Instant, estimate: Bitrate) {
         // Did value change from previous?
-        let do_update = self.esimates.back().map(|b| b.1) != Some(estimate);
+        let do_update = self.estimates.back().map(|b| b.1) != Some(estimate);
 
         if do_update {
             self.maybe_emit = true;
-            self.esimates.push_back((now, estimate));
+            self.estimates.push_back((now, estimate));
         }
 
         // Remove entries older than the window.
-        while let Some((time, _)) = self.esimates.front() {
+        while let Some((time, _)) = self.estimates.front() {
             if now.duration_since(*time) > ESTIMATE_WINDOW {
                 // Keep last entry
-                if self.esimates.len() == 1 {
+                if self.estimates.len() == 1 {
                     break;
                 }
 
                 self.maybe_emit = true;
-                self.esimates.pop_front();
+                self.estimates.pop_front();
             } else {
                 break;
             }
@@ -58,17 +58,17 @@ impl EstimateSmoother {
             return None;
         }
 
-        if self.esimates.is_empty() {
+        if self.estimates.is_empty() {
             return None;
         }
 
-        let total: f64 = self.esimates.iter().map(|b| b.1.as_f64()).sum();
-        let avg = total / self.esimates.len() as f64;
+        let total: f64 = self.estimates.iter().map(|b| b.1.as_f64()).sum();
+        let avg = total / self.estimates.len() as f64;
         let rate: Bitrate = avg.into();
 
         // This forces emitting if we have the first ever value, or a last
         // where the rest of the window is gone (estimates stop coming).
-        let force = self.esimates.len() == 1 && self.emitted != Some(rate);
+        let force = self.estimates.len() == 1 && self.emitted != Some(rate);
 
         // Emit if we deviate enough from previously emitted.
         let deviate = if let Some(emitted) = self.emitted {
