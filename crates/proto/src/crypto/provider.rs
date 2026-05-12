@@ -192,6 +192,9 @@ pub trait DtlsInstance: CryptoSafe {
 
     /// Return the negotiated DTLS protocol version. May return `None` before handshake completion.
     fn protocol_version(&self) -> Option<ProtocolVersion>;
+
+    /// Initiate graceful shutdown by sending a DTLS `close_notify` alert.
+    fn close(&mut self) -> Result<(), DtlsImplError>;
 }
 
 // ============================================================================

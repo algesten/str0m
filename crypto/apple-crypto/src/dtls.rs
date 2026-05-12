@@ -169,6 +169,10 @@ impl DtlsInstance for AppleCryptoDtlsInstance {
     fn protocol_version(&self) -> Option<ProtocolVersion> {
         self.dtls.protocol_version()
     }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        self.dtls.close()
+    }
 }
 
 #[cfg(test)]

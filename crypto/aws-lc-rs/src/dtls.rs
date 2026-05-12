@@ -111,4 +111,8 @@ impl DtlsInstance for AwsLcRsDtlsInstance {
     fn protocol_version(&self) -> Option<ProtocolVersion> {
         self.dtls.protocol_version()
     }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        self.dtls.close()
+    }
 }

@@ -1018,6 +1018,9 @@ pub enum Event {
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
 
+    /// We have received the DTLS close packet
+    Closed,
+
     /// Debug output of incoming and outgoing RTCP/RTP packets.
     ///
     /// Enable using [`RtcConfig::enable_raw_packets()`].
@@ -1640,6 +1643,9 @@ impl Rtc {
                     self.next_dtls_timeout = Some(t);
                     break;
                 }
+                DtlsOutput::CloseNotify => {
+                    return Ok(Output::Event(Event::Closed));
+                }
                 other => {
                     return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
                         format!("Unexpected DTLS output: {other:?}"),
@@ -1892,6 +1898,11 @@ impl Rtc {
             }
         }
         Ok(())
+    }
+
+    /// Sends the DTLS close_notify to the remote.
+    pub fn close(&mut self) -> Result<(), RtcError> {
+        Ok(self.dtls.close()?)
     }
 
     fn init_time(&mut self, now: Instant) {
