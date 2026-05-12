@@ -907,10 +907,13 @@ pub enum FormatParam {
     /// Default 3. Max 120.
     MinPTime(u8),
 
-    /// Allow stereo Opus encoding; actual channel count follows the source track
-    ///
-    /// RFC 7587 Section 7.1: https://datatracker.ietf.org/doc/html/rfc7587#section-7.1
+    /// Decoder-side preference for stereo audio. Default is mono per
+    /// RFC 7587 Section 7.1: <https://datatracker.ietf.org/doc/html/rfc7587#section-7.1>
     Stereo(bool),
+
+    /// Sender-side stereo hint for Opus. This is the symmetric m-line companion
+    /// to `stereo` and signals the sender's intention to transmit stereo.
+    SpropStereo(bool),
 
     /// Specifies that the decoder can do Opus in-band FEC
     UseInbandFec(bool),
@@ -971,6 +974,7 @@ impl FormatParam {
             "useinbandfec" => Some(UseInbandFec(v == "1")),
             "usedtx" => Some(UseDtx(v == "1")),
             "stereo" => Some(Stereo(v == "1")),
+            "sprop-stereo" => Some(SpropStereo(v == "1")),
             "level-asymmetry-allowed" => Some(LevelAsymmetryAllowed(v == "1")),
             "packetization-mode" => v.parse().map(PacketizationMode).ok(),
             "profile-level-id" => u32::from_str_radix(v, 16)
@@ -1038,6 +1042,7 @@ impl fmt::Display for FormatParam {
             UseInbandFec(v) => write!(f, "useinbandfec={}", i32::from(*v)),
             UseDtx(v) => write!(f, "usedtx={}", i32::from(*v)),
             Stereo(v) => write!(f, "stereo={}", i32::from(*v)),
+            SpropStereo(v) => write!(f, "sprop-stereo={}", i32::from(*v)),
             LevelAsymmetryAllowed(v) => {
                 write!(f, "level-asymmetry-allowed={}", i32::from(*v))
             }
@@ -1863,11 +1868,12 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             let f = FormatParams {
                 use_dtx: Some(true),
                 stereo: Some(true),
+                sprop_stereo: Some(true),
                 ..Default::default()
             };
 
             let fmtp_str = f.to_string();
-            assert_eq!(fmtp_str, "stereo=1;usedtx=1");
+            assert_eq!(fmtp_str, "stereo=1;sprop-stereo=1;usedtx=1");
 
             let parsed = FormatParams::parse_line(&fmtp_str);
             assert_eq!(parsed, f);
@@ -1883,6 +1889,8 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
 
             let parsed = FormatParams::parse_line(&fmtp_str);
             assert!(parsed.stereo.is_none());
+            assert_eq!(parsed.stereo.unwrap_or(false), false);
+            assert_eq!(parsed.sprop_stereo.unwrap_or(false), false);
         }
     }
 

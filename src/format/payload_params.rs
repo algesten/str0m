@@ -341,9 +341,17 @@ impl PayloadParams {
             score = score.saturating_sub(4);
         }
 
-        // If neither value is specified both sides should assume mono for stereo.
-        let either_stereo_specified = c0.format.stereo.is_some() || c1.format.stereo.is_some();
-        if either_stereo_specified && c0.format.stereo != c1.format.stereo {
+        // If neither value is specified both sides should assume mono for stereo
+        // and the sprop-stereo hint defaults to false.
+        let c0_stereo = c0.format.stereo.unwrap_or(false);
+        let c1_stereo = c1.format.stereo.unwrap_or(false);
+        if c0_stereo != c1_stereo {
+            score = score.saturating_sub(8);
+        }
+
+        let c0_sprop_stereo = c0.format.sprop_stereo.unwrap_or(false);
+        let c1_sprop_stereo = c1.format.sprop_stereo.unwrap_or(false);
+        if c0_sprop_stereo != c1_sprop_stereo {
             score = score.saturating_sub(8);
         }
 
