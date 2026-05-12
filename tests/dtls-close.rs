@@ -87,5 +87,8 @@ fn close_notify_received_by_remote() {
         r_got_closed,
         "R should receive Event::Closed after L sends close_notify"
     );
-    println!("L received reciprocal close_notify: {l_got_closed}");
+    assert!(
+        l_got_closed,
+        "L should receive reciprocal Event::Closed"
+    );
 }
