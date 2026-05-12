@@ -1,3 +1,7 @@
+# Unreleased
+
+  * Add stereo to opus format params #955
+
 # 0.19.0
 
   * Expose H265 some already referenced profile structs #948
