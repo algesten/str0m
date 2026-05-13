@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use sctp_proto::{Association, AssociationHandle, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
-use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
+use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig, TransportConfig};
 
 use snap::{b64_encode, webrtc_transport_config};
 
@@ -29,6 +29,12 @@ pub use error::SctpError;
 /// Bytes that can be buffered inside str0m across all streams.
 const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
 
+/// Maximum message size we advertise in SDP (what we can receive)
+pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
+
+/// Default max message size if remote doesn't advertise
+pub const DEFAULT_REMOTE_MAX_MESSAGE_SIZE: u32 = 64 * 1024;
+
 pub(crate) struct RtcSctp {
     state: RtcSctpState,
     endpoint: Endpoint,
@@ -39,6 +45,7 @@ pub(crate) struct RtcSctp {
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
     client: bool,
+    remote_max_message_size: u32,
     snap_enabled: bool,
     snap_init: Option<SctpInitData>,
 }
@@ -255,6 +262,7 @@ impl RtcSctp {
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
             client: false,
+            remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
             snap_enabled: false,
             snap_init: None,
         }
@@ -269,6 +277,7 @@ impl RtcSctp {
         client: bool,
         now: Instant,
         sctp_init_data: Option<SctpInitData>,
+        remote_max_message_size: Option<u32>,
     ) -> Result<(), SctpError> {
         if self.state != RtcSctpState::Uninited {
             return Err(SctpError::Proto(ProtoError::Other(
@@ -278,6 +287,10 @@ impl RtcSctp {
 
         self.client = client;
         self.last_now = now;
+
+        if let Some(max_msg_size) = remote_max_message_size {
+            self.remote_max_message_size = max_msg_size;
+        }
 
         if let Some(snap_data) = sctp_init_data {
             // SNAP path: both local and remote INIT chunks must be present.
@@ -309,7 +322,16 @@ impl RtcSctp {
             set_state(&mut self.state, RtcSctpState::Established);
         } else if client {
             // Normal client path: initiate the SCTP association.
-            let config = SctpInitData::default().into_client_config();
+            let mut config = SctpInitData::default().into_client_config();
+
+            config.transport = Arc::new(
+                TransportConfig::default()
+                    .with_max_init_retransmits(None)
+                    .with_max_data_retransmits(None)
+                    .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
+                    .with_max_send_message_size(self.remote_max_message_size),
+            );
+
             debug!("New local association (out-of-band: false)");
             let (handle, assoc) = self
                 .endpoint
@@ -663,6 +685,7 @@ impl RtcSctp {
 
         while let Some(e) = assoc.poll() {
             if let Event::Connected = e {
+                assoc.set_max_send_message_size(self.remote_max_message_size);
                 set_state(&mut self.state, RtcSctpState::Established);
                 return self.poll();
             }
@@ -937,6 +960,11 @@ impl RtcSctp {
             .find(|s| s.id == sctp_stream_id)
             .and_then(|s| s.config.as_ref())
     }
+
+    #[cfg(test)]
+    pub(crate) fn remote_max_message_size(&self) -> u32 {
+        self.remote_max_message_size
+    }
 }
 
 fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Vec<u8>>> {
@@ -1104,7 +1132,7 @@ mod tests {
 
         init_data.local_init_chunk().unwrap();
 
-        let err = sctp.init(true, now, Some(init_data)).unwrap_err();
+        let err = sctp.init(true, now, Some(init_data), None).unwrap_err();
         assert!(
             err.to_string()
                 .contains("SNAP requires both local and remote SCTP INIT chunks")
@@ -1128,8 +1156,8 @@ mod tests {
         let mut client = RtcSctp::new();
         let mut server = RtcSctp::new();
 
-        client.init(true, now, None).unwrap();
-        server.init(false, now, None).unwrap();
+        client.init(true, now, None, None).unwrap();
+        server.init(false, now, None, None).unwrap();
 
         // Exchange packets until both are Established.
         for _ in 0..20 {

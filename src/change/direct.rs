@@ -1,5 +1,5 @@
-use crate::Candidate;
-use crate::IceCreds;
+use is::{Candidate, IceCreds};
+
 use crate::Rtc;
 use crate::RtcError;
 use crate::channel::ChannelId;
@@ -116,7 +116,7 @@ impl<'a> DirectApi<'a> {
     /// connecting party.
     pub fn start_sctp(&mut self, client: bool) {
         self.rtc
-            .try_init_sctp(client, None)
+            .try_init_sctp(client, None, None)
             .expect("starting SCTP should be infallible")
     }
 
@@ -152,7 +152,7 @@ impl<'a> DirectApi<'a> {
         client: bool,
         sctp_init_data: SctpInitData,
     ) -> Result<(), RtcError> {
-        self.rtc.try_init_sctp(client, Some(sctp_init_data))
+        self.rtc.try_init_sctp(client, Some(sctp_init_data), None)
     }
 
     /// Create a new data channel.
