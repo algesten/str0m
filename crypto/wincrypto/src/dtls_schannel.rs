@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::dtls::{KeyingMaterial, SrtpProfile};
-use str0m_proto::crypto::{CryptoError, DtlsVersion};
+use str0m_proto::crypto::{CryptoError, DtlsConfig, DtlsVersion};
 
 use crate::sys::{Certificate, Dtls, DtlsEvent};
 
@@ -42,9 +42,9 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         &self,
         cert: &DtlsCert,
         _now: Instant,
-        dtls_version: DtlsVersion,
+        dtls_config: &DtlsConfig,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
-        if !matches!(dtls_version, DtlsVersion::Dtls12 | DtlsVersion::Auto) {
+        if !matches!(dtls_config.version, DtlsVersion::Dtls12 | DtlsVersion::Auto) {
             return Err(CryptoError::Other(
                 "WinCrypto DTLS provider only supports DTLS 1.2 without dimpl. \
                  Enable the str0m-wincrypto-dimpl feature for DTLS 1.3/Auto."
