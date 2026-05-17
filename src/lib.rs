@@ -865,6 +865,7 @@ pub use error::RtcError;
 /// ```
 pub struct Rtc {
     alive: bool,
+    closing: bool,
     ice: IceAgent,
     dtls: Dtls,
     dtls_connected: bool,
@@ -1199,6 +1200,7 @@ impl Rtc {
 
         Ok(Rtc {
             alive: true,
+            closing: false,
             ice,
             dtls: Dtls::new(
                 &dtls_cert,
@@ -1397,6 +1399,10 @@ impl Rtc {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
 
+        if !self.alive  || self.closing {
+            return None;
+        }
+
         // This does not catch potential RIDs required to send simulcast, but
         // it's a good start. An error might arise later on RID mismatch.
         self.session.media_by_mid_mut(mid)?;
@@ -1506,6 +1512,46 @@ impl Rtc {
             return Ok(Output::Timeout(not_happening()));
         }
 
+        if self.closing {
+            // Drain DTLS output to collect packets and detect incoming CloseNotify
+            match self.dtls.poll_output(&mut self.dtls_buf) {
+                DtlsOutput::CloseNotify => {
+                    return Ok(Output::Event(Event::Closed));
+                }
+                _ => {}
+            }
+
+            // Transmit any pending DTLS packets (e.g. the close_notify record)
+            if let Some(send) = &self.send_addr {
+                if let Some(contents) = self.dtls.poll_packet() {
+                    let t = net::Transmit {
+                        proto: send.proto,
+                        source: send.source,
+                        destination: send.destination,
+                        contents,
+                    };
+                    return Ok(Output::Transmit(t));
+                }
+            }
+
+            let time_and_reason =
+                (None, Reason::NotHappening).soonest((self.next_dtls_timeout, Reason::DTLS));
+
+            let time = time_and_reason.0.unwrap_or_else(not_happening);
+            let reason = time_and_reason.1;
+
+            // We want to guarantee time doesn't go backwards.
+            let next = if time < self.last_now {
+                self.last_now
+            } else {
+                time
+            };
+
+            self.last_timeout_reason = reason;
+
+            return Ok(Output::Timeout(next));
+        }
+
         while let Some(e) = self.ice.poll_event() {
             match e {
                 IceAgentEvent::IceRestart(_) => {
@@ -1605,6 +1651,7 @@ impl Rtc {
                     break;
                 }
                 DtlsOutput::CloseNotify => {
+                    self.closing = true;
                     return Ok(Output::Event(Event::Closed));
                 }
                 other => {
@@ -1863,6 +1910,7 @@ impl Rtc {
 
     /// Sends the DTLS close_notify to the remote.
     pub fn close(&mut self) -> Result<(), RtcError> {
+        self.closing = true;
         Ok(self.dtls.close()?)
     }
 
@@ -1927,6 +1975,17 @@ impl Rtc {
 
         self.peer_bytes_rx += bytes_rx as u64;
 
+        if self.closing {
+            // We are closing, process only DTLS close_notify
+            match r.contents.inner {
+                Dtls(dtls) => self.dtls.handle_receive(dtls)?,
+                _ => {
+                    // Ignore everything else
+                }
+            }
+            return Ok(());
+        }
+
         match r.contents.inner {
             Stun(stun) => {
                 let packet = is::stun::StunPacket {
@@ -1962,7 +2021,7 @@ impl Rtc {
     /// // TODO write data channel data.
     /// ```
     pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
-        if !self.alive {
+        if !self.alive || self.closing {
             return None;
         }
 
