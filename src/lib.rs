@@ -1438,7 +1438,7 @@ impl Rtc {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
 
-        if !self.alive  || self.closing {
+        if !self.alive || self.closing {
             return None;
         }
 
