@@ -1553,11 +1553,8 @@ impl Rtc {
 
         if self.closing {
             // Drain DTLS output to collect packets and detect incoming CloseNotify
-            match self.dtls.poll_output(&mut self.dtls_buf) {
-                DtlsOutput::CloseNotify => {
-                    return Ok(Output::Event(Event::Closed));
-                }
-                _ => {}
+            if let DtlsOutput::CloseNotify = self.dtls.poll_output(&mut self.dtls_buf) {
+                return Ok(Output::Event(Event::Closed));
             }
 
             // Transmit any pending DTLS packets (e.g. the close_notify record)
