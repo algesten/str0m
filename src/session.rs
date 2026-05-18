@@ -22,7 +22,9 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
+use crate::rtp_::RtcpPacket;
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
+use crate::rtp_::{ReceiverReport, ReceptionReport, ReportList};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
@@ -107,6 +109,12 @@ pub(crate) struct Session {
     feedback_tx: VecDeque<Rtcp>,
     feedback_rx: VecDeque<Rtcp>,
 
+    // Standalone PsfbApp queue — sent in their own SRTCP datagrams (not bundled with SR/RR).
+    // This is needed for MIRE interop where the RTCP multiplexer routes based on the first
+    // SSRC in the compound packet. If PsfbApp is bundled with an audio SR/RR, it gets routed
+    // to the audio RTP session instead of the video session.
+    standalone_psfb_tx: VecDeque<Rtcp>,
+
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
     // Pending PsfbApp (PSFB FMT=15) messages to emit as events.
@@ -171,6 +179,7 @@ impl Session {
             vp9_packetizer_mode: config.vp9_packetizer_mode,
             feedback_tx: VecDeque::new(),
             feedback_rx: VecDeque::new(),
+            standalone_psfb_tx: VecDeque::new(),
             raw_packets: if config.enable_raw_packets {
                 Some(VecDeque::new())
             } else {
@@ -215,6 +224,13 @@ impl Session {
         // Whether we're active or passive determines if we use the left or right
         // hand side of the key material to derive input/output.
         let left = active;
+
+        // Debug: log keying material and role for SRTP key mismatch diagnosis
+        warn!(
+            "SRTP set_keying_material: active={}, left={}, profile={:?}, keying_material_len={}, keying_material_hex={}",
+            active, left, srtp_profile, mat.len(),
+            mat.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join("")
+        );
 
         self.srtp_rx = Some(SrtpContext::new(crypto, srtp_profile, &mat, !left));
         self.srtp_tx = Some(SrtpContext::new(crypto, srtp_profile, &mat, left));
@@ -311,7 +327,12 @@ impl Session {
 
     /// Enqueue a PsfbApp (PSFB FMT=15) message for transmission.
     pub fn send_psfb_app(&mut self, psfb: crate::rtp_::PsfbApp) {
-        self.feedback_tx.push_back(Rtcp::PsfbApp(psfb));
+        // Send PsfbApp in its own standalone SRTCP datagram, not bundled with SR/RR.
+        // This ensures the RTCP multiplexer on the remote side routes it based on the
+        // PsfbApp's sender_ssrc (video SSRC) rather than the SR/RR's SSRC (audio SSRC).
+        warn!("send_psfb_app: enqueuing PsfbApp sender_ssrc={:?}, payload_len={}, queue_depth={}",
+            psfb.sender_ssrc, psfb.payload.len(), self.standalone_psfb_tx.len());
+        self.standalone_psfb_tx.push_back(Rtcp::PsfbApp(psfb));
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
@@ -749,6 +770,7 @@ impl Session {
         }
 
         let x = None
+            .or_else(|| self.poll_standalone_psfb())
             .or_else(|| self.poll_feedback())
             .or_else(|| self.poll_packet(now));
 
@@ -769,6 +791,84 @@ impl Session {
     pub fn clear_feedback(&mut self) {
         self.feedback_rx.clear();
         self.feedback_tx.clear();
+        self.standalone_psfb_tx.clear();
+    }
+
+    /// Send each PsfbApp as a valid RTCP compound packet (RR + PsfbApp).
+    /// RFC 3550 requires compound packets to start with SR or RR. A bare PsfbApp
+    /// would be rejected by MP's RtpMultiplexer. We prepend an empty RR with the
+    /// same sender_ssrc so the multiplexer routes the compound packet to the
+    /// correct RTP session (video) based on the first SSRC.
+    fn poll_standalone_psfb(&mut self) -> Option<net::DatagramSend> {
+        if self.standalone_psfb_tx.is_empty() {
+            return None;
+        }
+
+        trace!("poll_standalone_psfb: queue has {} items", self.standalone_psfb_tx.len());
+
+        const ENCRYPTABLE_MTU: usize = (DATAGRAM_MTU - SRTCP_OVERHEAD) & !3;
+        let mut data = vec![0_u8; ENCRYPTABLE_MTU];
+
+        // Take one PsfbApp at a time.
+        let psfb = self.standalone_psfb_tx.pop_front()?;
+
+        // Extract sender_ssrc from the PsfbApp inside the Rtcp enum.
+        let sender_ssrc = match &psfb {
+            Rtcp::PsfbApp(p) => {
+                trace!("poll_standalone_psfb: PsfbApp sender_ssrc={:?}, media_ssrc={:?}, payload_len={}",
+                    p.sender_ssrc, p.media_ssrc, p.payload.len());
+                p.sender_ssrc
+            }
+            _ => {
+                warn!("poll_standalone_psfb: non-PsfbApp in standalone queue, dropping");
+                return None;
+            }
+        };
+
+        // Build a compound packet: RR (with report block) + PsfbApp.
+        // The RR ensures RFC 3550 compliance. The report block's SSRC allows
+        // MP's RtpMultiplexer::CheckSSRCInRange to route the compound packet
+        // to the correct RTP session (video). An empty RR (no report blocks)
+        // would not match any SSRC range and get misrouted.
+        let mut reports = ReportList::new();
+        // Extract media_ssrc from PsfbApp to use as the reported-on SSRC.
+        // This is the MP's video ingress SSRC, which falls in the video session's range.
+        let media_ssrc = match &psfb {
+            Rtcp::PsfbApp(p) if p.media_ssrc != Ssrc::from(0u32) => p.media_ssrc,
+            _ => sender_ssrc, // fallback: use sender_ssrc
+        };
+        reports.push(crate::rtp_::ReceptionReport {
+            ssrc: media_ssrc,
+            fraction_lost: 0,
+            packets_lost: 0,
+            max_seq: 0,
+            jitter: 0,
+            last_sr_time: 0,
+            last_sr_delay: 0,
+        });
+        let mut compound = VecDeque::new();
+        compound.push_back(Rtcp::ReceiverReport(ReceiverReport {
+            sender_ssrc,
+            reports,
+        }));
+        compound.push_back(psfb);
+
+        let len = Rtcp::write_packet(&mut compound, &mut data, |_| {});
+        if len == 0 {
+            warn!("poll_standalone_psfb: write_packet returned 0 bytes");
+            return None;
+        }
+        data.truncate(len);
+
+        trace!("poll_standalone_psfb: compound packet {} bytes (RR + PsfbApp)", len);
+
+        let Some(srtp) = self.srtp_tx.as_mut() else {
+            warn!("poll_standalone_psfb: srtp_tx not available, dropping PsfbApp");
+            return None;
+        };
+        let protected = srtp.protect_rtcp(&data);
+        trace!("poll_standalone_psfb: SRTCP protected, sending {} bytes", protected.len());
+        Some(protected.into())
     }
 
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
