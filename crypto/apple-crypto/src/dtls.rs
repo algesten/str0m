@@ -160,6 +160,10 @@ impl DtlsInstance for AppleCryptoDtlsInstance {
     fn is_active(&self) -> bool {
         self.dtls.is_active()
     }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        self.dtls.close()
+    }
 }
 
 #[cfg(test)]
