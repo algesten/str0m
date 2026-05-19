@@ -15,7 +15,7 @@ mod sha256;
 use sha256::WinCryptoSha256Provider;
 
 #[cfg(feature = "dimpl")]
-mod dimpl_provider;
+pub mod dimpl_provider;
 #[cfg_attr(feature = "dimpl", path = "dtls_dimpl.rs")]
 #[cfg_attr(not(feature = "dimpl"), path = "dtls_schannel.rs")]
 mod dtls;
