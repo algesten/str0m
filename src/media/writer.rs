@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::RtcError;
@@ -131,7 +132,7 @@ impl<'a> Writer<'a> {
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
-        data: impl Into<Vec<u8>>,
+        data: impl Into<Arc<[u8]>>,
     ) -> Result<(), RtcError> {
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
@@ -146,7 +147,7 @@ impl<'a> Writer<'a> {
             }
         }
 
-        let data: Vec<u8> = data.into();
+        let data: Arc<[u8]> = data.into();
 
         trace!(
             "write {:?} {:?} {:?} time: {:?} len: {}",

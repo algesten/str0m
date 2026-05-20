@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::media::KeyframeRequestKind;
@@ -448,7 +449,7 @@ impl StreamRx {
         &mut self,
         now: Instant,
         header: RtpHeader,
-        data: Vec<u8>,
+        payload: Arc<[u8]>,
         seq_no: SeqNo,
         time: MediaTime,
     ) -> RtpPacket {
@@ -468,7 +469,7 @@ impl StreamRx {
             seq_no,
             time,
             header,
-            payload: data,
+            payload,
             nackable: false,
             last_sender_info: self.sender_info.as_ref().map(|l| l.info),
             timestamp: now,
@@ -480,11 +481,12 @@ impl StreamRx {
         packet
     }
 
-    pub(crate) fn un_rtx(&self, header: &mut RtpHeader, data: &mut Vec<u8>, pt: Pt) {
+    /// Rewrites the header to be the un-RTX'd original packet, and returns
+    /// `data` with the original sequence number prefix stripped.
+    pub(crate) fn un_rtx<'a>(&self, header: &mut RtpHeader, data: &'a [u8], pt: Pt) -> &'a [u8] {
         let mut orig_seq_no_16 = 0;
 
         let n = RtpHeader::read_original_sequence_number(data, &mut orig_seq_no_16);
-        data.drain(0..n);
 
         trace!(
             "Repaired seq no {} -> {}",
@@ -496,6 +498,8 @@ impl StreamRx {
         header.ssrc = self.ssrc;
         header.payload_type = pt;
         header.ext_vals.rid = header.ext_vals.rid_repair.take();
+
+        &data[n..]
     }
 
     pub(crate) fn maybe_create_keyframe_request(

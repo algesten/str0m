@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self};
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -61,7 +62,7 @@ pub struct RtpPacket {
     pub header: RtpHeader,
 
     /// RTP payload. This contains no header.
-    pub payload: Vec<u8>,
+    pub payload: Arc<[u8]>,
 
     /// str0m server timestamp.
     ///
@@ -112,7 +113,7 @@ impl RtpPacket {
                 payload_type: BLANK_PACKET_DEFAULT_PT,
                 ..Default::default()
             },
-            payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
+            payload: Arc::default(), // This payload is never used. See RtpHeader::create_padding_packet
             nackable: false,
             last_sender_info: None,
             timestamp: already_happened(),

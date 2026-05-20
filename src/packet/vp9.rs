@@ -68,7 +68,7 @@ pub struct Vp9CodecExtra {
     /// // We want to receive S1T2 layer.
     /// let (target_spatial, target_temporal) = (1u8, 2u8);
     ///
-    /// let mut media_data: MediaData = todo!();
+    /// let media_data: MediaData = todo!();
     ///
     /// if let CodecExtra::Vp9(vp9_extra) = media_data.codec_extra {
     ///     // Try to get current `temporal layer`. If `None` there is no SVC.
@@ -80,9 +80,8 @@ pub struct Vp9CodecExtra {
     ///             // border of data for the target `spatial layer`.
     ///             vp9_extra.layers_scheme[target_spatial as usize],
     ///         ) {
-    ///             // Cut off unwanted data of `spatial layer`s with spatial
-    ///             // indeces higher than `target_spatial`.
-    ///             media_data.data.drain(end_of_target_layer..);
+    ///             // Keep only the bytes for spatial layers up to `target_spatial`.
+    ///             let data = &media_data.data[..end_of_target_layer];
     ///         }
     ///     }
     /// }
