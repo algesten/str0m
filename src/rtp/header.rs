@@ -131,16 +131,15 @@ impl RtpHeader {
         rounded_len
     }
 
-    pub(crate) fn unpad_payload(buf: &mut Vec<u8>) -> bool {
+    /// Returns `buf` with any trailing SRTP padding removed, or `None` if the
+    /// trailing padding length is invalid.
+    pub(crate) fn unpad_payload(buf: &[u8]) -> Option<&[u8]> {
         if buf.is_empty() {
-            return true;
+            return Some(buf);
         }
         let pad_len = buf[buf.len() - 1] as usize;
-        let Some(unpadded_len) = buf.len().checked_sub(pad_len) else {
-            return false;
-        };
-        buf.truncate(unpadded_len);
-        true
+        let unpadded_len = buf.len().checked_sub(pad_len)?;
+        Some(&buf[..unpadded_len])
     }
 
     pub(crate) fn parse(buf: &[u8], exts: &ExtensionMap) -> Option<RtpHeader> {
@@ -921,11 +920,10 @@ mod test {
 
     #[test]
     fn truncate_off_srtp_padding() {
-        let truncate = |mut payload| -> Result<Vec<u8>, ()> {
-            if RtpHeader::unpad_payload(&mut payload) {
-                Ok(payload)
-            } else {
-                Err(())
+        let truncate = |payload: Vec<u8>| -> Result<Vec<u8>, ()> {
+            match RtpHeader::unpad_payload(&payload) {
+                Some(unpadded) => Ok(unpadded.to_vec()),
+                None => Err(()),
             }
         };
 
