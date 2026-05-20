@@ -48,7 +48,7 @@ impl Payloader {
             ..
         } = to_payload;
 
-        let chunks = self.pack.packetize(mtu, &data)?;
+        let chunks = self.pack.packetize(mtu, data.as_ref())?;
         let len = chunks.len();
 
         for (idx, data) in chunks.into_iter().enumerate() {

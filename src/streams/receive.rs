@@ -468,7 +468,7 @@ impl StreamRx {
             seq_no,
             time,
             header,
-            payload: data,
+            payload: data.into(),
             nackable: false,
             last_sender_info: self.sender_info.as_ref().map(|l| l.info),
             timestamp: now,
