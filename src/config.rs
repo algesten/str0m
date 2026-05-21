@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::meta::Meta;
 use crate::Rtc;
 use crate::config::DtlsCert;
 use crate::crypto::CryptoProvider;
@@ -610,6 +611,11 @@ impl RtcConfig {
 
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self, start: Instant) -> Rtc {
+        Rtc::new_from_config(self, start).expect("Failed to create Rtc from config")
+    }
+
+    /// Create a [`Rtc`] with a custom [`Meta`] implementation.
+    pub fn build_meta<M: Meta>(self, start: Instant) -> Rtc<M> {
         Rtc::new_from_config(self, start).expect("Failed to create Rtc from config")
     }
 }

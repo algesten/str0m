@@ -17,6 +17,7 @@ use str0m::net::Protocol;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
+use str0m::meta::Meta;
 use str0m::{DefaultMeta, Event, Input, Output, Rtc, RtcError};
 use tracing::Span;
 use tracing::info_span;
@@ -69,9 +70,9 @@ impl AsRef<[u8]> for PendingPacket {
     }
 }
 
-pub struct TestRtc {
+pub struct TestRtc<M: Meta = DefaultMeta> {
     pub span: Span,
-    pub rtc: Rtc,
+    pub rtc: Rtc<M>,
     pub start: Instant,
     pub last: Instant,
     pub events: Vec<(Instant, Event)>,
@@ -90,8 +91,10 @@ impl TestRtc {
 
         Self::new_with_rtc(peer.span(), rtc)
     }
+}
 
-    pub fn new_with_rtc(span: Span, rtc: Rtc) -> Self {
+impl<M: Meta> TestRtc<M> {
+    pub fn new_with_rtc(span: Span, rtc: Rtc<M>) -> Self {
         let now = Instant::now();
         TestRtc {
             span,
@@ -188,7 +191,7 @@ impl TestRtc {
 ///
 /// Pick the earliest, process it, then try to progress again for any
 /// more even that is within 5ms of the first time.
-pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
+pub fn progress<M: Meta>(l: &mut TestRtc<M>, r: &mut TestRtc<M>) -> Result<(), RtcError> {
     let mut first_time = None;
 
     loop {
@@ -228,9 +231,9 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
     Ok(())
 }
 
-fn progress_one(
-    l: &mut TestRtc,
-    r: &mut TestRtc,
+fn progress_one<M: Meta>(
+    l: &mut TestRtc<M>,
+    r: &mut TestRtc<M>,
     time: Instant,
     is_l: bool,
     is_netem: bool,
@@ -254,8 +257,8 @@ fn progress_one(
 }
 
 /// Deliver one packet from rtc.pending to rtc. No timeout processing.
-fn netem_to_rtc(
-    rtc: &mut TestRtc,
+fn netem_to_rtc<M: Meta>(
+    rtc: &mut TestRtc<M>,
     time: Instant,
     other_netem: &mut Netem<PendingPacket>,
 ) -> Result<(), RtcError> {
@@ -282,8 +285,8 @@ fn netem_to_rtc(
 }
 
 /// Process rtc timeout and poll until next timeout, queueing transmits in other_netem.
-fn rtc_timeout(
-    rtc: &mut TestRtc,
+fn rtc_timeout<M: Meta>(
+    rtc: &mut TestRtc<M>,
     time: Instant,
     other_netem: &mut Netem<PendingPacket>,
 ) -> Result<(), RtcError> {
@@ -295,8 +298,8 @@ fn rtc_timeout(
     Ok(())
 }
 
-fn rtc_poll_to_timeout(
-    rtc: &mut TestRtc,
+fn rtc_poll_to_timeout<M: Meta>(
+    rtc: &mut TestRtc<M>,
     time: Instant,
     other_netem: &mut Netem<PendingPacket>,
 ) -> Result<(), RtcError> {
@@ -330,9 +333,9 @@ fn rtc_poll_to_timeout(
 ///
 /// The closure is passed the [`SdpApi`] for the offer side to make any changes, these are then
 /// applied locally and the offer is negotiated with the answerer.
-pub fn negotiate<F, R>(offerer: &mut TestRtc, answerer: &mut TestRtc, mut do_change: F) -> R
+pub fn negotiate<M: Meta, F, R>(offerer: &mut TestRtc<M>, answerer: &mut TestRtc<M>, mut do_change: F) -> R
 where
-    F: FnMut(&mut SdpApi<'_, DefaultMeta>) -> R,
+    F: FnMut(&mut SdpApi<'_, M>) -> R,
 {
     let (offer, pending, result) = offerer.span.in_scope(|| {
         let mut change = offerer.rtc.sdp_api();
@@ -359,8 +362,8 @@ where
     result
 }
 
-impl Deref for TestRtc {
-    type Target = Rtc;
+impl<M: Meta> Deref for TestRtc<M> {
+    type Target = Rtc<M>;
 
     fn deref(&self) -> &Self::Target {
         &self.rtc
