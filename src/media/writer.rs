@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use crate::RtcError;
 use crate::format::PayloadParams;
+use crate::meta::Meta;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
@@ -14,19 +15,19 @@ use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid
 ///
 /// This is the Frame Level API. For RTP level see
 /// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
-pub struct Writer<'a> {
-    session: &'a mut Session,
+pub struct Writer<'a, M: Meta> {
+    session: &'a mut Session<M>,
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
     ext_vals: ExtensionValues,
 }
 
-impl<'a> Writer<'a> {
+impl<'a, M: Meta> Writer<'a, M> {
     /// Create a new writer object.
     ///
     /// The `mid` parameter is required to have a corresponding media in `self.session`.
-    pub(crate) fn new(session: &'a mut Session, mid: Mid) -> Self {
+    pub(crate) fn new(session: &'a mut Session<M>, mid: Mid) -> Self {
         Writer {
             session,
             mid,
@@ -131,8 +132,9 @@ impl<'a> Writer<'a> {
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
-        data: impl Into<Vec<u8>>,
+        data: impl Into<M::Input>,
     ) -> Result<(), RtcError> {
+        let data: M::Input = data.into();
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
@@ -146,15 +148,13 @@ impl<'a> Writer<'a> {
             }
         }
 
-        let data: Vec<u8> = data.into();
-
         trace!(
             "write {:?} {:?} {:?} time: {:?} len: {}",
             self.mid,
             self.rid,
             pt,
             rtp_time,
-            data.len()
+            data.as_ref().len()
         );
 
         let to_payload = ToPayload {
@@ -236,6 +236,6 @@ impl<'a> Writer<'a> {
 /// Get a &mut Media in a slice for a `mid`.
 ///
 /// `mid` must be resolvable or panic will ensue.
-fn media_by_mid_mut(medias: &mut [Media], mid: Mid) -> &mut Media {
+fn media_by_mid_mut<M: Meta>(medias: &mut [Media<M>], mid: Mid) -> &mut Media<M> {
     medias.iter_mut().find(|m| m.mid() == mid).unwrap()
 }

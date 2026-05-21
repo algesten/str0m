@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::RtcError;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
+use crate::meta::Meta;
 use crate::io::DATAGRAM_MTU;
 use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::ExtensionMap;
@@ -40,9 +41,8 @@ pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt,
 /// These probes carry `transport_cc` for TWCC feedback but no real media.
 pub(crate) const MID_PROBE: Mid = Mid::from_array(*b"~]probe\0\0\0\0\0\0\0\0\0");
 
-#[derive(Debug)]
 /// Information about some configured media.
-pub struct Media {
+pub struct Media<M: Meta> {
     // ========================================= RTP level =========================================
     //
     /// Identifier of this media.
@@ -134,7 +134,7 @@ pub struct Media {
     payloaders: HashMap<(Pt, Option<Rid>), Payloader>,
 
     /// Frames to payload. Should typically only be 0 or 1.
-    to_payload: VecDeque<ToPayload>,
+    to_payload: VecDeque<ToPayload<M>>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -184,18 +184,17 @@ impl Rids {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct ToPayload {
+pub(crate) struct ToPayload<M: Meta> {
     pub pt: Pt,
     pub rid: Option<Rid>,
     pub wallclock: Instant,
     pub rtp_time: MediaTime,
     pub start_of_talk_spurt: bool,
-    pub data: Vec<u8>,
+    pub data: M::Input,
     pub ext_vals: ExtensionValues,
 }
 
-impl Media {
+impl<M: Meta> Media<M> {
     /// Identifier of the media.
     ///
     /// RTP level.
@@ -275,8 +274,8 @@ impl Media {
     /// To test whether it's possible to send media with the current direction, use
     ///
     /// ```no_run
-    /// # use str0m::media::Media;
-    /// let media: Media = todo!(); // Get hold of media row.
+    /// # use str0m::{DefaultMeta, media::Media};
+    /// let media: Media<DefaultMeta> = todo!(); // Get hold of media row.
     /// if media.direction().is_sending() {
     ///     // media.write(...);
     /// }
@@ -441,7 +440,7 @@ impl Media {
         })
     }
 
-    fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
+    fn set_to_payload(&mut self, to_payload: ToPayload<M>) -> Result<(), RtcError> {
         if self.to_payload.len() > 100 {
             return Err(RtcError::WriteWithoutPoll);
         }
@@ -568,7 +567,7 @@ impl Media {
     }
 }
 
-impl Default for Media {
+impl<M: Meta> Default for Media<M> {
     fn default() -> Self {
         Self {
             mid: Mid::new(),
@@ -594,7 +593,7 @@ impl Default for Media {
     }
 }
 
-impl Media {
+impl<M: Meta> Media<M> {
     pub(crate) fn from_remote_media_line(
         l: &MediaLine,
         index: usize,
@@ -638,7 +637,7 @@ impl Media {
         }
     }
 
-    pub(crate) fn from_app_tmp(mid: Mid, index: usize) -> Media {
+    pub(crate) fn from_app_tmp(mid: Mid, index: usize) -> Media<M> {
         Media {
             mid,
             index,
@@ -652,7 +651,7 @@ impl Media {
         index: usize,
         kind: MediaKind,
         exts: ExtensionMap,
-    ) -> Media {
+    ) -> Media<M> {
         Media {
             mid,
             index,

@@ -5,6 +5,7 @@ use std::{fmt, str, time::Instant};
 
 use crate::sctp::RtcSctp;
 use crate::util::already_happened;
+use crate::meta::Meta;
 use crate::{Rtc, RtcError};
 
 pub use crate::sctp::ChannelConfig;
@@ -39,13 +40,13 @@ pub struct ChannelData {
 /// Channel for sending data to the remote peer.
 ///
 /// Get this handle from [`Rtc::channel()`][crate::Rtc::channel()].
-pub struct Channel<'a> {
+pub struct Channel<'a, M: Meta> {
     sctp_stream_id: u16,
-    rtc: &'a mut Rtc,
+    rtc: &'a mut Rtc<M>,
 }
 
-impl<'a> Channel<'a> {
-    pub(crate) fn new(sctp_stream_id: u16, rtc: &'a mut Rtc) -> Self {
+impl<'a, M: Meta> Channel<'a, M> {
+    pub(crate) fn new(sctp_stream_id: u16, rtc: &'a mut Rtc<M>) -> Self {
         Channel {
             rtc,
             sctp_stream_id,

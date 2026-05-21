@@ -17,7 +17,7 @@ use str0m::net::Protocol;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
-use str0m::{Event, Input, Output, Rtc, RtcError};
+use str0m::{DefaultMeta, Event, Input, Output, Rtc, RtcError};
 use tracing::Span;
 use tracing::info_span;
 
@@ -332,7 +332,7 @@ fn rtc_poll_to_timeout(
 /// applied locally and the offer is negotiated with the answerer.
 pub fn negotiate<F, R>(offerer: &mut TestRtc, answerer: &mut TestRtc, mut do_change: F) -> R
 where
-    F: FnMut(&mut SdpApi) -> R,
+    F: FnMut(&mut SdpApi<'_, DefaultMeta>) -> R,
 {
     let (offer, pending, result) = offerer.span.in_scope(|| {
         let mut change = offerer.rtc.sdp_api();

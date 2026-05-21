@@ -1,8 +1,8 @@
 //! Exported things with feature `_internal_test_exports`.
 
+use crate::meta::DefaultMeta;
 use crate::Rtc;
 use crate::format::PayloadParams;
-use crate::media::Media;
 use crate::media::Mid;
 use crate::rtp::{ExtensionMap, RtpHeader};
 use is::IceCreds;
@@ -13,10 +13,10 @@ use rng::Rng;
 
 mod setup;
 
-impl Rtc {
+impl Rtc<DefaultMeta> {
     /// UNSTABLE: not public API!
     pub fn _mids(&self) -> Vec<Mid> {
-        self.session.medias.iter().map(Media::mid).collect()
+        self.session.medias.iter().map(|m| m.mid()).collect()
     }
 
     /// UNSTABLE: not public API!

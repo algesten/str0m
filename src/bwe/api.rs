@@ -1,5 +1,6 @@
 //! Bandwidth estimation.
 
+use crate::meta::Meta;
 use crate::{Rtc, rtp_::Mid};
 
 pub use crate::rtp_::Bitrate;
@@ -15,9 +16,9 @@ pub enum BweKind {
 }
 
 /// Access to the Bandwidth Estimate subsystem.
-pub struct Bwe<'a>(pub(crate) &'a mut Rtc);
+pub struct Bwe<'a, M: Meta>(pub(crate) &'a mut Rtc<M>);
 
-impl<'a> Bwe<'a> {
+impl<'a, M: Meta> Bwe<'a, M> {
     /// Configure the desired bitrate.
     ///
     /// Configure the bandwidth estimation system with the desired bitrate.

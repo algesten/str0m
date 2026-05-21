@@ -13,6 +13,7 @@ use crate::format::Vp9PacketizerMode;
 use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN, DatagramSend};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
+use crate::meta::Meta;
 use crate::media::{MediaAdded, MediaChanged};
 use crate::pacer::PacerControl;
 use crate::pacer::{Pacer, PacerImpl};
@@ -40,13 +41,13 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 
-pub(crate) struct Session {
+pub(crate) struct Session<M: Meta> {
     id: SessionId,
 
     // These fields are pub to allow session_sdp.rs modify them.
     // Notice the fields are maybe not in m-line index order since the app
     // might be spliced in somewhere.
-    pub medias: Vec<Media>,
+    pub medias: Vec<Media<M>>,
 
     // The actual RTP encoded streams.
     pub streams: Streams,
@@ -113,7 +114,7 @@ pub(crate) struct Session {
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
 }
 
-impl Session {
+impl<M: Meta> Session<M> {
     pub fn new(config: &RtcConfig) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
@@ -961,11 +962,11 @@ impl Session {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
-    pub fn add_media(&mut self, media: Media) {
+    pub fn add_media(&mut self, media: Media<M>) {
         self.medias.push(media);
     }
 
-    pub fn medias(&self) -> &[Media] {
+    pub fn medias(&self) -> &[Media<M>] {
         &self.medias
     }
 
@@ -1002,11 +1003,11 @@ impl Session {
             .any(|m| m.direction().is_sending() && !m.disabled())
     }
 
-    pub fn media_by_mid(&self, mid: Mid) -> Option<&Media> {
+    pub fn media_by_mid(&self, mid: Mid) -> Option<&Media<M>> {
         self.medias.iter().find(|m| m.mid() == mid)
     }
 
-    pub fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media> {
+    pub fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media<M>> {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 

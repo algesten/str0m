@@ -804,6 +804,10 @@ pub mod change;
 mod util;
 use util::{Soonest, not_happening};
 
+/// Buffer type customisation for [`Rtc`].
+pub mod meta;
+pub use meta::{DefaultMeta, Meta};
+
 mod session;
 use session::Session;
 
@@ -863,7 +867,7 @@ pub use error::RtcError;
 ///     rtc.handle_input(input).unwrap();
 /// }
 /// ```
-pub struct Rtc {
+pub struct Rtc<M: Meta = DefaultMeta> {
     alive: bool,
     ice: IceAgent,
     dtls: Dtls,
@@ -873,7 +877,7 @@ pub struct Rtc {
     sctp: RtcSctp,
     chan: ChannelHandler,
     stats: Option<Stats>,
-    session: Session,
+    session: Session<M>,
     remote_fingerprint: Option<Fingerprint>,
     remote_addrs: Vec<SocketAddr>,
     send_addr: Option<SendAddr>,
@@ -1119,6 +1123,10 @@ pub enum Reason {
     BweProbeEstimator,
 }
 
+/// Convenience constructors that default to [`DefaultMeta`].
+///
+/// For a custom [`Meta`] implementation, use [`Rtc::new_from_config`] with an explicit
+/// turbofish: `Rtc::<MyMeta>::new_from_config(config, start)`.
 impl Rtc {
     /// Creates a new instance with default settings.
     ///
@@ -1147,7 +1155,9 @@ impl Rtc {
     pub fn builder() -> RtcConfig {
         RtcConfig::new()
     }
+}
 
+impl<M: Meta> Rtc<M> {
     pub(crate) fn new_from_config(config: RtcConfig, start: Instant) -> Result<Self, RtcError> {
         let crypto_provider = config
             .crypto_provider
@@ -1349,14 +1359,14 @@ impl Rtc {
     ///
     /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
-    pub fn sdp_api(&mut self) -> SdpApi {
+    pub fn sdp_api(&mut self) -> SdpApi<'_, M> {
         SdpApi::new(self)
     }
 
     /// Makes direct changes to the Rtc session.
     ///
     /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
-    pub fn direct_api(&mut self) -> DirectApi {
+    pub fn direct_api(&mut self) -> DirectApi<'_, M> {
         DirectApi::new(self)
     }
 
@@ -1389,7 +1399,7 @@ impl Rtc {
     /// This is a frame level API: For RTP level see [`DirectApi::stream_tx()`]
     /// and [`DirectApi::stream_rx()`].
     ///
-    pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
+    pub fn writer(&mut self, mid: Mid) -> Option<Writer<M>> {
         if self.session.rtp_mode {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
@@ -1404,7 +1414,7 @@ impl Rtc {
     /// Currently configured media.
     ///
     /// Read only access. Changes are made via [`Rtc::sdp_api()`] or [`Rtc::direct_api()`].
-    pub fn media(&self, mid: Mid) -> Option<&Media> {
+    pub fn media(&self, mid: Mid) -> Option<&Media<M>> {
         self.session.media_by_mid(mid)
     }
 
@@ -1950,7 +1960,7 @@ impl Rtc {
     /// let channel = rtc.channel(cid).unwrap();
     /// // TODO write data channel data.
     /// ```
-    pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
+    pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_, M>> {
         if !self.alive {
             return None;
         }
@@ -1967,7 +1977,7 @@ impl Rtc {
     /// Configure the Bandwidth Estimate (BWE) subsystem.
     ///
     /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
-    pub fn bwe(&mut self) -> Bwe {
+    pub fn bwe(&mut self) -> Bwe<'_, M> {
         Bwe(self)
     }
 

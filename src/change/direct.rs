@@ -5,6 +5,7 @@ use crate::RtcError;
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::media::{Media, MediaKind};
+use crate::meta::Meta;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::{ChannelConfig, SctpInitData};
@@ -31,16 +32,16 @@ use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, StreamRx
 ///  session in a way that is internally inconsistent. Such situations can
 ///  result in panics.
 /// </div>
-pub struct DirectApi<'a> {
-    rtc: &'a mut Rtc,
+pub struct DirectApi<'a, M: Meta> {
+    rtc: &'a mut Rtc<M>,
 }
 
-impl<'a> DirectApi<'a> {
+impl<'a, M: Meta> DirectApi<'a, M> {
     /// Creates a new instance of the `DirectApi` struct with the specified `Rtc` instance.
     ///
     /// The `DirectApi` struct provides a high-level API for interacting with a WebRTC peer connection,
     /// and the `Rtc` instance provides low-level access to the underlying WebRTC functionality.
-    pub fn new(rtc: &'a mut Rtc) -> Self {
+    pub fn new(rtc: &'a mut Rtc<M>) -> Self {
         DirectApi { rtc }
     }
 
@@ -202,7 +203,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// All streams belong to a media identified by a `mid`. This creates the media without
     /// doing any SDP dance.
-    pub fn declare_media(&mut self, mid: Mid, kind: MediaKind) -> &mut Media {
+    pub fn declare_media(&mut self, mid: Mid, kind: MediaKind) -> &mut Media<M> {
         let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
 
         let next_index = if let Some(max_index) = max_index {

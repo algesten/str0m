@@ -10,6 +10,7 @@ use crate::io::DATAGRAM_MTU_WARN;
 use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
 use crate::media::Media;
+use crate::meta::Meta;
 use crate::media::MediaKind;
 use crate::pacer::QueuePriority;
 use crate::pacer::QueueSnapshot;
@@ -1016,10 +1017,10 @@ impl StreamTx {
         self.send_queue.need_timeout()
     }
 
-    pub(crate) fn handle_timeout<'a>(
+    pub(crate) fn handle_timeout<'a, M: Meta + 'a>(
         &mut self,
         now: Instant,
-        get_media: impl FnOnce() -> (&'a Media, &'a CodecConfig),
+        get_media: impl FnOnce() -> (&'a Media<M>, &'a CodecConfig),
     ) {
         // If kind is None, this is the first time we ever get a handle_timeout.
         if self.kind.is_none() {
@@ -1030,7 +1031,7 @@ impl StreamTx {
         self.send_queue.handle_timeout(now);
     }
 
-    fn on_first_timeout(&mut self, media: &Media, config: &CodecConfig) {
+    fn on_first_timeout<M: Meta>(&mut self, media: &Media<M>, config: &CodecConfig) {
         // Always set on first timeout.
         self.kind = Some(media.kind());
         self.cname = Some(media.cname().to_string());

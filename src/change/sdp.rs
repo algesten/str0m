@@ -10,6 +10,7 @@ use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{Media, Rids, Simulcast};
+use crate::meta::Meta;
 use crate::packet::MediaKind;
 use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
@@ -26,13 +27,13 @@ pub use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, Streams};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
-pub struct SdpApi<'a> {
-    rtc: &'a mut Rtc,
+pub struct SdpApi<'a, M: Meta> {
+    rtc: &'a mut Rtc<M>,
     changes: Changes,
 }
 
-impl<'a> SdpApi<'a> {
-    pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
+impl<'a, M: Meta> SdpApi<'a, M> {
+    pub(crate) fn new(rtc: &'a mut Rtc<M>) -> Self {
         SdpApi {
             rtc,
             changes: Changes::default(),
@@ -587,21 +588,16 @@ impl SdpPendingOffer {
     ///
     /// This function filters the vector of `Change` instances stored in the current object and retains
     /// only those changes that are considered relevant with respect to the provided `Rtc` instance.
-    fn retain_relevant(&mut self, rtc: &Rtc) {
-        fn is_relevant(rtc: &Rtc, c: &Change) -> bool {
-            match c {
-                Change::AddMedia(v) => rtc.media(v.mid).is_none(),
-                Change::AddApp(_) => rtc.session.app().is_none(),
-                Change::AddChannel(v) => rtc.chan.stream_id_by_channel_id(v.0).is_none(),
-                Change::Direction(m, d) => {
-                    // If mid is missing, this is not relevant.
-                    rtc.media(*m).map(|m| m.direction() != *d).unwrap_or(false)
-                }
-                Change::IceRestart(v, _) => rtc.ice.local_credentials() != v,
+    fn retain_relevant<M: Meta>(&mut self, rtc: &Rtc<M>) {
+        self.changes.retain(|c| match c {
+            Change::AddMedia(v) => rtc.media(v.mid).is_none(),
+            Change::AddApp(_) => rtc.session.app().is_none(),
+            Change::AddChannel(v) => rtc.chan.stream_id_by_channel_id(v.0).is_none(),
+            Change::Direction(m, d) => {
+                rtc.media(*m).map(|m| m.direction() != *d).unwrap_or(false)
             }
-        }
-
-        self.changes.retain(|c| is_relevant(rtc, c));
+            Change::IceRestart(v, _) => rtc.ice.local_credentials() != v,
+        });
     }
 }
 
@@ -675,7 +671,7 @@ fn requires_negotiation(c: &Change) -> bool {
     }
 }
 
-fn apply_direct_changes(rtc: &mut Rtc, mut changes: Changes) {
+fn apply_direct_changes<M: Meta>(rtc: &mut Rtc<M>, mut changes: Changes) {
     // Split out new channels, since that is not handled by the Session.
     let new_channels = changes.take_new_channels();
 
@@ -684,7 +680,7 @@ fn apply_direct_changes(rtc: &mut Rtc, mut changes: Changes) {
     }
 }
 
-fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
+fn create_offer<M: Meta>(rtc: &mut Rtc<M>, changes: &Changes) -> SdpOffer {
     if !rtc.dtls.is_inited() {
         // The side that makes the first offer is the controlling side, unless they
         // are ICE Lite, in which case the roles are reversed (see RFC 5245).
@@ -706,8 +702,8 @@ fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
     sdp.into()
 }
 
-fn add_ice_details(
-    rtc: &mut Rtc,
+fn add_ice_details<M: Meta>(
+    rtc: &mut Rtc<M>,
     sdp: &Sdp,
     pending: Option<&SdpPendingOffer>,
 ) -> Result<(), RtcError> {
@@ -753,7 +749,7 @@ fn add_ice_details(
     Ok(())
 }
 
-fn init_dtls(rtc: &mut Rtc, remote_sdp: &Sdp) -> Result<(), RtcError> {
+fn init_dtls<M: Meta>(rtc: &mut Rtc<M>, remote_sdp: &Sdp) -> Result<(), RtcError> {
     let setup = match remote_sdp.setup() {
         Some(v) => match v {
             // Remote being ActPass, we take Passive role.
@@ -827,11 +823,11 @@ fn process_remote_sctp_init(
     }
 }
 
-fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
+fn as_sdp<M: Meta>(session: &Session<M>, params: AsSdpParams) -> Sdp {
     let (media_lines, mids, stream_ids) = {
         let mut v = as_media_lines(session);
 
-        let mut new_lines = vec![];
+        let mut new_lines: Vec<Media<M>> = vec![];
 
         // When creating new m-lines from the pending changes, the m-line index starts from this.
         let new_index_start = v.len();
@@ -936,7 +932,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     }
 }
 
-fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
+fn apply_offer<M: Meta>(session: &mut Session<M>, offer: SdpOffer) -> Result<(), RtcError> {
     offer.assert_consistency()?;
 
     update_session(session, &offer);
@@ -951,8 +947,8 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     Ok(())
 }
 
-fn apply_answer(
-    session: &mut Session,
+fn apply_answer<M: Meta>(
+    session: &mut Session<M>,
     pending: Changes,
     answer: SdpAnswer,
 ) -> Result<(), RtcError> {
@@ -978,7 +974,7 @@ fn apply_answer(
     Ok(())
 }
 
-fn ensure_stream_tx(session: &mut Session) {
+fn ensure_stream_tx<M: Meta>(session: &mut Session<M>) {
     for media in &session.medias {
         // Only make send streams when we have to.
         if !media.direction().is_sending() {
@@ -1036,7 +1032,7 @@ fn ensure_stream_tx(session: &mut Session) {
     }
 }
 
-fn add_pending_changes(session: &mut Session, pending: Changes) {
+fn add_pending_changes<M: Meta>(session: &mut Session<M>, pending: Changes) {
     // For pending AddMedia, we have outgoing SSRC communicated that needs to be added.
     for change in pending.0 {
         let add_media = match change {
@@ -1082,8 +1078,8 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 ///   index they should occupy. The index is normally the next free slot,
 ///   but can be a recycled slot (RFC 8829 §5.2.2) when the remote has
 ///   replaced a previously disabled Media with a new mid.
-fn sync_medias<'a>(
-    session: &mut Session,
+fn sync_medias<'a, M: Meta>(
+    session: &mut Session<M>,
     sdp: &'a Sdp,
     is_offer: bool,
 ) -> Result<Vec<(usize, &'a MediaLine)>, String> {
@@ -1158,8 +1154,8 @@ fn sync_medias<'a>(
 ///
 /// Each entry in `new_lines` pairs an m-line with the session index it
 /// should occupy.
-fn add_new_lines(
-    session: &mut Session,
+fn add_new_lines<M: Meta>(
+    session: &mut Session<M>,
     new_lines: &[(usize, &MediaLine)],
     is_offer: bool,
     bundle_mids: Option<&[Mid]>,
@@ -1212,7 +1208,7 @@ fn add_new_lines(
 
 /// Update session level properties like
 /// Extensions from offer or answer.
-fn update_session(session: &mut Session, sdp: &Sdp) {
+fn update_session<M: Meta>(session: &mut Session<M>, sdp: &Sdp) {
     // Does any m-line contain a a=rtcp-fb:xx transport-cc?
     let has_transport_cc = sdp
         .media_lines
@@ -1235,7 +1231,7 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
 }
 
 /// Returns all media/channels as `AsMediaLine` trait.
-fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
+fn as_media_lines<M: Meta>(session: &Session<M>) -> Vec<&dyn AsSdpMediaLine> {
     let mut v = vec![];
 
     if let Some(app) = session.app() {
@@ -1246,8 +1242,8 @@ fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
     v
 }
 
-fn update_media(
-    media: &mut Media,
+fn update_media<M: Meta>(
+    media: &mut Media<M>,
     m: &MediaLine,
     config: &CodecConfig,
     exts: &ExtensionMap,
@@ -1441,7 +1437,7 @@ impl AsSdpMediaLine for (Mid, usize) {
     }
 }
 
-impl AsSdpMediaLine for Media {
+impl<M: Meta> AsSdpMediaLine for Media<M> {
     fn mid(&self) -> Mid {
         Media::mid(self)
     }
@@ -1580,7 +1576,7 @@ struct AsSdpParams<'a, 'b> {
 }
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
-    pub fn new(rtc: &'a Rtc, pending: Option<&'b Changes>) -> Self {
+    pub fn new<M: Meta>(rtc: &'a Rtc<M>, pending: Option<&'b Changes>) -> Self {
         let (creds, candidates) = if let Some((new_creds, keep_local_candidates)) =
             pending.and_then(|p| p.ice_restart())
         {
@@ -1736,12 +1732,12 @@ impl Changes {
             .count()
     }
 
-    pub fn as_new_medias<'a, 'b: 'a>(
+    pub fn as_new_medias<'a, 'b: 'a, M: Meta + 'a>(
         &'a self,
         index_start: usize,
         config: &'b CodecConfig,
         exts: &'b ExtensionMap,
-    ) -> impl Iterator<Item = Media> + 'a {
+    ) -> impl Iterator<Item = Media<M>> + 'a {
         // Use a separate counter that only advances for entries that actually produce
         // an m-line (AddMedia / AddApp).  Non-media entries (Direction, IceRestart,
         // AddChannel) must not consume an index slot, otherwise the resulting m-line
@@ -1790,12 +1786,12 @@ impl Changes {
 }
 
 impl Change {
-    fn as_new_media(
+    fn as_new_media<M: Meta>(
         &self,
         index: usize,
         config: &CodecConfig,
         exts: &ExtensionMap,
-    ) -> Option<Media> {
+    ) -> Option<Media<M>> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -2020,7 +2016,7 @@ mod test {
         let config = CodecConfig::new_with_defaults();
         let exts = ExtensionMap::standard();
 
-        let medias: Vec<Media> = changes.as_new_medias(0, &config, &exts).collect();
+        let medias: Vec<Media<crate::DefaultMeta>> = changes.as_new_medias(0, &config, &exts).collect();
 
         // Should produce two Media objects: one for AddApp, one for AddMedia(audio).
         assert_eq!(medias.len(), 2, "Expected 2 media-producing entries");

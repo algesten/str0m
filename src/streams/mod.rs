@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media, SenderFeedback};
+use crate::meta::Meta;
 use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Bitrate, Pt};
@@ -183,11 +184,11 @@ impl Streams {
         }
     }
 
-    pub(crate) fn map_dynamic_by_rid(
+    pub(crate) fn map_dynamic_by_rid<M: Meta>(
         &mut self,
         ssrc: Ssrc,
         midrid: MidRid,
-        media: &mut Media,
+        media: &mut Media<M>,
         payload: PayloadParams,
         is_main: bool,
     ) {
@@ -218,11 +219,11 @@ impl Streams {
         self.map_dynamic_finish(midrid, ssrc_main, rtx, media, payload);
     }
 
-    pub(crate) fn map_dynamic_by_pt(
+    pub(crate) fn map_dynamic_by_pt<M: Meta>(
         &mut self,
         ssrc: Ssrc,
         midrid: MidRid,
-        media: &mut Media,
+        media: &mut Media<M>,
         payload: PayloadParams,
         is_main: bool,
     ) {
@@ -253,12 +254,12 @@ impl Streams {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn map_dynamic_finish(
+    fn map_dynamic_finish<M: Meta>(
         &mut self,
         midrid: MidRid,
         ssrc_main: Ssrc,
         rtx: Option<Ssrc>,
-        media: &mut Media,
+        media: &mut Media<M>,
         payload: PayloadParams,
     ) {
         let maybe_stream = self.stream_rx_by_midrid(midrid, false);
@@ -404,12 +405,12 @@ impl Streams {
         !self.streams_rx.is_empty()
     }
 
-    pub(crate) fn handle_timeout(
+    pub(crate) fn handle_timeout<M: Meta>(
         &mut self,
         now: Instant,
         sender_ssrc: Ssrc,
         do_nack: bool,
-        medias: &[Media],
+        medias: &[Media<M>],
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
     ) {

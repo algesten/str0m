@@ -1,6 +1,7 @@
 use crate::format::CodecSpec;
 use crate::format::Vp9PacketizerMode;
 use crate::media::ToPayload;
+use crate::meta::Meta;
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::Frequency;
 use crate::streams::StreamTx;
@@ -31,9 +32,9 @@ impl Payloader {
         }
     }
 
-    pub(crate) fn push_sample(
+    pub(crate) fn push_sample<M: Meta>(
         &mut self,
-        to_payload: ToPayload,
+        to_payload: ToPayload<M>,
         mtu: usize,
         is_audio: bool,
         stream: &mut StreamTx,
@@ -48,7 +49,7 @@ impl Payloader {
             ..
         } = to_payload;
 
-        let chunks = self.pack.packetize(mtu, &data)?;
+        let chunks = self.pack.packetize(mtu, data.as_ref())?;
         let len = chunks.len();
 
         for (idx, data) in chunks.into_iter().enumerate() {
