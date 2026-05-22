@@ -105,6 +105,21 @@ pub struct CandidatePairStats {
     ///
     /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-currentroundtriptime
     pub current_round_trip_time: Option<Duration>,
+    /// Sum of all RTTs measured from successful STUN binding transactions
+    /// on the nominated pair over its lifetime. Divide by
+    /// [`responses_received`][Self::responses_received] for the average.
+    ///
+    /// Spec equivalent of [`RTCIceCandidatePairStats.totalRoundTripTime`][1].
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-totalroundtriptime
+    pub total_round_trip_time: Duration,
+    /// Total number of STUN binding responses received on the nominated
+    /// pair over its lifetime.
+    ///
+    /// Spec equivalent of [`RTCIceCandidatePairStats.responsesReceived`][1].
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-responsesreceived
+    pub responses_received: u64,
 }
 
 #[derive(Debug, Clone)]
