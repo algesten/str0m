@@ -1888,6 +1888,7 @@ impl Rtc {
                 let mut snapshot = StatsSnapshot::new(now);
                 snapshot.peer_rx = self.peer_bytes_rx;
                 snapshot.peer_tx = self.peer_bytes_tx;
+                let current_round_trip_time = self.ice.nominated_pair_rtt();
                 snapshot.selected_candidate_pair =
                     self.send_addr.as_ref().map(|s| CandidatePairStats {
                         protocol: s.proto,
@@ -1895,6 +1896,7 @@ impl Rtc {
                         remote: CandidateStats {
                             addr: s.destination,
                         },
+                        current_round_trip_time,
                     });
                 self.session.visit_stats(now, &mut snapshot);
                 stats.do_handle_timeout(&mut snapshot);

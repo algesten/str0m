@@ -352,6 +352,17 @@ impl CandidatePair {
         self.binding_attempts.back().map(|b| b.request_sent)
     }
 
+    /// The round-trip time of the most recent successful STUN binding
+    /// transaction recorded for this pair.
+    ///
+    /// `None` if no binding response has been received yet.
+    pub fn last_successful_rtt(&self) -> Option<Duration> {
+        self.binding_attempts
+            .iter()
+            .rev()
+            .find_map(|b| b.respone_recv.map(|r| r - b.request_sent))
+    }
+
     /// From the back of binding_attempts, go through all unanswered and find
     /// the time when we started having an outage.
     ///
@@ -544,5 +555,37 @@ mod tests {
         let duration = now.duration_since(offline_at);
 
         assert_eq!(duration, stun_timing.timeout())
+    }
+
+    #[test]
+    fn last_successful_rtt_returns_most_recent() {
+        let stun_timing = StunTiming::default();
+        let mut pair = CandidatePair::new(0, CandidateKind::Host, 0, CandidateKind::Host, 0);
+        let now = Instant::now();
+
+        assert_eq!(pair.last_successful_rtt(), None);
+
+        let id1 = pair.new_attempt(now, &stun_timing, false);
+        pair.record_binding_response(now + Duration::from_millis(50), id1, 0);
+        assert_eq!(
+            pair.last_successful_rtt(),
+            Some(Duration::from_millis(50))
+        );
+
+        // Newer in-flight attempt without response shouldn't shadow the
+        // older successful one.
+        let _id2 = pair.new_attempt(now + Duration::from_millis(100), &stun_timing, false);
+        assert_eq!(
+            pair.last_successful_rtt(),
+            Some(Duration::from_millis(50))
+        );
+
+        // A newer successful attempt replaces the value.
+        let id3 = pair.new_attempt(now + Duration::from_millis(200), &stun_timing, false);
+        pair.record_binding_response(now + Duration::from_millis(220), id3, 0);
+        assert_eq!(
+            pair.last_successful_rtt(),
+            Some(Duration::from_millis(20))
+        );
     }
 }

@@ -94,6 +94,17 @@ pub struct CandidatePairStats {
     pub local: CandidateStats,
     /// The remote candidate.
     pub remote: CandidateStats,
+    /// Round-trip time of the most recent STUN binding transaction on the
+    /// nominated pair.
+    ///
+    /// Spec equivalent of [`RTCIceCandidatePairStats.currentRoundTripTime`][1].
+    ///
+    /// This is sourced from the ICE keepalive/consent traffic and is
+    /// available even on receive-only endpoints where RTP-based RTT
+    /// estimates aren't.
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-currentroundtriptime
+    pub current_round_trip_time: Option<Duration>,
 }
 
 #[derive(Debug, Clone)]

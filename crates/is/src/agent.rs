@@ -1930,6 +1930,28 @@ impl IceAgent {
             .find_map(|p| (p.id() == id).then_some(p.prio()))
     }
 
+    /// The round-trip time of the most recent successful STUN binding
+    /// transaction on the nominated candidate pair.
+    ///
+    /// Returns `None` if there is no nominated pair, or no successful
+    /// binding response has been recorded on it.
+    ///
+    /// This is the ICE-level equivalent of
+    /// [`RTCIceCandidatePairStats.currentRoundTripTime`][1] and is updated
+    /// on every STUN keepalive/consent exchange — useful for measuring RTT
+    /// on receive-only endpoints where RTP-based RTT estimates aren't
+    /// available.
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-currentroundtriptime
+    pub fn nominated_pair_rtt(&self) -> Option<Duration> {
+        let id = self.nominated_send?;
+
+        self.candidate_pairs
+            .iter()
+            .find(|p| p.id() == id)
+            .and_then(|p| p.last_successful_rtt())
+    }
+
     fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
         if self.state != state {
             debug!("State change ({}): {:?} -> {:?}", reason, self.state, state);
