@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -267,7 +268,7 @@ impl StreamTx {
         marker: bool,
         ext_vals: ExtensionValues,
         nackable: bool,
-        payload: Vec<u8>,
+        payload: impl Into<Arc<[u8]>>,
     ) -> Result<(), PacketError> {
         self.write_rtp_with_csrc(
             pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload, 0, [0; 15],
@@ -286,7 +287,7 @@ impl StreamTx {
         marker: bool,
         ext_vals: ExtensionValues,
         nackable: bool,
-        payload: Vec<u8>,
+        payload: impl Into<Arc<[u8]>>,
         csrc_count: usize,
         csrc: [u32; 15],
     ) -> Result<(), PacketError> {
@@ -322,7 +323,7 @@ impl StreamTx {
             seq_no,
             time: media_time,
             header,
-            payload,
+            payload: payload.into(),
             nackable,
             // The overall idea for str0m is to only drive time forward from handle_input. If we
             // used a "now" argument to write_rtp(), we effectively get a second point that also need
@@ -504,7 +505,7 @@ impl StreamTx {
         let body_len = match next.kind {
             NextPacketKind::Regular | NextPacketKind::Resend(_) => {
                 let body_len = pkt.payload.len();
-                body_out[..body_len].copy_from_slice(&pkt.payload);
+                body_out[..body_len].copy_from_slice(pkt.payload.as_ref());
 
                 // pad for SRTP
                 let pad_len = RtpHeader::pad_packet(

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
@@ -90,7 +91,7 @@ impl Depacketized {
 #[derive(Debug)]
 struct Entry {
     meta: RtpMeta,
-    data: Vec<u8>,
+    data: Arc<[u8]>,
     head: bool,
     tail: bool,
 }
@@ -133,7 +134,7 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
+    pub fn push(&mut self, meta: RtpMeta, data: impl Into<Arc<[u8]>>) {
         // We're not emitting frames in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         //
@@ -162,8 +163,11 @@ impl DepacketizingBuffer {
                 trace!("Drop exactly same packet: {}", meta.seq_no);
             }
             Err(i) => {
-                let head = self.depack.is_partition_head(&data);
-                let tail = self.depack.is_partition_tail(meta.header.marker, &data);
+                let data = data.into();
+                let head = self.depack.is_partition_head(data.as_ref());
+                let tail = self
+                    .depack
+                    .is_partition_tail(meta.header.marker, data.as_ref());
 
                 // i is insertion point to maintain order
                 let entry = Entry {
@@ -268,7 +272,7 @@ impl DepacketizingBuffer {
 
         for entry in self.queue.range_mut(start..=stop) {
             self.depack
-                .depacketize(&entry.data, &mut data, &mut codec_extra)?;
+                .depacketize(entry.data.as_ref(), &mut data, &mut codec_extra)?;
             meta.push(entry.meta.clone());
         }
 
