@@ -76,15 +76,31 @@ impl Depacketized {
             .marker
     }
 
-    pub fn ext_vals(&self) -> &ExtensionValues {
-        // We use the extensions from the last packet because certain extensions, such as video
-        // orientation, are only added on the last packet to save bytes.
-        &self
+    pub fn ext_vals(&self) -> ExtensionValues {
+        let last = &self
             .meta
             .last()
-            .expect("a depacketized to consist of at least one packet")
+            .expect("depacketized video frame must contain a trailing packet")
             .header
-            .ext_vals
+            .ext_vals;
+
+        let first = &self
+            .meta
+            .first()
+            .expect("depacketized video frame must contain a leading packet")
+            .header
+            .ext_vals;
+
+        // We use the extensions from the last packet because certain extensions, such as video
+        // orientation, are only added on the last packet to save bytes.
+        let mut merged = last.clone();
+
+        // str0m strictly attaches abs_capture_time to the first packet of a frame.
+        // Ensure we don't accidentally lose it by cloning from the last packet.
+        if let Some(first_val) = &first.abs_capture_time {
+            merged.abs_capture_time = Some(*first_val);
+        }
+        merged
     }
 }
 
@@ -394,9 +410,11 @@ impl fmt::Debug for Depacketized {
 
 #[cfg(test)]
 mod test {
+    use std::time::{Duration, Instant, SystemTime};
+
     use super::*;
     use crate::packet::vp9::Vp9Depacketizer;
-    use crate::rtp_::{Frequency, MediaTime, Pt, Ssrc};
+    use crate::rtp_::{AbsCaptureTime, Frequency, MediaTime, Pt, Ssrc, VideoOrientation};
 
     #[test]
     fn end_on_marker() {
@@ -405,6 +423,72 @@ mod test {
             (1, 1, &[1], &[]),
             (2, 1, &[9], &[(1, &[1, 9])]),
         ])
+    }
+
+    #[test]
+    fn ext_vals_extracts_abs_capture_time_from_first_packet() {
+        let first_time = Instant::now();
+        let abs_capture_time = AbsCaptureTime {
+            capture_time: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+            clock_offset: None,
+        };
+
+        let first_header = RtpHeader {
+            version: 2,
+            has_padding: false,
+            has_extension: true,
+            csrc_count: 0,
+            marker: false,
+            payload_type: Pt::new_with_value(98),
+            sequence_number: 1,
+            timestamp: 100,
+            ssrc: Ssrc::from(42),
+            csrc: [0; 15],
+            ext_vals: ExtensionValues {
+                abs_capture_time: Some(abs_capture_time),
+                ..Default::default()
+            },
+            header_len: 0,
+        };
+
+        let last_header = RtpHeader {
+            ext_vals: ExtensionValues {
+                video_orientation: Some(VideoOrientation::Deg90),
+                ..Default::default()
+            },
+            ..first_header.clone()
+        };
+
+        let time_value = 100_u64;
+        let dep = Depacketized {
+            time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
+            contiguous: true,
+            meta: vec![
+                RtpMeta {
+                    received: first_time,
+                    time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
+                    seq_no: SeqNo::from(1u64),
+                    header: first_header,
+                    last_sender_info: None,
+                },
+                RtpMeta {
+                    received: first_time + Duration::from_millis(1),
+                    time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
+                    seq_no: SeqNo::from(2u64),
+                    header: last_header,
+                    last_sender_info: None,
+                },
+            ],
+            data: Vec::new(),
+            codec_extra: CodecExtra::None,
+        };
+
+        let merged = dep.ext_vals();
+        assert_eq!(
+            merged.abs_capture_time.unwrap().capture_time,
+            abs_capture_time.capture_time
+        );
+        assert_eq!(merged.video_orientation, Some(VideoOrientation::Deg90));
     }
 
     #[test]

@@ -5,6 +5,7 @@ use crate::RtcError;
 use crate::format::PayloadParams;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
+use crate::rtp_::AbsCaptureTime;
 use crate::session::Session;
 
 use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
@@ -95,6 +96,12 @@ impl<'a> Writer<'a> {
     /// whether the video requires to be rotated to show correctly.
     pub fn video_orientation(mut self, o: VideoOrientation) -> Self {
         self.ext_vals.video_orientation = Some(o);
+        self
+    }
+
+    /// Set absolute capture time for this packet.
+    pub fn abs_capture_time(mut self, capture_time: AbsCaptureTime) -> Self {
+        self.ext_vals.abs_capture_time = Some(capture_time);
         self
     }
 

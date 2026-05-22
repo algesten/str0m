@@ -338,7 +338,7 @@ impl Media {
                     network_time: dep.first_network_time(),
                     seq_range: dep.seq_range(),
                     contiguous: dep.contiguous,
-                    ext_vals: dep.ext_vals().clone(),
+                    ext_vals: dep.ext_vals(),
                     codec_extra: dep.codec_extra,
                     last_sender_info: dep.first_sender_info(),
                     audio_start_of_talk_spurt: codec.spec().codec.is_audio()
