@@ -1,8 +1,7 @@
 # Unreleased
 
   * Add stereo to opus format params #955
-  * Use shared `Arc<[u8]>` storage for RTP and media payload events (breaking) #959
-  * Accept `impl Into<Arc<[u8]>>` in RTP and media write APIs #959
+  * Use `Arc<[u8]>` as input/output of media data (breaking) #959
 
 # 0.19.0
 
