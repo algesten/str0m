@@ -1889,10 +1889,8 @@ impl Rtc {
                 snapshot.peer_rx = self.peer_bytes_rx;
                 snapshot.peer_tx = self.peer_bytes_tx;
                 let current_round_trip_time = self.ice.nominated_pair_rtt();
-                let total_round_trip_time =
-                    self.ice.nominated_pair_total_rtt().unwrap_or_default();
-                let responses_received =
-                    self.ice.nominated_pair_responses_received().unwrap_or(0);
+                let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
+                let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
                 snapshot.selected_candidate_pair =
                     self.send_addr.as_ref().map(|s| CandidatePairStats {
                         protocol: s.proto,

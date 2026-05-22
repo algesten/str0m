@@ -594,29 +594,20 @@ mod tests {
 
         let id1 = pair.new_attempt(now, &stun_timing, false);
         pair.record_binding_response(now + Duration::from_millis(50), id1, 0);
-        assert_eq!(
-            pair.last_successful_rtt(),
-            Some(Duration::from_millis(50))
-        );
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(50)));
         assert_eq!(pair.responses_received(), 1);
         assert_eq!(pair.total_round_trip_time(), Duration::from_millis(50));
 
         // Newer in-flight attempt without response shouldn't shadow the
         // older successful one or change cumulative counters.
         let _id2 = pair.new_attempt(now + Duration::from_millis(100), &stun_timing, false);
-        assert_eq!(
-            pair.last_successful_rtt(),
-            Some(Duration::from_millis(50))
-        );
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(50)));
         assert_eq!(pair.responses_received(), 1);
 
         // A newer successful attempt replaces current rtt and accumulates totals.
         let id3 = pair.new_attempt(now + Duration::from_millis(200), &stun_timing, false);
         pair.record_binding_response(now + Duration::from_millis(220), id3, 0);
-        assert_eq!(
-            pair.last_successful_rtt(),
-            Some(Duration::from_millis(20))
-        );
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(20)));
         assert_eq!(pair.responses_received(), 2);
         assert_eq!(pair.total_round_trip_time(), Duration::from_millis(70));
     }
