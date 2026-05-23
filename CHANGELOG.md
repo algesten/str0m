@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Expose ICE candidate pair RTT in CandidatePairStats #962
   * Add stereo to opus format params #955
   * Use `Arc<[u8]>` as input/output of media data (breaking) #959
 
