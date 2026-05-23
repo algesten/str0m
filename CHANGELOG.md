@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Add VP8 descriptor parsing and `vp8_patch()` to `RtpWrite` #963
   * `write_rtp()` now takes a `RtpWrite` builder (breaking) #963
   * Add `abs-capture-time` writer support and fixed receiver-side extension propagation (breaking) #964
   * Expose ICE candidate pair RTT in CandidatePairStats #962
