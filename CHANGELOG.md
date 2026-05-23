@@ -1,5 +1,6 @@
 # Unreleased
 
+  * `write_rtp()` now takes a `RtpWrite` builder (breaking) #963
   * Add `abs-capture-time` writer support and fixed receiver-side extension propagation (breaking) #964
   * Expose ICE candidate pair RTT in CandidatePairStats #962
   * Add stereo to opus format params #955

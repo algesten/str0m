@@ -16,7 +16,7 @@ use crate::rtp_::{Rtcp, RtpHeader};
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
-pub use self::send::StreamTx;
+pub use self::send::{RtpWrite, StreamTx};
 
 mod receive;
 pub(crate) mod register;

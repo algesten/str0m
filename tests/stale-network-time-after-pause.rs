@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::rtp::{RtpWrite, Ssrc};
 use str0m::{Candidate, Event, Input, Output, Rtc, RtcError};
 
 mod common;
@@ -154,16 +154,15 @@ fn measure_fresh_age_after_pause(pause_duration: Duration) -> Result<Duration, R
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            10_000u64.into(),
-            frame_timestamp,
-            first_write_at,
-            false,
-            ExtensionValues::default(),
-            true,
-            vec![0x10, 0x00, 0xAA, 0xBB],
-        )
-        .expect("write first VP8 fragment");
+            RtpWrite::new(
+                pt,
+                10_000u64.into(),
+                frame_timestamp,
+                first_write_at,
+                [0x10, 0x00, 0xAA, 0xBB],
+            )
+            .nackable(true),
+        );
     }
     let (first_emit_at, mut first_packets) =
         wait_for_transmits(&mut l, first_write_at, Duration::from_millis(50))?;
@@ -174,16 +173,16 @@ fn measure_fresh_age_after_pause(pause_duration: Duration) -> Result<Duration, R
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            10_001u64.into(),
-            frame_timestamp,
-            first_write_at + Duration::from_millis(5),
-            true,
-            ExtensionValues::default(),
-            true,
-            vec![0x00, 0xCC, 0xDD],
-        )
-        .expect("write delayed VP8 tail");
+            RtpWrite::new(
+                pt,
+                10_001u64.into(),
+                frame_timestamp,
+                first_write_at + Duration::from_millis(5),
+                [0x00, 0xCC, 0xDD],
+            )
+            .marker(true)
+            .nackable(true),
+        );
     }
     let (_, delayed_packets) = wait_for_transmits(
         &mut l,
@@ -227,16 +226,15 @@ fn measure_fresh_age_after_pause(pause_duration: Duration) -> Result<Duration, R
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            10_002u64.into(),
-            fresh_frame_timestamp,
-            fresh_first_at,
-            false,
-            ExtensionValues::default(),
-            true,
-            vec![0x10, 0x00, 0x11, 0x22],
-        )
-        .expect("write fresh VP8 fragment");
+            RtpWrite::new(
+                pt,
+                10_002u64.into(),
+                fresh_frame_timestamp,
+                fresh_first_at,
+                [0x10, 0x00, 0x11, 0x22],
+            )
+            .nackable(true),
+        );
     }
     let (fresh_first_emit_at, mut fresh_first_packets) =
         wait_for_transmits(&mut l, fresh_first_at, Duration::from_millis(50))?;
@@ -251,16 +249,16 @@ fn measure_fresh_age_after_pause(pause_duration: Duration) -> Result<Duration, R
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            10_003u64.into(),
-            fresh_frame_timestamp,
-            fresh_first_at + Duration::from_millis(5),
-            true,
-            ExtensionValues::default(),
-            true,
-            vec![0x00, 0x33, 0x44],
-        )
-        .expect("write fresh VP8 tail");
+            RtpWrite::new(
+                pt,
+                10_003u64.into(),
+                fresh_frame_timestamp,
+                fresh_first_at + Duration::from_millis(5),
+                [0x00, 0x33, 0x44],
+            )
+            .marker(true)
+            .nackable(true),
+        );
     }
     let (fresh_tail_emit_at, fresh_tail_packets) = wait_for_transmits(
         &mut l,
@@ -320,16 +318,15 @@ fn collect_fresh_ages_after_repeated_pauses(
             let mut direct = l.direct_api();
             let tx = direct.stream_tx_by_mid(mid, None).unwrap();
             tx.write_rtp(
-                pt,
-                seq.into(),
-                frame_timestamp,
-                first_write_at,
-                false,
-                ExtensionValues::default(),
-                true,
-                vec![0x10, 0x00, 0xAA, 0xBB, i as u8],
-            )
-            .expect("write first VP8 fragment");
+                RtpWrite::new(
+                    pt,
+                    seq.into(),
+                    frame_timestamp,
+                    first_write_at,
+                    [0x10, 0x00, 0xAA, 0xBB, i as u8],
+                )
+                .nackable(true),
+            );
         }
         let (first_emit_at, mut first_packets) =
             wait_for_transmits(&mut l, first_write_at, Duration::from_millis(50))?;
@@ -340,16 +337,16 @@ fn collect_fresh_ages_after_repeated_pauses(
             let mut direct = l.direct_api();
             let tx = direct.stream_tx_by_mid(mid, None).unwrap();
             tx.write_rtp(
-                pt,
-                (seq + 1).into(),
-                frame_timestamp,
-                first_write_at + Duration::from_millis(5),
-                true,
-                ExtensionValues::default(),
-                true,
-                vec![0x00, 0xCC, 0xDD, i as u8],
-            )
-            .expect("write delayed VP8 tail");
+                RtpWrite::new(
+                    pt,
+                    (seq + 1).into(),
+                    frame_timestamp,
+                    first_write_at + Duration::from_millis(5),
+                    [0x00, 0xCC, 0xDD, i as u8],
+                )
+                .marker(true)
+                .nackable(true),
+            );
         }
         let (_, packets) = wait_for_transmits(
             &mut l,
@@ -395,16 +392,15 @@ fn collect_fresh_ages_after_repeated_pauses(
             let mut direct = l.direct_api();
             let tx = direct.stream_tx_by_mid(mid, None).unwrap();
             tx.write_rtp(
-                pt,
-                fresh_seq.into(),
-                fresh_frame_timestamp,
-                fresh_first_at,
-                false,
-                ExtensionValues::default(),
-                true,
-                vec![0x10, 0x00, 0x55, 0x66, i as u8],
-            )
-            .expect("write fresh VP8 fragment");
+                RtpWrite::new(
+                    pt,
+                    fresh_seq.into(),
+                    fresh_frame_timestamp,
+                    fresh_first_at,
+                    [0x10, 0x00, 0x55, 0x66, i as u8],
+                )
+                .nackable(true),
+            );
         }
         let (fresh_first_emit_at, mut fresh_first_packets) =
             wait_for_transmits(&mut l, fresh_first_at, Duration::from_millis(50))?;
@@ -419,16 +415,16 @@ fn collect_fresh_ages_after_repeated_pauses(
             let mut direct = l.direct_api();
             let tx = direct.stream_tx_by_mid(mid, None).unwrap();
             tx.write_rtp(
-                pt,
-                (fresh_seq + 1).into(),
-                fresh_frame_timestamp,
-                fresh_first_at + Duration::from_millis(5),
-                true,
-                ExtensionValues::default(),
-                true,
-                vec![0x00, 0x77, 0x88, i as u8],
-            )
-            .expect("write fresh VP8 tail");
+                RtpWrite::new(
+                    pt,
+                    (fresh_seq + 1).into(),
+                    fresh_frame_timestamp,
+                    fresh_first_at + Duration::from_millis(5),
+                    [0x00, 0x77, 0x88, i as u8],
+                )
+                .marker(true)
+                .nackable(true),
+            );
         }
         let (fresh_tail_emit_at, fresh_tail_packets) = wait_for_transmits(
             &mut l,

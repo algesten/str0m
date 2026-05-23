@@ -1,9 +1,8 @@
-use std::collections::VecDeque;
 use std::time::Duration;
 
 use str0m::format::Codec;
-use str0m::media::MediaKind;
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::media::{MediaKind, Pt};
+use str0m::rtp::{ExtensionValues, RtpWrite, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
@@ -51,46 +50,34 @@ pub fn rtp_direct_csrc_basic() -> Result<(), RtcError> {
         0,
     ];
 
-    let to_write: Vec<&[u8]> = vec![&[0x1, 0x2, 0x3, 0x4]];
-    let mut to_write: VecDeque<_> = to_write.into();
+    let wallclock = l.start + l.duration();
+    let exts = ExtensionValues {
+        audio_level: Some(-42),
+        voice_activity: Some(false),
+        ..Default::default()
+    };
 
-    let mut write_at = l.last + Duration::from_millis(300);
+    l.direct_api().stream_tx(&ssrc).unwrap().write_rtp(
+        RtpWrite::new(
+            pt,
+            47_000.into(),
+            47_000_000,
+            wallclock,
+            [0x1, 0x2, 0x3, 0x4],
+        )
+        .ext_vals(exts)
+        .csrc(&csrc_values[..3]),
+    );
 
     loop {
-        if l.start + l.duration() > write_at {
-            write_at = l.last + Duration::from_millis(300);
-            if let Some(packet) = to_write.pop_front() {
-                let wallclock = l.start + l.duration();
-
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx(&ssrc).unwrap();
-
-                let exts = ExtensionValues {
-                    audio_level: Some(-42),
-                    voice_activity: Some(false),
-                    ..Default::default()
-                };
-
-                stream
-                    .write_rtp_with_csrc(
-                        pt,
-                        47_000.into(),
-                        47_000_000,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                        3,
-                        csrc_values,
-                    )
-                    .expect("clean write");
-            }
-        }
-
         progress(&mut l, &mut r)?;
 
-        if l.duration() > Duration::from_secs(10) {
+        let has_media_packet = r
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::RtpPacket(_)));
+
+        if has_media_packet || l.duration() > Duration::from_secs(10) {
             break;
         }
     }
@@ -147,40 +134,27 @@ pub fn rtp_direct_csrc_max_entries() -> Result<(), RtcError> {
 
     let csrc_values: [u32; 15] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
-    let to_write: Vec<&[u8]> = vec![&[0xa, 0xb, 0xc, 0xd]];
-    let mut to_write: VecDeque<_> = to_write.into();
-
-    let mut write_at = l.last + Duration::from_millis(300);
+    let wallclock = l.start + l.duration();
+    l.direct_api().stream_tx(&ssrc).unwrap().write_rtp(
+        RtpWrite::new(
+            pt,
+            48_000.into(),
+            48_000_000,
+            wallclock,
+            [0xa, 0xb, 0xc, 0xd],
+        )
+        .csrc(&csrc_values),
+    );
 
     loop {
-        if l.start + l.duration() > write_at {
-            write_at = l.last + Duration::from_millis(300);
-            if let Some(packet) = to_write.pop_front() {
-                let wallclock = l.start + l.duration();
-
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx(&ssrc).unwrap();
-
-                stream
-                    .write_rtp_with_csrc(
-                        pt,
-                        48_000.into(),
-                        48_000_000,
-                        wallclock,
-                        false,
-                        ExtensionValues::default(),
-                        false,
-                        packet.to_vec(),
-                        15,
-                        csrc_values,
-                    )
-                    .expect("clean write");
-            }
-        }
-
         progress(&mut l, &mut r)?;
 
-        if l.duration() > Duration::from_secs(10) {
+        let has_media_packet = r
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::RtpPacket(_)));
+
+        if has_media_packet || l.duration() > Duration::from_secs(10) {
             break;
         }
     }
@@ -206,4 +180,18 @@ pub fn rtp_direct_csrc_max_entries() -> Result<(), RtcError> {
     }
 
     Ok(())
+}
+
+#[test]
+#[should_panic(expected = "CSRC count must be <= 15")]
+pub fn rtp_direct_csrc_panics_on_too_many_entries() {
+    let csrc_values = [0; 16];
+    RtpWrite::new(
+        Pt::new_with_value(96),
+        47_000.into(),
+        47_000_000,
+        std::time::Instant::now(),
+        [0],
+    )
+    .csrc(&csrc_values);
 }

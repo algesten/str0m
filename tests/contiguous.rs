@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use str0m::Rtc;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
+use str0m::rtp::RtpWrite;
 use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
@@ -204,16 +205,17 @@ impl Server {
             let mut direct = l.direct_api();
             let tx = direct.stream_tx_by_mid(mid, None).unwrap();
             tx.write_rtp(
-                pt,
-                header.sequence_number(None),
-                header.timestamp,
-                absolute,
-                header.marker,
-                header.ext_vals,
-                true,
-                payload,
-            )
-            .unwrap();
+                RtpWrite::new(
+                    pt,
+                    header.sequence_number(None),
+                    header.timestamp,
+                    absolute,
+                    payload,
+                )
+                .marker(header.marker)
+                .ext_vals(header.ext_vals)
+                .nackable(true),
+            );
 
             progress(&mut l, &mut r)?;
 
