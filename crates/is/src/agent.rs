@@ -1930,6 +1930,54 @@ impl IceAgent {
             .find_map(|p| (p.id() == id).then_some(p.prio()))
     }
 
+    fn nominated_pair(&self) -> Option<&CandidatePair> {
+        let id = self.nominated_send?;
+        self.candidate_pairs.iter().find(|p| p.id() == id)
+    }
+
+    /// The round-trip time of the most recent successful STUN binding
+    /// transaction on the nominated candidate pair.
+    ///
+    /// Returns `None` if there is no nominated pair, or no successful
+    /// binding response has been recorded on it.
+    ///
+    /// This is the ICE-level equivalent of
+    /// [`RTCIceCandidatePairStats.currentRoundTripTime`][1] and is updated
+    /// on every STUN keepalive/consent exchange — useful for measuring RTT
+    /// on receive-only endpoints where RTP-based RTT estimates aren't
+    /// available.
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-currentroundtriptime
+    pub fn nominated_pair_rtt(&self) -> Option<Duration> {
+        self.nominated_pair().and_then(|p| p.last_successful_rtt())
+    }
+
+    /// Sum of all RTTs measured from successful STUN binding transactions
+    /// on the nominated candidate pair over its lifetime.
+    ///
+    /// Spec equivalent of [`RTCIceCandidatePairStats.totalRoundTripTime`][1].
+    /// Divide by [`nominated_pair_responses_received`] to get the average.
+    ///
+    /// Returns `None` if there is no nominated pair.
+    ///
+    /// [`nominated_pair_responses_received`]: Self::nominated_pair_responses_received
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-totalroundtriptime
+    pub fn nominated_pair_total_rtt(&self) -> Option<Duration> {
+        self.nominated_pair().map(|p| p.total_round_trip_time())
+    }
+
+    /// Total number of STUN binding responses received on the nominated
+    /// candidate pair over its lifetime.
+    ///
+    /// Spec equivalent of [`RTCIceCandidatePairStats.responsesReceived`][1].
+    ///
+    /// Returns `None` if there is no nominated pair.
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-responsesreceived
+    pub fn nominated_pair_responses_received(&self) -> Option<u64> {
+        self.nominated_pair().map(|p| p.responses_received())
+    }
+
     fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
         if self.state != state {
             debug!("State change ({}): {:?} -> {:?}", reason, self.state, state);

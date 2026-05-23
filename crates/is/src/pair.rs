@@ -52,6 +52,14 @@ pub struct CandidatePair {
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
+
+    /// Total number of STUN binding responses received on this pair,
+    /// across the whole pair lifetime (not bounded by `binding_attempts`).
+    responses_received: u64,
+
+    /// Sum of all RTTs measured from successful STUN binding transactions
+    /// on this pair, across the whole pair lifetime.
+    total_round_trip_time: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -153,6 +161,8 @@ impl CandidatePair {
             remote_binding_requests: Default::default(),
             remote_binding_request_time: Default::default(),
             nomination_state: Default::default(),
+            responses_received: 0,
+            total_round_trip_time: Duration::ZERO,
         }
     }
 
@@ -328,6 +338,9 @@ impl CandidatePair {
 
         attempt.respone_recv = Some(now);
 
+        self.responses_received += 1;
+        self.total_round_trip_time += now - attempt.request_sent;
+
         if attempt.nominated && self.nomination_state == NominationState::Attempt {
             self.nomination_state = NominationState::Success;
             debug!("Nomination success: {:?}", Pii(&self));
@@ -350,6 +363,29 @@ impl CandidatePair {
     /// `None` means there has been no attempts.
     fn last_attempt_time(&self) -> Option<Instant> {
         self.binding_attempts.back().map(|b| b.request_sent)
+    }
+
+    /// The round-trip time of the most recent successful STUN binding
+    /// transaction recorded for this pair.
+    ///
+    /// `None` if no binding response has been received yet.
+    pub fn last_successful_rtt(&self) -> Option<Duration> {
+        self.binding_attempts
+            .iter()
+            .rev()
+            .find_map(|b| b.respone_recv.map(|r| r - b.request_sent))
+    }
+
+    /// Total number of STUN binding responses received on this pair over
+    /// the pair's lifetime.
+    pub fn responses_received(&self) -> u64 {
+        self.responses_received
+    }
+
+    /// Sum of all RTTs measured from successful STUN binding transactions
+    /// on this pair over the pair's lifetime.
+    pub fn total_round_trip_time(&self) -> Duration {
+        self.total_round_trip_time
     }
 
     /// From the back of binding_attempts, go through all unanswered and find
@@ -544,5 +580,35 @@ mod tests {
         let duration = now.duration_since(offline_at);
 
         assert_eq!(duration, stun_timing.timeout())
+    }
+
+    #[test]
+    fn last_successful_rtt_returns_most_recent() {
+        let stun_timing = StunTiming::default();
+        let mut pair = CandidatePair::new(0, CandidateKind::Host, 0, CandidateKind::Host, 0);
+        let now = Instant::now();
+
+        assert_eq!(pair.last_successful_rtt(), None);
+        assert_eq!(pair.responses_received(), 0);
+        assert_eq!(pair.total_round_trip_time(), Duration::ZERO);
+
+        let id1 = pair.new_attempt(now, &stun_timing, false);
+        pair.record_binding_response(now + Duration::from_millis(50), id1, 0);
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(50)));
+        assert_eq!(pair.responses_received(), 1);
+        assert_eq!(pair.total_round_trip_time(), Duration::from_millis(50));
+
+        // Newer in-flight attempt without response shouldn't shadow the
+        // older successful one or change cumulative counters.
+        let _id2 = pair.new_attempt(now + Duration::from_millis(100), &stun_timing, false);
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(50)));
+        assert_eq!(pair.responses_received(), 1);
+
+        // A newer successful attempt replaces current rtt and accumulates totals.
+        let id3 = pair.new_attempt(now + Duration::from_millis(200), &stun_timing, false);
+        pair.record_binding_response(now + Duration::from_millis(220), id3, 0);
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(20)));
+        assert_eq!(pair.responses_received(), 2);
+        assert_eq!(pair.total_round_trip_time(), Duration::from_millis(70));
     }
 }
