@@ -648,14 +648,26 @@ impl Depacketizer for Vp8Depacketizer {
         self.s = (b & 0x10) >> 4;
         self.pid = b & 0x07;
 
-        if self.x == 1 {
+        let (i, l, t, k) = if self.x == 1 {
             b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
-            self.i = (b & 0x80) >> 7;
-            self.l = (b & 0x40) >> 6;
-            self.t = (b & 0x20) >> 5;
-            self.k = (b & 0x10) >> 4;
-        }
+            let i = (b & 0x80) >> 7;
+            let l = (b & 0x40) >> 6;
+            let t = (b & 0x20) >> 5;
+            let k = (b & 0x10) >> 4;
+
+            if l == 1 && t == 0 {
+                return Err(PacketError::ErrVP8CorruptedPacket);
+            }
+
+            (i, l, t, k)
+        } else {
+            (0, 0, 0, 0)
+        };
+        self.i = i;
+        self.l = l;
+        self.t = t;
+        self.k = k;
 
         if self.i == 1 {
             b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
@@ -835,18 +847,19 @@ mod test {
         assert_eq!(pck.k, 0, "K must be 0");
         assert_eq!(pck.p, 1, "P must be 1");
 
-        // Header size, X and L
+        // Header size, X and L without T
         let raw_bytes = &[0x80, 0x40, 0x00, 0x00];
         let mut payload = Vec::new();
+        assert_eq!(
+            pck.depacketize(raw_bytes, &mut payload, &mut extra),
+            Err(PacketError::ErrVP8CorruptedPacket)
+        );
+
+        let raw_bytes = &[0x00, 0x11, 0x22];
+        let mut payload = Vec::new();
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
-            .expect("X and L");
-        assert!(!payload.is_empty(), "Payload must be not empty");
-        assert_eq!(pck.x, 1, "X must be 1");
-        assert_eq!(pck.i, 0, "I must be 0");
-        assert_eq!(pck.l, 1, "L must be 1");
-        assert_eq!(pck.t, 0, "T must be 0");
-        assert_eq!(pck.k, 0, "K must be 0");
-        assert_eq!(pck.p, 1, "P must be 1");
+            .expect("valid packet after malformed descriptor");
+        assert_eq!(payload, [0x11, 0x22]);
 
         // Header size, X and T
         let raw_bytes = &[0x80, 0x20, 0x00, 0x00];
