@@ -99,7 +99,7 @@ impl<'a> Writer<'a> {
         self
     }
 
-    /// Set absolute capture time for this packet.
+    /// Set absolute capture time for this frame.
     pub fn abs_capture_time(mut self, capture_time: AbsCaptureTime) -> Self {
         self.ext_vals.abs_capture_time = Some(capture_time);
         self

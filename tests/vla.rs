@@ -172,7 +172,8 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
 
     writer
         .user_extension_value(vla.clone())
-        .write(pt, last, MediaTime::ZERO, vec![0xAA; 10])?;
+        // Create ~3-4 packets to make sure vla is propagated properly to the receiver
+        .write(pt, last, MediaTime::ZERO, vec![0xAA; 5000])?;
 
     let mut vla_received = false;
     for _ in 0..100 {
