@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
-use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
+use str0m::rtp::{ExtensionValues, RawPacket, RtpWrite, SeqNo, Ssrc};
 use str0m::{Event, Input, Output, Rtc, RtcError};
 
 mod common;
@@ -57,17 +57,7 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
             };
 
             stream
-                .write_rtp(
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    vec![1, 3, 3, 7],
-                )
-                .expect("clean write");
+                .write_rtp(RtpWrite::new(pt, seq_no, time, wallclock, [1, 3, 3, 7]).ext_vals(exts));
             send_count += 1;
         }
 
@@ -163,17 +153,7 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
             };
 
             stream
-                .write_rtp(
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    vec![1, 3, 3, 7],
-                )
-                .expect("clean write");
+                .write_rtp(RtpWrite::new(pt, seq_no, time, wallclock, [1, 3, 3, 7]).ext_vals(exts));
             send_count += 1;
         }
 

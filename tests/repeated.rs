@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::MediaKind;
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::rtp::{ExtensionValues, RtpWrite, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
@@ -61,18 +61,9 @@ pub fn repeated() -> Result<(), RtcError> {
                 ..Default::default()
             };
 
-            stream
-                .write_rtp(
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    vec![0x01, 0x02, 0x03, 0x04],
-                )
-                .expect("clean write");
+            stream.write_rtp(
+                RtpWrite::new(pt, seq_no, time, wallclock, [0x01, 0x02, 0x03, 0x04]).ext_vals(exts),
+            );
         }
 
         progress(&mut l, &mut r)?;

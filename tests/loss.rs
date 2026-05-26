@@ -11,7 +11,7 @@ use common::{connect_l_r, init_crypto_default, progress, vp8_data};
 use netem::{GilbertElliot, LossModel, NetemConfig};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
-use str0m::rtp::Ssrc;
+use str0m::rtp::{RtpWrite, Ssrc};
 use str0m::{Event, RtcError};
 
 use crate::common::init_log;
@@ -72,16 +72,16 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
         let mut direct = l.direct_api();
         let tx = direct.stream_tx(&ssrc_tx).unwrap();
         tx.write_rtp(
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            Default::default(), // Don't use pcap ext_vals - wrong extension mapping
-            true,
-            payload,
-        )
-        .unwrap();
+            RtpWrite::new(
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                payload,
+            )
+            .marker(header.marker)
+            .nackable(true),
+        );
 
         progress(&mut l, &mut r)?;
 

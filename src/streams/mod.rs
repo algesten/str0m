@@ -7,6 +7,7 @@ use std::time::Instant;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media, SenderFeedback};
+use crate::packet::Vp8Patch;
 use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Bitrate, Pt};
@@ -16,7 +17,7 @@ use crate::rtp_::{Rtcp, RtpHeader};
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
-pub use self::send::StreamTx;
+pub use self::send::{RtpWrite, StreamTx};
 
 mod receive;
 pub(crate) mod register;
@@ -63,6 +64,8 @@ pub struct RtpPacket {
 
     /// RTP payload. This contains no header.
     pub payload: Arc<[u8]>,
+
+    vp8_patch: Option<Vp8Patch>,
 
     /// str0m server timestamp.
     ///
@@ -114,6 +117,7 @@ impl RtpPacket {
                 ..Default::default()
             },
             payload: Arc::default(), // This payload is never used. See RtpHeader::create_padding_packet
+            vp8_patch: None,
             nackable: false,
             last_sender_info: None,
             timestamp: already_happened(),
