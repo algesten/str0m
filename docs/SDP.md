@@ -76,6 +76,15 @@ anything else. It's as if we collectively pretend that SHOULD is a MUST, and imp
 
 str0m does this too. Sauce for the goose…
 
+### Renegotiation and narrowed PT lists
+
+On renegotiation of an existing m-line, str0m keeps the remote payload type list
+from the first negotiation. Strictly following SDP offer/answer would mean an
+answer that narrows the `sendrecv`/`recvonly` PT list should also narrow what we
+consider valid to send on that m-line. In practice, browsers keep stable PT/codec
+sets for an existing m-line, and we have not seen a real interoperability problem
+from keeping the initial list.
+
 ### Side note about asymmetry
 
 > The answerer MUST send using a media format in the offer that is also listed in the answer,
