@@ -467,6 +467,7 @@ impl Streams {
         if now > self.rx_lookup_at() {
             self.rx_lookup
                 .retain(|_, l| now - l.last_used <= RX_LOOKUP_EXPIRY);
+            self.last_rx_lookup_cleanup = now;
         }
     }
 
