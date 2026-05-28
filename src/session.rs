@@ -97,6 +97,10 @@ pub(crate) struct Session {
     // Whether we sent a single outgoing RTP packet.
     packet_first_sent: bool,
 
+    // Total RTP payload bytes for media, including retransmissions.
+    media_bytes_rx: u64,
+    media_bytes_tx: u64,
+
     pub ice_lite: bool,
 
     /// Whether we are running in RTP-mode.
@@ -164,6 +168,8 @@ impl Session {
             poll_packet_buf: vec![0; 2000],
             pending_packet: None,
             packet_first_sent: false,
+            media_bytes_rx: 0,
+            media_bytes_tx: 0,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
             vp9_packetizer_mode: config.vp9_packetizer_mode,
@@ -562,6 +568,8 @@ impl Session {
             return;
         }
 
+        self.media_bytes_rx += data.len() as u64;
+
         // One-shot conversion to Arc<[u8]>: a single allocation that copies
         // only the trimmed payload bytes out of the SRTP scratch buffer.
         let payload: Arc<[u8]> = Arc::from(data);
@@ -870,6 +878,10 @@ impl Session {
             bwe.on_media_sent(payload_size.into(), is_padding, now);
         }
 
+        if !is_padding && !header.ssrc.is_probe() {
+            self.media_bytes_tx += payload_size as u64;
+        }
+
         if !self.packet_first_sent {
             self.packet_first_sent = true;
         }
@@ -949,8 +961,8 @@ impl Session {
             stream.visit_stats(snapshot, now);
         }
 
-        snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
-        snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
+        snapshot.tx = self.media_bytes_tx;
+        snapshot.rx = self.media_bytes_rx;
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
 
         snapshot.egress_loss_fraction = self.twcc_tx_register.loss(Duration::from_secs(1), now);
