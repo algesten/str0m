@@ -1,14 +1,19 @@
 # Unreleased
 
+# 0.20.0
+
   * Update dimpl to 0.6.2 and sctp-proto to 0.9.1
   * Fix repeated rx lookup cleanup bug #965
   * Fix permissive vp8 depacketizer for invalid `l=1,t=0` cases (breaking) #963
   * Add VP8 descriptor parsing and `vp8_patch()` to `RtpWrite` #963
   * `write_rtp()` now takes a `RtpWrite` builder (breaking) #963
   * Add `abs-capture-time` writer support and fixed receiver-side (breaking) #964
-  * Expose ICE candidate pair RTT in CandidatePairStats #962
   * Add stereo to opus format params #955
   * Use `Arc<[u8]>` as input/output of media data (breaking) #959
+
+# is-0.9.1
+
+  * Expose ICE candidate pair RTT in CandidatePairStats #962
 
 # 0.19.0
 
