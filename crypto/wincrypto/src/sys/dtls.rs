@@ -89,21 +89,15 @@ const SRTP_PROTECTION_PROFILES_SECBUFFER: SecBuffer = SecBuffer {
     pvBuffer: &SRTP_PROTECTION_PROFILES_BUFFER_INSTANCE as *const _ as *mut _,
 };
 
-const DTLS_MTU_BUFFER_INSTANCE: SEC_DTLS_MTU = SEC_DTLS_MTU {
-    PathMTU: DATAGRAM_MTU as u16,
-};
-const DTLS_MTU_SECBUFFER: SecBuffer = SecBuffer {
-    cbBuffer: std::mem::size_of::<SEC_DTLS_MTU>() as u32,
-    BufferType: SECBUFFER_DTLS_MTU,
-    pvBuffer: &DTLS_MTU_BUFFER_INSTANCE as *const _ as *mut _,
-};
+const DTLS_MTU_BUFFER_SIZE: u32 = std::mem::size_of::<SEC_DTLS_MTU>() as u32;
 
 // The label used for SRTP key derivation from: https://datatracker.ietf.org/doc/html/rfc5764#section-4.2
 const DTLS_KEY_LABEL: &[u8] = b"EXTRACTOR-dtls_srtp\0";
 
-// This size includes the encaptulation overhead of DTLS. So it must be larger than the MTU Str0m
-// uses for SCTP.
-const DATAGRAM_MTU: usize = 1200;
+// Scratch buffer size for SChannel token/alert output. Large enough to hold
+// a worst-case DTLS record on common networks; the actual on-wire MTU is
+// communicated to SChannel via SEC_DTLS_MTU::PathMTU per instance.
+const MAX_DTLS_BUFFER: usize = 1500;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum EstablishmentState {
@@ -131,12 +125,13 @@ pub struct Dtls {
     cred_handle: Option<SecHandle>,
     security_ctx: Option<SecHandle>,
     encrypt_message_input_sizes: SecPkgContext_StreamSizes,
+    mtu: u16,
 
     output_datagrams: VecDeque<Vec<u8>>,
 }
 
 impl Dtls {
-    pub fn new(cert: Arc<Certificate>) -> Result<Self, WinCryptoError> {
+    pub fn new(cert: Arc<Certificate>, mtu: u16) -> Result<Self, WinCryptoError> {
         Ok(Dtls {
             cert,
             is_client: None,
@@ -144,6 +139,7 @@ impl Dtls {
             cred_handle: None,
             security_ctx: None,
             encrypt_message_input_sizes: SecPkgContext_StreamSizes::default(),
+            mtu,
             output_datagrams: VecDeque::default(),
         })
     }
@@ -301,8 +297,16 @@ impl Dtls {
         };
         let mut new_ctx_handle = SecHandle::default();
 
+        // Per-instance MTU buffer (read synchronously by SChannel during this call).
+        let dtls_mtu_buffer = SEC_DTLS_MTU { PathMTU: self.mtu };
+        let dtls_mtu_secbuffer = SecBuffer {
+            cbBuffer: DTLS_MTU_BUFFER_SIZE,
+            BufferType: SECBUFFER_DTLS_MTU,
+            pvBuffer: &dtls_mtu_buffer as *const _ as *mut _,
+        };
+
         let mut buffers = [
-            DTLS_MTU_SECBUFFER,
+            dtls_mtu_secbuffer,
             SRTP_PROTECTION_PROFILES_SECBUFFER,
             SecBuffer {
                 cbBuffer: 0,
@@ -339,8 +343,8 @@ impl Dtls {
             },
         };
 
-        let mut token_buffer = [0u8; DATAGRAM_MTU];
-        let mut alert_buffer = [0u8; DATAGRAM_MTU];
+        let mut token_buffer = [0u8; MAX_DTLS_BUFFER];
+        let mut alert_buffer = [0u8; MAX_DTLS_BUFFER];
         let mut out_buffers = [
             SecBuffer {
                 cbBuffer: token_buffer.len() as u32,

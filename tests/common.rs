@@ -1,4 +1,5 @@
 #![allow(unused)]
+use std::cell::Cell;
 use std::io::Cursor;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
@@ -228,6 +229,26 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
     Ok(())
 }
 
+thread_local! {
+    /// When set, [`rtc_poll_to_timeout`] asserts every [`Output::Transmit`]
+    /// for which `contents.len() <= mtu`.
+    static STRICT_MTU: Cell<Option<usize>> = const { Cell::new(None) };
+}
+
+struct StrictMtuGuard(Option<usize>);
+impl Drop for StrictMtuGuard {
+    fn drop(&mut self) {
+        STRICT_MTU.with(|c| c.set(self.0));
+    }
+}
+
+/// Like [`progress`] but asserts every outgoing datagram is `<= mtu` bytes.
+pub fn progress_strict_mtu(l: &mut TestRtc, r: &mut TestRtc, mtu: usize) -> Result<(), RtcError> {
+    let prev = STRICT_MTU.with(|c| c.replace(Some(mtu)));
+    let _guard = StrictMtuGuard(prev);
+    progress(l, r)
+}
+
 fn progress_one(
     l: &mut TestRtc,
     r: &mut TestRtc,
@@ -310,6 +331,17 @@ fn rtc_poll_to_timeout(
                 break;
             }
             Output::Transmit(v) => {
+                if let Some(mtu) = STRICT_MTU.with(|c| c.get()) {
+                    assert!(
+                        v.contents.len() <= mtu,
+                        "outgoing datagram {} bytes exceeds strict mtu {} (proto={:?}, {}->{})",
+                        v.contents.len(),
+                        mtu,
+                        v.proto,
+                        v.source,
+                        v.destination,
+                    );
+                }
                 let packet = PendingPacket {
                     proto: v.proto,
                     source: v.source,

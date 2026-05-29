@@ -3,6 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
+use str0m_proto::DATAGRAM_MTU_TARGET;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::dtls::{KeyingMaterial, SrtpProfile};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
@@ -43,6 +44,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         cert: &DtlsCert,
         _now: Instant,
         dtls_version: DtlsVersion,
+        mtu: Option<usize>,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         if !matches!(dtls_version, DtlsVersion::Dtls12 | DtlsVersion::Auto) {
             return Err(CryptoError::Other(
@@ -64,8 +66,12 @@ impl DtlsProvider for WinCryptoDtlsProvider {
                 )
             })?;
 
-        let dtls =
-            Dtls::new(win_cert).map_err(|e| CryptoError::Other(format!("DTLS creation: {}", e)))?;
+        let mtu = mtu.unwrap_or(DATAGRAM_MTU_TARGET);
+        let mtu_u16 = u16::try_from(mtu).map_err(|_| {
+            CryptoError::Other(format!("MTU {} does not fit in u16 for SChannel", mtu))
+        })?;
+        let dtls = Dtls::new(win_cert, mtu_u16)
+            .map_err(|e| CryptoError::Other(format!("DTLS creation: {}", e)))?;
 
         Ok(Box::new(WinCryptoDtlsInstance {
             dtls,
