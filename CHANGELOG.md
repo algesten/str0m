@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Update dimpl to 0.6.2 and sctp-proto to 0.9.1
   * Fix repeated rx lookup cleanup bug #965
   * Fix permissive vp8 depacketizer for invalid `l=1,t=0` cases (breaking) #963
   * Add VP8 descriptor parsing and `vp8_patch()` to `RtpWrite` #963
