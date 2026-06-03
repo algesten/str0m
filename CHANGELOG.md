@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Accept any non-empty SDP session name (`s=`), not just `s=-` (RFC 8866 section 5.3)
+
 # 0.20.0
 
   * Update dimpl to 0.6.2 and sctp-proto to 0.9.1

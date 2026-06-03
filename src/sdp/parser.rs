@@ -31,7 +31,8 @@ where
 /// 1. First line must be v=0
 /// 2. The second SDP line MUST be an "o=" line The sess-id MUST be representable by a 64-bit signed
 ///    integer, and the initial value MUST be less than (2**62)-1
-/// 3. Third line a single dash SHOULD be used as the session name, e.g. "s=-"
+/// 3. Third line is the session name. The "s=" field MUST NOT be empty and SHOULD contain
+///    ISO 10646 characters (RFC 8866 section 5.3).
 ///
 /// Session is over when we find a "t=" line MUST be added, both <start-time> and <stop-time>
 ///    SHOULD be set to zero, e.g. "t=0 0".
@@ -43,7 +44,8 @@ where
     (
         typed_line('v', token('0')), // v=0
         originator_line(),           // o=- 6564425948916445306 2 IN IP4 127.0.0.1
-        typed_line('s', token('-')), // s=-
+        // The "s=" field MUST NOT be empty (RFC 8866 section 5.3)
+        typed_line('s', any_value()),
         many::<Vec<_>, _, _>(ignored_session_line()),
         optional(bandwidth_line()),                         // b=CT:1234
         typed_line('t', string("0 0")),                     // t=0 0
@@ -1035,6 +1037,58 @@ mod test {
     }
 
     #[test]
+    fn session_parser_named_session() {
+        // A session name other than "-".
+        let sdp = "v=0\r\n\
+            o=publisher 4489045141692799359 2 IN IP4 127.0.0.1\r\n\
+            s=NamedPublishSession\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0 1\r\n\
+            a=extmap-allow-mixed\r\n\
+            a=msid-semantic: WMS\r\n";
+        assert_eq!(
+            session_parser().parse(sdp),
+            Ok((
+                Session {
+                    id: 4_489_045_141_692_799_359.into(),
+                    bw: None,
+                    attrs: vec![
+                        SessionAttribute::Group {
+                            typ: "BUNDLE".into(),
+                            mids: vec!["0".into(), "1".into()],
+                        },
+                        SessionAttribute::Unused("extmap-allow-mixed".into()),
+                        SessionAttribute::Unused("msid-semantic: WMS".into()),
+                    ],
+                },
+                ""
+            ))
+        );
+    }
+
+    #[test]
+    fn session_parser_space_session_name() {
+        // "If a session has no meaningful name, the value "s= " SHOULD be used
+        // (i.e., a single space as the session name)." (RFC 8866 section 5.3)
+        let sdp = "v=0\n\
+            o=- 6564425948916445306 2 IN IP4 127.0.0.1\n\
+            s= \n\
+            t=0 0\n\
+            ";
+        assert_eq!(
+            session_parser().parse(sdp),
+            Ok((
+                Session {
+                    id: 6_564_425_948_916_445_306.into(),
+                    bw: None,
+                    attrs: vec![],
+                },
+                ""
+            ))
+        );
+    }
+
+    #[test]
     fn parse_sdp_firefox() {
         let sdp = "v=0\r\n\
             o=mozilla...THIS_IS_SDPARTA-83.0 7052848360639826063 0 IN IP4 0.0.0.0\r\n\
@@ -1161,6 +1215,64 @@ mod test {
         let parsed = sdp_parser().parse(sdp);
 
         assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn parse_offer_sdp_ffmpeg_whip() {
+        // ffmpeg -re \
+        //   -f lavfi -i "testsrc=size=640x480:rate=30" \
+        //   -f lavfi -i "sine=frequency=440:sample_rate=48000" \
+        //   -c:v libx264 -profile:v baseline -pix_fmt yuv420p -g 60 -tune zerolatency \
+        //   -c:a libopus -ar 48000 -ac 2 \
+        //   -f whip "http://127.0.0.1:8080/whip"
+        let sdp = "v=0\r\n\
+            o=FFmpeg 4489045141692799359 2 IN IP4 127.0.0.1\r\n\
+            s=FFmpegPublishSession\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0 1\r\n\
+            a=extmap-allow-mixed\r\n\
+            a=msid-semantic: WMS\r\n\
+            m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=ice-ufrag:08a9c3f4\r\n\
+            a=ice-pwd:a202d23be47d1decaa6f67d04d4e6c16\r\n\
+            a=fingerprint:sha-256 21:69:7C:46:D3:DC:4D:D3:66:61:5C:C5:6A:0B:F7:36\
+            :BD:91:A9:2A:FF:BC:1A:59:D9:38:38:C8:E2:A4:8D:AF\r\n\
+            a=setup:passive\r\n\
+            a=mid:0\r\n\
+            a=sendonly\r\n\
+            a=msid:FFmpeg audio\r\n\
+            a=rtcp-mux\r\n\
+            a=rtpmap:111 opus/48000/2\r\n\
+            a=ssrc:3166090378 cname:FFmpeg\r\n\
+            a=ssrc:3166090378 msid:FFmpeg audio\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 106 105\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=ice-ufrag:08a9c3f4\r\n\
+            a=ice-pwd:a202d23be47d1decaa6f67d04d4e6c16\r\n\
+            a=fingerprint:sha-256 21:69:7C:46:D3:DC:4D:D3:66:61:5C:C5:6A:0B:F7:36\
+            :BD:91:A9:2A:FF:BC:1A:59:D9:38:38:C8:E2:A4:8D:AF\r\n\
+            a=setup:passive\r\n\
+            a=mid:1\r\n\
+            a=sendonly\r\n\
+            a=msid:FFmpeg video\r\n\
+            a=rtcp-mux\r\n\
+            a=rtcp-rsize\r\n\
+            a=rtpmap:106 H264/90000\r\n\
+            a=fmtp:106 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001e\r\n\
+            a=rtcp-fb:106 nack\r\n\
+            a=rtpmap:105 rtx/90000\r\n\
+            a=fmtp:105 apt=106\r\n\
+            a=ssrc-group:FID 3166090379 3166090380\r\n\
+            a=ssrc:3166090379 cname:FFmpeg\r\n\
+            a=ssrc:3166090379 msid:FFmpeg video\r\n\
+            ";
+
+        let (sdp, _) = sdp_parser().parse(sdp).unwrap();
+
+        assert_eq!(sdp.media_lines.len(), 2);
+        assert_eq!(sdp.media_lines[0].mid().to_string(), "0");
+        assert_eq!(sdp.media_lines[1].mid().to_string(), "1");
     }
 
     #[test]
