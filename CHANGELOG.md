@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix `Simulcast::add_recv_layer` to push to recv instead of send #968
   * Accept any non-empty SDP session name (`s=`), not just `s=-` (RFC 8866 section 5.3)
 
 # 0.20.0
