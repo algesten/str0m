@@ -105,7 +105,7 @@ impl Simulcast {
 
     /// Add a receive layer
     pub fn add_recv_layer(&mut self, layer: SimulcastLayer) {
-        self.send.push(layer);
+        self.recv.push(layer);
     }
 }
 
