@@ -25,12 +25,14 @@ impl SendQueue {
     pub fn push(&mut self, mut packet: RtpPacket) {
         // Every incoming packet must be timestamped withe a handle_timeout.
         // This sentinel value indicates it is needed.
+        tracing::warn!(ssrc = ?packet.header.ssrc, pt = ?packet.header.payload_type, seq = packet.header.sequence_number, queue_len = self.queue.len(), "[MIRE_DEBUG] send_queue.push");
         packet.timestamp = not_happening();
 
         self.queue.push_back(packet);
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
+        let mut timestamped_count = 0u32;
         for pkt in self.queue.iter_mut().rev() {
             if pkt.timestamp != not_happening() {
                 // all enqueued packets are timestamped.
@@ -38,7 +40,11 @@ impl SendQueue {
             } else {
                 pkt.timestamp = now;
                 self.total.increase(now, pkt.payload.len());
+                timestamped_count += 1;
             }
+        }
+        if timestamped_count > 0 {
+            tracing::warn!(timestamped_count, queue_len = self.queue.len(), "[MIRE_DEBUG] send_queue.handle_timeout stamped packets");
         }
     }
 
@@ -54,8 +60,10 @@ impl SendQueue {
     pub fn peek(&mut self) -> Option<&mut RtpPacket> {
         let peeked = self.queue.front_mut()?;
         if peeked.timestamp == not_happening() {
+            tracing::warn!(ssrc = ?peeked.header.ssrc, "[MIRE_DEBUG] send_queue.peek BLOCKED - not timestamped");
             None
         } else {
+            tracing::warn!(ssrc = ?peeked.header.ssrc, "[MIRE_DEBUG] send_queue.peek OK - returning packet");
             Some(peeked)
         }
     }

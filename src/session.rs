@@ -337,10 +337,11 @@ impl Session {
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
         let Some(header) = RtpHeader::parse(message, &self.exts) else {
-            trace!("Failed to parse RTP header");
+            warn!("[MIRE_DEBUG] Failed to parse RTP header, len={}", message.len());
             return;
         };
 
+        warn!("[MIRE_DEBUG] handle_rtp_receive: ssrc={:?}, pt={:?}, len={}", header.ssrc, header.payload_type, message.len());
         self.handle_rtp(now, header, message);
     }
 
@@ -451,7 +452,7 @@ impl Session {
 
         // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(now, &header) else {
-            debug!("No mid/SSRC for header: {:?}", header);
+            warn!("[MIRE_DEBUG] No mid/SSRC for header: ssrc={:?} pt={:?}", header.ssrc, header.payload_type);
             return;
         };
 
@@ -909,11 +910,28 @@ impl Session {
     }
 
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
+        if self.srtp_tx.is_none() {
+            static SRTP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let c = SRTP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if c % 1000 == 0 {
+                tracing::warn!("[MIRE_DEBUG] poll_packet: srtp_tx is None — no SRTP context (count: {})", c);
+            }
+            return None;
+        }
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
         // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
-        let (midrid, cluster_id) = self.pacer.poll_queue()?;
+        let poll_result = self.pacer.poll_queue();
+        if poll_result.is_none() {
+            // Only log occasionally to avoid spam
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let c = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if c % 1000 == 0 {
+                tracing::warn!("[MIRE_DEBUG] pacer.poll_queue returned None (count: {})", c);
+            }
+        }
+        let (midrid, cluster_id) = poll_result?;
         let Some(media) = self.medias.iter().find(|m| m.mid() == midrid.mid()) else {
             trace!("Pacer pointed to mid {} which has no media", midrid.mid());
             return None;
@@ -941,7 +959,7 @@ impl Session {
             payload_size,
         } = receipt;
 
-        trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
+        tracing::warn!("[MIRE_DEBUG] poll_packet SUCCESS: ssrc={:?}, pt={:?}, seq={}, mid={:?}, payload_size={}", header.ssrc, header.payload_type, header.sequence_number, midrid.mid(), payload_size);
 
         #[cfg(feature = "_internal_dont_use_log_stats")]
         {
