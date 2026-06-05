@@ -1623,30 +1623,12 @@ mod test {
                             }),
                             MediaAttribute::Setup(Setup::ActPass),
                             MediaAttribute::Mid("0".into()),
-                            MediaAttribute::ExtMap {
-                                id: 1,
-                                ext: Extension::AudioLevel,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 2,
-                                ext: Extension::AbsoluteSendTime,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 3,
-                                ext: Extension::TransportSequenceNumber,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 4,
-                                ext: Extension::RtpMid,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 5,
-                                ext: Extension::RtpStreamId,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 6,
-                                ext: Extension::RepairedRtpStreamId,
-                            },
+                            MediaAttribute::ExtMap{ id: 1, ext: Extension::AudioLevel },
+                            MediaAttribute::ExtMap{ id: 2, ext: Extension::AbsoluteSendTime },
+                            MediaAttribute::ExtMap{ id: 3, ext: Extension::TransportSequenceNumber },
+                            MediaAttribute::ExtMap{ id: 4, ext: Extension::RtpMid },
+                            MediaAttribute::ExtMap{ id: 5, ext: Extension::RtpStreamId },
+                            MediaAttribute::ExtMap{ id: 6, ext: Extension::RepairedRtpStreamId },
                             MediaAttribute::SendRecv,
                             MediaAttribute::Msid(Msid {
                                 stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(),
@@ -1661,16 +1643,10 @@ mod test {
                                     channels: Some(2),
                                 },
                             },
-                            MediaAttribute::RtcpFb {
-                                pt: 111.into(),
-                                value: "transport-cc".into(),
-                            },
+                            MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },
                             MediaAttribute::Fmtp {
                                 pt: 111.into(),
-                                values: vec![
-                                    FormatParam::MinPTime(10),
-                                    FormatParam::UseInbandFec(true),
-                                ],
+                                values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
                             },
                             MediaAttribute::Ssrc {
                                 ssrc: 3_948_621_874.into(),
@@ -1680,8 +1656,7 @@ mod test {
                             MediaAttribute::Ssrc {
                                 ssrc: 3_948_621_874.into(),
                                 attr: "msid".into(),
-                                value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK \
-                            f78dde68-7055-4e20-bb37-433803dd1ed1"
+                                value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1"
                                     .into(),
                             },
                             MediaAttribute::Ssrc {
@@ -1717,50 +1692,17 @@ mod test {
                             }),
                             MediaAttribute::Setup(Setup::ActPass),
                             MediaAttribute::Mid("1".into()),
-                            MediaAttribute::ExtMap {
-                                id: 14,
-                                ext: Extension::TransmissionTimeOffset,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 2,
-                                ext: Extension::AbsoluteSendTime,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 13,
-                                ext: Extension::VideoOrientation,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 3,
-                                ext: Extension::TransportSequenceNumber,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 5,
-                                ext: Extension::PlayoutDelay,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 6,
-                                ext: Extension::VideoContentType,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 7,
-                                ext: Extension::VideoTiming,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 8,
-                                ext: Extension::ColorSpace,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 4,
-                                ext: Extension::RtpMid,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 10,
-                                ext: Extension::RtpStreamId,
-                            },
-                            MediaAttribute::ExtMap {
-                                id: 11,
-                                ext: Extension::RepairedRtpStreamId,
-                            },
+                            MediaAttribute::ExtMap{ id: 14, ext: Extension::TransmissionTimeOffset },
+                            MediaAttribute::ExtMap{ id: 2, ext: Extension::AbsoluteSendTime },
+                            MediaAttribute::ExtMap{ id: 13, ext: Extension::VideoOrientation },
+                            MediaAttribute::ExtMap{ id: 3, ext: Extension::TransportSequenceNumber },
+                            MediaAttribute::ExtMap{ id: 5, ext: Extension::PlayoutDelay },
+                            MediaAttribute::ExtMap{ id: 6, ext: Extension::VideoContentType },
+                            MediaAttribute::ExtMap{ id: 7, ext: Extension::VideoTiming },
+                            MediaAttribute::ExtMap{ id: 8, ext: Extension::ColorSpace },
+                            MediaAttribute::ExtMap{ id: 4, ext: Extension::RtpMid },
+                            MediaAttribute::ExtMap{ id: 10, ext: Extension::RtpStreamId },
+                            MediaAttribute::ExtMap{ id: 11, ext: Extension::RepairedRtpStreamId },
                             MediaAttribute::SendRecv,
                             MediaAttribute::Msid(Msid {
                                 stream_id: "-".into(),
@@ -1776,26 +1718,11 @@ mod test {
                                     channels: None,
                                 },
                             },
-                            MediaAttribute::RtcpFb {
-                                pt: 45.into(),
-                                value: "goog-remb".into(),
-                            },
-                            MediaAttribute::RtcpFb {
-                                pt: 45.into(),
-                                value: "transport-cc".into(),
-                            },
-                            MediaAttribute::RtcpFb {
-                                pt: 45.into(),
-                                value: "ccm fir".into(),
-                            },
-                            MediaAttribute::RtcpFb {
-                                pt: 45.into(),
-                                value: "nack".into(),
-                            },
-                            MediaAttribute::RtcpFb {
-                                pt: 45.into(),
-                                value: "nack pli".into(),
-                            },
+                            MediaAttribute::RtcpFb { pt: 45.into(), value: "goog-remb".into() },
+                            MediaAttribute::RtcpFb { pt: 45.into(), value: "transport-cc".into() },
+                            MediaAttribute::RtcpFb { pt: 45.into(), value: "ccm fir".into() },
+                            MediaAttribute::RtcpFb { pt: 45.into(), value: "nack".into() },
+                            MediaAttribute::RtcpFb { pt: 45.into(), value: "nack pli".into() },
                             MediaAttribute::Fmtp {
                                 pt: 45.into(),
                                 values: vec![
@@ -1812,12 +1739,9 @@ mod test {
                                     channels: None,
                                 },
                             },
-                            MediaAttribute::Fmtp {
-                                pt: 46.into(),
-                                values: vec![FormatParam::Apt(45.into())],
-                            },
+                            MediaAttribute::Fmtp { pt: 46.into(), values: vec![FormatParam::Apt(45.into())] }
                         ],
-                    },
+                    }
                 ],
             };
             assert_eq!(
@@ -1835,8 +1759,8 @@ mod test {
             a=ice-ufrag:S5hk\r\n\
             a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
             a=ice-options:trickle\r\n\
-            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27\
-            :96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:\
+5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
             a=setup:actpass\r\n\
             a=mid:0\r\n\
             a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n\
