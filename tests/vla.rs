@@ -4,7 +4,7 @@ use str0m::media::{MediaKind, MediaTime};
 use str0m::rtp::vla::{ResolutionAndFramerate, Serializer as VlaSerializer};
 use str0m::rtp::vla::{SimulcastStreamAllocation, SpatialLayerAllocation};
 use str0m::rtp::vla::{TemporalLayerAllocation, URI as VLA_URI, VideoLayersAllocation};
-use str0m::rtp::{Extension, ExtensionValues, Ssrc};
+use str0m::rtp::{Extension, ExtensionValues, RtpWrite, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
@@ -60,25 +60,16 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
         }],
     };
 
-    let mut exts = ExtensionValues::default();
-    exts.mid = Some(mid);
+    let mut exts = ExtensionValues {
+        mid: Some(mid),
+        ..Default::default()
+    };
     exts.user_values.set(vla.clone());
 
     let last = l.last;
     let mut direct = l.direct_api();
     let stream = direct.stream_tx(&ssrc).unwrap();
-    stream
-        .write_rtp(
-            pt,
-            (1000 as u64).into(),
-            0,
-            last,
-            false,
-            exts,
-            false,
-            vec![0xAA; 10],
-        )
-        .unwrap();
+    stream.write_rtp(RtpWrite::new(pt, 1000_u64.into(), 0, last, [0xAA; 10]).ext_vals(exts));
 
     let mut vla_received = false;
     for _ in 0..100 {
@@ -172,7 +163,8 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
 
     writer
         .user_extension_value(vla.clone())
-        .write(pt, last, MediaTime::ZERO, vec![0xAA; 10])?;
+        // Create ~3-4 packets to make sure vla is propagated properly to the receiver
+        .write(pt, last, MediaTime::ZERO, vec![0xAA; 5000])?;
 
     let mut vla_received = false;
     for _ in 0..100 {

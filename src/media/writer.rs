@@ -1,7 +1,9 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::RtcError;
 use crate::format::PayloadParams;
+use crate::rtp_::AbsCaptureTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
@@ -97,6 +99,12 @@ impl<'a> Writer<'a> {
         self
     }
 
+    /// Set absolute capture time for this frame.
+    pub fn abs_capture_time(mut self, capture_time: AbsCaptureTime) -> Self {
+        self.ext_vals.abs_capture_time = Some(capture_time);
+        self
+    }
+
     /// Set the minimum and maximum playout delay values. This can be used by a player
     /// on the receiver end to determine the size of the jitter buffer.
     pub fn playout_delay(mut self, min: MediaTime, max: MediaTime) -> Self {
@@ -131,7 +139,7 @@ impl<'a> Writer<'a> {
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
-        data: impl Into<Vec<u8>>,
+        data: impl Into<Arc<[u8]>>,
     ) -> Result<(), RtcError> {
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
@@ -146,7 +154,7 @@ impl<'a> Writer<'a> {
             }
         }
 
-        let data: Vec<u8> = data.into();
+        let data: Arc<[u8]> = data.into();
 
         trace!(
             "write {:?} {:?} {:?} time: {:?} len: {}",

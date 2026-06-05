@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
+use std::sync::Arc;
 use std::time::Instant;
 
+use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
 use super::contiguity::Contiguity;
@@ -75,22 +77,42 @@ impl Depacketized {
             .marker
     }
 
-    pub fn ext_vals(&self) -> &ExtensionValues {
-        // We use the extensions from the last packet because certain extensions, such as video
-        // orientation, are only added on the last packet to save bytes.
-        &self
+    pub fn ext_vals(&self) -> ExtensionValues {
+        let last = &self
             .meta
             .last()
-            .expect("a depacketized to consist of at least one packet")
+            .expect("depacketized video frame must contain a trailing packet")
             .header
-            .ext_vals
+            .ext_vals;
+
+        let first = &self
+            .meta
+            .first()
+            .expect("depacketized video frame must contain a leading packet")
+            .header
+            .ext_vals;
+
+        // We use the extensions from the last packet because certain extensions, such as video
+        // orientation, are only added on the last packet to save bytes.
+        let mut merged = last.clone();
+
+        // str0m strictly attaches some fields to the first packet of a frame.
+        if let Some(first_val) = &first.abs_capture_time {
+            merged.abs_capture_time = Some(*first_val);
+        }
+
+        if let Some(first_val) = first.user_values.get_arc::<VideoLayersAllocation>() {
+            merged.user_values.set_arc(first_val);
+        }
+
+        merged
     }
 }
 
 #[derive(Debug)]
 struct Entry {
     meta: RtpMeta,
-    data: Vec<u8>,
+    data: Arc<[u8]>,
     head: bool,
     tail: bool,
 }
@@ -133,7 +155,7 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
+    pub fn push(&mut self, meta: RtpMeta, data: impl Into<Arc<[u8]>>) {
         // We're not emitting frames in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         //
@@ -162,8 +184,11 @@ impl DepacketizingBuffer {
                 trace!("Drop exactly same packet: {}", meta.seq_no);
             }
             Err(i) => {
-                let head = self.depack.is_partition_head(&data);
-                let tail = self.depack.is_partition_tail(meta.header.marker, &data);
+                let data = data.into();
+                let head = self.depack.is_partition_head(data.as_ref());
+                let tail = self
+                    .depack
+                    .is_partition_tail(meta.header.marker, data.as_ref());
 
                 // i is insertion point to maintain order
                 let entry = Entry {
@@ -268,7 +293,7 @@ impl DepacketizingBuffer {
 
         for entry in self.queue.range_mut(start..=stop) {
             self.depack
-                .depacketize(&entry.data, &mut data, &mut codec_extra)?;
+                .depacketize(entry.data.as_ref(), &mut data, &mut codec_extra)?;
             meta.push(entry.meta.clone());
         }
 
@@ -390,9 +415,12 @@ impl fmt::Debug for Depacketized {
 
 #[cfg(test)]
 mod test {
+    use std::time::{Duration, Instant, SystemTime};
+
     use super::*;
     use crate::packet::vp9::Vp9Depacketizer;
-    use crate::rtp_::{Frequency, MediaTime, Pt, Ssrc};
+    use crate::rtp::UserExtensionValues;
+    use crate::rtp_::{AbsCaptureTime, Frequency, MediaTime, Pt, Ssrc, VideoOrientation};
 
     #[test]
     fn end_on_marker() {
@@ -401,6 +429,88 @@ mod test {
             (1, 1, &[1], &[]),
             (2, 1, &[9], &[(1, &[1, 9])]),
         ])
+    }
+
+    #[test]
+    fn ext_vals_extracts_from_first_and_last_packet() {
+        let first_time = Instant::now();
+        let abs_capture_time = AbsCaptureTime {
+            capture_time: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+            clock_offset: None,
+        };
+        let mut vla = UserExtensionValues::default();
+        vla.set(VideoLayersAllocation {
+            current_simulcast_stream_index: 1,
+            simulcast_streams: vec![],
+        });
+
+        let first_header = RtpHeader {
+            version: 2,
+            has_padding: false,
+            has_extension: true,
+            csrc_count: 0,
+            marker: false,
+            payload_type: Pt::new_with_value(98),
+            sequence_number: 1,
+            timestamp: 100,
+            ssrc: Ssrc::from(42),
+            csrc: [0; 15],
+            ext_vals: ExtensionValues {
+                abs_capture_time: Some(abs_capture_time),
+                user_values: vla.clone(),
+                ..Default::default()
+            },
+            header_len: 0,
+        };
+
+        let last_header = RtpHeader {
+            ext_vals: ExtensionValues {
+                video_orientation: Some(VideoOrientation::Deg90),
+                ..Default::default()
+            },
+            ..first_header.clone()
+        };
+
+        let time_value = 100_u64;
+        let dep = Depacketized {
+            time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
+            contiguous: true,
+            meta: vec![
+                RtpMeta {
+                    received: first_time,
+                    time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
+                    seq_no: SeqNo::from(1u64),
+                    header: first_header,
+                    last_sender_info: None,
+                },
+                RtpMeta {
+                    received: first_time + Duration::from_millis(1),
+                    time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
+                    seq_no: SeqNo::from(2u64),
+                    header: last_header,
+                    last_sender_info: None,
+                },
+            ],
+            data: Vec::new(),
+            codec_extra: CodecExtra::None,
+        };
+
+        let merged = dep.ext_vals();
+        assert_eq!(
+            merged.abs_capture_time.unwrap().capture_time,
+            abs_capture_time.capture_time
+        );
+        assert_eq!(
+            merged
+                .user_values
+                .get::<VideoLayersAllocation>()
+                .unwrap()
+                .current_simulcast_stream_index,
+            vla.get::<VideoLayersAllocation>()
+                .unwrap()
+                .current_simulcast_stream_index,
+        );
+        assert_eq!(merged.video_orientation, Some(VideoOrientation::Deg90));
     }
 
     #[test]

@@ -31,7 +31,15 @@ impl std::fmt::Debug for EcdsaSigningKey {
 }
 
 impl SigningKeyTrait for EcdsaSigningKey {
-    fn sign(&mut self, data: &[u8], out: &mut Buf) -> Result<(), String> {
+    fn sign(&mut self, data: &[u8], hash_alg: HashAlgorithm, out: &mut Buf) -> Result<(), String> {
+        let key_hash = self.hash_algorithm();
+        if hash_alg != key_hash {
+            return Err(format!(
+                "openssl ECDSA key is locked to {:?} but {:?} was requested",
+                key_hash, hash_alg
+            ));
+        }
+
         let md = match self.curve {
             EcCurve::P256 => MessageDigest::sha256(),
             EcCurve::P384 => MessageDigest::sha384(),
@@ -57,6 +65,15 @@ impl SigningKeyTrait for EcdsaSigningKey {
         match self.curve {
             EcCurve::P256 => HashAlgorithm::SHA256,
             EcCurve::P384 => HashAlgorithm::SHA384,
+        }
+    }
+
+    fn supported_hash_algorithms(&self) -> &[HashAlgorithm] {
+        // openssl ECDSA key is bound to the curve's default hash here;
+        // only one is supported.
+        match self.curve {
+            EcCurve::P256 => &[HashAlgorithm::SHA256],
+            EcCurve::P384 => &[HashAlgorithm::SHA384],
         }
     }
 }

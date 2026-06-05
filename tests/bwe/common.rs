@@ -11,7 +11,7 @@ use str0m::bwe::{Bitrate, BweKind};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::media::Pt;
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::rtp::{RtpWrite, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 use tracing::info;
 
@@ -300,22 +300,12 @@ impl BweTestContext {
                 let mut direct = l.direct_api();
                 let stream = direct.stream_tx(&self.ssrc).unwrap();
 
-                let exts = ExtensionValues::default();
-
                 // Send a video packet
                 let payload = vec![0u8; packet_size];
-                stream
-                    .write_rtp(
-                        self.pt,
-                        self.seq_no.into(),
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        true,
-                        payload,
-                    )
-                    .expect("clean write");
+                stream.write_rtp(
+                    RtpWrite::new(self.pt, self.seq_no.into(), time, wallclock, payload)
+                        .nackable(true),
+                );
 
                 self.seq_no += 1;
                 self.byte_budget -= packet_size as f64;

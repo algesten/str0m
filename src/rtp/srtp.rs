@@ -6,6 +6,7 @@ use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
 use crate::crypto::{AeadAes128Gcm, AeadAes256Gcm, Aes128CmSha1_80};
 use crate::crypto::{AeadAes128GcmCipher, AeadAes256GcmCipher};
 use crate::crypto::{CryptoProvider, Sha1HmacProvider, SrtpProvider};
+use crate::io::DATAGRAM_MAX_PACKET_SIZE;
 
 use super::header::RtpHeader;
 
@@ -36,6 +37,11 @@ pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
 // This adds 15 bytes of padding that we truncate after encryption
 const CTR_BUFFER_PADDING: usize = SRTP_BLOCK_SIZE - 1;
 
+/// Initial capacity for the RTP decryption scratch buffer. Sized to fit the
+/// largest possible received datagram plus the CTR padding the AES-CM cipher
+/// needs, so `unprotect_rtp` never has to grow the buffer in practice.
+const RX_SCRATCH_CAPACITY: usize = DATAGRAM_MAX_PACKET_SIZE + CTR_BUFFER_PADDING;
+
 impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
     pub fn new(
@@ -60,6 +66,7 @@ impl SrtpContext {
                     rtcp,
                     srtcp_index: 0,
                     sha1_hmac_provider,
+                    rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
                 }
             }
             SrtpProfile::AEAD_AES_128_GCM => {
@@ -74,6 +81,7 @@ impl SrtpContext {
                     rtcp,
                     srtcp_index: 0,
                     sha1_hmac_provider,
+                    rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
                 }
             }
             SrtpProfile::AEAD_AES_256_GCM => {
@@ -88,6 +96,7 @@ impl SrtpContext {
                     rtcp,
                     srtcp_index: 0,
                     sha1_hmac_provider,
+                    rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
                 }
             }
             _ => panic!("Unexpected SRTP profile: {profile:?}"),
@@ -129,6 +138,7 @@ impl SrtpContext {
             },
             srtcp_index,
             sha1_hmac_provider: provider.sha1_hmac_provider,
+            rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
         }
     }
 
@@ -167,6 +177,7 @@ impl SrtpContext {
             },
             srtcp_index,
             sha1_hmac_provider: provider.sha1_hmac_provider,
+            rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
         }
     }
 }
@@ -181,6 +192,9 @@ pub struct SrtpContext {
     srtcp_index: u32,
     /// SHA1-HMAC provider for AES_128_CM_SHA1_80 profile.
     sha1_hmac_provider: &'static dyn Sha1HmacProvider,
+    /// Reusable scratch buffer for RTP decryption output. Reused across calls
+    /// to `unprotect_rtp` so we don't allocate a fresh `Vec` per packet.
+    rx_scratch: Vec<u8>,
 }
 
 /// SrtpContext contains cipher contexts that can't observe broken invariants after a panic.
@@ -289,12 +303,16 @@ impl SrtpContext {
         }
     }
 
+    /// Decrypts an SRTP packet into the internal reusable scratch buffer and
+    /// returns a slice of the plaintext bytes. The returned slice borrows from
+    /// `self` until the next mutable use; the scratch buffer is reused across
+    /// calls to avoid per-packet allocation.
     pub fn unprotect_rtp(
         &mut self,
         buf: &[u8],
         header: &RtpHeader,
         srtp_index: u64, // same as ext_seq
-    ) -> Option<Vec<u8>> {
+    ) -> Option<&[u8]> {
         match &mut self.rtp {
             Derived::Aes128CmSha1_80 { key, salt, dec, .. } => {
                 if buf.len() < Aes128CmSha1_80::HMAC_TAG_LEN {
@@ -318,10 +336,10 @@ impl SrtpContext {
                 let iv = Aes128CmSha1_80::rtp_iv(*salt, *header.ssrc, srtp_index);
 
                 let input = &buf[header.header_len..hmac_start];
-                // Allocate buffer with CTR padding (aws-lc-rs requirement)
-                let mut output = vec![0; input.len() + CTR_BUFFER_PADDING];
+                // Sized with CTR padding (aws-lc-rs requirement).
+                self.rx_scratch.resize(input.len() + CTR_BUFFER_PADDING, 0);
 
-                if let Err(e) = dec.decrypt(&iv, input, &mut output) {
+                if let Err(e) = dec.decrypt(&iv, input, &mut self.rx_scratch) {
                     warn!(
                         "Failed to decrypt SRTP {} ({}): {}",
                         self.rtp.profile(),
@@ -331,8 +349,7 @@ impl SrtpContext {
                     return None;
                 };
 
-                output.truncate(input.len());
-                Some(output)
+                Some(&self.rx_scratch[..input.len()])
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
                 if buf.len() < AeadAes128Gcm::TAG_LEN {
@@ -347,9 +364,10 @@ impl SrtpContext {
                 let (aad, input) = buf.split_at(header.header_len);
                 // Input and output lengths for decryption:
                 // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.2
-                let mut output = vec![0; input.len() - AeadAes128Gcm::TAG_LEN];
+                let out_len = input.len() - AeadAes128Gcm::TAG_LEN;
+                self.rx_scratch.resize(out_len, 0);
 
-                match dec.decrypt(&iv, &[aad], input, &mut output) {
+                match dec.decrypt(&iv, &[aad], input, &mut self.rx_scratch) {
                     Ok(v) => v,
                     Err(e) => {
                         warn!(
@@ -362,7 +380,7 @@ impl SrtpContext {
                     }
                 };
 
-                Some(output)
+                Some(&self.rx_scratch[..out_len])
             }
             Derived::AeadAes256Gcm { salt, dec, .. } => {
                 if buf.len() < AeadAes256Gcm::TAG_LEN {
@@ -377,9 +395,10 @@ impl SrtpContext {
                 let (aad, input) = buf.split_at(header.header_len);
                 // Input and output lengths for decryption:
                 // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.2
-                let mut output = vec![0; input.len() - AeadAes256Gcm::TAG_LEN];
+                let out_len = input.len() - AeadAes256Gcm::TAG_LEN;
+                self.rx_scratch.resize(out_len, 0);
 
-                match dec.decrypt(&iv, &[aad], input, &mut output) {
+                match dec.decrypt(&iv, &[aad], input, &mut self.rx_scratch) {
                     Ok(v) => v,
                     Err(e) => {
                         warn!(
@@ -392,7 +411,7 @@ impl SrtpContext {
                     }
                 };
 
-                Some(output)
+                Some(&self.rx_scratch[..out_len])
             }
         }
     }
@@ -1174,7 +1193,7 @@ mod test {
 
             assert_eq!(
                 out,
-                rfc7714::PLAINTEXT_RTP_PACKET[12..],
+                &rfc7714::PLAINTEXT_RTP_PACKET[12..],
                 "failed to decrypt packet.\n{:02x?}\n{:02x?}",
                 out,
                 &rfc7714::PLAINTEXT_RTP_PACKET
@@ -1199,7 +1218,7 @@ mod test {
                 .expect("rtp unprotect");
 
             // And verify we get the input back.
-            assert_eq!(decrypted, rfc7714::PLAINTEXT_RTP_PACKET[12..]);
+            assert_eq!(decrypted, &rfc7714::PLAINTEXT_RTP_PACKET[12..]);
         }
 
         #[test]
@@ -1402,7 +1421,7 @@ mod test {
 
             assert_eq!(
                 out,
-                rfc7714::PLAINTEXT_RTP_PACKET[12..],
+                &rfc7714::PLAINTEXT_RTP_PACKET[12..],
                 "failed to decrypt packet.\n{:02x?}\n{:02x?}",
                 out,
                 &rfc7714::PLAINTEXT_RTP_PACKET
@@ -1427,7 +1446,7 @@ mod test {
                 .expect("rtp unprotect");
 
             // And verify we get the input back.
-            assert_eq!(decrypted, rfc7714::PLAINTEXT_RTP_PACKET[12..]);
+            assert_eq!(decrypted, &rfc7714::PLAINTEXT_RTP_PACKET[12..]);
         }
 
         #[test]

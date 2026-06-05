@@ -31,13 +31,18 @@ pub use h265::H265Packetizer;
 pub use h265::detect_h265_keyframe;
 
 mod h265_profile;
-pub(crate) use h265_profile::H265ProfileTierLevel;
+pub use h265_profile::{H265Level, H265Profile, H265ProfileTierLevel, H265Tier};
 
 mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
 pub use vp8::Vp8CodecExtra;
+pub use vp8::Vp8Descriptor;
+pub use vp8::Vp8DescriptorError;
+pub use vp8::Vp8Patch;
+pub use vp8::Vp8PatchBuilder;
+pub use vp8::Vp8PatchError;
 pub use vp8::detect_vp8_keyframe;
 pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
 

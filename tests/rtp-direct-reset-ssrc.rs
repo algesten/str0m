@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::MediaKind;
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::rtp::{ExtensionValues, RtpWrite, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
@@ -76,18 +76,7 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write with initial SSRC");
+                stream.write_rtp(RtpWrite::new(pt, seq_no, time, wallclock, packet).ext_vals(exts));
             }
         }
 
@@ -153,18 +142,7 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write with new SSRC");
+                stream.write_rtp(RtpWrite::new(pt, seq_no, time, wallclock, packet).ext_vals(exts));
             }
         }
 

@@ -114,75 +114,103 @@
 //!
 //! ## Run loop
 //!
-//! Driving the state of the `Rtc` forward is a run loop that, regardless of sync or async,
-//! looks like this.
+//! ### The single-mutation invariant
+//!
+//! str0m's API has one strict contract that the run loop is built around:
+//!
+//! > **Every mutation of an `Rtc` instance must be followed by a complete
+//! > drain of `poll_output` until it returns `Output::Timeout`, before the
+//! > next mutation on the same `Rtc`.**
+//!
+//! A "mutation" is anything that takes `&mut Rtc` (directly or through a
+//! handle obtained from it). The common ones are:
+//!
+//! - `Rtc::handle_input` — feeding a network packet or a timeout
+//! - `Writer::write` / `Writer::request_keyframe` — sending media
+//! - `Channel::write` — sending data channel data
+//! - `SdpApi::apply` / `DirectApi::*` — negotiation
+//! - `Rtc::add_local_candidate` / `Rtc::add_remote_candidate`
+//!
+//! Always: **mutate → drain to `Timeout` → mutate → drain to `Timeout` → …**
+//!
+//! Doing two mutations back-to-back without draining in between, or
+//! waiting on I/O while the engine still has output queued, leaves the
+//! engine in an inconsistent state and produces wrong behavior. Mutations
+//! issued from inside the drain loop (e.g. calling `Writer::write` in
+//! response to an `Output::Event`) are fine — the drain loop naturally
+//! continues calling `poll_output` afterward and so the invariant holds.
+//!
+//! ### Canonical shape
+//!
+//! Driving an `Rtc` forward follows the same six-step shape, regardless
+//! of sync or async:
+//!
+//! 1. **Wait** for one of: the next timeout firing, an incoming network
+//!    packet, or the application wanting to perform a mutation (e.g.
+//!    write media).
+//! 2. **Perform that ONE mutation** — feed `Input` to `handle_input`, or
+//!    call into a writer / channel / SDP API.
+//! 3. **Poll** `Rtc::poll_output`.
+//! 4. **Handle** the output: `Output::Transmit` is sent on the socket,
+//!    `Output::Event` is dispatched to the application, `Output::Timeout`
+//!    records the next deadline.
+//! 5. **Goto 3** until `poll_output` returns `Output::Timeout`. Only then
+//!    is the engine fully drained.
+//! 6. The returned timeout is what we wait on next — **goto 1**.
 //!
 //! ```no_run
 //! # use str0m::{Rtc, Output, IceConnectionState, Event, Input};
 //! # use str0m::net::{Receive, Protocol};
 //! # use std::io::ErrorKind;
 //! # use std::net::UdpSocket;
-//! # use std::time::Instant;
-//! # let rtc = Rtc::new(Instant::now());
-//! // Buffer for reading incoming UDP packets.
-//! let mut buf = vec![0; 2000];
-//!
+//! # use std::time::{Duration, Instant};
+//! # let mut rtc = Rtc::new(Instant::now());
 //! // A UdpSocket we obtained _somehow_.
 //! let socket: UdpSocket = todo!();
 //!
+//! // Buffer for reading incoming UDP packets.
+//! let mut buf = vec![0; 2000];
+//!
 //! loop {
-//!     // Poll output until we get a timeout. The timeout means we
-//!     // are either awaiting UDP socket input or the timeout to happen.
-//!     let timeout = match rtc.poll_output().unwrap() {
-//!         // Stop polling when we get the timeout.
-//!         Output::Timeout(v) => v,
+//!     // === Steps 3-5: drain poll_output until we get the next timeout. ===
+//!     let timeout = loop {
+//!         match rtc.poll_output().unwrap() {
+//!             // Step 5: a Timeout exits the drain loop.
+//!             Output::Timeout(t) => break t,
 //!
-//!         // Transmit this data to the remote peer. Typically via
-//!         // a UDP socket. The destination IP comes from the ICE
-//!         // agent. It might change during the session.
-//!         Output::Transmit(v) => {
-//!             socket.send_to(&v.contents, v.destination).unwrap();
-//!             continue;
-//!         }
-//!
-//!         // Events are mainly incoming media data from the remote
-//!         // peer, but also data channel data and statistics.
-//!         Output::Event(v) => {
-//!
-//!             // Abort if we disconnect.
-//!             if v == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
-//!                 return;
+//!             // Step 4: transmit on the socket and keep draining.
+//!             // The destination IP comes from the ICE agent and may
+//!             // change during the session.
+//!             Output::Transmit(t) => {
+//!                 socket.send_to(&t.contents, t.destination).unwrap();
 //!             }
 //!
-//!             // TODO: handle more cases of v here, such as incoming media data.
-//!
-//!             continue;
+//!             // Step 4: hand the event to the application and keep draining.
+//!             // Events are mainly incoming media data from the remote peer,
+//!             // but also data channel data and statistics.
+//!             Output::Event(e) => {
+//!                 if e == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
+//!                     return;
+//!                 }
+//!                 // TODO: handle other events here, such as incoming media data.
+//!             }
 //!         }
 //!     };
 //!
-//!     // Duration until timeout.
-//!     let duration = timeout - Instant::now();
-//!
-//!     // socket.set_read_timeout(Some(0)) is not ok
-//!     if duration.is_zero() {
-//!         // Drive time forwards in rtc straight away.
-//!         rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
-//!         continue;
-//!     }
-//!
+//!     // === Step 1: wait for ONE of: the timeout firing, an incoming
+//!     // packet, or application-side data. The example below uses a
+//!     // blocking UDP socket with a read timeout. With async you would
+//!     // `select!` over multiple futures; with application-side data you
+//!     // would also include a channel.
+//!     //
+//!     // set_read_timeout(Some(ZERO)) is not allowed, so clamp to >= 1ms.
+//!     let duration = (timeout - Instant::now()).max(Duration::from_millis(1));
 //!     socket.set_read_timeout(Some(duration)).unwrap();
-//!
-//!     // Scale up buffer to receive an entire UDP packet.
 //!     buf.resize(2000, 0);
 //!
-//!     // Try to receive. Because we have a timeout on the socket,
-//!     // we will either receive a packet, or timeout.
-//!     // This is where having an async loop shines. We can await multiple things to
-//!     // happen such as outgoing media data, the timeout and incoming network traffic.
-//!     // When using async there is no need to set timeout on the socket.
+//!     // === Step 2: take ONE event and feed it as Input ===
 //!     let input = match socket.recv_from(&mut buf) {
 //!         Ok((n, source)) => {
-//!             // UDP data received.
 //!             buf.truncate(n);
 //!             Input::Receive(
 //!                 Instant::now(),
@@ -195,21 +223,22 @@
 //!             )
 //!         }
 //!
-//!         Err(e) => match e.kind() {
-//!             // Expected error for set_read_timeout().
-//!             // One for windows, one for the rest.
-//!             ErrorKind::WouldBlock
-//!                 | ErrorKind::TimedOut => Input::Timeout(Instant::now()),
+//!         // The socket read timed out — feed Input::Timeout to advance
+//!         // the engine to the deadline. WouldBlock is the unix error,
+//!         // TimedOut is the windows error.
+//!         Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+//!             Input::Timeout(Instant::now())
+//!         }
 //!
-//!             e => {
-//!                 eprintln!("Error: {:?}", e);
-//!                 return; // abort
-//!             }
-//!         },
+//!         Err(e) => {
+//!             eprintln!("Error: {:?}", e);
+//!             return;
+//!         }
 //!     };
 //!
-//!     // Input is either a Timeout or Receive of data. Both drive the state forward.
 //!     rtc.handle_input(input).unwrap();
+//!
+//!     // === Step 6: back to the top of the outer loop (goto step 3). ===
 //! }
 //! ```
 //!
@@ -239,6 +268,11 @@
 //! let data: &[u8] = todo!(); // Actual data
 //! writer.write(pt, wallclock, media_time, data).unwrap();
 //! ```
+//!
+//! `Writer::write` is a mutation, so the
+//! [single-mutation invariant](#the-single-mutation-invariant) applies:
+//! after writing, drain `Rtc::poll_output` to `Output::Timeout` before
+//! the next mutation on this `Rtc`.
 //!
 //! ## Media time, wallclock and local time
 //!
@@ -717,8 +751,11 @@ pub mod rtp {
     pub use crate::rtp_::{AbsCaptureTime, ExtensionValues, UserExtensionValues};
     pub use crate::rtp_::{Extension, ExtensionMap, ExtensionSerializer};
 
+    pub use crate::packet::{
+        Vp8Descriptor, Vp8DescriptorError, Vp8Patch, Vp8PatchBuilder, Vp8PatchError,
+    };
     pub use crate::rtp_::{RtpHeader, SeqNo, Ssrc, VideoOrientation};
-    pub use crate::streams::{RtpPacket, StreamPaused, StreamRx, StreamTx};
+    pub use crate::streams::{RtpPacket, RtpWrite, StreamPaused, StreamRx, StreamTx};
 
     /// Debug output of the unencrypted RTP and RTCP packets.
     ///
@@ -795,27 +832,35 @@ pub use error::RtcError;
 ///
 /// ## Usage
 ///
+/// The canonical run loop is: perform exactly one mutation (typically
+/// `handle_input` with a network packet or timeout), then drain
+/// `poll_output` until it returns `Output::Timeout`, then wait for the
+/// next event. **Every mutation must be followed by a full drain before
+/// the next mutation.** See the [crate docs](crate#run-loop) for the full
+/// explanation of the single-mutation invariant.
+///
 /// ```no_run
 /// # use std::time::Instant;
 /// # use str0m::{Rtc, Output, Input};
 /// let mut rtc = Rtc::new(Instant::now());
 ///
 /// loop {
-///     let timeout = match rtc.poll_output().unwrap() {
-///         Output::Timeout(v) => v,
-///         Output::Transmit(t) => {
-///             // TODO: Send data to remote peer.
-///             continue; // poll again
-///         }
-///         Output::Event(e) => {
-///             // TODO: Handle event.
-///             continue; // poll again
+///     // Drain poll_output until it returns the next timeout.
+///     let timeout = loop {
+///         match rtc.poll_output().unwrap() {
+///             Output::Timeout(t) => break t,
+///             Output::Transmit(t) => {
+///                 // TODO: Send t.contents to t.destination on a UDP socket.
+///             }
+///             Output::Event(e) => {
+///                 // TODO: Handle event.
+///             }
 ///         }
 ///     };
 ///
-///     // TODO: Wait for one of two events, reaching `timeout`
-///     //       or receiving network input. Both are encapsulated
-///     //       in the Input enum.
+///     // TODO: Wait for ONE of: `timeout` firing, an incoming network
+///     //       packet, or application-side data to send. Build an
+///     //       `Input` from whichever fires first.
 ///     let input: Input = todo!();
 ///
 ///     rtc.handle_input(input).unwrap();
@@ -974,7 +1019,9 @@ impl Event {
 pub enum Input<'a> {
     /// A timeout without any network input.
     Timeout(Instant),
-    /// Network input.
+    /// Network input. The [`Instant`] is the time the packet was received from the socket -
+    /// not necessarily "now" (e.g. when UDP demultiplexing runs on a separate thread). It
+    /// drives time forward when more recent than the last "now" the instance has seen.
     Receive(Instant, net::Receive<'a>),
 }
 
@@ -1495,6 +1542,16 @@ impl Rtc {
             }
         }
 
+        // Handle DTLS timeout before polling output so any retransmit packets
+        // queued by dimpl and the re-armed flight timer are picked up by the
+        // poll loop below in the same iteration.
+        if let Some(timeout) = self.next_dtls_timeout {
+            if timeout <= self.last_now {
+                let _ = self.dtls.handle_timeout(self.last_now);
+                self.next_dtls_timeout = None;
+            }
+        }
+
         // Poll DTLS output - collect packets, handle events
         let mut just_connected = false;
         loop {
@@ -1659,14 +1716,6 @@ impl Rtc {
 
         let stats = self.stats.as_mut();
 
-        // Handle DTLS timeout
-        if let Some(timeout) = self.next_dtls_timeout {
-            if timeout <= self.last_now {
-                let _ = self.dtls.handle_timeout(self.last_now);
-                self.next_dtls_timeout = None;
-            }
-        }
-
         let time_and_reason = (None, Reason::NotHappening)
             .soonest((self.next_dtls_timeout, Reason::DTLS))
             .soonest((self.ice.poll_timeout(), Reason::Ice))
@@ -1802,9 +1851,9 @@ impl Rtc {
 
         match input {
             Input::Timeout(now) => self.do_handle_timeout(now)?,
-            Input::Receive(now, r) => {
-                self.do_handle_receive(now, r)?;
-                self.do_handle_timeout(now)?;
+            Input::Receive(recv_time, r) => {
+                self.do_handle_receive(recv_time, r)?;
+                self.do_handle_timeout(recv_time)?;
             }
         }
         Ok(())
@@ -1843,6 +1892,9 @@ impl Rtc {
                 let mut snapshot = StatsSnapshot::new(now);
                 snapshot.peer_rx = self.peer_bytes_rx;
                 snapshot.peer_tx = self.peer_bytes_tx;
+                let current_round_trip_time = self.ice.nominated_pair_rtt();
+                let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
+                let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
                 snapshot.selected_candidate_pair =
                     self.send_addr.as_ref().map(|s| CandidatePairStats {
                         protocol: s.proto,
@@ -1850,6 +1902,9 @@ impl Rtc {
                         remote: CandidateStats {
                             addr: s.destination,
                         },
+                        current_round_trip_time,
+                        total_round_trip_time,
+                        responses_received,
                     });
                 self.session.visit_stats(now, &mut snapshot);
                 stats.do_handle_timeout(&mut snapshot);

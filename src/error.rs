@@ -6,7 +6,7 @@ use std::fmt;
 // Re-export all error types for convenience
 pub use crate::crypto::DtlsError;
 pub use crate::io::NetError;
-pub use crate::packet::PacketError;
+pub use crate::packet::{PacketError, Vp8DescriptorError, Vp8PatchError};
 pub use crate::rtp_::RtpError;
 pub use crate::sctp::ProtoError;
 pub use crate::sctp::SctpError;

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::Event;
@@ -96,6 +97,10 @@ pub(crate) struct Session {
     // Whether we sent a single outgoing RTP packet.
     packet_first_sent: bool,
 
+    // Total RTP payload bytes for media, including retransmissions.
+    media_bytes_rx: u64,
+    media_bytes_tx: u64,
+
     pub ice_lite: bool,
 
     /// Whether we are running in RTP-mode.
@@ -163,6 +168,8 @@ impl Session {
             poll_packet_buf: vec![0; 2000],
             pending_packet: None,
             packet_first_sent: false,
+            media_bytes_rx: 0,
+            media_bytes_tx: 0,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
             vp9_packetizer_mode: config.vp9_packetizer_mode,
@@ -473,8 +480,11 @@ impl Session {
             return;
         }
 
-        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
-            Some(v) => v,
+        // The decrypted plaintext borrows from the SRTP scratch buffer. We
+        // narrow it down to the actual payload via slicing only, then build
+        // the final `Arc<[u8]>` in a single allocation at the end.
+        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+            Some(d) => d,
             None => {
                 trace!(
                     "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
@@ -490,14 +500,20 @@ impl Session {
             }
         };
 
-        if header.has_padding && !RtpHeader::unpad_payload(&mut data) {
-            // Unpadding failed. Broken data?
-            trace!("unpadding of unprotected payload failed");
-            return;
-        }
+        let data = if header.has_padding {
+            match RtpHeader::unpad_payload(data) {
+                Some(d) => d,
+                None => {
+                    trace!("unpadding of unprotected payload failed");
+                    return;
+                }
+            }
+        } else {
+            data
+        };
 
         if let Some(raw_packets) = &mut self.raw_packets {
-            raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.clone())));
+            raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.to_vec())));
         }
 
         // Mark as received for TWCC purposes
@@ -517,7 +533,7 @@ impl Session {
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
-        let receipt = if is_repair {
+        let (receipt, data) = if is_repair {
             // Drop RTX packets that are just empty padding. The payload here
             // is empty because we would have done RtpHeader::unpad_payload above.
             // For unpausing, it's enough with the stream.update() already done above.
@@ -525,8 +541,8 @@ impl Session {
                 return;
             }
 
-            // Rewrite the header, and removes the resent seq_no from the body.
-            stream.un_rtx(&mut header, &mut data, pt);
+            // Rewrite the header, and strip the resent seq_no prefix from the body.
+            let data = stream.un_rtx(&mut header, data, pt);
 
             let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
 
@@ -539,11 +555,12 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            stream.update_register(now, &header, clock_rate, false, seq_no)
+            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no);
+            (receipt, data)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.
-            receipt_outer
+            (receipt_outer, data)
         };
 
         // Probe packets (SSRC 0) contain only padding, no real media to process
@@ -551,7 +568,13 @@ impl Session {
             return;
         }
 
-        let packet = stream.handle_rtp(now, header, data, seq_no, receipt.time);
+        self.media_bytes_rx += data.len() as u64;
+
+        // One-shot conversion to Arc<[u8]>: a single allocation that copies
+        // only the trimmed payload bytes out of the SRTP scratch buffer.
+        let payload: Arc<[u8]> = Arc::from(data);
+
+        let packet = stream.handle_rtp(now, header, payload, seq_no, receipt.time);
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().
@@ -855,6 +878,10 @@ impl Session {
             bwe.on_media_sent(payload_size.into(), is_padding, now);
         }
 
+        if !is_padding && !header.ssrc.is_probe() {
+            self.media_bytes_tx += payload_size as u64;
+        }
+
         if !self.packet_first_sent {
             self.packet_first_sent = true;
         }
@@ -934,8 +961,8 @@ impl Session {
             stream.visit_stats(snapshot, now);
         }
 
-        snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
-        snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
+        snapshot.tx = self.media_bytes_tx;
+        snapshot.rx = self.media_bytes_rx;
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
 
         snapshot.egress_loss_fraction = self.twcc_tx_register.loss(Duration::from_secs(1), now);

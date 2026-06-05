@@ -52,6 +52,14 @@ pub struct CandidatePair {
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
+
+    /// Total number of STUN binding responses received on this pair,
+    /// across the whole pair lifetime (not bounded by `binding_attempts`).
+    responses_received: u64,
+
+    /// Sum of all RTTs measured from successful STUN binding transactions
+    /// on this pair, across the whole pair lifetime.
+    total_round_trip_time: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -106,6 +114,20 @@ pub struct BindingAttempt {
 
     /// Whether the binding attempt is nominated.
     nominated: bool,
+
+    /// The agent's `controlling` value at request time.
+    ///
+    /// Used to decide whether a 487 (Role Conflict) response is
+    /// stale: if the agent has already swapped role since the
+    /// request was sent, the 487 must be ignored to avoid flapping
+    /// when in-flight requests with the old role get rejected.
+    controlling: bool,
+}
+
+impl BindingAttempt {
+    pub fn controlling(&self) -> bool {
+        self.controlling
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +161,8 @@ impl CandidatePair {
             remote_binding_requests: Default::default(),
             remote_binding_request_time: Default::default(),
             nomination_state: Default::default(),
+            responses_received: 0,
+            total_round_trip_time: Duration::ZERO,
         }
     }
 
@@ -181,6 +205,10 @@ impl CandidatePair {
 
     pub fn prio(&self) -> u64 {
         self.prio
+    }
+
+    pub fn set_prio(&mut self, prio: u64) {
+        self.prio = prio;
     }
 
     pub fn state(&self) -> CheckState {
@@ -239,7 +267,12 @@ impl CandidatePair {
     /// Records a new binding request attempt.
     ///
     /// Returns the transaction id to use in the STUN message.
-    pub fn new_attempt(&mut self, now: Instant, timing_config: &StunTiming) -> TransId {
+    pub fn new_attempt(
+        &mut self,
+        now: Instant,
+        timing_config: &StunTiming,
+        controlling: bool,
+    ) -> TransId {
         // calculate a new time
         self.cached_next_attempt_time = None;
 
@@ -253,6 +286,7 @@ impl CandidatePair {
             request_sent: now,
             respone_recv: None,
             nominated: self.is_nominated(),
+            controlling,
         };
 
         self.binding_attempts.push_back(attempt);
@@ -278,9 +312,12 @@ impl CandidatePair {
         last.trans_id
     }
 
-    /// Tells if this pair caused the binding request for a STUN transaction id.
-    pub fn has_binding_attempt(&self, trans_id: TransId) -> bool {
-        self.binding_attempts.iter().any(|b| b.trans_id == trans_id)
+    /// Returns the binding attempt for the given STUN transaction id, if
+    /// this pair sent it.
+    pub fn binding_attempt(&self, trans_id: TransId) -> Option<&BindingAttempt> {
+        self.binding_attempts
+            .iter()
+            .find(|b| b.trans_id == trans_id)
     }
 
     /// Marks a binding request attempt as having a successful response.
@@ -300,6 +337,9 @@ impl CandidatePair {
             .expect("Binding request attempt");
 
         attempt.respone_recv = Some(now);
+
+        self.responses_received += 1;
+        self.total_round_trip_time += now - attempt.request_sent;
 
         if attempt.nominated && self.nomination_state == NominationState::Attempt {
             self.nomination_state = NominationState::Success;
@@ -323,6 +363,29 @@ impl CandidatePair {
     /// `None` means there has been no attempts.
     fn last_attempt_time(&self) -> Option<Instant> {
         self.binding_attempts.back().map(|b| b.request_sent)
+    }
+
+    /// The round-trip time of the most recent successful STUN binding
+    /// transaction recorded for this pair.
+    ///
+    /// `None` if no binding response has been received yet.
+    pub fn last_successful_rtt(&self) -> Option<Duration> {
+        self.binding_attempts
+            .iter()
+            .rev()
+            .find_map(|b| b.respone_recv.map(|r| r - b.request_sent))
+    }
+
+    /// Total number of STUN binding responses received on this pair over
+    /// the pair's lifetime.
+    pub fn responses_received(&self) -> u64 {
+        self.responses_received
+    }
+
+    /// Sum of all RTTs measured from successful STUN binding transactions
+    /// on this pair over the pair's lifetime.
+    pub fn total_round_trip_time(&self) -> Duration {
+        self.total_round_trip_time
     }
 
     /// From the back of binding_attempts, go through all unanswered and find
@@ -500,7 +563,7 @@ mod tests {
         let mut now = Instant::now();
 
         for _ in 0..20 {
-            let id = pair.new_attempt(now, &stun_timing);
+            let id = pair.new_attempt(now, &stun_timing, false);
 
             now += Duration::from_millis(500);
 
@@ -510,12 +573,42 @@ mod tests {
         let offline_at = now;
 
         while pair.is_still_possible(now, &stun_timing) {
-            pair.new_attempt(now, &stun_timing);
+            pair.new_attempt(now, &stun_timing, false);
             now = pair.next_binding_attempt(now, &stun_timing);
         }
 
         let duration = now.duration_since(offline_at);
 
         assert_eq!(duration, stun_timing.timeout())
+    }
+
+    #[test]
+    fn last_successful_rtt_returns_most_recent() {
+        let stun_timing = StunTiming::default();
+        let mut pair = CandidatePair::new(0, CandidateKind::Host, 0, CandidateKind::Host, 0);
+        let now = Instant::now();
+
+        assert_eq!(pair.last_successful_rtt(), None);
+        assert_eq!(pair.responses_received(), 0);
+        assert_eq!(pair.total_round_trip_time(), Duration::ZERO);
+
+        let id1 = pair.new_attempt(now, &stun_timing, false);
+        pair.record_binding_response(now + Duration::from_millis(50), id1, 0);
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(50)));
+        assert_eq!(pair.responses_received(), 1);
+        assert_eq!(pair.total_round_trip_time(), Duration::from_millis(50));
+
+        // Newer in-flight attempt without response shouldn't shadow the
+        // older successful one or change cumulative counters.
+        let _id2 = pair.new_attempt(now + Duration::from_millis(100), &stun_timing, false);
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(50)));
+        assert_eq!(pair.responses_received(), 1);
+
+        // A newer successful attempt replaces current rtt and accumulates totals.
+        let id3 = pair.new_attempt(now + Duration::from_millis(200), &stun_timing, false);
+        pair.record_binding_response(now + Duration::from_millis(220), id3, 0);
+        assert_eq!(pair.last_successful_rtt(), Some(Duration::from_millis(20)));
+        assert_eq!(pair.responses_received(), 2);
+        assert_eq!(pair.total_round_trip_time(), Duration::from_millis(70));
     }
 }

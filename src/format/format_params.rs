@@ -13,6 +13,18 @@ pub struct FormatParams {
 
     /// Opus specific parameter.
     ///
+    /// Decoder-side preference for stereo audio. Default is mono per
+    /// RFC 7587 Section 7.1: <https://datatracker.ietf.org/doc/html/rfc7587#section-7.1>
+    pub stereo: Option<bool>,
+
+    /// Opus specific parameter.
+    ///
+    /// Sender-side stereo hint for Opus. When set, it signals the intent to
+    /// transmit stereo from the sender, matching the symmetric m-line model.
+    pub sprop_stereo: Option<bool>,
+
+    /// Opus specific parameter.
+    ///
     /// Specifies that the decoder can do Opus in-band FEC
     pub use_inband_fec: Option<bool>,
 
@@ -117,6 +129,8 @@ impl FormatParams {
         use FormatParam::*;
         match param {
             MinPTime(v) => self.min_p_time = Some(*v),
+            Stereo(v) => self.stereo = Some(*v),
+            SpropStereo(v) => self.sprop_stereo = Some(*v),
             UseInbandFec(v) => self.use_inband_fec = Some(*v),
             UseDtx(v) => self.use_dtx = Some(*v),
             LevelAsymmetryAllowed(v) => self.level_asymmetry_allowed = Some(*v),
@@ -139,6 +153,12 @@ impl FormatParams {
 
         if let Some(v) = self.min_p_time {
             r.push(MinPTime(v));
+        }
+        if let Some(v) = self.stereo {
+            r.push(Stereo(v));
+        }
+        if let Some(v) = self.sprop_stereo {
+            r.push(SpropStereo(v));
         }
         if let Some(v) = self.use_inband_fec {
             r.push(UseInbandFec(v));
@@ -210,6 +230,20 @@ mod test {
         // Parse back
         let parsed = FormatParams::parse_line(&fmtp_str);
         assert_eq!(parsed.sprop_max_don_diff, Some(32));
+    }
+
+    #[test]
+    fn sprop_stereo_roundtrip() {
+        let f = FormatParams {
+            sprop_stereo: Some(true),
+            ..Default::default()
+        };
+
+        let fmtp_str = f.to_string();
+        assert_eq!(fmtp_str, "sprop-stereo=1");
+
+        let parsed = FormatParams::parse_line(&fmtp_str);
+        assert_eq!(parsed.sprop_stereo, Some(true));
     }
 
     #[test]

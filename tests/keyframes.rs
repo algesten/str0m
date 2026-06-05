@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use str0m::format::{Codec, CodecExtra};
 use str0m::media::{Direction, MediaKind};
+use str0m::rtp::RtpWrite;
 use str0m::{Event, RtcError};
 
 mod common;
@@ -56,16 +57,17 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
-        .unwrap();
+            RtpWrite::new(
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                payload,
+            )
+            .marker(header.marker)
+            .ext_vals(header.ext_vals)
+            .nackable(true),
+        );
 
         progress(&mut l, &mut r)?;
 
@@ -146,16 +148,17 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
-        .unwrap();
+            RtpWrite::new(
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                payload,
+            )
+            .marker(header.marker)
+            .ext_vals(header.ext_vals)
+            .nackable(true),
+        );
 
         progress(&mut l, &mut r)?;
 
@@ -237,16 +240,17 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
-        .unwrap();
+            RtpWrite::new(
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                payload,
+            )
+            .marker(header.marker)
+            .ext_vals(header.ext_vals)
+            .nackable(true),
+        );
 
         let _ = progress(&mut l, &mut r);
 
@@ -331,16 +335,17 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
-        .unwrap();
+            RtpWrite::new(
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                payload,
+            )
+            .marker(header.marker)
+            .ext_vals(header.ext_vals)
+            .nackable(true),
+        );
 
         progress(&mut l, &mut r)?;
 
@@ -433,16 +438,17 @@ pub fn test_h265_keyframes_detection() -> Result<(), RtcError> {
         let mut direct = l.direct_api();
         let tx = direct.stream_tx_by_mid(mid, None).unwrap();
         tx.write_rtp(
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
-        .unwrap();
+            RtpWrite::new(
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                payload,
+            )
+            .marker(header.marker)
+            .ext_vals(header.ext_vals)
+            .nackable(true),
+        );
 
         progress(&mut l, &mut r)?;
 

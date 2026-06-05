@@ -499,6 +499,20 @@ impl Candidate {
         self.addr
     }
 
+    /// Returns the _local_ address of this ICE candidate.
+    ///
+    /// This is an extension to the ICE spec that we use to track
+    /// local interfaces also for relayed candidates.
+    /// Specifically, for relayed candidates, the local interface
+    /// is the address the agent uses to communicate with the TURN
+    /// server using the TURN protocol.
+    ///
+    /// For all other candidates, this refers to either the
+    /// candidate itself (host) or the base (srflx/prflx).
+    pub fn local(&self) -> SocketAddr {
+        self.local
+    }
+
     /// Returns a reference to the String containing the transport protocol of
     /// the ICE candidate. For example tcp/udp/..
     pub fn proto(&self) -> Protocol {
@@ -545,10 +559,6 @@ impl Candidate {
 
     pub(crate) fn clear_ufrag(&mut self) {
         self.ufrag = None;
-    }
-
-    pub(crate) fn local(&self) -> SocketAddr {
-        self.local
     }
 
     /// Generates a candidate attribute string.
