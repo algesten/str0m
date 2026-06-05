@@ -109,7 +109,7 @@ impl<'a> SdpApi<'a> {
         let has_snap = process_remote_sctp_init(&mut self.rtc.sctp, remote_sctp_init.as_deref())?;
 
         // Modify session with offer.
-        apply_offer(self.rtc, offer)?;
+        apply_offer(&mut self.rtc.session, offer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
@@ -205,7 +205,7 @@ impl<'a> SdpApi<'a> {
         let remote_max_message_size = extract_max_message_size(answer.media_lines.iter());
 
         // Modify session with answer
-        apply_answer(self.rtc, pending.changes, answer)?;
+        apply_answer(&mut self.rtc.session, pending.changes, answer)?;
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
@@ -943,10 +943,9 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     }
 }
 
-fn apply_offer(rtc: &mut Rtc, offer: SdpOffer) -> Result<(), RtcError> {
+fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     offer.assert_consistency()?;
 
-    let session = &mut rtc.session;
     update_session(session, &offer);
 
     let bundle_mids = offer.bundle_mids();
@@ -959,10 +958,13 @@ fn apply_offer(rtc: &mut Rtc, offer: SdpOffer) -> Result<(), RtcError> {
     Ok(())
 }
 
-fn apply_answer(rtc: &mut Rtc, pending: Changes, answer: SdpAnswer) -> Result<(), RtcError> {
+fn apply_answer(
+    session: &mut Session,
+    pending: Changes,
+    answer: SdpAnswer,
+) -> Result<(), RtcError> {
     answer.assert_consistency()?;
 
-    let session = &mut rtc.session;
     update_session(session, &answer);
 
     let bundle_mids = answer.bundle_mids();
