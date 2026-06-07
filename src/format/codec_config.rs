@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 
+use crate::packet::H266ProfileTierLevel;
 use crate::packet::MediaKind;
 use crate::rtp_::Pt;
 use crate::rtp_::{Direction, Frequency};
@@ -39,6 +40,12 @@ pub(crate) const PT_H265: Pt = Pt::new_with_value(102);
 /// Default payload type for H265 RTX.
 pub(crate) const PT_H265_RTX: Pt = Pt::new_with_value(103);
 
+/// Default payload type for H266 (VVC).
+pub(crate) const PT_H266: Pt = Pt::new_with_value(104);
+
+/// Default payload type for H266 RTX.
+pub(crate) const PT_H266_RTX: Pt = Pt::new_with_value(105);
+
 /// Default payload type for Opus.
 pub(crate) const PT_OPUS: Pt = Pt::new_with_value(111);
 
@@ -69,6 +76,7 @@ impl CodecConfig {
         c.enable_vp8(true);
         c.enable_h264(true);
         c.enable_h265(true);
+        c.enable_h266(true);
         c.enable_vp9(true);
         c.enable_av1(true);
 
@@ -281,6 +289,49 @@ impl CodecConfig {
         //   https://source.chromium.org/chromium/chromium/src/+/main:
         //   third_party/webrtc/api/video_codecs/h265_profile_tier_level.h
         self.add_h265(PT_H265, Some(PT_H265_RTX), 1, 0, 180); // Main, Main tier, Level 6.0
+    }
+
+    /// Convenience for adding a h266 payload type.
+    pub fn add_h266(
+        &mut self,
+        pt: Pt,
+        resend: Option<Pt>,
+        profile_id: u8,
+        tier_flag: u8,
+        level_id: u8,
+    ) {
+        let ptl = H266ProfileTierLevel::new(profile_id, tier_flag, level_id)
+            .unwrap_or(H266ProfileTierLevel::FALLBACK);
+
+        self.add_config(
+            pt,
+            resend,
+            Codec::H266,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams {
+                h266_profile_tier_level: Some(ptl),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Add a default H266 (VVC) payload type.
+    ///
+    /// Enables H266 as a video codec (clock rate 90kHz) with a default RTX
+    /// payload type. Profile/tier/level negotiation happens via the SDP fmtp
+    /// parameters profile-id / tier-flag / level-id (RFC 9328 §7.2).
+    pub fn enable_h266(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::H266);
+        if !enabled {
+            return;
+        }
+
+        // Single default configuration with a high capability level.
+        //
+        // Level 6.0 (level_id=96) — per ITU-T H.266 Annex A the level_id is
+        // 16*major + 3*minor, e.g. Level 6.0 → 16*6 = 96.
+        self.add_h266(PT_H266, Some(PT_H266_RTX), 1, 0, 96); // Main 10, Main tier, Level 6.0
     }
 
     /// Add a default VP9 payload type.

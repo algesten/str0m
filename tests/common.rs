@@ -176,6 +176,14 @@ impl TestRtc {
             .cloned()
             .unwrap()
     }
+
+    pub fn params_h266(&self) -> PayloadParams {
+        self.rtc
+            .codec_config()
+            .find(|p| p.spec().codec == Codec::H266)
+            .cloned()
+            .unwrap()
+    }
 }
 
 /// Progress time forward by processing the next event.
@@ -538,6 +546,10 @@ pub fn av1_data() -> PcapData {
 
 pub fn h265_data() -> PcapData {
     load_pcap_data(include_bytes!("data/h265.pcap"))
+}
+
+pub fn h266_data() -> PcapData {
+    load_pcap_data(include_bytes!("data/h266.pcap"))
 }
 
 // ---------------------------------------------------------------------------

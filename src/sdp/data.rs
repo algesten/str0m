@@ -12,6 +12,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::packet::H265ProfileTierLevel;
+use crate::packet::H266ProfileTierLevel;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::{Candidate, IceCreds, VERSION};
 use str0m_proto::Id;
@@ -954,6 +955,9 @@ pub enum FormatParam {
     /// H.265/HEVC profile, tier, and level.
     H265ProfileTierLevel(crate::packet::H265ProfileTierLevel),
 
+    /// H.266/VVC profile, tier, and level.
+    H266ProfileTierLevel(crate::packet::H266ProfileTierLevel),
+
     /// H.265 sprop-max-don-diff parameter (RFC 7798 §7.1).
     /// When > 0, DONL fields are included in RTP packets to support
     /// out-of-order NAL unit decoding. Valid range: 0–32767.
@@ -1000,23 +1004,29 @@ impl FormatParam {
     }
 
     /// Parse multiple format parameters from key-value pairs.
-    /// Handles H.265 special case where three params combine into one composite.
+    /// Handles the H.265/H.266 special case where three params combine into
+    /// one composite ProfileTierLevel.
     pub fn parse_pairs(pairs: Vec<(String, String)>) -> Vec<FormatParam> {
-        // Check if this looks like H.265 by presence of tier-flag or level-id.
-        let is_h265 = pairs
+        // Check if this looks like H.265/H.266 by presence of tier-flag or level-id.
+        // Both codecs use the same three fmtp keys (RFC 7798 / RFC 9328);
+        // their level-id value spaces are disjoint (H.265: 30×level, e.g. 93;
+        // H.266: 16×major + 3×minor, e.g. 51), which disambiguates them.
+        let is_ptl = pairs
             .iter()
             .any(|(k, _)| k == "tier-flag" || k == "level-id");
 
-        if is_h265 {
-            // For H.265, build composite ProfileTierLevel.
+        if is_ptl {
+            // Build composite ProfileTierLevel: H.265 first, else H.266.
             let map: HashMap<String, String> = pairs.into_iter().collect();
 
             let mut result = vec![];
             if let Some(ptl) = H265ProfileTierLevel::from_fmtp(&map) {
                 result.push(FormatParam::H265ProfileTierLevel(ptl));
+            } else if let Some(ptl) = H266ProfileTierLevel::from_fmtp(&map) {
+                result.push(FormatParam::H266ProfileTierLevel(ptl));
             }
 
-            // Include non-H.265-PTL parameters.
+            // Include non-PTL parameters.
             for (k, v) in map.iter() {
                 if k != "profile-id" && k != "tier-flag" && k != "level-id" {
                     result.push(FormatParam::parse(k, v));
@@ -1025,7 +1035,7 @@ impl FormatParam {
 
             result
         } else {
-            // Standard parsing for non-H.265 codecs.
+            // Standard parsing for non-PTL codecs.
             pairs
                 .into_iter()
                 .map(|(k, v)| FormatParam::parse(&k, &v))
@@ -1053,6 +1063,15 @@ impl fmt::Display for FormatParam {
             LevelIdx(v) => write!(f, "level-idx={}", *v),
             Tier(v) => write!(f, "tier={}", v),
             H265ProfileTierLevel(ptl) => {
+                write!(
+                    f,
+                    "profile-id={};tier-flag={};level-id={}",
+                    ptl.profile_id(),
+                    ptl.tier_flag(),
+                    ptl.level_id()
+                )
+            }
+            H266ProfileTierLevel(ptl) => {
                 write!(
                     f,
                     "profile-id={};tier-flag={};level-id={}",
@@ -2771,6 +2790,890 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
 
                 let f = FormatParams {
                     h265_profile_tier_level: ptl,
+                    ..Default::default()
+                };
+
+                let serialized = f.to_string();
+                assert!(serialized.contains(&format!("level-id={}", level_id)));
+            }
+        }
+    }
+
+    /// Core H.266 (VVC) codec-specific tests, mirrored from h265_codec.
+    /// Tests basic H.266 parameter handling including profile-tier-level parsing,
+    /// serialization, and format parameter combinations.
+    mod h266_codec {
+        use super::*;
+
+        /// Test that H.266 format parameters can be serialized to a string and parsed back
+        /// without loss of information. Verifies the round-trip conversion works correctly.
+        #[test]
+        fn h266_fmtp_round_trip() {
+            // Test that H.266 fmtp params round-trip correctly
+            let ptl = H266ProfileTierLevel::new(1, 0, 51).unwrap(); // Main, Main tier, Level 3.1
+
+            let f = FormatParams {
+                h266_profile_tier_level: Some(ptl),
+                ..Default::default()
+            };
+
+            // Serialize to string
+            let fmtp_str = f.to_string();
+            assert_eq!(fmtp_str, "profile-id=1;tier-flag=0;level-id=51");
+
+            // Parse back
+            let parsed = FormatParams::parse_line(&fmtp_str);
+            assert_eq!(parsed.h266_profile_tier_level, Some(ptl));
+        }
+
+        /// Test different combinations of H.266 profiles, tiers, and levels to ensure
+        /// they are all serialized correctly. Covers Main, Main 10, different tiers, and levels.
+        #[test]
+        fn h266_different_profiles() {
+            // Test Main profile (1)
+            let main = H266ProfileTierLevel::new(1, 0, 51).unwrap();
+            let f = FormatParams {
+                h266_profile_tier_level: Some(main),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=51");
+
+            // Test Main 10 profile (2)
+            let main10 = H266ProfileTierLevel::new(33, 0, 51).unwrap();
+            let f = FormatParams {
+                h266_profile_tier_level: Some(main10),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=33;tier-flag=0;level-id=51");
+
+            // Test different tier (High tier)
+            let high_tier = H266ProfileTierLevel::new(1, 1, 51).unwrap();
+            let f = FormatParams {
+                h266_profile_tier_level: Some(high_tier),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=1;level-id=51");
+
+            // Test different level (Level 5.1 = 153)
+            let level_5_1 = H266ProfileTierLevel::new(1, 0, 83).unwrap();
+            let f = FormatParams {
+                h266_profile_tier_level: Some(level_5_1),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=83");
+        }
+
+        /// Test parsing H.266 parameters from key-value pairs as they would appear in SDP.
+        /// Verifies that the three separate params (profile-id, tier-flag, level-id) are
+        /// correctly combined into a single H266ProfileTierLevel composite.
+        #[test]
+        fn h266_parse_from_pairs() {
+            // Test parsing from key-value pairs (as would come from SDP)
+            let pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+            ];
+
+            let params = FormatParam::parse_pairs(pairs);
+
+            // Should have exactly one H266ProfileTierLevel param
+            let h266_params: Vec<_> = params
+                .iter()
+                .filter(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+                .collect();
+            assert_eq!(h266_params.len(), 1);
+
+            if let FormatParam::H266ProfileTierLevel(ptl) = h266_params[0] {
+                assert_eq!(ptl.profile_id(), 1);
+                assert_eq!(ptl.tier_flag(), 0);
+                assert_eq!(ptl.level_id(), 51);
+            } else {
+                panic!("Expected H266ProfileTierLevel");
+            }
+        }
+
+        /// Test that H.266 profile-tier-level params can coexist with other H.266-specific
+        /// parameters like sprop-max-don-diff without interfering with each other.
+        #[test]
+        fn h266_mixed_with_other_params() {
+            // Test H.266 params mixed with other format params
+            let pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+                ("sprop-max-don-diff".to_string(), "0".to_string()),
+            ];
+
+            let params = FormatParam::parse_pairs(pairs);
+
+            // Should have H266ProfileTierLevel and SpropMaxDonDiff
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::SpropMaxDonDiff(0)))
+            );
+        }
+
+        /// Test sprop-max-don-diff parsing, display, and round-trip for various values.
+        #[test]
+        fn sprop_max_don_diff_parse_and_display() {
+            // Parse standalone sprop-max-don-diff
+            let param = FormatParam::parse("sprop-max-don-diff", "32");
+            assert!(matches!(param, FormatParam::SpropMaxDonDiff(32)));
+
+            // Display format
+            assert_eq!(param.to_string(), "sprop-max-don-diff=32");
+
+            // Parse value 0 (DONL disabled)
+            let param0 = FormatParam::parse("sprop-max-don-diff", "0");
+            assert!(matches!(param0, FormatParam::SpropMaxDonDiff(0)));
+
+            // Parse max valid value (RFC 9328 §7.2: 0..32767)
+            let param_max = FormatParam::parse("sprop-max-don-diff", "32767");
+            assert!(matches!(param_max, FormatParam::SpropMaxDonDiff(32767)));
+
+            // Out-of-range value (32768) rejected per RFC 9328 §7.2
+            let param_over = FormatParam::parse("sprop-max-don-diff", "32768");
+            assert!(matches!(param_over, FormatParam::Unknown));
+
+            // Invalid value falls back to Unknown
+            let param_bad = FormatParam::parse("sprop-max-don-diff", "notanumber");
+            assert!(matches!(param_bad, FormatParam::Unknown));
+        }
+
+        /// Test that sprop-max-don-diff > 0 round-trips through H.266 fmtp with PTL params.
+        #[test]
+        fn h266_sprop_max_don_diff_nonzero_with_ptl() {
+            let pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+                ("sprop-max-don-diff".to_string(), "32".to_string()),
+            ];
+
+            let params = FormatParam::parse_pairs(pairs);
+
+            // Should have both H266ProfileTierLevel and SpropMaxDonDiff(32)
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+            assert!(
+                params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::SpropMaxDonDiff(32)))
+            );
+
+            // Verify PTL values are correct
+            if let Some(FormatParam::H266ProfileTierLevel(ptl)) = params
+                .iter()
+                .find(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            {
+                assert_eq!(ptl.profile_id(), 1);
+                assert_eq!(ptl.tier_flag(), 0);
+                assert_eq!(ptl.level_id(), 51);
+            }
+        }
+    }
+
+    /// Tests ensuring H.266 parameters are not confused with other codecs.
+    /// Verifies that H.266's three-parameter format (profile-id, tier-flag, level-id)
+    /// is correctly distinguished from H.264's profile-level-id, VP9's profile-id,
+    /// and AV1's profile/tier/level-idx parameters.
+    mod no_confusion_h266 {
+        use super::*;
+
+        /// Test that H.264's profile-level-id parameter (single hex value) is not confused
+        /// with H.266's three separate parameters. H.264 uses a different format entirely.
+        #[test]
+        fn h266_no_confusion_with_h264() {
+            // H.264 uses profile-level-id (single param)
+            let h264_pairs = vec![
+                ("profile-level-id".to_string(), "42e01f".to_string()),
+                ("packetization-mode".to_string(), "1".to_string()),
+            ];
+
+            let h264_params = FormatParam::parse_pairs(h264_pairs);
+
+            // Should NOT have H266ProfileTierLevel
+            assert!(
+                !h264_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Should have ProfileLevelId (H.264)
+            assert!(
+                h264_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::ProfileLevelId(_)))
+            );
+            assert!(
+                h264_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::PacketizationMode(1)))
+            );
+        }
+
+        /// Test that VP9's profile-id parameter (standalone) is not confused with H.266's
+        /// profile-id which must be combined with tier-flag and level-id.
+        #[test]
+        fn h266_no_confusion_with_vp9() {
+            // VP9 uses profile-id (single param, not combined)
+            let vp9_pairs = vec![("profile-id".to_string(), "0".to_string())];
+
+            let vp9_params = FormatParam::parse_pairs(vp9_pairs);
+
+            // Should NOT have H266ProfileTierLevel (missing tier-flag and level-id)
+            assert!(
+                !vp9_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Should have ProfileId (VP9)
+            assert!(
+                vp9_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::ProfileId(0)))
+            );
+        }
+
+        /// Test that AV1's parameters (profile, tier, level-idx) use different naming than
+        /// H.266 (profile-id, tier-flag, level-id) and are not confused during parsing.
+        #[test]
+        fn h266_no_confusion_with_av1() {
+            // AV1 uses profile, level-idx, tier (but should not be confused with H.266)
+            let av1_pairs = vec![
+                ("profile".to_string(), "0".to_string()),
+                ("level-idx".to_string(), "5".to_string()),
+                ("tier".to_string(), "0".to_string()),
+            ];
+
+            let av1_params = FormatParam::parse_pairs(av1_pairs);
+
+            // Should NOT have H266ProfileTierLevel
+            // (AV1 uses different param names: profile vs profile-id,
+            // tier vs tier-flag, level-idx vs level-id)
+            assert!(
+                !av1_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Should have AV1-specific params
+            assert!(
+                av1_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::Profile(0)))
+            );
+            assert!(
+                av1_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::LevelIdx(5)))
+            );
+            assert!(av1_params.iter().any(|p| matches!(p, FormatParam::Tier(0))));
+        }
+    }
+
+    /// Additional H.266 parsing and validation tests.
+    /// Covers incomplete parameter handling and complete SDP integration scenarios.
+    mod h266_additional {
+        use super::*;
+
+        /// Test that incomplete H.266 parameter sets do not create a composite ProfileTierLevel.
+        /// All three parameters (profile-id, tier-flag, level-id) must be present.
+        #[test]
+        fn h266_partial_params_no_composite() {
+            // If only some H.266 params are present, should not create composite
+            let partial_pairs = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                // Missing level-id
+            ];
+
+            let params = FormatParam::parse_pairs(partial_pairs);
+
+            // Should NOT have H266ProfileTierLevel (incomplete)
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+        }
+
+        /// Test H.266 parameters in a complete SDP offer/answer scenario.
+        /// Verifies that H.266 rtpmap and fmtp lines are correctly parsed along with RTX.
+        #[test]
+        fn h266_in_complete_sdp() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96 97\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H266/90000\r\n\
+            a=fmtp:96 profile-id=1;tier-flag=0;level-id=51\r\n\
+            a=rtpmap:97 rtx/90000\r\n\
+            a=fmtp:97 apt=96\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+
+            // Get RTP params
+            let params = sdp.media_lines[0].rtp_params();
+
+            // Find H.266 payload
+            let h266_payload = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H266)
+                .expect("should have H.266");
+
+            assert_eq!(h266_payload.pt, 96.into());
+            assert_eq!(h266_payload.spec.clock_rate, Frequency::NINETY_KHZ);
+
+            // Check H.266 params
+            let ptl = h266_payload
+                .spec
+                .format
+                .h266_profile_tier_level
+                .expect("should have H.266 PTL");
+            assert_eq!(ptl.profile_id(), 1);
+            assert_eq!(ptl.tier_flag(), 0);
+            assert_eq!(ptl.level_id(), 51);
+
+            // Check RTX
+            assert_eq!(h266_payload.resend, Some(97.into()));
+        }
+    }
+
+    /// Multi-codec integration tests.
+    /// Verifies that multiple video codecs (H.264, H.266, VP8, VP9) can coexist
+    /// in the same SDP without parameter conflicts or interference.
+    mod multi_codec_h266 {
+        use super::*;
+
+        /// Test that H.264, H.266, and other video codecs can coexist in the same SDP
+        /// without their format parameters interfering with each other.
+        #[test]
+        fn h266_and_h264_coexist() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96 97 98\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H264/90000\r\n\
+            a=fmtp:96 profile-level-id=42e01f;packetization-mode=1\r\n\
+            a=rtpmap:97 H266/90000\r\n\
+            a=fmtp:97 profile-id=1;tier-flag=0;level-id=51\r\n\
+            a=rtpmap:98 VP8/90000\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+            let params = sdp.media_lines[0].rtp_params();
+
+            // Check H.264
+            let h264 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H264)
+                .expect("should have H.264");
+            assert_eq!(h264.pt, 96.into());
+            assert_eq!(h264.spec.format.profile_level_id, Some(0x42e01f));
+            assert_eq!(h264.spec.format.packetization_mode, Some(1));
+            assert!(h264.spec.format.h266_profile_tier_level.is_none());
+
+            // Check H.266
+            let h266 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H266)
+                .expect("should have H.266");
+            assert_eq!(h266.pt, 97.into());
+            let ptl = h266
+                .spec
+                .format
+                .h266_profile_tier_level
+                .expect("should have H.266 PTL");
+            assert_eq!(ptl.profile_id(), 1);
+            assert!(h266.spec.format.profile_level_id.is_none());
+
+            // Check VP8
+            let vp8 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::Vp8)
+                .expect("should have VP8");
+            assert_eq!(vp8.pt, 98.into());
+            assert!(vp8.spec.format.h266_profile_tier_level.is_none());
+            assert!(vp8.spec.format.profile_level_id.is_none());
+        }
+    }
+
+    /// H.266 serialization and edge case tests.
+    /// Tests media attribute generation, empty parameter handling, extreme values,
+    /// parameter ordering independence, DONL parameters, and invalid value handling.
+    mod h266_serialization {
+        use super::*;
+
+        /// Test that H.266 parameters are correctly serialized as media attributes,
+        /// including rtpmap, fmtp with ProfileTierLevel, rtcp-fb, and RTX payload.
+        #[test]
+        fn h266_serialization_in_media_attrs() {
+            let ptl = H266ProfileTierLevel::new(33, 1, 83).unwrap(); // Main 10, High tier, Level 5.1
+
+            let mut payload = PayloadParams::new(
+                100.into(),
+                Some(101.into()),
+                CodecSpec {
+                    codec: Codec::H266,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        h266_profile_tier_level: Some(ptl),
+                        ..Default::default()
+                    },
+                },
+            );
+            payload.fb_transport_cc = true;
+            payload.fb_nack = true;
+            payload.fb_pli = true;
+
+            let mut attrs = vec![];
+            payload.as_media_attrs(&mut attrs);
+
+            // Should have rtpmap for H.266
+            assert!(attrs.iter().any(|a| matches!(a,
+                MediaAttribute::RtpMap { pt, value }
+                if *pt == 100.into() && value.codec == Codec::H266
+            )));
+
+            // Should have fmtp with H.266 params
+            let fmtp = attrs.iter().find(|a| {
+                matches!(a,
+                    MediaAttribute::Fmtp { pt, .. } if *pt == 100.into()
+                )
+            });
+            assert!(fmtp.is_some());
+
+            if let Some(MediaAttribute::Fmtp { values, .. }) = fmtp {
+                assert!(
+                    values
+                        .iter()
+                        .any(|v| matches!(v, FormatParam::H266ProfileTierLevel(p)
+                            if p.profile_id() == 33 && p.tier_flag() == 1 && p.level_id() == 83
+                        ))
+                );
+            }
+
+            // Should have rtx mapping
+            assert!(attrs.iter().any(|a| matches!(a,
+                MediaAttribute::RtpMap { pt, value }
+                if *pt == 101.into() && value.codec == Codec::Rtx
+            )));
+        }
+
+        /// Test that empty format parameters do not generate an a=fmtp line in SDP,
+        /// avoiding invalid SDP syntax with empty fmtp attributes.
+        #[test]
+        fn h266_empty_fmtp_not_serialized() {
+            // Empty fmtp should not be written
+            let payload = PayloadParams::new(
+                100.into(),
+                None,
+                CodecSpec {
+                    codec: Codec::H266,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams::default(),
+                },
+            );
+
+            let mut attrs = vec![];
+            payload.as_media_attrs(&mut attrs);
+
+            // Should NOT have fmtp line (it would be empty)
+            assert!(
+                !attrs
+                    .iter()
+                    .any(|a| matches!(a, MediaAttribute::Fmtp { .. }))
+            );
+        }
+
+        /// Test H.266 with extreme profile/tier/level values at boundaries.
+        /// Verifies parsing and serialization of edge case values.
+        #[test]
+        fn h266_extreme_values() {
+            // Test minimum level (Level 1.0 = 30)
+            let min_level = H266ProfileTierLevel::new(1, 0, 16).unwrap();
+            let f = FormatParams {
+                h266_profile_tier_level: Some(min_level),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=16");
+
+            // Test maximum level (Level 6.2 = 186)
+            let max_level = H266ProfileTierLevel::new(1, 0, 102).unwrap();
+            let f = FormatParams {
+                h266_profile_tier_level: Some(max_level),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=1;tier-flag=0;level-id=102");
+
+            // Test Main10 with High tier
+            let main10_high = H266ProfileTierLevel::new(33, 1, 51).unwrap();
+            let f = FormatParams {
+                h266_profile_tier_level: Some(main10_high),
+                ..Default::default()
+            };
+            assert_eq!(f.to_string(), "profile-id=33;tier-flag=1;level-id=51");
+        }
+
+        /// Test H.266 parameter ordering doesn't affect parsing.
+        /// SDP parameters can appear in any order.
+        #[test]
+        fn h266_parameter_order_independence() {
+            // Normal order
+            let normal_order = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+            ];
+
+            // Reversed order
+            let reversed_order = vec![
+                ("level-id".to_string(), "51".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("profile-id".to_string(), "1".to_string()),
+            ];
+
+            // Mixed order
+            let mixed_order = vec![
+                ("tier-flag".to_string(), "0".to_string()),
+                ("profile-id".to_string(), "1".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+            ];
+
+            let normal_params = FormatParam::parse_pairs(normal_order);
+            let reversed_params = FormatParam::parse_pairs(reversed_order);
+            let mixed_params = FormatParam::parse_pairs(mixed_order);
+
+            // All should create H266ProfileTierLevel
+            assert!(
+                normal_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+            assert!(
+                reversed_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+            assert!(
+                mixed_params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // All should have the same values
+            for params in [&normal_params, &reversed_params, &mixed_params] {
+                if let Some(FormatParam::H266ProfileTierLevel(ptl)) = params
+                    .iter()
+                    .find(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+                {
+                    assert_eq!(ptl.profile_id(), 1);
+                    assert_eq!(ptl.tier_flag(), 0);
+                    assert_eq!(ptl.level_id(), 51);
+                }
+            }
+        }
+
+        #[test]
+        fn h266_invalid_parameter_values() {
+            // Invalid profile-id
+            let invalid_profile = vec![
+                ("profile-id".to_string(), "999".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(invalid_profile);
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Invalid tier-flag
+            let invalid_tier = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "5".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(invalid_tier);
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Invalid level-id
+            let invalid_level = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "999".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(invalid_level);
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+        }
+    }
+
+    /// H.266 integration with RTCP feedback mechanisms.
+    /// Tests H.266 behavior with multiple codecs and various RTCP feedback types
+    /// including NACK, PLI, FIR, and transport-cc.
+    mod h266_integration {
+        use super::*;
+
+        /// Test H.266 in SDP with multiple video codecs and feedback mechanisms.
+        /// Verifies proper parsing of complex multi-codec scenarios.
+        #[test]
+        fn h266_multi_codec_with_feedback() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96 97 98 99\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H266/90000\r\n\
+            a=fmtp:96 profile-id=1;tier-flag=0;level-id=51\r\n\
+            a=rtcp-fb:96 nack\r\n\
+            a=rtcp-fb:96 nack pli\r\n\
+            a=rtcp-fb:96 ccm fir\r\n\
+            a=rtcp-fb:96 transport-cc\r\n\
+            a=rtpmap:97 rtx/90000\r\n\
+            a=fmtp:97 apt=96\r\n\
+            a=rtpmap:98 VP9/90000\r\n\
+            a=fmtp:98 profile-id=0\r\n\
+            a=rtpmap:99 rtx/90000\r\n\
+            a=fmtp:99 apt=98\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+            let params = sdp.media_lines[0].rtp_params();
+
+            // Check H.266 with all feedback mechanisms
+            let h266 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H266)
+                .expect("should have H.266");
+            assert_eq!(h266.pt, 96.into());
+            assert!(h266.fb_nack);
+            assert!(h266.fb_pli);
+            assert!(h266.fb_fir);
+            assert!(h266.fb_transport_cc);
+            assert_eq!(h266.resend, Some(97.into()));
+
+            // Verify H.266 PTL is correct
+            let ptl = h266
+                .spec
+                .format
+                .h266_profile_tier_level
+                .expect("should have PTL");
+            assert_eq!(ptl.profile_id(), 1);
+
+            // Check VP9 is separate and correct
+            let vp9 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::Vp9)
+                .expect("should have VP9");
+            assert_eq!(vp9.pt, 98.into());
+            assert_eq!(vp9.spec.format.profile_id, Some(0));
+            assert!(vp9.spec.format.h266_profile_tier_level.is_none());
+        }
+    }
+
+    /// Advanced H.266 functionality tests.
+    /// Covers SDP round-trip serialization, incomplete parameter permutations,
+    /// browser compatibility (Chrome profile-only mode), and validation of all
+    /// standard H.266 level values (1.0 through 6.2).
+    mod h266_advanced {
+        use super::*;
+
+        /// Test H.266 SDP serialization maintains parameter integrity.
+        /// Ensures that serialized SDP can be parsed back with identical values.
+        #[test]
+        fn h266_sdp_serialization_round_trip() {
+            let ptl = H266ProfileTierLevel::new(33, 0, 83).unwrap();
+
+            let payload = PayloadParams::new(
+                100.into(),
+                Some(101.into()),
+                CodecSpec {
+                    codec: Codec::H266,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        h266_profile_tier_level: Some(ptl),
+                        ..Default::default()
+                    },
+                },
+            );
+
+            let mut attrs = vec![];
+            payload.as_media_attrs(&mut attrs);
+
+            // Find the fmtp line
+            let fmtp = attrs
+                .iter()
+                .find_map(|a| match a {
+                    MediaAttribute::Fmtp { pt, values } if *pt == 100.into() => Some(values),
+                    _ => None,
+                })
+                .expect("should have fmtp");
+
+            // Should contain H266ProfileTierLevel
+            assert!(fmtp.iter().any(
+                |v| matches!(v, FormatParam::H266ProfileTierLevel(p) if p.profile_id() == 33)
+            ));
+        }
+
+        /// Test that only two of three H.266 params doesn't create PTL.
+        /// Each permutation of missing parameter should fail.
+        #[test]
+        fn h266_incomplete_params_all_permutations() {
+            // Missing level-id
+            let missing_level = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("tier-flag".to_string(), "0".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(missing_level);
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Missing tier-flag
+            let missing_tier = vec![
+                ("profile-id".to_string(), "1".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(missing_tier);
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Missing profile-id
+            let missing_profile = vec![
+                ("tier-flag".to_string(), "0".to_string()),
+                ("level-id".to_string(), "51".to_string()),
+            ];
+            let params = FormatParam::parse_pairs(missing_profile);
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+
+            // Only one parameter
+            let only_profile = vec![("profile-id".to_string(), "1".to_string())];
+            let params = FormatParam::parse_pairs(only_profile);
+            assert!(
+                !params
+                    .iter()
+                    .any(|p| matches!(p, FormatParam::H266ProfileTierLevel(_)))
+            );
+        }
+
+        /// Test H.266 with Chrome-style profile-only in complete SDP.
+        /// Verifies that browser compatibility mode works in real SDP.
+        #[test]
+        fn h266_chrome_profile_only_sdp() {
+            let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 H266/90000\r\n\
+            a=fmtp:96 profile-id=1\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+
+            let sdp = Sdp::parse(input).expect("should parse");
+            let params = sdp.media_lines[0].rtp_params();
+
+            let h266 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::H266)
+                .expect("should have H.266");
+
+            // Should NOT have full PTL
+            assert!(h266.spec.format.h266_profile_tier_level.is_none());
+
+            // Should have profile_id field instead
+            assert_eq!(h266.spec.format.profile_id, Some(1));
+        }
+
+        /// Test H.266 different level values in valid range.
+        /// Ensures all valid level IDs are properly handled.
+        #[test]
+        fn h266_all_valid_levels() {
+            let valid_levels = vec![
+                16,  // Level 1.0
+                32,  // Level 2.0
+                35,  // Level 2.1
+                48,  // Level 3.0
+                51,  // Level 3.1
+                64,  // Level 4.0
+                67,  // Level 4.1
+                80,  // Level 5.0
+                83,  // Level 5.1
+                86,  // Level 5.2
+                96,  // Level 6.0
+                99,  // Level 6.1
+                102, // Level 6.2
+            ];
+
+            for level_id in valid_levels {
+                let ptl = H266ProfileTierLevel::new(1, 0, level_id);
+                assert!(ptl.is_some(), "Level ID {} should be valid", level_id);
+
+                let f = FormatParams {
+                    h266_profile_tier_level: ptl,
                     ..Default::default()
                 };
 
