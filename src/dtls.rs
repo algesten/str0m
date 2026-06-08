@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
-use crate::crypto::dtls::{DtlsCert, DtlsOutput};
-use crate::crypto::dtls::{DtlsInstance, DtlsProvider, DtlsVersion};
+use crate::crypto::dtls::{DtlsCert, DtlsConfig, DtlsOutput};
+use crate::crypto::dtls::{DtlsInstance, DtlsProvider};
 use crate::crypto::{CryptoError, DtlsError};
 use crate::io::DatagramSend;
 use crate::util::already_happened;
@@ -53,10 +53,10 @@ impl Dtls {
         dtls_provider: &dyn DtlsProvider,
         sha256_provider: &dyn Sha256Provider,
         now: Instant,
-        dtls_version: DtlsVersion,
+        dtls_config: &DtlsConfig,
     ) -> Result<Self, DtlsError> {
         let instance = dtls_provider
-            .new_dtls(cert, now, dtls_version)
+            .new_dtls(cert, now, dtls_config)
             .map_err(DtlsError::CryptoError)?;
 
         // Compute fingerprint from the certificate DER bytes
