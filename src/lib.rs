@@ -1515,9 +1515,8 @@ impl Rtc {
         if self.closing {
             // Drain DTLS output to move packets into the poll_packet queue
             loop {
-                match self.dtls.poll_output(&mut self.dtls_buf) {
-                    DtlsOutput::Timeout(_) => break,
-                    _ => {}
+                if let DtlsOutput::Timeout(_) = self.dtls.poll_output(&mut self.dtls_buf) {
+                    break;
                 }
             }
 
