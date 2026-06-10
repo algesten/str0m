@@ -1935,7 +1935,6 @@ impl Rtc {
     }
 
     /// Sends the DTLS close_notify to the remote.
-    /// Sends the DTLS close_notify to the remote.
     ///
     /// The close_notify packet will be emitted via the next `poll_output()` call
     /// as a `Transmit`. Once the packet is drained, the `Rtc` instance becomes
