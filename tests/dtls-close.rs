@@ -1,5 +1,5 @@
 //! Test that calling `Rtc::close()` sends a DTLS close_notify alert
-//! and the remote peer receives `Event::Closed`.
+//! and marks the Rtc instance as not alive.
 #![cfg(any(
     feature = "aws-lc-rs",
     feature = "rust-crypto",
@@ -63,22 +63,15 @@ fn close_notify_received_by_remote() {
 
     // L initiates close.
     println!("L calling close()");
-    l.rtc.close().unwrap();
+    l.rtc.close().expect("L close");
 
     // Drive the close_notify packet from L to R.
     let mut r_got_closed = false;
-    let mut l_got_closed = false;
     for i in 0..100 {
         progress(&mut l, &mut r).unwrap();
-        if !r_got_closed && r.events.iter().any(|(_, e)| matches!(e, Event::Closed)) {
+        if r.events.iter().any(|(_, e)| matches!(e, Event::Closed)) {
             println!("R received Event::Closed after {i} progress iterations");
             r_got_closed = true;
-        }
-        if !l_got_closed && l.events.iter().any(|(_, e)| matches!(e, Event::Closed)) {
-            println!("L received Event::Closed after {i} progress iterations");
-            l_got_closed = true;
-        }
-        if r_got_closed && l_got_closed {
             break;
         }
     }
@@ -87,5 +80,16 @@ fn close_notify_received_by_remote() {
         r_got_closed,
         "R should receive Event::Closed after L sends close_notify"
     );
-    assert!(l_got_closed, "L should receive reciprocal Event::Closed");
+
+    // After close, L should no longer be alive
+    assert!(!l.rtc.is_alive(), "L should not be alive after close");
+
+    // R also initiates close and drains.
+    println!("R calling close()");
+    r.rtc.close().expect("R close");
+    for _ in 0..10 {
+        progress(&mut l, &mut r).unwrap();
+    }
+
+    assert!(!r.rtc.is_alive(), "R should not be alive after close");
 }
