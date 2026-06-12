@@ -889,6 +889,7 @@ pub use error::RtcError;
 /// ```
 pub struct Rtc {
     alive: bool,
+    closing: bool,
     ice: IceAgent,
     dtls: Dtls,
     dtls_connected: bool,
@@ -1008,6 +1009,9 @@ pub enum Event {
 
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
+
+    /// We have received the DTLS close packet
+    Closed,
 
     /// Debug output of incoming and outgoing RTCP/RTP packets.
     ///
@@ -1220,6 +1224,7 @@ impl Rtc {
 
         Ok(Rtc {
             alive: true,
+            closing: false,
             ice,
             dtls: Dtls::new(
                 &dtls_cert,
@@ -1418,6 +1423,10 @@ impl Rtc {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
 
+        if !self.alive {
+            return None;
+        }
+
         // This does not catch potential RIDs required to send simulcast, but
         // it's a good start. An error might arise later on RID mismatch.
         self.session.media_by_mid_mut(mid)?;
@@ -1527,6 +1536,33 @@ impl Rtc {
             return Ok(Output::Timeout(not_happening()));
         }
 
+        if self.closing {
+            // Drain DTLS output to move packets into the poll_packet queue
+            loop {
+                if let DtlsOutput::Timeout(_) = self.dtls.poll_output(&mut self.dtls_buf) {
+                    break;
+                }
+            }
+
+            // Transmit any pending DTLS packets (the close_notify record)
+            if let Some(send) = &self.send_addr {
+                if let Some(contents) = self.dtls.poll_packet() {
+                    let t = net::Transmit {
+                        proto: send.proto,
+                        source: send.source,
+                        destination: send.destination,
+                        contents,
+                    };
+                    return Ok(Output::Transmit(t));
+                }
+            }
+
+            // All packets drained — mark as not alive
+            self.alive = false;
+            self.last_timeout_reason = Reason::NotHappening;
+            return Ok(Output::Timeout(not_happening()));
+        }
+
         while let Some(e) = self.ice.poll_event() {
             match e {
                 IceAgentEvent::IceRestart(_) => {
@@ -1624,6 +1660,9 @@ impl Rtc {
                 DtlsOutput::Timeout(t) => {
                     self.next_dtls_timeout = Some(t);
                     break;
+                }
+                DtlsOutput::CloseNotify => {
+                    return Ok(Output::Event(Event::Closed));
                 }
                 other => {
                     return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
@@ -1877,6 +1916,16 @@ impl Rtc {
             }
         }
         Ok(())
+    }
+
+    /// Sends the DTLS close_notify to the remote.
+    ///
+    /// The close_notify packet will be emitted via the next `poll_output()` call
+    /// as a `Transmit`. Once the packet is drained, the `Rtc` instance becomes
+    /// not alive.
+    pub fn close(&mut self) -> Result<(), RtcError> {
+        self.closing = true;
+        Ok(self.dtls.close()?)
     }
 
     fn init_time(&mut self, now: Instant) {
