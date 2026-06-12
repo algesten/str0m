@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 /// let mtime = MediaTime::new(2000, freq);
 /// ```
 #[derive(Debug, Clone, Copy, Serialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct Frequency(NonZeroU32);
 
 impl Frequency {

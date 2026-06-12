@@ -296,6 +296,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "drv"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb67531e2bd07035971a7b45c7ca013024e6691a348736801675914847f03b21"
+dependencies = [
+ "drv-macros",
+]
+
+[[package]]
+name = "drv-macros"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d1fa8647349fd4f292c87823cc96987a404b38181da2736ce7773d9d5601298"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.90",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1118,6 +1138,7 @@ dependencies = [
  "_str0m_test",
  "combine",
  "crc",
+ "drv",
  "fastrand",
  "hmac",
  "libc",

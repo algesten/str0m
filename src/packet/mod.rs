@@ -51,6 +51,7 @@ pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 pub(crate) use pacer::{QueuePriority, QueueSnapshot, QueueState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 /// Types of media.
 pub enum MediaKind {
     /// Audio media.

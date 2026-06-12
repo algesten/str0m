@@ -84,6 +84,7 @@ impl Eq for PayloadParams {}
 
 /// Codec specification
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct CodecSpec {
     /// The codec identifier.
     pub codec: Codec,
@@ -101,6 +102,7 @@ pub struct CodecSpec {
 
 /// Known codecs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub enum Codec {
@@ -127,6 +129,7 @@ pub enum Codec {
 
 /// Codec specific format parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct FormatParams {
     /// Opus specific parameter.
     ///

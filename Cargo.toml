@@ -34,6 +34,12 @@ sha1 = ["dep:sha1"]
 # Uses native Windows API to implement cryptographic features, use instead on openssl and sha1.
 wincrypto = ["dep:str0m-wincrypto"]
 
+# Derives `drv::Input` (drv's memoization cache-key plumbing) on the public
+# identity types — Mid, Rid, Ssrc, Pt, SessionId, SeqNo, Direction, MediaKind,
+# Frequency, Codec, CodecSpec, FormatParams, VideoOrientation — so downstream
+# `#[drv::memo]` queries can take them by value. Off by default.
+drv = ["dep:drv"]
+
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
 
@@ -54,6 +60,7 @@ libc = { version = "0.2", optional = true }
 hmac = "0.12.1"
 crc = "3.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
+drv = { version = "0.4.3", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 sha1 = { version = "0.10.6", features = ["asm"], optional = true }
