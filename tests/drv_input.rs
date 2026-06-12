@@ -3,6 +3,8 @@
 //! identity types so downstream `#[drv::memo]` queries can take them by
 //! value. `Frequency` exercises the `NonZeroU32` path specifically.
 
+use std::collections::HashMap;
+
 use str0m::format::Codec;
 use str0m::media::{Frequency, MediaKind, MediaTime, Mid};
 
@@ -59,4 +61,22 @@ fn media_time_is_a_valid_memo_input() {
     assert_eq!(a, b);
     assert_eq!(micros(TimeFacts { at: a }), 2_000_000);
     assert_eq!(micros(TimeFacts { at: b }), 2_000_000);
+}
+
+#[derive(drv::Input)]
+struct MidMapInput<'a> {
+    pub by_mid: &'a HashMap<Mid, u32>,
+}
+
+#[drv::memo(single)]
+fn mid_count(input: MidMapInput<'_>) -> usize {
+    input.by_mid.len()
+}
+
+#[test]
+fn mid_works_as_a_projected_hashmap_key() {
+    let mut by_mid = HashMap::new();
+    by_mid.insert(Mid::from("0"), 1u32);
+    by_mid.insert(Mid::from("1"), 2u32);
+    assert_eq!(mid_count(MidMapInput { by_mid: &by_mid }), 2);
 }

@@ -5,7 +5,6 @@ use crate::sdp::FormatParam;
 
 /// Codec specific format parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct FormatParams {
     /// Opus specific parameter.
     ///
@@ -100,6 +99,9 @@ pub struct FormatParams {
     /// out-of-order NAL unit decoding.
     pub sprop_max_don_diff: Option<u16>,
 }
+
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(FormatParams);
 
 impl FormatParams {
     /// Parse an fmtp line to create a FormatParams.

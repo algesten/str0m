@@ -687,6 +687,27 @@ use streams::RtpPacket;
 use streams::StreamPaused;
 use util::InstantExt;
 
+// Identity `drv::ToStatic` (`Static = Self`) for the `Copy` identity types.
+// Used instead of `#[derive(drv::Input)]` because the derive's generated
+// shadow type isn't `Eq`/`Hash`/`Borrow<Self>`, so it can't be a `HashMap`
+// key inside a `#[drv::memo]` projection; `Static = Self` can. `eq_static`
+// defers to each type's own `PartialEq`. Each module invokes this for its
+// own types.
+#[cfg(feature = "drv")]
+macro_rules! drv_identity_copy {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl drv::ToStatic for $t {
+                type Static = $t;
+                fn to_static(&self) -> $t { *self }
+                fn eq_static(&self, other: &$t) -> bool { self == other }
+            }
+        )*
+    };
+}
+#[cfg(feature = "drv")]
+pub(crate) use drv_identity_copy;
+
 /// Cryptographic provider traits and implementations.
 ///
 /// This module provides the traits for pluggable cryptographic operations

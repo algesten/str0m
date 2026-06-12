@@ -4,7 +4,6 @@ use std::fmt;
 ///
 /// And also extmap direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub enum Direction {
     /// Send only direction.
     SendOnly,
@@ -15,6 +14,9 @@ pub enum Direction {
     /// Disabled direction.
     Inactive,
 }
+
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(Direction);
 
 impl Direction {
     /// Change the direction to the opposite.
