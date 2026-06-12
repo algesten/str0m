@@ -4,6 +4,7 @@ use std::fmt;
 ///
 /// And also extmap direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub enum Direction {
     /// Send only direction.
     SendOnly,

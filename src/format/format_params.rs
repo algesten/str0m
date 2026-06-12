@@ -5,6 +5,7 @@ use crate::sdp::FormatParam;
 
 /// Codec specific format parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct FormatParams {
     /// Opus specific parameter.
     ///

@@ -67,6 +67,7 @@ mod payload;
 pub(crate) use payload::Payloader;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 /// Types of media.
 pub enum MediaKind {
     /// Audio media.

@@ -8,6 +8,7 @@ use super::format_params::FormatParams;
 
 /// Codec specification
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct CodecSpec {
     /// The codec identifier.
     pub codec: Codec,
@@ -25,6 +26,7 @@ pub struct CodecSpec {
 
 /// Known codecs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub enum Codec {

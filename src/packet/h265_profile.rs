@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 /// Represents the three SDP fmtp parameters `profile-id`, `tier-flag`, and `level-id`
 /// as defined in RFC 7798 §7.1 and ITU-T H.265 Annex A.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct H265ProfileTierLevel {
     profile: H265Profile,
     tier: H265Tier,
@@ -94,6 +95,7 @@ impl From<(u8, u8, u8)> for H265ProfileTierLevel {
 
 /// H.265 profile as defined in ITU-T H.265 Annex A.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub enum H265Profile {
     /// Main profile (profile_id=1).
     Main,
@@ -160,6 +162,7 @@ impl H265Profile {
 
 /// H.265 tier (Main or High).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub enum H265Tier {
     /// Main tier (tier_flag=0).
     Main,
@@ -192,6 +195,7 @@ impl H265Tier {
 ///
 /// Level IDs are 30× the level number (e.g., Level 3.1 = 93).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 #[repr(u8)]
 #[rustfmt::skip]
 pub enum H265Level {
