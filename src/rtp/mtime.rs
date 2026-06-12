@@ -333,6 +333,22 @@ impl PartialEq for MediaTime {
 }
 impl Eq for MediaTime {}
 
+// `MediaTime`'s `PartialEq` rebases to a common timebase before comparing,
+// so the structural `drv::Input` derive (raw numerator + frequency) would
+// diverge from its real equality. It's `Copy + 'static`, so give it an
+// identity `ToStatic` that defers to that `PartialEq` — mirroring how drv
+// treats primitives.
+#[cfg(feature = "drv")]
+impl drv::ToStatic for MediaTime {
+    type Static = MediaTime;
+    fn to_static(&self) -> MediaTime {
+        *self
+    }
+    fn eq_static(&self, other: &MediaTime) -> bool {
+        self == other
+    }
+}
+
 impl PartialOrd for MediaTime {
     #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
