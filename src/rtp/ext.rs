@@ -1222,7 +1222,6 @@ impl fmt::Debug for ExtensionMap {
 
 /// How the video is rotated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub enum VideoOrientation {
     /// Not rotated.
     Deg0 = 0,
@@ -1233,6 +1232,9 @@ pub enum VideoOrientation {
     /// 90 degrees counter clockwise.
     Deg270 = 1,
 }
+
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(VideoOrientation);
 
 impl From<u8> for VideoOrientation {
     fn from(value: u8) -> Self {
