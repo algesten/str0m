@@ -123,6 +123,7 @@ macro_rules! num_id {
 /// 3 incoming StreamRx, but since they belong to the same media,
 /// the have the same `Mid`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct Mid([u8; 16]);
 str_id!(Mid, "Mid", 16, 3);
 
@@ -134,6 +135,7 @@ str_id!(Mid, "Mid", 16, 3);
 /// In SDP this is an optional value that will be seen in [`MediaData`][crate::media::MediaData]
 /// if the remote peer is configured for simulcast.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct Rid([u8; 8]);
 str_id!(Rid, "Rid", 8, 3);
 
@@ -143,6 +145,7 @@ str_id!(Rid, "Rid", 8, 3);
 /// with at least one synchronization source. Multiple sources for the same stream happens
 /// for RTX (resend) and simulcast.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct Ssrc(u32);
 num_id!(Ssrc, u32);
 
@@ -163,6 +166,7 @@ impl Ssrc {
 ///
 /// PTs in RTP headers are 7 bits. Values >=128 are not valid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct Pt(u8);
 num_id!(Pt, u8);
 
@@ -170,6 +174,7 @@ num_id!(Pt, u8);
 ///
 /// This value is rarely interesting, but is part of the SDP OFFER and ANSWER.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct SessionId(u64);
 num_id!(SessionId, u64);
 
@@ -194,6 +199,7 @@ num_id!(SessionId, u64);
 /// assert_eq!(b, 1);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub struct SeqNo(u64);
 num_id!(SeqNo, u64);
 

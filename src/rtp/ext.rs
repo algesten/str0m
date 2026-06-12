@@ -1222,6 +1222,7 @@ impl fmt::Debug for ExtensionMap {
 
 /// How the video is rotated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "drv", derive(drv::Input))]
 pub enum VideoOrientation {
     /// Not rotated.
     Deg0 = 0,
