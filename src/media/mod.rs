@@ -1,6 +1,7 @@
 //! Media (audio/video) related content.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::RtcError;
@@ -191,7 +192,7 @@ pub(crate) struct ToPayload {
     pub wallclock: Instant,
     pub rtp_time: MediaTime,
     pub start_of_talk_spurt: bool,
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
     pub ext_vals: ExtensionValues,
 }
 
@@ -337,12 +338,12 @@ impl Media {
                     network_time: dep.first_network_time(),
                     seq_range: dep.seq_range(),
                     contiguous: dep.contiguous,
-                    ext_vals: dep.ext_vals().clone(),
+                    ext_vals: dep.ext_vals(),
                     codec_extra: dep.codec_extra,
                     last_sender_info: dep.first_sender_info(),
                     audio_start_of_talk_spurt: codec.spec().codec.is_audio()
                         && dep.start_of_talkspurt(),
-                    data: dep.data,
+                    data: dep.data.into(),
                 }));
             }
         }

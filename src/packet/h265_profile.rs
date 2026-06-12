@@ -223,6 +223,9 @@ pub enum H265Level {
     Level6_2 = 186_u8,
 }
 
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(H265ProfileTierLevel, H265Profile, H265Tier, H265Level);
+
 impl H265Level {
     /// Returns the ordinal position (0-12) representing capability order.
     pub fn ordinal(self) -> usize {

@@ -687,6 +687,27 @@ use streams::RtpPacket;
 use streams::StreamPaused;
 use util::InstantExt;
 
+// Identity `drv::ToStatic` (`Static = Self`) for the `Copy` identity types.
+// Used instead of `#[derive(drv::Input)]` because the derive's generated
+// shadow type isn't `Eq`/`Hash`/`Borrow<Self>`, so it can't be a `HashMap`
+// key inside a `#[drv::memo]` projection; `Static = Self` can. `eq_static`
+// defers to each type's own `PartialEq`. Each module invokes this for its
+// own types.
+#[cfg(feature = "drv")]
+macro_rules! drv_identity_copy {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl drv::ToStatic for $t {
+                type Static = $t;
+                fn to_static(&self) -> $t { *self }
+                fn eq_static(&self, other: &$t) -> bool { self == other }
+            }
+        )*
+    };
+}
+#[cfg(feature = "drv")]
+pub(crate) use drv_identity_copy;
+
 /// Cryptographic provider traits and implementations.
 ///
 /// This module provides the traits for pluggable cryptographic operations
@@ -751,8 +772,11 @@ pub mod rtp {
     pub use crate::rtp_::{AbsCaptureTime, ExtensionValues, UserExtensionValues};
     pub use crate::rtp_::{Extension, ExtensionMap, ExtensionSerializer};
 
+    pub use crate::packet::{
+        Vp8Descriptor, Vp8DescriptorError, Vp8Patch, Vp8PatchBuilder, Vp8PatchError,
+    };
     pub use crate::rtp_::{RtpHeader, SeqNo, Ssrc, VideoOrientation};
-    pub use crate::streams::{RtpPacket, StreamPaused, StreamRx, StreamTx};
+    pub use crate::streams::{RtpPacket, RtpWrite, StreamPaused, StreamRx, StreamTx};
 
     /// Debug output of the unencrypted RTP and RTCP packets.
     ///
@@ -1937,6 +1961,9 @@ impl Rtc {
                 let mut snapshot = StatsSnapshot::new(now);
                 snapshot.peer_rx = self.peer_bytes_rx;
                 snapshot.peer_tx = self.peer_bytes_tx;
+                let current_round_trip_time = self.ice.nominated_pair_rtt();
+                let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
+                let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
                 snapshot.selected_candidate_pair =
                     self.send_addr.as_ref().map(|s| CandidatePairStats {
                         protocol: s.proto,
@@ -1944,6 +1971,9 @@ impl Rtc {
                         remote: CandidateStats {
                             addr: s.destination,
                         },
+                        current_round_trip_time,
+                        total_round_trip_time,
+                        responses_received,
                     });
                 self.session.visit_stats(now, &mut snapshot);
                 stats.do_handle_timeout(&mut snapshot);

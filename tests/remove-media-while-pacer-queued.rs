@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::MediaKind;
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::rtp::{ExtensionValues, RtpWrite, Ssrc};
 use str0m::{Input, RtcError};
 
 mod common;
@@ -55,18 +55,17 @@ pub fn remove_media_while_pacer_queued() -> Result<(), RtcError> {
             ..Default::default()
         };
 
-        stream
-            .write_rtp(
+        stream.write_rtp(
+            RtpWrite::new(
                 pt,
                 47_000.into(),
                 47_000_000,
                 wallclock,
-                false,
-                exts,
-                true,
-                vec![0x1, 0x2, 0x3, 0x4],
+                [0x1, 0x2, 0x3, 0x4],
             )
-            .unwrap();
+            .ext_vals(exts)
+            .nackable(true),
+        );
     }
 
     // Advance time slightly so the timeout fires

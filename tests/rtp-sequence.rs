@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 use std::time::Instant;
 
 use str0m::media::{Direction, MediaKind};
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::rtp::{RtpWrite, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
@@ -49,25 +49,18 @@ fn rtp_sequence_number_near_boundary() -> Result<(), RtcError> {
         let time = (i * 960) as u32; // Opus uses 48kHz, 20ms = 960 samples
         let wallclock = l.start + l.duration();
 
-        let exts = ExtensionValues::default();
+        {
+            let mut direct = l.direct_api();
+            let stream = direct.stream_tx(&ssrc).unwrap();
 
-        let mut direct = l.direct_api();
-        let stream = direct.stream_tx(&ssrc).unwrap();
-
-        stream
-            .write_rtp(
+            stream.write_rtp(RtpWrite::new(
                 pt,
                 seq_no.into(),
                 time,
                 wallclock,
-                false,
-                exts,
-                false,
-                vec![1_u8; 80],
-            )
-            .expect("write_rtp should succeed");
-
-        drop(direct);
+                [1_u8; 80],
+            ));
+        }
         progress(&mut l, &mut r)?;
     }
 
@@ -102,7 +95,7 @@ fn rtp_sequence_number_near_boundary() -> Result<(), RtcError> {
     // Verify sequence numbers before boundary (65530-65535) were received
     let before_boundary: Vec<_> = received_seqs
         .iter()
-        .filter(|&&s| s >= 65530 && s <= 65535)
+        .filter(|&&s| (65530..=65535).contains(&s))
         .collect();
     assert!(
         !before_boundary.is_empty(),
@@ -168,25 +161,18 @@ fn rtp_reordering_buffer_audio() -> Result<(), RtcError> {
     for &seq in &send_order {
         let time = (seq * 960) as u32; // Opus 48kHz, 20ms frames
         let wallclock = l.start + l.duration();
-        let exts = ExtensionValues::default();
+        {
+            let mut direct = l.direct_api();
+            let stream = direct.stream_tx(&ssrc).unwrap();
 
-        let mut direct = l.direct_api();
-        let stream = direct.stream_tx(&ssrc).unwrap();
-
-        stream
-            .write_rtp(
+            stream.write_rtp(RtpWrite::new(
                 pt,
                 seq.into(),
                 time,
                 wallclock,
-                false,
-                exts,
-                false,
-                vec![seq as u8; 80], // payload contains seq number for verification
-            )
-            .expect("write_rtp should succeed");
-
-        drop(direct);
+                [seq as u8; 80],
+            ));
+        }
         progress(&mut l, &mut r)?;
     }
 
@@ -274,26 +260,22 @@ fn rtp_reordering_buffer_video() -> Result<(), RtcError> {
     for &seq in &send_order {
         let time = (seq * 3000) as u32; // 90kHz video clock, ~33ms frames
         let wallclock = l.start + l.duration();
-        let exts = ExtensionValues::default();
+        {
+            let mut direct = l.direct_api();
+            let stream = direct.stream_tx(&ssrc).unwrap();
 
-        let mut direct = l.direct_api();
-        let stream = direct.stream_tx(&ssrc).unwrap();
-
-        // VP8 keyframe header
-        stream
-            .write_rtp(
-                pt,
-                seq.into(),
-                time,
-                wallclock,
-                true, // marker bit for complete frame
-                exts,
-                false,
-                vec![0x10, 0x00, 0x00, seq as u8],
-            )
-            .expect("write_rtp should succeed");
-
-        drop(direct);
+            // VP8 keyframe header
+            stream.write_rtp(
+                RtpWrite::new(
+                    pt,
+                    seq.into(),
+                    time,
+                    wallclock,
+                    [0x10, 0x00, 0x00, seq as u8],
+                )
+                .marker(true),
+            );
+        }
         progress(&mut l, &mut r)?;
     }
 
@@ -369,25 +351,18 @@ fn rtp_reordering_buffer_custom_size() -> Result<(), RtcError> {
     for &seq in &send_order {
         let time = (seq * 960) as u32;
         let wallclock = l.start + l.duration();
-        let exts = ExtensionValues::default();
+        {
+            let mut direct = l.direct_api();
+            let stream = direct.stream_tx(&ssrc).unwrap();
 
-        let mut direct = l.direct_api();
-        let stream = direct.stream_tx(&ssrc).unwrap();
-
-        stream
-            .write_rtp(
+            stream.write_rtp(RtpWrite::new(
                 pt,
                 seq.into(),
                 time,
                 wallclock,
-                false,
-                exts,
-                false,
-                vec![seq as u8; 80],
-            )
-            .expect("write_rtp should succeed");
-
-        drop(direct);
+                [seq as u8; 80],
+            ));
+        }
         progress(&mut l, &mut r)?;
     }
 
@@ -511,40 +486,28 @@ fn rtp_reordering_buffer_large() -> Result<(), RtcError> {
 
     // Send packets with larger gaps that require big buffer
     // Send 1, 10, 2, 11, 3, 12, 4, 13... (interleaved with gap of ~9)
-    let mut send_order = Vec::new();
-    for i in 0..10 {
-        send_order.push(1 + i); // 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
-        send_order.push(11 + i); // 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
-    }
     // Shuffle to create out-of-order: 1, 11, 2, 12, 3, 13...
-    let mut interleaved = Vec::new();
-    for i in 0..10 {
-        interleaved.push(1 + i);
-        interleaved.push(11 + i);
+    let mut send_order = Vec::new();
+    for i in 0_u64..10 {
+        send_order.push(1 + i);
+        send_order.push(11 + i);
     }
 
-    for seq in interleaved {
+    for seq in send_order {
         let time = (seq * 960) as u32;
         let wallclock = l.start + l.duration();
-        let exts = ExtensionValues::default();
+        {
+            let mut direct = l.direct_api();
+            let stream = direct.stream_tx(&ssrc).unwrap();
 
-        let mut direct = l.direct_api();
-        let stream = direct.stream_tx(&ssrc).unwrap();
-
-        stream
-            .write_rtp(
+            stream.write_rtp(RtpWrite::new(
                 pt,
                 seq.into(),
                 time,
                 wallclock,
-                false,
-                exts,
-                false,
-                vec![seq as u8; 80],
-            )
-            .expect("write_rtp should succeed");
-
-        drop(direct);
+                [seq as u8; 80],
+            ));
+        }
         progress(&mut l, &mut r)?;
     }
 

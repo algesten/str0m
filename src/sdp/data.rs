@@ -907,6 +907,14 @@ pub enum FormatParam {
     /// Default 3. Max 120.
     MinPTime(u8),
 
+    /// Decoder-side preference for stereo audio. Default is mono per
+    /// RFC 7587 Section 7.1: <https://datatracker.ietf.org/doc/html/rfc7587#section-7.1>
+    Stereo(bool),
+
+    /// Sender-side stereo hint for Opus. This is the symmetric m-line companion
+    /// to `stereo` and signals the sender's intention to transmit stereo.
+    SpropStereo(bool),
+
     /// Specifies that the decoder can do Opus in-band FEC
     UseInbandFec(bool),
 
@@ -965,6 +973,8 @@ impl FormatParam {
             "minptime" => v.parse().map(MinPTime).ok(),
             "useinbandfec" => Some(UseInbandFec(v == "1")),
             "usedtx" => Some(UseDtx(v == "1")),
+            "stereo" => Some(Stereo(v == "1")),
+            "sprop-stereo" => Some(SpropStereo(v == "1")),
             "level-asymmetry-allowed" => Some(LevelAsymmetryAllowed(v == "1")),
             "packetization-mode" => v.parse().map(PacketizationMode).ok(),
             "profile-level-id" => u32::from_str_radix(v, 16)
@@ -1031,6 +1041,8 @@ impl fmt::Display for FormatParam {
             MinPTime(v) => write!(f, "minptime={v}"),
             UseInbandFec(v) => write!(f, "useinbandfec={}", i32::from(*v)),
             UseDtx(v) => write!(f, "usedtx={}", i32::from(*v)),
+            Stereo(v) => write!(f, "stereo={}", i32::from(*v)),
+            SpropStereo(v) => write!(f, "sprop-stereo={}", i32::from(*v)),
             LevelAsymmetryAllowed(v) => {
                 write!(f, "level-asymmetry-allowed={}", i32::from(*v))
             }
@@ -1514,10 +1526,11 @@ mod test {
         fn fmtp_param_to_string() {
             let f = FormatParams {
                 min_p_time: Some(10),
+                stereo: Some(true),
                 use_inband_fec: Some(true),
                 ..Default::default()
             };
-            assert_eq!(f.to_string(), "minptime=10;useinbandfec=1");
+            assert_eq!(f.to_string(), "minptime=10;stereo=1;useinbandfec=1");
         }
     }
 
@@ -1842,6 +1855,42 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             assert!(!sdp.media_lines[0].disabled, "audio has port=9");
             assert!(sdp.media_lines[1].disabled, "video has port=0");
             assert!(sdp.media_lines[2].disabled, "application has port=0");
+        }
+    }
+
+    /// Opus codec-specific tests.
+    /// These tests are mainly verify SDP format params.
+    mod opus_codec {
+        use super::*;
+
+        #[test]
+        fn opus_fmtp_round_trip() {
+            let f = FormatParams {
+                use_dtx: Some(true),
+                stereo: Some(true),
+                sprop_stereo: Some(true),
+                ..Default::default()
+            };
+
+            let fmtp_str = f.to_string();
+            assert_eq!(fmtp_str, "stereo=1;sprop-stereo=1;usedtx=1");
+
+            let parsed = FormatParams::parse_line(&fmtp_str);
+            assert_eq!(parsed, f);
+        }
+
+        #[test]
+        fn opus_default_to_mono() {
+            let f = FormatParams {
+                ..Default::default()
+            };
+            let fmtp_str = f.to_string();
+            assert_eq!(fmtp_str, "");
+
+            let parsed = FormatParams::parse_line(&fmtp_str);
+            assert!(parsed.stereo.is_none());
+            assert_eq!(parsed.stereo.unwrap_or(false), false);
+            assert_eq!(parsed.sprop_stereo.unwrap_or(false), false);
         }
     }
 

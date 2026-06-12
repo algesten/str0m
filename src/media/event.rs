@@ -1,5 +1,6 @@
 use std::fmt;
 use std::ops::RangeInclusive;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::packet::MediaKind;
@@ -104,7 +105,7 @@ impl Simulcast {
 
     /// Add a receive layer
     pub fn add_recv_layer(&mut self, layer: SimulcastLayer) {
-        self.send.push(layer);
+        self.recv.push(layer);
     }
 }
 
@@ -261,7 +262,7 @@ pub struct MediaData {
     /// transmission units into smaller parts.
     ///
     /// This data is a full depayloaded Frame.
-    pub data: Vec<u8>,
+    pub data: Arc<[u8]>,
 
     /// RTP header extensions for this media data. This is taken from the
     /// first RTP header.

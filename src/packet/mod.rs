@@ -38,6 +38,11 @@ pub use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
 pub use vp8::Vp8CodecExtra;
+pub use vp8::Vp8Descriptor;
+pub use vp8::Vp8DescriptorError;
+pub use vp8::Vp8Patch;
+pub use vp8::Vp8PatchBuilder;
+pub use vp8::Vp8PatchError;
 pub use vp8::detect_vp8_keyframe;
 pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
@@ -69,6 +74,9 @@ pub enum MediaKind {
     /// Video media.
     Video,
 }
+
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(MediaKind);
 
 impl MediaKind {
     /// Tests if this is `MediaKind::Audio`

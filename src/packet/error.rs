@@ -3,6 +3,7 @@ use std::fmt;
 
 /// Errors arising in packet- and depacketization.
 #[derive(Debug, PartialEq, Eq)]
+#[non_exhaustive]
 #[allow(missing_docs)]
 pub enum PacketError {
     ErrShortPacket,
@@ -13,6 +14,7 @@ pub enum PacketError {
     ErrH265PACIPHESTooLong,
     StapASizeLargerThanBuffer(usize, usize),
     NaluTypeIsNotHandled(u8),
+    ErrVP8CorruptedPacket,
     ErrVP9CorruptedPacket,
     ErrAv1CorruptedPacket,
 }
@@ -36,6 +38,7 @@ impl fmt::Display for PacketError {
             PacketError::NaluTypeIsNotHandled(nalu_type) => {
                 write!(f, "H264 NALU type is not handled: {}", nalu_type)
             }
+            PacketError::ErrVP8CorruptedPacket => write!(f, "VP8 corrupted packet"),
             PacketError::ErrVP9CorruptedPacket => write!(f, "VP9 corrupted packet"),
             PacketError::ErrAv1CorruptedPacket => write!(f, "AV1 corrupted packet"),
         }
