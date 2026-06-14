@@ -134,6 +134,11 @@ pub struct Media {
     /// Payloaders for outoing RTP packets.
     payloaders: HashMap<(Pt, Option<Rid>), Payloader>,
 
+    /// Whether outgoing packets are wrapped in RFC 2198 RED right now. RED availability is fixed at
+    /// negotiation (or set up via DirectAPI); this is the runtime send-side lever, toggled with no
+    /// renegotiation. Defaults to `true`, so a negotiated RED PT wraps unless it is turned off.
+    red_send_enabled: bool,
+
     /// Frames to payload. Should typically only be 0 or 1.
     to_payload: VecDeque<ToPayload>,
 
@@ -442,6 +447,17 @@ impl Media {
         self.dir = new_dir;
     }
 
+    /// Toggle RFC 2198 RED wrapping for outgoing packets. Takes effect on the next payloaded
+    /// packet; RED must be available (negotiated or set via DirectAPI) for `true` to wrap.
+    /// Returns whether the setting changed.
+    pub(crate) fn set_red_send(&mut self, enabled: bool) -> bool {
+        if self.red_send_enabled == enabled {
+            return false;
+        }
+        self.red_send_enabled = enabled;
+        true
+    }
+
     pub(crate) fn set_simulcast(&mut self, s: SdpSimulcast) {
         debug!("Set simulcast: {:?}", s);
         self.simulcast = Some(s);
@@ -453,12 +469,24 @@ impl Media {
         rid: Option<Rid>,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
+        red_distances: &[u32],
     ) -> &mut Payloader {
-        self.payloaders.entry((pt, rid)).or_insert_with(|| {
+        let payloader = self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
             Payloader::new(params.spec, vp9_mode)
-        })
+        });
+        // Keep the RED linkage current with the negotiated params so a remapped or dropped RED
+        // PT can't go stale in the cached payloader. The runtime send toggle gates wrapping here:
+        // when RED sending is off we pass `None`, so packets go out as the plain codec PT even
+        // though RED stays negotiated on the m-line and can be turned back on with no renegotiation.
+        let red = if self.red_send_enabled {
+            params.iter().find(|p| p.pt == pt).and_then(|p| p.red)
+        } else {
+            None
+        };
+        payloader.set_red(red, pt, red_distances);
+        payloader
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
@@ -485,6 +513,7 @@ impl Media {
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
+        red_distances: &[u32],
     ) -> Result<(), RtcError> {
         let Some(to_payload) = self.to_payload.pop_front() else {
             return Ok(());
@@ -504,7 +533,7 @@ impl Media {
 
         let pt = *pt;
 
-        let payloader = self.payloader_for(pt, *rid, params, vp9_mode);
+        let payloader = self.payloader_for(pt, *rid, params, vp9_mode, red_distances);
 
         let rtp_size: usize = mtu - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs
@@ -611,6 +640,7 @@ impl Default for Media {
             to_payload: VecDeque::default(),
             need_open_event: true,
             need_changed_event: false,
+            red_send_enabled: true,
         }
     }
 }
