@@ -25,6 +25,13 @@ impl Payloader {
             }
         }
 
+        // Enable DONL for H.266 when sprop-max-don-diff > 0 (RFC 9328 §7.2)
+        if let CodecPacketizer::H266(ref mut h266) = pack {
+            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                h266.with_donl(true);
+            }
+        }
+
         Payloader {
             pack,
             clock_rate: spec.clock_rate,

@@ -35,6 +35,9 @@ pub enum Codec {
     // TODO show this when we support h265.
     #[doc(hidden)]
     H265,
+    /// H266/VVC.
+    #[doc(hidden)]
+    H266,
     Vp8,
     Vp9,
     // TODO show this when we support Av1.
@@ -64,7 +67,7 @@ impl Codec {
     /// Tells if codec is video.
     pub fn is_video(&self) -> bool {
         use Codec::*;
-        matches!(self, H265 | H264 | Vp8 | Vp9 | Av1)
+        matches!(self, H266 | H265 | H264 | Vp8 | Vp9 | Av1)
     }
 
     /// Audio/Video.
@@ -86,6 +89,7 @@ impl<'a> From<&'a str> for Codec {
             "pcma" => Codec::PCMA,
             "h264" => Codec::H264,
             "h265" => Codec::H265,
+            "h266" => Codec::H266,
             "vp8" => Codec::Vp8,
             "vp9" => Codec::Vp9,
             "av1" => Codec::Av1,
@@ -103,6 +107,7 @@ impl fmt::Display for Codec {
             Codec::PCMA => write!(f, "PCMA"),
             Codec::H264 => write!(f, "H264"),
             Codec::H265 => write!(f, "H265"),
+            Codec::H266 => write!(f, "H266"),
             Codec::Vp8 => write!(f, "VP8"),
             Codec::Vp9 => write!(f, "VP9"),
             Codec::Av1 => write!(f, "AV1"),
