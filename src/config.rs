@@ -242,6 +242,35 @@ impl RtcConfig {
         self
     }
 
+    /// Enable RFC 2198 RED (redundant audio). Off by default. Requires an audio codec.
+    ///
+    /// RED carries redundant copies of earlier frames in each packet so the receiver can recover
+    /// packet losses without retransmission, at the cost of extra audio payload size. It applies to
+    /// every enabled audio codec (Opus, PCMU, PCMA, G722), each getting its own RED payload type.
+    ///
+    /// Call this after enabling audio codecs: RED folds onto the enabled audio payloads, so
+    /// enabling it while no audio codec is configured is a no-op (and is logged). The redundancy
+    /// depth is set with [`Self::set_red_distances`] (default one level, the previous frame), and
+    /// wrapping can be toggled at runtime on the send side without renegotiation via
+    /// [`SdpApi::set_red_send`][crate::change::SdpApi::set_red_send] /
+    /// [`DirectApi::set_red_send`][crate::change::DirectApi::set_red_send].
+    pub fn enable_red(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_red(enabled);
+        self
+    }
+
+    /// Set the RFC 2198 RED send-side redundancy pattern: how many packets back each redundant
+    /// level carries. `[1]` (the default) sends one level, the previous frame, as browsers do;
+    /// `[1, 3, 5]` sends three levels for higher loss at the cost of more bandwidth.
+    ///
+    /// The pattern is sanitised (zeros and values deeper than the recovery depth are dropped, then
+    /// sorted and de-duped), falling back to `[1]` if empty. This only sets the pattern; enable RED
+    /// with [`Self::enable_red`] for it to take effect.
+    pub fn set_red_distances(mut self, distances: &[u32]) -> Self {
+        self.codec_config.set_red_distances(distances);
+        self
+    }
+
     /// Enable PCM μ-law audio codec.
     ///
     /// This is 14-bit audio compressed to 8-bit as specified by G.711

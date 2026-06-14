@@ -3,6 +3,10 @@
 # 0.23.1
 
   * Guard SRTP/SRTCP and RTCP parsing against malformed input #1029
+  * Add RFC 2198 RED (redundant audio) via `RtcConfig::enable_red` for all audio codecs (Opus, PCMU,
+    PCMA, G722): transparent send/recv with best-effort loss recovery in frame mode, a configurable
+    redundancy pattern via `RtcConfig::set_red_distances`, a runtime send-side on/off toggle via
+    `SdpApi`/`DirectApi::set_red_send`, pass-through in rtp mode, and public `RedEncoder`/`RedDecoder` #982
 
 # 0.23.0
 
