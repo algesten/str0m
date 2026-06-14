@@ -1542,4 +1542,27 @@ mod test {
         assert!(!detect_vp9_keyframe(&[0x40])); // P=1 only
         assert!(!detect_vp9_keyframe(&[0xD5])); // I=1, P=1, F=1, E=1, Z=1
     }
+
+    #[test]
+    fn packetize_respects_mtu() -> Result<(), PacketError> {
+        // VP9 profile 0 keyframe header followed by payload bytes.
+        let mut payload = vec![0x82u8];
+        payload.extend(std::iter::repeat(0xABu8).take(2000));
+        for &mtu in &[100usize, 300, 600, 1200] {
+            let mut pck = Vp9Packetizer {
+                initial_picture_id: 100,
+                ..Default::default()
+            };
+            let pkts = pck.packetize(mtu, &payload)?;
+            assert!(!pkts.is_empty(), "VP9 produced no packets at mtu {mtu}");
+            for (i, pkt) in pkts.iter().enumerate() {
+                assert!(
+                    pkt.len() <= mtu,
+                    "VP9 packet {i} size {} > mtu {mtu}",
+                    pkt.len()
+                );
+            }
+        }
+        Ok(())
+    }
 }

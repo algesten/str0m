@@ -904,4 +904,24 @@ mod test {
         // FU-A too short
         assert!(!detect_h264_keyframe(&[0x7C]));
     }
+
+    #[test]
+    fn packetize_respects_mtu() -> Result<(), PacketError> {
+        // NAL header byte (type=5, IDR slice) + payload.
+        let mut payload = vec![0x05u8];
+        payload.extend(std::iter::repeat(0xABu8).take(2000));
+        for &mtu in &[100usize, 300, 600, 1200] {
+            let mut pck = H264Packetizer::default();
+            let pkts = pck.packetize(mtu, &payload)?;
+            assert!(!pkts.is_empty(), "H264 produced no packets at mtu {mtu}");
+            for (i, pkt) in pkts.iter().enumerate() {
+                assert!(
+                    pkt.len() <= mtu,
+                    "H264 packet {i} size {} > mtu {mtu}",
+                    pkt.len()
+                );
+            }
+        }
+        Ok(())
+    }
 }

@@ -5180,4 +5180,24 @@ mod test {
         // FU too short (no FU header byte)
         assert!(!detect_h265_keyframe(&fu_header_bytes.0.to_be_bytes()));
     }
+
+    #[test]
+    fn packetize_respects_mtu() -> Result<()> {
+        // 2-byte NAL header (non-parameter-set type) + payload.
+        let mut nalu = vec![0x02u8, 0x01];
+        nalu.extend(std::iter::repeat(0xABu8).take(2000));
+        for &mtu in &[100usize, 300, 600, 1200] {
+            let mut p = H265Packetizer::default();
+            let pkts = p.packetize(mtu, &nalu)?;
+            assert!(!pkts.is_empty(), "H265 produced no packets at mtu {mtu}");
+            for (i, pkt) in pkts.iter().enumerate() {
+                assert!(
+                    pkt.len() <= mtu,
+                    "H265 packet {i} size {} > mtu {mtu}",
+                    pkt.len()
+                );
+            }
+        }
+        Ok(())
+    }
 } // end test module

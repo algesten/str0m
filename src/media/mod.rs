@@ -7,7 +7,7 @@ use std::time::Instant;
 use crate::RtcError;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
-use crate::io::DATAGRAM_MTU;
+
 use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
@@ -465,6 +465,7 @@ impl Media {
         streams: &mut Streams,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
+        mtu: usize,
     ) -> Result<(), RtcError> {
         let Some(to_payload) = self.to_payload.pop_front() else {
             return Ok(());
@@ -486,12 +487,12 @@ impl Media {
 
         let payloader = self.payloader_for(pt, *rid, params, vp9_mode);
 
-        const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
+        let rtp_size: usize = mtu - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs
-        const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
+        let aligned_mtu: usize = rtp_size - rtp_size % SRTP_BLOCK_SIZE;
 
         payloader
-            .push_sample(to_payload, MTU, is_audio, stream)
+            .push_sample(to_payload, aligned_mtu, is_audio, stream)
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
         Ok(())

@@ -1,3 +1,4 @@
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,6 +9,10 @@ use crate::crypto::dtls::DtlsVersion;
 use crate::format::CodecConfig;
 use crate::format::Vp9PacketizerMode;
 use crate::ice::IceCreds;
+use crate::io::DATAGRAM_MTU_TARGET;
+use crate::io::DATAGRAM_MTU_TARGET_MAX;
+use crate::io::DATAGRAM_MTU_TARGET_MIN;
+use crate::io::DATAGRAM_MTU_WARN;
 use crate::rtp_::{Bitrate, Extension, ExtensionMap};
 
 /// Customized config for creating an [`Rtc`] instance.
@@ -47,6 +52,7 @@ pub struct RtcConfig {
     pub(crate) dtls_version: DtlsVersion,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
+    pub(crate) mtu: RangeInclusive<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -581,6 +587,48 @@ impl RtcConfig {
         self.dtls_version
     }
 
+    /// Set the MTU as a `target..=warn` inclusive range.
+    ///
+    /// * `*range.start()` is the **target** MTU: the size str0m aims for when
+    ///   fragmenting outgoing packets. Must be within
+    ///   `[DATAGRAM_MTU_TARGET_MIN, DATAGRAM_MTU_TARGET_MAX]`.
+    /// * `*range.end()` is the **warn** threshold: packets whose length
+    ///   exceeds the target trigger a warning.
+    ///
+    ///  Set as `target..=target` to warn packets bigger than target.
+    ///  Set as `target..=usize::MAX` to disable warning.
+    ///
+    /// Defaults to `DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN`.
+    pub fn set_mtu(mut self, range: RangeInclusive<usize>) -> Self {
+        let (start, end) = (*range.start(), *range.end());
+        assert!(
+            DATAGRAM_MTU_TARGET_MIN <= start && start <= DATAGRAM_MTU_TARGET_MAX,
+            "mtu target {} out of bounds [{}, {}]",
+            start,
+            DATAGRAM_MTU_TARGET_MIN,
+            DATAGRAM_MTU_TARGET_MAX,
+        );
+        assert!(
+            start <= end,
+            "mtu range start must be <= end, got {}..={}",
+            start,
+            end,
+        );
+        self.mtu = range;
+        self
+    }
+
+    /// Get the configured target MTU (the value str0m aims for).
+    pub fn mtu(&self) -> usize {
+        *self.mtu.start()
+    }
+
+    /// Get the configured warn threshold above which outgoing packets
+    /// trigger a warning trace.
+    pub fn mtu_warn(&self) -> usize {
+        *self.mtu.end()
+    }
+
     /// Set the VP9 packetizer mode.
     ///
     /// VP9 supports two RTP payload descriptor formats:
@@ -644,6 +692,61 @@ impl Default for RtcConfig {
             dtls_version: DtlsVersion::Dtls12,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
+            mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_mtu_is_datagram_mtu_target() {
+        let cfg = RtcConfig::default();
+        assert_eq!(cfg.mtu(), DATAGRAM_MTU_TARGET);
+        assert_eq!(cfg.mtu_warn(), DATAGRAM_MTU_WARN);
+    }
+
+    #[test]
+    fn set_mtu_round_trips() {
+        let cfg = RtcConfig::default().set_mtu(900..=1400);
+        assert_eq!(cfg.mtu(), 900);
+        assert_eq!(cfg.mtu_warn(), 1400);
+
+        let cfg = RtcConfig::default().set_mtu(900..=usize::MAX);
+        assert_eq!(cfg.mtu(), 900);
+        assert_eq!(cfg.mtu_warn(), usize::MAX);
+    }
+
+    #[test]
+    fn set_mtu_accepts_equal_bounds() {
+        let cfg = RtcConfig::default().set_mtu(1200..=1200);
+        assert_eq!(cfg.mtu(), 1200);
+        assert_eq!(cfg.mtu_warn(), 1200);
+
+        let cfg = RtcConfig::default().set_mtu(DATAGRAM_MTU_TARGET_MIN..=DATAGRAM_MTU_TARGET_MIN);
+        assert_eq!(cfg.mtu(), DATAGRAM_MTU_TARGET_MIN);
+
+        let cfg = RtcConfig::default().set_mtu(DATAGRAM_MTU_TARGET_MAX..=DATAGRAM_MTU_TARGET_MAX);
+        assert_eq!(cfg.mtu(), DATAGRAM_MTU_TARGET_MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "mtu target")]
+    fn set_mtu_panics_on_target_below_min() {
+        let _ = RtcConfig::default().set_mtu((DATAGRAM_MTU_TARGET_MIN - 1)..=usize::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "mtu target")]
+    fn set_mtu_panics_on_target_above_max() {
+        let _ = RtcConfig::default().set_mtu((DATAGRAM_MTU_TARGET_MAX + 1)..=usize::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "mtu range start must be <= end")]
+    fn set_mtu_panics_on_inverted_range() {
+        let _ = RtcConfig::default().set_mtu(1300..=1299);
     }
 }
