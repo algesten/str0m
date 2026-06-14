@@ -46,6 +46,10 @@ pub enum Codec {
     /// in `a=rtpmap` lines.
     #[doc(hidden)]
     Rtx,
+    /// RFC 2198 redundant encoding (RED). Like `Rtx`, technically not a codec;
+    /// it appears in `a=rtpmap` lines and wraps a primary audio codec.
+    #[doc(hidden)]
+    Red,
     /// For RTP mode. No codec.
     #[doc(hidden)]
     Null,
@@ -93,6 +97,7 @@ impl<'a> From<&'a str> for Codec {
             "vp9" => Codec::Vp9,
             "av1" => Codec::Av1,
             "rtx" => Codec::Rtx, // resends
+            "red" => Codec::Red, // RFC 2198 redundancy
             _ => Codec::Unknown,
         }
     }
@@ -111,8 +116,22 @@ impl fmt::Display for Codec {
             Codec::Vp9 => write!(f, "VP9"),
             Codec::Av1 => write!(f, "AV1"),
             Codec::Rtx => write!(f, "rtx"),
+            Codec::Red => write!(f, "red"),
             Codec::Null => write!(f, "null"),
             Codec::Unknown => write!(f, "unknown"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn red_codec_string_roundtrip() {
+        assert_eq!(Codec::from("red"), Codec::Red);
+        assert_eq!(Codec::Red.to_string(), "red");
+        assert!(!Codec::Red.is_audio());
+        assert!(!Codec::Red.is_video());
     }
 }

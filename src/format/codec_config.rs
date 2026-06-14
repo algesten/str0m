@@ -49,6 +49,9 @@ pub(crate) const PT_H266_RTX: Pt = Pt::new_with_value(105);
 /// Default payload type for Opus.
 pub(crate) const PT_OPUS: Pt = Pt::new_with_value(111);
 
+/// Default payload type for RFC 2198 RED (redundant Opus).
+pub(crate) const PT_RED: Pt = Pt::new_with_value(63);
+
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
@@ -119,6 +122,7 @@ impl CodecConfig {
                 format,
             },
             resend,
+            red: None,
             fb_transport_cc,
             fb_fir,
             fb_nack,
@@ -230,6 +234,21 @@ impl CodecConfig {
                 ..Default::default()
             },
         )
+    }
+
+    /// Enable RFC 2198 RED (redundant Opus) for the audio m-line. Off by default.
+    ///
+    /// RED roughly doubles audio payload size, so it is opt-in. This is a no-op when
+    /// Opus is not enabled.
+    pub fn enable_red(&mut self, enabled: bool) {
+        if enabled && !self.params.iter().any(|p| p.spec.codec == Codec::Opus) {
+            warn!("enable_red(true) ignored: Opus is not enabled");
+        }
+        for p in &mut self.params {
+            if p.spec.codec == Codec::Opus {
+                p.red = if enabled { Some(PT_RED) } else { None };
+            }
+        }
     }
 
     /// Add a default VP8 payload type.
@@ -444,6 +463,10 @@ impl CodecConfig {
             if let Some(rtx) = p.resend {
                 claimed.assert_claim_once(rtx);
             }
+
+            if let Some(red) = p.red {
+                claimed.assert_claim_once(red);
+            }
         }
 
         // Collect all currently unlocked PTs since we will need to avoid them when reassigning.
@@ -451,7 +474,7 @@ impl CodecConfig {
             .params
             .iter()
             .filter(|p| !p.locked)
-            .flat_map(|p| [Some(p.pt()), p.resend()])
+            .flat_map(|p| [Some(p.pt()), p.resend(), p.red()])
             .flatten()
             .collect::<HashSet<_>>();
 
@@ -489,6 +512,25 @@ impl CodecConfig {
 
                 claimed.assert_claim_once(pt);
                 unlocked.remove(&pt);
+            }
+
+            // RED rides its own PT (like RTX); reassign it if it now collides.
+            if let Some(red) = p.red {
+                if claimed.is_claimed(red) {
+                    match claimed.find_unclaimed(PREFERED_RANGES, &unlocked) {
+                        Some(new_red) => {
+                            debug!("Reassigned RED PT {:?} => {:?}", p.red, new_red);
+                            p.red = Some(new_red);
+                            claimed.assert_claim_once(new_red);
+                            unlocked.remove(&new_red);
+                        }
+                        // RED is opt-in; drop it rather than panic if no PT is free.
+                        None => {
+                            debug!("No free PT for RED; dropping it");
+                            p.red = None;
+                        }
+                    }
+                }
             }
 
             let Some(rtx) = p.resend else {
@@ -553,6 +595,62 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    #[test]
+    fn enable_red_links_opus() {
+        let mut c = CodecConfig::empty();
+        c.enable_opus(true);
+        c.enable_red(true);
+        let opus = c
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .unwrap();
+        assert_eq!(opus.red(), Some(PT_RED));
+    }
+
+    #[test]
+    fn red_kept_when_both_sides_enable() {
+        let mut local = CodecConfig::empty();
+        local.enable_opus(true);
+        local.enable_red(true);
+
+        let mut remote = CodecConfig::empty();
+        remote.enable_opus(true);
+        remote.enable_red(true);
+
+        local.update_params(remote.params(), Direction::SendRecv);
+
+        let opus = local
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .unwrap();
+        assert_eq!(opus.red(), Some(PT_RED));
+    }
+
+    #[test]
+    fn red_dropped_when_remote_lacks_red() {
+        let mut local = CodecConfig::empty();
+        local.enable_opus(true);
+        local.enable_red(true);
+
+        let mut remote = CodecConfig::empty();
+        remote.enable_opus(true); // remote does not offer RED
+
+        local.update_params(remote.params(), Direction::SendRecv);
+
+        let opus = local
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .unwrap();
+        assert_eq!(
+            opus.red(),
+            None,
+            "RED must be dropped when remote doesn't offer it"
+        );
+    }
 
     #[test]
     fn test_pt_conflict_different_directions() {

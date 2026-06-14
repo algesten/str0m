@@ -479,8 +479,11 @@ impl StreamTx {
 
         let pt_main = header_ref.payload_type;
 
-        // The pt in next.pkt is the "main" pt.
-        let Some(param) = params.iter().find(|p| p.pt() == pt_main) else {
+        // The pt in next.pkt is the "main" pt, or a RED PT folded onto its primary codec.
+        let Some(param) = params
+            .iter()
+            .find(|p| p.pt() == pt_main || p.red() == Some(pt_main))
+        else {
             // PT does not exist in the connected media.
             warn!("Media is missing PT ({}) used in RTP packet", pt_main);
 

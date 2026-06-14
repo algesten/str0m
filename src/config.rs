@@ -229,6 +229,19 @@ impl RtcConfig {
         self
     }
 
+    /// Enable RFC 2198 RED (redundant Opus audio). Off by default. Requires Opus.
+    ///
+    /// RED carries a redundant copy of the previous Opus frame in each packet so the
+    /// receiver can recover single packet losses without retransmission, at the cost of
+    /// roughly doubling audio payload size.
+    ///
+    /// Call this after [`Self::enable_opus`]: RED folds onto the enabled Opus payload, so
+    /// enabling it while no Opus codec is configured is a no-op (and is logged).
+    pub fn enable_red(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_red(enabled);
+        self
+    }
+
     /// Enable PCM μ-law audio codec.
     ///
     /// This is 14-bit audio compressed to 8-bit as specified by G.711

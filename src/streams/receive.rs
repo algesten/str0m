@@ -453,6 +453,25 @@ impl StreamRx {
         seq_no: SeqNo,
         time: MediaTime,
     ) -> RtpPacket {
+        let packet = self.make_rtp_packet(now, header, payload, seq_no, time);
+
+        self.stats.bytes += packet.payload.len() as u64;
+        self.stats.packets += 1;
+
+        packet
+    }
+
+    /// Build an [`RtpPacket`] WITHOUT counting it in receive stats. Used for RFC 2198
+    /// FEC-recovered packets, which were never received on the wire (the carrying packet's
+    /// bytes are already counted by `handle_rtp`).
+    pub(crate) fn make_rtp_packet(
+        &mut self,
+        now: Instant,
+        header: RtpHeader,
+        payload: Arc<[u8]>,
+        seq_no: SeqNo,
+        time: MediaTime,
+    ) -> RtpPacket {
         trace!("Handle RTP: {:?}", header);
 
         let need_clock_rate = self.last_clock_rate.map(|(pt, _)| pt) != Some(header.payload_type);
@@ -465,7 +484,7 @@ impl StreamRx {
             }
         }
 
-        let packet = RtpPacket {
+        RtpPacket {
             seq_no,
             time,
             header,
@@ -474,12 +493,7 @@ impl StreamRx {
             nackable: false,
             last_sender_info: self.sender_info.as_ref().map(|l| l.info),
             timestamp: now,
-        };
-
-        self.stats.bytes += packet.payload.len() as u64;
-        self.stats.packets += 1;
-
-        packet
+        }
     }
 
     /// Rewrites the header to be the un-RTX'd original packet, and returns

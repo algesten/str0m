@@ -85,6 +85,10 @@ pub struct PayloadParams {
     /// This is used to, via PT, separate RTX resend streams from the main stream.
     pub(crate) resend: Option<Pt>,
 
+    /// The RFC 2198 RED payload type that wraps this primary codec, if negotiated.
+    /// Like `resend`, this links a secondary PT to this primary via SDP.
+    pub(crate) red: Option<Pt>,
+
     /// The codec with settings for this group of parameters.
     pub(crate) spec: CodecSpec,
 
@@ -116,6 +120,7 @@ impl PartialEq for PayloadParams {
     fn eq(&self, other: &Self) -> bool {
         self.pt == other.pt
             && self.resend == other.resend
+            && self.red == other.red
             && self.spec == other.spec
             && self.fb_transport_cc == other.fb_transport_cc
             && self.fb_nack == other.fb_nack
@@ -155,6 +160,7 @@ impl PayloadParams {
         PayloadParams {
             pt,
             resend,
+            red: None,
 
             spec,
 
@@ -183,6 +189,7 @@ impl PayloadParams {
         PayloadParams {
             pt,
             resend: None,
+            red: None,
             spec: CodecSpec {
                 codec: Codec::Null,
                 clock_rate: Frequency::NINETY_KHZ,
@@ -207,6 +214,11 @@ impl PayloadParams {
     /// This is used to, via PT, separate RTX resend streams from the main stream.
     pub fn resend(&self) -> Option<Pt> {
         self.resend
+    }
+
+    /// The RFC 2198 RED payload type wrapping this primary codec, if negotiated.
+    pub fn red(&self) -> Option<Pt> {
+        self.red
     }
 
     /// The codec with settings for this group of parameters.
@@ -688,6 +700,13 @@ impl PayloadParams {
                     self.resend, remote_rtx
                 );
             }
+
+            if self.red != first.red {
+                warn!(
+                    "Ignore remote PT RED change {:?} => {:?}",
+                    self.red, first.red
+                );
+            }
         } else {
             // Before locking, check if the remote PT conflicts with an already locked PT.
             // If we're receiving, we control what PTs to use,
@@ -738,6 +757,33 @@ impl PayloadParams {
                 claimed.assert_claim_once(rtx);
             }
 
+            // RED is opt-in on our side and Opus-only: keep it only if the matched remote also
+            // offers RED (`and`) and our codec is Opus (str0m supports RED only for Opus, like
+            // `enable_red`). Adopt the remote's RED PT, remapping on conflict when we control it.
+            let mut remote_red = self
+                .red
+                .and(first.red)
+                .filter(|_| self.spec.codec == Codec::Opus);
+            if local_is_controlling {
+                if let Some(red) = remote_red {
+                    if claimed.is_claimed(red) {
+                        if let Some(new_red) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
+                            debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
+                            remote_red = Some(new_red);
+                            unlocked.remove(&new_red);
+                        } else {
+                            // RED is opt-in; drop it rather than panic if no PT is free.
+                            debug!("No free PT for RED; dropping it");
+                            remote_red = None;
+                        }
+                    }
+                }
+            }
+            self.red = remote_red;
+            if let Some(red) = remote_red {
+                claimed.assert_claim_once(red);
+            }
+
             // This is now locked.
             self.locked = true;
         }
@@ -750,6 +796,59 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    #[test]
+    fn payload_params_red_defaults_none() {
+        let spec = CodecSpec {
+            codec: Codec::Opus,
+            clock_rate: Frequency::NINETY_KHZ,
+            channels: Some(2),
+            format: FormatParams::default(),
+        };
+        let p = PayloadParams::new(Pt::new_with_value(111), None, spec);
+        assert_eq!(p.red(), None);
+    }
+
+    #[test]
+    fn red_pt_remapped_on_conflict() {
+        use std::collections::HashSet;
+
+        // When we control PT allocation (the remote is send-only) and the RED PT we would adopt
+        // from the remote is already taken, RED is remapped to a free PT rather than colliding
+        // or being dropped.
+        let spec = CodecSpec {
+            codec: Codec::Opus,
+            clock_rate: Frequency::FORTY_EIGHT_KHZ,
+            channels: Some(2),
+            format: FormatParams::default(),
+        };
+
+        let red_pt = Pt::new_with_value(63);
+
+        let mut local = PayloadParams::new(Pt::new_with_value(111), None, spec);
+        local.red = Some(red_pt);
+
+        let mut remote = PayloadParams::new(Pt::new_with_value(111), None, spec);
+        remote.red = Some(red_pt);
+
+        // Pre-claim the RED PT as if another payload already holds it.
+        let mut claimed = [false; 128];
+        claimed[*red_pt as usize] = true;
+        let mut unlocked = HashSet::new();
+
+        // local_is_controlling = true: we allocate PTs and may remap the conflict.
+        local.update_param(&[remote], &mut claimed, true, &mut unlocked);
+
+        let got = local.red.expect("RED is kept, remapped to a free PT");
+        assert_ne!(
+            got, red_pt,
+            "RED PT must be remapped away from the conflict"
+        );
+        assert!(
+            claimed.is_claimed(got),
+            "the remapped RED PT must be claimed"
+        );
+    }
 
     mod h264 {
         use super::*;

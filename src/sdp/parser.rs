@@ -608,6 +608,27 @@ where
     let fmtp1 = attribute_line("fmtp", (pt(), token(' '), fmtp_param))
         .map(|(pt, _, values)| MediaAttribute::Fmtp { pt, values });
 
+    // a=fmtp:63 111/111   (RFC 2198 RED: "<primary>/<redundant>[/...]" payload-type list)
+    // `pt()` grabs the whole non-space token, so split the slash-list ourselves. We keep only
+    // the primary PT (the first entry); failing here lets the parser fall through to `fmtp2`.
+    let fmtp_red = attribute_line("fmtp", (pt(), token(' '), not_sp())).and_then(
+        |(red_pt, _, value): (Pt, _, String)| {
+            let parts: Vec<&str> = value.split('/').collect();
+            let pts: Option<Vec<u8>> = if parts.len() >= 2 {
+                parts.iter().map(|p| p.parse::<u8>().ok()).collect()
+            } else {
+                None
+            };
+            match pts.and_then(|v| v.first().copied()) {
+                Some(primary) => Ok(MediaAttribute::Fmtp {
+                    pt: red_pt,
+                    values: vec![FormatParam::Red(Pt::from(primary))],
+                }),
+                None => Err(StreamErrorFor::<Input>::message_format("not a RED fmtp")),
+            }
+        },
+    );
+
     // a=fmtp:101 0-15
     let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, _value)| {
         MediaAttribute::Fmtp {
@@ -616,7 +637,7 @@ where
         }
     });
 
-    let fmtp = choice((attempt(fmtp1), attempt(fmtp2)));
+    let fmtp = choice((attempt(fmtp1), attempt(fmtp_red), attempt(fmtp2)));
 
     // a=rid:<rid-id> <direction> [pt=<fmt-list>;]<restriction>=<value>
     let rid = attribute_line(
