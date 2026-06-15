@@ -87,8 +87,15 @@ fn close_notify_received_by_remote() {
     // R also initiates close and drains.
     println!("R calling close()");
     r.rtc.close().expect("R close");
-    for _ in 0..10 {
+
+    // poll_output needs to be called on R to drain the close and set alive=false.
+    // We need enough progress() calls to let R catch up timewise with L
+    // since progress() uses a 5ms window per call.
+    for _ in 0..100 {
         progress(&mut l, &mut r).unwrap();
+        if !r.rtc.is_alive() {
+            break;
+        }
     }
 
     assert!(!r.rtc.is_alive(), "R should not be alive after close");

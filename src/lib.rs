@@ -1559,7 +1559,8 @@ impl Rtc {
                 }
             }
 
-            // Transmit any pending DTLS packets (the close_notify record)
+            // Transmit pending DTLS packets one at a time (the close_notify record).
+            // The caller must keep calling poll_output() until we return Timeout.
             if let Some(send) = &self.send_addr {
                 if let Some(contents) = self.dtls.poll_packet() {
                     let t = net::Transmit {
