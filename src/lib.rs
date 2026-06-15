@@ -729,6 +729,15 @@ pub use is::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, Ice
 mod config_mod;
 pub use config_mod::RtcConfig;
 
+/// Default target MTU used when none is configured.
+pub use io::DATAGRAM_MTU_TARGET;
+/// Upper bound that the target endpoint of [`RtcConfig::set_mtu`] must satisfy.
+pub use io::DATAGRAM_MTU_TARGET_MAX;
+/// Lower bound that the target endpoint of [`RtcConfig::set_mtu`] must satisfy.
+pub use io::DATAGRAM_MTU_TARGET_MIN;
+/// Default warning threshold for over-sized packets.
+pub use io::DATAGRAM_MTU_WARN;
+
 /// Additional configuration.
 pub mod config {
     pub use super::crypto::dtls::{DtlsCert, DtlsVersion, KeyingMaterial};
@@ -1186,6 +1195,9 @@ impl Rtc {
 
         let session = Session::new(&config);
 
+        // Capture before any partial moves of `config` below.
+        let mtu = config.mtu.clone();
+
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
         let mut ice = IceAgent::with_hmac(local_creds, crypto_provider.sha1_hmac_provider);
         if config.ice_lite {
@@ -1204,6 +1216,8 @@ impl Rtc {
             ice.set_max_stun_retransmits(max_stun_retransmits);
         }
 
+        ice.set_mtu(mtu.clone());
+
         let dtls_cert = config
             .dtls_cert
             .or_else(|| crypto_provider.dtls_provider.generate_certificate())
@@ -1213,7 +1227,7 @@ impl Rtc {
              crypto provider that supports certificate generation.",
             );
 
-        let mut sctp = RtcSctp::new();
+        let mut sctp = RtcSctp::new(*mtu.start());
         if config.snap_enabled {
             sctp.enable_snap();
         }
@@ -1227,6 +1241,7 @@ impl Rtc {
                 crypto_provider.sha256_provider,
                 start,
                 config.dtls_version,
+                mtu,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,

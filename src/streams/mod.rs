@@ -159,6 +159,10 @@ pub(crate) struct Streams {
     /// Whether periodic statistics reports are expected to be generated. This informs us on
     /// whether we should be holding onto data needed for those reports or not.
     enable_stats: bool,
+
+    /// Threshold above which an outgoing RTP packet triggers an MTU warning. Used as a
+    /// hard cap when selecting RTX cache entries for spurious padding.
+    mtu_warn: usize,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -175,7 +179,7 @@ struct RxLookup {
 }
 
 impl Streams {
-    pub(crate) fn new(enable_stats: bool) -> Self {
+    pub(crate) fn new(enable_stats: bool, mtu_warn: usize) -> Self {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
@@ -185,6 +189,7 @@ impl Streams {
             mids_to_report: Vec::with_capacity(10),
             any_nack_active: None,
             enable_stats,
+            mtu_warn,
         }
     }
 
@@ -339,7 +344,7 @@ impl Streams {
     ) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid, self.enable_stats))
+            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid, self.enable_stats, self.mtu_warn))
     }
 
     pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {

@@ -303,6 +303,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         cert: &DtlsCert,
         _now: Instant,
         dtls_version: DtlsVersion,
+        mtu: Option<usize>,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         if dtls_version != DtlsVersion::Dtls12 {
             return Err(CryptoError::Other(
@@ -316,7 +317,11 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         let win_cert = crate::Certificate::new_self_signed(true, "CN=WebRTC")
             .map_err(|e| CryptoError::Other(format!("Certificate creation: {}", e)))?;
 
-        let dtls = crate::Dtls::new(Arc::new(win_cert))
+        let mtu = mtu.unwrap_or(str0m_proto::DATAGRAM_MTU_TARGET);
+        let mtu_u16 = u16::try_from(mtu).map_err(|_| {
+            CryptoError::Other(format!("MTU {} does not fit in u16 for SChannel", mtu))
+        })?;
+        let dtls = crate::Dtls::new(Arc::new(win_cert), mtu_u16)
             .map_err(|e| CryptoError::Other(format!("DTLS creation: {}", e)))?;
 
         Ok(Box::new(WinCryptoDtlsInstance { dtls }))

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,7 @@ use crate::crypto::dtls::SrtpProfile;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
-use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN, DatagramSend};
+use crate::io::DatagramSend;
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
@@ -114,6 +115,10 @@ pub(crate) struct Session {
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
+    /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
+    /// target; oversized outgoing datagrams above the warn threshold log a warning.
+    mtu: RangeInclusive<usize>,
+
     #[cfg(feature = "_internal_test_exports")]
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
 }
@@ -140,7 +145,7 @@ impl Session {
         Session {
             id,
             medias: vec![],
-            streams: Streams::new(enable_stats),
+            streams: Streams::new(enable_stats, *config.mtu.end()),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
@@ -180,9 +185,18 @@ impl Session {
             } else {
                 None
             },
+            mtu: config.mtu.clone(),
             #[cfg(feature = "_internal_test_exports")]
             pending_probe: None,
         }
+    }
+
+    fn mtu(&self) -> usize {
+        *self.mtu.start()
+    }
+
+    fn mtu_warn(&self) -> usize {
+        *self.mtu.end()
     }
 
     pub fn id(&self) -> SessionId {
@@ -300,7 +314,7 @@ impl Session {
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
         self.last_twcc = now;
-        let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
+        let mut twcc = self.twcc_rx_register.build_report(self.mtu() - 100)?;
 
         // These SSRC are on media level, but twcc is on session level,
         // we fill in the first discovered media SSRC in each direction.
@@ -761,8 +775,8 @@ impl Session {
             // In RTP mode we trust the API user feeds the RTP packet sizes they
             // need for the MTU they are targeting. This warning is only for when
             // str0m does the RTP packetization.
-            if !self.rtp_mode && x.len() > DATAGRAM_MTU_WARN {
-                warn!("RTP above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
+            if !self.rtp_mode && x.len() > self.mtu_warn() {
+                warn!("RTP above MTU {}: {}", self.mtu_warn(), x.len());
             }
         }
 
@@ -782,10 +796,10 @@ impl Session {
         }
 
         // Round to nearest multiple of 4 bytes.
-        const ENCRYPTABLE_MTU: usize = (DATAGRAM_MTU - SRTCP_OVERHEAD) & !3;
-        assert!(ENCRYPTABLE_MTU % 4 == 0);
+        let encryptable_mtu: usize = (self.mtu() - SRTCP_OVERHEAD) & !3;
+        assert!(encryptable_mtu % 4 == 0);
 
-        let mut data = vec![0_u8; ENCRYPTABLE_MTU];
+        let mut data = vec![0_u8; encryptable_mtu];
 
         let mut raw_packets = self.raw_packets.as_mut();
         let output = move |fb| {
@@ -806,7 +820,7 @@ impl Session {
         let protected = srtp.protect_rtcp(&data);
 
         assert!(
-            protected.len() < DATAGRAM_MTU,
+            protected.len() < self.mtu(),
             "Encrypted SRTCP should be less than MTU"
         );
 
@@ -1038,11 +1052,13 @@ impl Session {
     }
 
     fn do_payload(&mut self) -> Result<(), RtcError> {
+        let mtu = self.mtu();
         for m in &mut self.medias {
             m.do_payload(
                 &mut self.streams,
                 &self.codec_config,
                 self.vp9_packetizer_mode,
+                mtu,
             )?;
         }
 
@@ -1124,5 +1140,23 @@ fn update_max_seq(map: &mut HashMap<Ssrc, SeqNo>, ssrc: Ssrc, seq_no: SeqNo) {
     let current = map.entry(ssrc).or_insert(seq_no);
     if seq_no > *current {
         *current = seq_no;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RtcConfig;
+    use crate::io::DATAGRAM_MTU_TARGET;
+
+    #[test]
+    fn session_mtu_matches_config() {
+        let cfg = RtcConfig::default();
+        let s = Session::new(&cfg);
+        assert_eq!(s.mtu(), DATAGRAM_MTU_TARGET);
+
+        let cfg = RtcConfig::default().set_mtu(900..=1280);
+        let s = Session::new(&cfg);
+        assert_eq!(s.mtu(), 900);
     }
 }

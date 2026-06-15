@@ -12,10 +12,10 @@ use openssl::ssl::{SslContext, SslContextBuilder, SslMethod};
 use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::X509;
 
+use str0m_proto::DATAGRAM_MTU_TARGET;
 use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
-use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
 // ============================================================================
 // IO Buffer
@@ -290,9 +290,9 @@ struct OsslDtlsImpl {
 }
 
 impl OsslDtlsImpl {
-    fn new(cert: &DtlsCert) -> Result<Self, CryptoError> {
+    fn new(cert: &DtlsCert, mtu: usize) -> Result<Self, CryptoError> {
         let context = dtls_create_ctx(cert)?;
-        let ssl = dtls_ssl_create(&context)?;
+        let ssl = dtls_ssl_create(&context, mtu)?;
         Ok(OsslDtlsImpl {
             tls: TlsStream::new(ssl, IoBuffer::default()),
         })
@@ -347,9 +347,6 @@ impl OsslDtlsImpl {
     fn poll_datagram(&mut self) -> Option<Vec<u8>> {
         let x = self.tls.inner_mut().pop_outgoing();
         if let Some(x) = &x {
-            if x.len() > DATAGRAM_MTU_WARN {
-                warn!("DTLS above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
-            }
             trace!("Poll datagram: {}", x.len());
         }
         x
@@ -407,9 +404,9 @@ fn dtls_create_ctx(cert: &DtlsCert) -> Result<SslContext, CryptoError> {
     Ok(ctx.build())
 }
 
-fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, CryptoError> {
+fn dtls_ssl_create(ctx: &SslContext, mtu: usize) -> Result<Ssl, CryptoError> {
     let mut ssl = Ssl::new(ctx)?;
-    ssl.set_mtu(DATAGRAM_MTU as u32)?;
+    ssl.set_mtu(mtu as u32)?;
     Ok(ssl)
 }
 
@@ -446,8 +443,8 @@ impl std::fmt::Debug for OsslDtlsInstance {
 }
 
 impl OsslDtlsInstance {
-    pub(super) fn new(cert: &DtlsCert) -> Result<Self, CryptoError> {
-        let inner = OsslDtlsImpl::new(cert)?;
+    pub(super) fn new(cert: &DtlsCert, mtu: usize) -> Result<Self, CryptoError> {
+        let inner = OsslDtlsImpl::new(cert, mtu)?;
         Ok(Self {
             inner,
             pending_packets: VecDeque::new(),
@@ -638,9 +635,11 @@ impl DtlsProvider for OsslDtlsProvider {
         cert: &DtlsCert,
         _now: Instant,
         dtls_version: DtlsVersion,
+        mtu: Option<usize>,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+        let mtu = mtu.unwrap_or(DATAGRAM_MTU_TARGET);
         match dtls_version {
-            DtlsVersion::Dtls12 => Ok(Box::new(OsslDtlsInstance::new(cert)?)),
+            DtlsVersion::Dtls12 => Ok(Box::new(OsslDtlsInstance::new(cert, mtu)?)),
             _ => Err(CryptoError::Other(
                 "OpenSSL DTLS provider only supports DTLS 1.2 without dimpl. \
                  Enable the openssl-dimpl feature for DTLS 1.3/Auto."

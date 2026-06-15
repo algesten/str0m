@@ -6,7 +6,6 @@ use std::time::Instant;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
-use crate::io::DATAGRAM_MTU_WARN;
 use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
 use crate::media::Media;
@@ -135,6 +134,9 @@ pub struct StreamTx {
 
     // Same as `remote_acked_ssrc`, but for the RTX SSRC
     remote_acked_rtx_ssrc: bool,
+
+    /// MTU warn threshold; used to cap spurious-padding RTX cache lookups.
+    mtu_warn: usize,
 }
 
 /// RTP packet data to enqueue on a direct RTP send stream.
@@ -252,7 +254,13 @@ impl RtpWrite {
 }
 
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid, enable_stats: bool) -> Self {
+    pub(crate) fn new(
+        ssrc: Ssrc,
+        rtx: Option<Ssrc>,
+        midrid: MidRid,
+        enable_stats: bool,
+        mtu_warn: usize,
+    ) -> Self {
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
         StreamTx {
@@ -282,6 +290,7 @@ impl StreamTx {
             pt_for_padding: None,
             remote_acked_ssrc: false,
             remote_acked_rtx_ssrc: false,
+            mtu_warn,
         }
     }
 
@@ -793,7 +802,7 @@ impl StreamTx {
             if self.padding > MIN_SPURIOUS_PADDING_SIZE {
                 // Find a historic packet that is smaller than this max size. The max size
                 // is a headroom since we can accept slightly larger padding than asked for.
-                let max_size = (self.padding * 2).min(DATAGRAM_MTU_WARN - MAX_RTP_OVERHEAD);
+                let max_size = (self.padding * 2).min(self.mtu_warn - MAX_RTP_OVERHEAD);
 
                 let Some(pkt) = self.rtx_cache.get_cached_packet_smaller_than(max_size) else {
                     // Couldn't find spurious packet, try a blank packet instead.
