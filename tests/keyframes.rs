@@ -487,8 +487,9 @@ pub fn test_h266_keyframes_detection() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(Peer::Left);
-    let mut r = TestRtc::new(Peer::Right);
+    // H.266 is opt-in (disabled by default), so enable it on both peers.
+    let mut l = TestRtc::new_with_config(Peer::Left, |c| c.enable_h266(true));
+    let mut r = TestRtc::new_with_config(Peer::Right, |c| c.enable_h266(true));
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());

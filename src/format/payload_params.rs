@@ -1799,5 +1799,50 @@ mod test {
                 "Local sprop-max-don-diff should be preserved when remote doesn't specify it"
             );
         }
+
+        /// Test that sprop-max-don-diff=0 from remote does NOT enable DONL.
+        #[test]
+        fn test_sprop_max_don_diff_zero_disables_donl() {
+            let local_spec = h266_codec_spec(1, 0, 51);
+            let mut local_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                local_spec,
+            );
+
+            // Remote offers with sprop-max-don-diff=0 (no reordering)
+            let mut remote_spec = h266_codec_spec(1, 0, 51);
+            remote_spec.format.sprop_max_don_diff = Some(0);
+            let remote_params = PayloadParams::new(
+                Pt::new_with_value(102),
+                Some(Pt::new_with_value(103)),
+                remote_spec,
+            );
+
+            let mut claimed = [false; 128];
+            let mut unlocked = std::collections::HashSet::new();
+            local_params.update_param(&[remote_params], &mut claimed, false, &mut unlocked);
+
+            assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
+            let donl_enabled = local_params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            assert!(
+                !donl_enabled,
+                "DONL should NOT be enabled when sprop-max-don-diff=0"
+            );
+
+            // Packetize without DONL — packet should be same size as NAL
+            let nalu = vec![0x00, 0x09, 0xAA, 0xBB];
+            let mut pack = crate::packet::CodecPacketizer::new(
+                local_params.spec.codec,
+                crate::format::Vp9PacketizerMode::default(),
+            );
+            // Don't enable DONL since donl_enabled is false
+            let packets = pack.packetize(1200, &nalu).unwrap();
+            assert_eq!(
+                packets[0].len(),
+                nalu.len(),
+                "No DONL field when sprop-max-don-diff=0"
+            );
+        }
     }
 }

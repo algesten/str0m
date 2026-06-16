@@ -1482,6 +1482,25 @@ mod test {
             }
             Ok(())
         }
+
+        #[test]
+        fn packetize_respects_mtu() -> Result<()> {
+            // 2-byte NAL header (non-parameter-set type) + payload.
+            let nal = make_nal(0, 2002);
+            for &mtu in &[100usize, 300, 600, 1200] {
+                let mut pck = H266Packetizer::default();
+                let pkts = pck.packetize(mtu, &nal)?;
+                assert!(!pkts.is_empty(), "H266 produced no packets at mtu {mtu}");
+                for (i, pkt) in pkts.iter().enumerate() {
+                    assert!(
+                        pkt.len() <= mtu,
+                        "H266 packet {i} size {} > mtu {mtu}",
+                        pkt.len()
+                    );
+                }
+            }
+            Ok(())
+        }
     }
 
     /// Packetize → depacketize roundtrips.

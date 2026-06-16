@@ -18,7 +18,7 @@ use str0m::net::Protocol;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
-use str0m::{Event, Input, Output, Rtc, RtcError};
+use str0m::{Event, Input, Output, Rtc, RtcConfig, RtcError};
 use tracing::Span;
 use tracing::info_span;
 
@@ -89,6 +89,20 @@ impl TestRtc {
             Rtc::new(now)
         };
 
+        Self::new_with_rtc(peer.span(), rtc)
+    }
+
+    /// Like [`TestRtc::new`], but lets the caller customise the `RtcConfig`
+    /// builder — e.g. to enable a non-default codec such as H.266.
+    pub fn new_with_config(peer: Peer, f: impl FnOnce(RtcConfig) -> RtcConfig) -> Self {
+        let now = Instant::now();
+        let builder = Rtc::builder();
+        let builder = if let Some(crypto) = peer.crypto_provider() {
+            builder.set_crypto_provider(crypto)
+        } else {
+            builder
+        };
+        let rtc = f(builder).build(now);
         Self::new_with_rtc(peer.span(), rtc)
     }
 
