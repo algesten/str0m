@@ -305,10 +305,11 @@ impl RtcSctp {
                 "New {} association (out-of-band: true)",
                 if client { "local" } else { "server" },
             );
-            let (handle, assoc) = self
+            let (handle, mut assoc) = self
                 .endpoint
                 .connect(config, self.fake_addr)
                 .map_err(|e| SctpError::Proto(ProtoError::Other(e.to_string())))?;
+            assoc.set_max_send_message_size(self.remote_max_message_size);
             self.handle = handle;
             self.assoc = Some(assoc);
 
