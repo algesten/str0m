@@ -1,5 +1,5 @@
-use is::{Candidate, IceCreds};
-
+use crate::Candidate;
+use crate::IceCreds;
 use crate::Rtc;
 use crate::RtcError;
 use crate::channel::ChannelId;
