@@ -128,4 +128,22 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn packetize_respects_mtu() -> Result<(), PacketError> {
+        let payload = vec![0xABu8; 2000];
+        for &mtu in &[100usize, 300, 600, 1200] {
+            let mut pck = OpusPacketizer;
+            let pkts = pck.packetize(mtu, &payload)?;
+            assert!(!pkts.is_empty(), "Opus produced no packets at mtu {mtu}");
+            for (i, pkt) in pkts.iter().enumerate() {
+                assert!(
+                    pkt.len() <= mtu,
+                    "Opus packet {i} size {} > mtu {mtu}",
+                    pkt.len()
+                );
+            }
+        }
+        Ok(())
+    }
 }

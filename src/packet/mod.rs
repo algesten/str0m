@@ -75,6 +75,9 @@ pub enum MediaKind {
     Video,
 }
 
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(MediaKind);
+
 impl MediaKind {
     /// Tests if this is `MediaKind::Audio`
     pub fn is_audio(&self) -> bool {

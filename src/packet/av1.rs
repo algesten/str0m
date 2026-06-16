@@ -1254,4 +1254,25 @@ mod test {
         assert!(!detect_av1_keyframe(&[0x70])); // Y=1, W=11, N=0
         assert!(!detect_av1_keyframe(&[0xF0])); // Z=1, Y=1, W=11, N=0
     }
+
+    #[test]
+    fn packetize_respects_mtu() {
+        // OBU header (frame-type, no size field) + payload bytes.
+        let mut payload = vec![0x30u8];
+        payload.extend(std::iter::repeat(0xABu8).take(2000));
+        for &mtu in &[100usize, 300, 600, 1200] {
+            let mut packetizer = Av1Packetizer::default();
+            let pkts = packetizer
+                .packetize(mtu, &payload)
+                .expect("AV1 packetize ok");
+            assert!(!pkts.is_empty(), "AV1 produced no packets at mtu {mtu}");
+            for (i, pkt) in pkts.iter().enumerate() {
+                assert!(
+                    pkt.len() <= mtu,
+                    "AV1 packet {i} size {} > mtu {mtu}",
+                    pkt.len()
+                );
+            }
+        }
+    }
 }

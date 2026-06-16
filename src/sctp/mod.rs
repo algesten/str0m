@@ -48,6 +48,8 @@ pub(crate) struct RtcSctp {
     remote_max_message_size: u32,
     snap_enabled: bool,
     snap_init: Option<SctpInitData>,
+    #[cfg(test)]
+    max_payload_size: usize,
 }
 
 /// This is okay because there is no way for a user of Rtc to interact with the Sctp subsystem
@@ -240,13 +242,26 @@ impl StreamEntry {
     }
 }
 
+/// SCTP framing per outgoing datagram: 12-byte common header + ~16-byte DATA
+/// chunk header + some extra.
+const SCTP_OVERHEAD: usize = 40;
+
+/// Empirical: SCTP `max_payload_size` of 1200 has produced 1277-byte DTLS-wrapped
+/// datagrams (77 bytes combined SCTP + DTLS overhead).
+const _: () = assert!(
+    crate::io::MAX_DTLS_OVERHEAD + SCTP_OVERHEAD >= 80,
+    "MAX_DTLS_OVERHEAD + SCTP_OVERHEAD must cover observed 77-byte SCTP-over-DTLS overhead"
+);
+
 impl RtcSctp {
-    pub fn new() -> Self {
+    pub fn new(mtu: usize) -> Self {
         let mut config = EndpointConfig::default();
-        // Default here is 1200, I've seen warnings that are 77 over.
-        // DTLS above MTU 1200: 1277
-        // Let's try 1120, see if we can avoid warnings.
-        config.max_payload_size(1120);
+        let max_payload = mtu
+            .saturating_sub(crate::io::MAX_DTLS_OVERHEAD)
+            .saturating_sub(SCTP_OVERHEAD);
+        config.max_payload_size(max_payload as u32);
+        #[cfg(test)]
+        let max_payload_size = max_payload;
         let mut server_config = ServerConfig::default();
         server_config.transport = webrtc_transport_config();
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
@@ -265,7 +280,14 @@ impl RtcSctp {
             remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
             snap_enabled: false,
             snap_init: None,
+            #[cfg(test)]
+            max_payload_size,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn max_payload_size(&self) -> usize {
+        self.max_payload_size
     }
 
     pub fn is_inited(&self) -> bool {
@@ -393,7 +415,7 @@ impl RtcSctp {
     pub fn local_sctp_init_for_sdp(&self) -> Option<String> {
         let d = self.snap_init.as_ref()?;
         if self.is_inited() && d.remote_init.is_none() {
-            // Established non-SNAP association — MUST NOT inject sctp-init.
+            // Established non-SNAP association - MUST NOT inject sctp-init.
             return None;
         }
         d.local_init.as_ref().map(|b| b64_encode(b))
@@ -1124,11 +1146,12 @@ impl From<(ReliabilityType, u32)> for Reliability {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use str0m_proto::DATAGRAM_MTU_TARGET;
 
     #[test]
     fn partial_snap_init_requires_both_chunks() {
         let now = Instant::now();
-        let mut sctp = RtcSctp::new();
+        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET);
         let mut init_data = SctpInitData::new();
 
         init_data.local_init_chunk().unwrap();
@@ -1142,7 +1165,7 @@ mod tests {
 
     #[test]
     fn malformed_remote_snap_does_not_disable_local_opt_in() {
-        let mut sctp = RtcSctp::new();
+        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET);
         sctp.enable_snap();
 
         assert!(!sctp.set_remote_snap_init_string("!!!not-valid-base64!!!"));
@@ -1154,8 +1177,8 @@ mod tests {
     /// Helper to connect a client and server RtcSctp pair to Established state.
     fn connect_client_server() -> (RtcSctp, RtcSctp) {
         let now = Instant::now();
-        let mut client = RtcSctp::new();
-        let mut server = RtcSctp::new();
+        let mut client = RtcSctp::new(DATAGRAM_MTU_TARGET);
+        let mut server = RtcSctp::new(DATAGRAM_MTU_TARGET);
 
         client.init(true, now, None, None).unwrap();
         server.init(false, now, None, None).unwrap();
@@ -1257,5 +1280,19 @@ mod tests {
         // Verify entry transitioned to Closed.
         let entry = client.entries.iter().find(|e| e.id == stream_id).unwrap();
         assert_eq!(entry.state, StreamEntryState::Closed);
+    }
+
+    #[test]
+    fn max_payload_size_matches_mtu_minus_overhead() {
+        let overhead = crate::io::MAX_DTLS_OVERHEAD + SCTP_OVERHEAD;
+
+        let default_sctp = RtcSctp::new(DATAGRAM_MTU_TARGET);
+        assert_eq!(
+            default_sctp.max_payload_size(),
+            DATAGRAM_MTU_TARGET - overhead
+        );
+
+        let small_sctp = RtcSctp::new(900);
+        assert_eq!(small_sctp.max_payload_size(), 900 - overhead);
     }
 }

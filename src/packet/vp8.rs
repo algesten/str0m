@@ -1243,4 +1243,22 @@ mod test {
             assert_eq!(descriptor_starts_keyframe, detect_vp8_keyframe(payload));
         }
     }
+
+    #[test]
+    fn packetize_respects_mtu() -> Result<(), PacketError> {
+        let payload = vec![0xABu8; 2000];
+        for &mtu in &[100usize, 300, 600, 1200] {
+            let mut pck = Vp8Packetizer::default();
+            let pkts = pck.packetize(mtu, &payload)?;
+            assert!(!pkts.is_empty(), "VP8 produced no packets at mtu {mtu}");
+            for (i, pkt) in pkts.iter().enumerate() {
+                assert!(
+                    pkt.len() <= mtu,
+                    "VP8 packet {i} size {} > mtu {mtu}",
+                    pkt.len()
+                );
+            }
+        }
+        Ok(())
+    }
 }

@@ -51,6 +51,9 @@ pub enum Codec {
     Unknown,
 }
 
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(Codec, CodecSpec);
+
 impl Codec {
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {

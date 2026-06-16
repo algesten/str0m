@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io;
+use std::ops::RangeInclusive;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::time::Instant;
 
@@ -30,6 +31,11 @@ pub struct Dtls {
 
     /// Packets to be sent.
     pending_packets: VecDeque<DatagramSend>,
+
+    /// Target MTU (start) and warn threshold (end). The target is forwarded to
+    /// the backend's fragmenter; outgoing records larger than the warn
+    /// threshold log a warning.
+    mtu: RangeInclusive<usize>,
 }
 
 pub(crate) fn is_would_block(error: &DtlsError) -> bool {
@@ -54,9 +60,10 @@ impl Dtls {
         sha256_provider: &dyn Sha256Provider,
         now: Instant,
         dtls_version: DtlsVersion,
+        mtu: RangeInclusive<usize>,
     ) -> Result<Self, DtlsError> {
         let instance = dtls_provider
-            .new_dtls(cert, now, dtls_version)
+            .new_dtls(cert, now, dtls_version, Some(*mtu.start()))
             .map_err(DtlsError::CryptoError)?;
 
         // Compute fingerprint from the certificate DER bytes
@@ -71,7 +78,13 @@ impl Dtls {
             remote_fingerprint: None,
             active_state: None,
             pending_packets: VecDeque::new(),
+            mtu,
         })
+    }
+
+    /// Threshold above which an outgoing DTLS record triggers an MTU warning.
+    pub fn mtu_warn(&self) -> usize {
+        *self.mtu.end()
     }
 
     /// Tells if this instance has been inited (set_active called).
@@ -110,6 +123,9 @@ impl Dtls {
         let next = self.instance.poll_output(buf);
 
         if let DtlsOutput::Packet(packet) = next {
+            if packet.len() > self.mtu_warn() {
+                warn!("DTLS above MTU {}: {}", self.mtu_warn(), packet.len());
+            }
             self.pending_packets.push_back(packet.to_vec().into());
 
             // Return timeout indicating we want another poll straight away

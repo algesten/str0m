@@ -332,6 +332,9 @@ impl PartialEq for MediaTime {
 }
 impl Eq for MediaTime {}
 
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(Frequency, MediaTime);
+
 impl PartialOrd for MediaTime {
     #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 pub use is::stun::StunMessage;
 
-pub use str0m_proto::DATAGRAM_MTU;
+pub use str0m_proto::DATAGRAM_MTU_TARGET;
+pub use str0m_proto::DATAGRAM_MTU_TARGET_MAX;
+pub use str0m_proto::DATAGRAM_MTU_TARGET_MIN;
 pub use str0m_proto::DATAGRAM_MTU_WARN;
 
 /// Max UDP packet size
@@ -18,6 +20,11 @@ pub(crate) const DATAGRAM_MAX_PACKET_SIZE: usize = 2000;
 
 /// Max expected RTP header over, with full extensions etc.
 pub const MAX_RTP_OVERHEAD: usize = 80;
+
+/// Max expected DTLS record overhead (record header + explicit nonce + AEAD
+/// auth tag), worst case across DTLS 1.2/1.3 and common AEAD ciphers
+/// (AES-GCM, AES-CCM, CHACHA20-POLY1305).
+pub const MAX_DTLS_OVERHEAD: usize = 48;
 
 mod error;
 pub use self::error::NetError;
