@@ -1402,7 +1402,14 @@ fn update_media(
 fn extract_max_message_size(mut media_lines: Iter<MediaLine>) -> Option<u32> {
     if let Some(app_line) = media_lines.find(|m| m.typ.is_channel()) {
         if let Some(max_size) = app_line.max_message_size() {
-            return Some(max_size as u32);
+            // RFC 8841 §6.1: a value of 0 means the peer can receive a message of
+            // any size, subject to local capacity. Represent that as the maximum.
+            let max_size = if max_size == 0 {
+                u32::MAX
+            } else {
+                max_size as u32
+            };
+            return Some(max_size);
         }
     }
 
@@ -2624,6 +2631,39 @@ mod test {
             rtc1.sctp.remote_max_message_size(),
             custom_max_size2,
             "rtc1 should have remote max message size set to rtc2's advertised value"
+        );
+    }
+
+    #[test]
+    fn test_remote_max_message_size_zero_means_unbounded() {
+        // RFC 8841 §6.1: a=max-message-size:0 means the peer can receive a message
+        // of any size, so we represent it as u32::MAX rather than passing 0 through
+        // (which would reject every non-empty outbound message in sctp-proto).
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut rtc1 = Rtc::new(now);
+        let mut rtc2 = Rtc::new(now);
+
+        let mut change1 = rtc1.sdp_api();
+        change1.add_channel("test-channel".into());
+        let (offer1, _pending1) = change1.apply().unwrap();
+
+        let sdp_string = offer1.to_sdp_string();
+        let modified_sdp = sdp_string.replace(
+            &format!("a=max-message-size:{}", crate::sctp::LOCAL_MAX_MESSAGE_SIZE),
+            "a=max-message-size:0",
+        );
+
+        let modified_offer =
+            SdpOffer::from_sdp_string(&modified_sdp).expect("modified SDP should parse");
+
+        rtc2.sdp_api().accept_offer(modified_offer).unwrap();
+
+        assert_eq!(
+            rtc2.sctp.remote_max_message_size(),
+            u32::MAX,
+            "a=max-message-size:0 should be treated as unbounded (u32::MAX)"
         );
     }
 }
