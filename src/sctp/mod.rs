@@ -1134,9 +1134,10 @@ mod tests {
         init_data.local_init_chunk().unwrap();
 
         let err = sctp.init(true, now, Some(init_data)).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("SNAP requires both local and remote SCTP INIT chunks"));
+        assert!(
+            err.to_string()
+                .contains("SNAP requires both local and remote SCTP INIT chunks")
+        );
     }
 
     #[test]
