@@ -986,10 +986,18 @@ pub enum Event {
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
 
-    /// Incoming application-specific Payload-Specific Feedback message (PSFB FMT=15, PT=206).
+    /// Incoming application-specific Payload-Specific Feedback (PSFB FMT=15, PT=206).
     ///
-    /// Used for application-specific PSFB feedback (RFC 4585 Section 6.4).
-    AppSpecificFeedback(rtp::rtcp::AppSpecificFeedback),
+    /// Emitted when a non-REMB FMT=15 RTCP PSFB message is received. The payload
+    /// is opaque and application-defined (RFC 4585 Section 6.4).
+    AppSpecificFeedback {
+        /// SSRC of the sender of this feedback message.
+        sender_ssrc: rtp::Ssrc,
+        /// SSRC of the media source this feedback relates to.
+        media_ssrc: rtp::Ssrc,
+        /// Application-dependent payload.
+        payload: Vec<u8>,
+    },
 
     /// Debug output of incoming and outgoing RTCP/RTP packets.
     ///
@@ -1985,16 +1993,6 @@ impl Rtc {
         let n = self.change_counter;
         self.change_counter += 1;
         n
-    }
-
-    /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
-    /// transmission in its own standalone SRTCP compound datagram.
-    ///
-    /// The message is sent separately from the session's regular compound RTCP
-    /// to ensure remote RTCP demuxers route it to the correct media session based
-    /// on the feedback's `sender_ssrc`. See RFC 4585 Section 6.4.
-    pub fn send_app_specific_feedback(&mut self, fb: rtp::rtcp::AppSpecificFeedback) {
-        self.session.send_app_specific_feedback(fb);
     }
 
     /// The codec configs for sending/receiving data.

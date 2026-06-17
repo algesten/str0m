@@ -1,4 +1,4 @@
-use super::{AppSpecificFeedback, DlrrItem, FirEntry, NackEntry, ReceptionReport, Remb, ReportBlock, ReportList};
+use super::{DlrrItem, FirEntry, NackEntry, ReceptionReport, Remb, ReportBlock, ReportList};
 use super::{Rrtr, Rtcp, Sdes, SenderInfo, Ssrc, Twcc};
 
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
@@ -16,7 +16,6 @@ pub enum RtcpFb {
     Fir(FirEntry),                     // rx -> tx
     Twcc(Twcc),                        // rx -> tx
     Remb(Remb),                        // rx -> tx
-    AppSpecificFeedback(AppSpecificFeedback), // rx -> tx
 }
 
 impl RtcpFb {
@@ -73,9 +72,9 @@ impl RtcpFb {
                 Rtcp::Remb(v) => {
                     q.push(RtcpFb::Remb(v));
                 }
-                Rtcp::AppSpecificFeedback(v) => {
-                    q.push(RtcpFb::AppSpecificFeedback(v));
-                }
+                // Application-specific feedback is not stream-routed;
+                // it is handled directly at the session level.
+                Rtcp::AppSpecificFeedback(_) => {}
             }
         }
         q.into_iter()
@@ -94,7 +93,6 @@ impl RtcpFb {
             RtcpFb::Fir(v) => v.ssrc,
             RtcpFb::Twcc(v) => v.ssrc,
             RtcpFb::Remb(v) => v.ssrcs.first().map(|ssrc| (*ssrc).into()).unwrap_or(v.ssrc),
-            RtcpFb::AppSpecificFeedback(v) => v.media_ssrc,
         }
     }
 }
@@ -102,50 +100,22 @@ impl RtcpFb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::AppSpecificFeedback;
     use std::collections::VecDeque;
 
     #[test]
-    fn app_specific_feedback_from_rtcp() {
+    fn app_specific_feedback_skipped_in_rtcpfb() {
+        // AppSpecificFeedback is not stream-routed, so from_rtcp should skip it
         let fb = AppSpecificFeedback {
             sender_ssrc: 100.into(),
             media_ssrc: 200.into(),
             payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
         };
 
-        let rtcp_items = vec![Rtcp::AppSpecificFeedback(fb.clone())];
+        let rtcp_items = vec![Rtcp::AppSpecificFeedback(fb)];
         let result: Vec<_> = RtcpFb::from_rtcp(rtcp_items).collect();
 
-        assert_eq!(result.len(), 1);
-        match &result[0] {
-            RtcpFb::AppSpecificFeedback(v) => {
-                assert_eq!(v.sender_ssrc, 100.into());
-                assert_eq!(v.media_ssrc, 200.into());
-                assert_eq!(v.payload, vec![0xDE, 0xAD, 0xBE, 0xEF]);
-            }
-            _ => panic!("Expected AppSpecificFeedback variant"),
-        }
-    }
-
-    #[test]
-    fn app_specific_feedback_ssrc() {
-        let fb = AppSpecificFeedback {
-            sender_ssrc: 100.into(),
-            media_ssrc: 200.into(),
-            payload: vec![],
-        };
-        let rtcpfb = RtcpFb::AppSpecificFeedback(fb);
-        assert_eq!(rtcpfb.ssrc(), 200.into());
-    }
-
-    #[test]
-    fn app_specific_feedback_is_not_for_rx() {
-        let fb = AppSpecificFeedback {
-            sender_ssrc: 1.into(),
-            media_ssrc: 2.into(),
-            payload: vec![],
-        };
-        let rtcpfb = RtcpFb::AppSpecificFeedback(fb);
-        assert!(!rtcpfb.is_for_rx());
+        assert_eq!(result.len(), 0, "AppSpecificFeedback should not produce RtcpFb items");
     }
 
     #[test]

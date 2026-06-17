@@ -117,7 +117,8 @@ pub(crate) struct Session {
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
-    pending_app_feedback: VecDeque<crate::rtp_::AppSpecificFeedback>,
+    // Stored as (sender_ssrc, media_ssrc, payload) tuples.
+    pending_app_feedback: VecDeque<(Ssrc, Ssrc, Vec<u8>)>,
 
     #[cfg(feature = "_internal_test_exports")]
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
@@ -319,14 +320,10 @@ impl Session {
 
     /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
     /// transmission in its own standalone SRTCP compound datagram.
-    ///
-    /// Unlike regular RTCP feedback which is bundled into the session's compound packet,
-    /// this message is sent in a separate datagram with a leading RR whose `sender_ssrc`
-    /// matches the feedback's `sender_ssrc`. This ensures that remote RTCP demuxers that
-    /// route compound packets by the first SSRC will deliver the feedback to the correct
-    /// media session.
-    pub fn send_app_specific_feedback(&mut self, fb: crate::rtp_::AppSpecificFeedback) {
-        self.standalone_feedback_tx.push_back(Rtcp::AppSpecificFeedback(fb));
+    pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: Vec<u8>) {
+        self.standalone_feedback_tx.push_back(Rtcp::AppSpecificFeedback(
+            crate::rtp_::AppSpecificFeedback { sender_ssrc, media_ssrc, payload }
+        ));
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
@@ -611,7 +608,19 @@ impl Session {
             }
         }
 
-        for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
+        // Extract application-specific feedback directly before stream routing.
+        // These are not stream-routed and are surfaced as events to the application.
+        let drained: Vec<Rtcp> = self.feedback_rx.drain(..).collect();
+        let mut for_rtcpfb = Vec::new();
+        for pkt in drained {
+            if let Rtcp::AppSpecificFeedback(fb) = pkt {
+                self.pending_app_feedback.push_back((fb.sender_ssrc, fb.media_ssrc, fb.payload));
+            } else {
+                for_rtcpfb.push(pkt);
+            }
+        }
+
+        for fb in RtcpFb::from_rtcp(for_rtcpfb) {
             if let RtcpFb::Twcc(twcc) = fb {
                 trace!("Handle TWCC: {:?}", twcc);
                 let maybe_records = self.twcc_tx_register.apply_report(twcc, now);
@@ -624,11 +633,6 @@ impl Session {
                 // The funky thing about TWCC reports is that they are never stapled
                 // together with other RTCP packet. If they were though, we want to
                 // handle more packets.
-                continue;
-            }
-
-            if let RtcpFb::AppSpecificFeedback(fb_msg) = fb {
-                self.pending_app_feedback.push_back(fb_msg);
                 continue;
             }
 
@@ -679,8 +683,8 @@ impl Session {
             }
         }
 
-        if let Some(fb) = self.pending_app_feedback.pop_front() {
-            return Some(Event::AppSpecificFeedback(fb));
+        if let Some((sender_ssrc, media_ssrc, payload)) = self.pending_app_feedback.pop_front() {
+            return Some(Event::AppSpecificFeedback { sender_ssrc, media_ssrc, payload });
         }
 
         // This must be before pending_packet.take() since we need to emit the unpaused event

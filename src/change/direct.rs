@@ -377,4 +377,21 @@ impl<'a> DirectApi<'a> {
         // Return a reference to the updated stream
         Some(stream)
     }
+
+    /// Send an application-specific feedback message (PSFB FMT=15, PT=206).
+    ///
+    /// The message is sent in its own standalone SRTCP compound datagram, prefixed
+    /// with a Receiver Report for RFC 3550 compliance. The `sender_ssrc` is used as
+    /// the RR's sender SSRC, which allows remote RTCP demuxers that route compound
+    /// packets by the first SSRC to deliver the feedback to the correct media session.
+    ///
+    /// The `payload` is opaque and application-defined.
+    pub fn send_app_specific_feedback(
+        &mut self,
+        sender_ssrc: Ssrc,
+        media_ssrc: Ssrc,
+        payload: Vec<u8>,
+    ) {
+        self.rtc.session.send_app_specific_feedback(sender_ssrc, media_ssrc, payload);
+    }
 }
