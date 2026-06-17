@@ -3,13 +3,13 @@ use crate::rtp::Ssrc;
 use super::RtcpType;
 use super::{FeedbackMessageType, PayloadType, RtcpHeader, RtcpPacket};
 
-/// Payload-Specific Feedback Application Layer message (PSFB FMT=15, PT=206).
+/// Application-specific Payload-Specific Feedback message (PSFB FMT=15, PT=206).
 ///
 /// Generic container for FMT=15 RTCP PSFB messages that are not REMB.
 /// Carries an opaque application-dependent payload after the standard
 /// sender and media SSRC fields (RFC 4585 Section 6.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PsfbApp {
+pub struct AppSpecificFeedback {
     /// SSRC of the sender of this feedback message.
     pub sender_ssrc: Ssrc,
     /// SSRC of the media source this feedback relates to.
@@ -18,7 +18,7 @@ pub struct PsfbApp {
     pub payload: Vec<u8>,
 }
 
-impl RtcpPacket for PsfbApp {
+impl RtcpPacket for AppSpecificFeedback {
     fn header(&self) -> RtcpHeader {
         RtcpHeader {
             rtcp_type: RtcpType::PayloadSpecificFeedback,
@@ -53,19 +53,19 @@ impl RtcpPacket for PsfbApp {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for PsfbApp {
+impl<'a> TryFrom<&'a [u8]> for AppSpecificFeedback {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
         if buf.len() < 8 {
-            return Err("PsfbApp less than 8 bytes");
+            return Err("AppSpecificFeedback less than 8 bytes");
         }
 
         let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
         let media_ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
         let payload = buf[8..].to_vec();
 
-        Ok(PsfbApp {
+        Ok(AppSpecificFeedback {
             sender_ssrc,
             media_ssrc,
             payload,
@@ -78,8 +78,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_psfbapp_round_trip() {
-        let input = PsfbApp {
+    fn test_round_trip() {
+        let input = AppSpecificFeedback {
             sender_ssrc: 1.into(),
             media_ssrc: 2.into(),
             payload: vec![0x01, 0x00, 0x00, 0x44, 0xAA, 0xBB, 0xCC, 0xDD],
@@ -89,28 +89,28 @@ mod tests {
         let written = input.write_to(&mut buf);
 
         // Parse back (skip 4-byte RTCP header)
-        let parsed = PsfbApp::try_from(&buf[4..written]).unwrap();
+        let parsed = AppSpecificFeedback::try_from(&buf[4..written]).unwrap();
         assert_eq!(input.sender_ssrc, parsed.sender_ssrc);
         assert_eq!(input.media_ssrc, parsed.media_ssrc);
         assert_eq!(input.payload, parsed.payload);
     }
 
     #[test]
-    fn test_psfbapp_header() {
-        let psfbapp = PsfbApp {
+    fn test_header() {
+        let fb = AppSpecificFeedback {
             sender_ssrc: 0.into(),
             media_ssrc: 0.into(),
             payload: vec![1, 2, 3, 4],
         };
 
-        let header = psfbapp.header();
+        let header = fb.header();
         assert_eq!(header.rtcp_type, RtcpType::PayloadSpecificFeedback);
     }
 
     #[test]
-    fn test_psfbapp_non_aligned_payload() {
+    fn test_non_aligned_payload() {
         // Payload not aligned to 4 bytes — should still round-trip
-        let input = PsfbApp {
+        let input = AppSpecificFeedback {
             sender_ssrc: 100.into(),
             media_ssrc: 200.into(),
             payload: vec![0xAA, 0xBB, 0xCC], // 3 bytes, needs 1 byte padding
@@ -122,7 +122,7 @@ mod tests {
         // Total should be 4 (header) + 4 (sender) + 4 (media) + 4 (padded payload) = 16
         assert_eq!(written, 16);
 
-        let parsed = PsfbApp::try_from(&buf[4..written]).unwrap();
+        let parsed = AppSpecificFeedback::try_from(&buf[4..written]).unwrap();
         assert_eq!(parsed.sender_ssrc, input.sender_ssrc);
         assert_eq!(parsed.media_ssrc, input.media_ssrc);
         // Parsed payload includes padding byte
@@ -132,8 +132,8 @@ mod tests {
     }
 
     #[test]
-    fn test_psfbapp_empty_payload() {
-        let input = PsfbApp {
+    fn test_empty_payload() {
+        let input = AppSpecificFeedback {
             sender_ssrc: 1.into(),
             media_ssrc: 2.into(),
             payload: vec![],
@@ -143,15 +143,15 @@ mod tests {
         let written = input.write_to(&mut buf);
         assert_eq!(written, 12); // header + sender + media, no payload
 
-        let parsed = PsfbApp::try_from(&buf[4..written]).unwrap();
+        let parsed = AppSpecificFeedback::try_from(&buf[4..written]).unwrap();
         assert_eq!(parsed.sender_ssrc, input.sender_ssrc);
         assert_eq!(parsed.media_ssrc, input.media_ssrc);
         assert!(parsed.payload.is_empty());
     }
 
     #[test]
-    fn test_psfbapp_too_short_rejected() {
+    fn test_too_short_rejected() {
         let buf = [0u8; 7]; // Less than 8 bytes
-        assert!(PsfbApp::try_from(&buf[..]).is_err());
+        assert!(AppSpecificFeedback::try_from(&buf[..]).is_err());
     }
 }

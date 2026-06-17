@@ -907,17 +907,6 @@ impl Derived {
         let mut rtcp_salt = [0; AeadAes256Gcm::SALT_LEN];
         srtp_key.derive(crypto, LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
-        // Debug: log derived keys for SRTP key mismatch diagnosis
-        warn!(
-            "SRTP AES-256-GCM derived keys: master_key={} master_salt={} rtp_key={} rtp_salt={} rtcp_key={} rtcp_salt={}",
-            srtp_key.master.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(""),
-            srtp_key.salt.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(""),
-            rtp_aes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(""),
-            rtp_salt.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(""),
-            rtcp_aes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(""),
-            rtcp_salt.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(""),
-        );
-
         let rtp = Derived::AeadAes256Gcm {
             salt: rtp_salt,
             enc: crypto.aead_aes_256_gcm().create_cipher(rtp_aes, true),

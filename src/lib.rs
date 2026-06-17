@@ -743,7 +743,7 @@ pub mod rtp {
         pub use crate::rtp_::{Dlrr, NackEntry, ReceptionReport, ReportBlock};
         pub use crate::rtp_::{FirEntry, ReceiverReport, SenderInfo, SenderReport, Twcc};
         pub use crate::rtp_::{ReportList, Rrtr, Rtcp, Sdes, SdesType};
-        pub use crate::rtp_::PsfbApp;
+        pub use crate::rtp_::AppSpecificFeedback;
     }
     use self::rtcp::Rtcp;
 
@@ -986,10 +986,10 @@ pub enum Event {
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
 
-    /// Incoming RTCP Payload-Specific Feedback Application Layer message (PSFB FMT=15, PT=206).
+    /// Incoming application-specific Payload-Specific Feedback message (PSFB FMT=15, PT=206).
     ///
     /// Used for application-specific PSFB feedback (RFC 4585 Section 6.4).
-    PsfbApp(rtp::rtcp::PsfbApp),
+    AppSpecificFeedback(rtp::rtcp::AppSpecificFeedback),
 
     /// Debug output of incoming and outgoing RTCP/RTP packets.
     ///
@@ -1987,11 +1987,14 @@ impl Rtc {
         n
     }
 
-    /// Enqueue a PsfbApp (RTCP PSFB FMT=15, PT=206) message for transmission.
+    /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
+    /// transmission in its own standalone SRTCP compound datagram.
     ///
-    /// Used for application-specific PSFB feedback (RFC 4585 Section 6.4).
-    pub fn send_psfb_app(&mut self, psfb: rtp::rtcp::PsfbApp) {
-        self.session.send_psfb_app(psfb);
+    /// The message is sent separately from the session's regular compound RTCP
+    /// to ensure remote RTCP demuxers route it to the correct media session based
+    /// on the feedback's `sender_ssrc`. See RFC 4585 Section 6.4.
+    pub fn send_app_specific_feedback(&mut self, fb: rtp::rtcp::AppSpecificFeedback) {
+        self.session.send_app_specific_feedback(fb);
     }
 
     /// The codec configs for sending/receiving data.
