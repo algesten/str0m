@@ -716,7 +716,7 @@ pub mod crypto;
 use crypto::Fingerprint;
 
 mod dtls;
-use crate::crypto::dtls::DtlsOutput;
+use crate::crypto::dtls::{DtlsOutput, DtlsVersion, ProtocolVersion};
 use crate::crypto::{CryptoProvider, DtlsError, from_feature_flags};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
@@ -1639,6 +1639,16 @@ impl Rtc {
                 DtlsOutput::Timeout(t) => {
                     self.next_dtls_timeout = Some(t);
                     break;
+                }
+                DtlsOutput::NegotiatedVersion(v) => {
+                    let mapped = match v {
+                        ProtocolVersion::DTLS1_2 => Some(DtlsVersion::Dtls12),
+                        ProtocolVersion::DTLS1_3 => Some(DtlsVersion::Dtls13),
+                        _ => None,
+                    };
+                    if let Some(dv) = mapped {
+                        debug!("DTLS negotiated version: {}", dv);
+                    }
                 }
                 other => {
                     return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(

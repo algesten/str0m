@@ -14,7 +14,9 @@ use openssl::x509::X509;
 
 use str0m_proto::DATAGRAM_MTU_TARGET;
 use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
-use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::dtls::{
+    DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider, ProtocolVersion,
+};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
 // ============================================================================
@@ -434,6 +436,7 @@ pub(super) struct OsslDtlsInstance {
     queued_app_data: VecDeque<Vec<u8>>,
     next_timeout: Option<Instant>,
     connected_emitted: bool,
+    negotiated_version_emitted: bool,
 }
 
 impl std::fmt::Debug for OsslDtlsInstance {
@@ -454,6 +457,7 @@ impl OsslDtlsInstance {
             queued_app_data: VecDeque::new(),
             next_timeout: None,
             connected_emitted: false,
+            negotiated_version_emitted: false,
         })
     }
 
@@ -545,6 +549,13 @@ impl DtlsInstance for OsslDtlsInstance {
         if self.inner.is_connected() && !self.connected_emitted {
             self.connected_emitted = true;
             return DtlsOutput::Connected;
+        }
+
+        // Return negotiated version event (immediately after Connected per dimpl contract).
+        // OpenSSL backend only supports DTLS 1.2.
+        if self.inner.is_connected() && !self.negotiated_version_emitted {
+            self.negotiated_version_emitted = true;
+            return DtlsOutput::NegotiatedVersion(ProtocolVersion::DTLS1_2);
         }
 
         // Return peer certificate DER

@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use str0m_proto::DATAGRAM_MTU_TARGET;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
-use str0m_proto::crypto::dtls::{KeyingMaterial, SrtpProfile};
+use str0m_proto::crypto::dtls::{KeyingMaterial, ProtocolVersion, SrtpProfile};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
 use crate::sys::{Certificate, Dtls, DtlsEvent};
@@ -98,6 +98,7 @@ struct WinCryptoDtlsInstance {
 #[derive(Debug)]
 enum PendingOutput {
     Connected,
+    NegotiatedVersion(ProtocolVersion),
     PeerCert(Vec<u8>),
     KeyingMaterial(KeyingMaterial, SrtpProfile),
     ApplicationData(Vec<u8>),
@@ -124,8 +125,11 @@ impl WinCryptoDtlsInstance {
                     _ => return, // Unknown profile, ignore
                 };
 
-                // Queue up the sequence: Connected -> PeerCert -> KeyingMaterial
+                // Queue up the sequence: Connected -> NegotiatedVersion -> PeerCert -> KeyingMaterial.
                 self.pending_outputs.push_back(PendingOutput::Connected);
+                // SChannel backend only supports DTLS 1.2.
+                self.pending_outputs
+                    .push_back(PendingOutput::NegotiatedVersion(ProtocolVersion::DTLS1_2));
                 self.pending_outputs
                     .push_back(PendingOutput::PeerCert(peer_cert_der));
                 self.pending_outputs
@@ -188,6 +192,7 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         if let Some(pending) = self.pending_outputs.pop_front() {
             return match pending {
                 PendingOutput::Connected => DtlsOutput::Connected,
+                PendingOutput::NegotiatedVersion(v) => DtlsOutput::NegotiatedVersion(v),
                 PendingOutput::PeerCert(cert) => {
                     let len = cert.len().min(buf.len());
                     buf[..len].copy_from_slice(&cert[..len]);
