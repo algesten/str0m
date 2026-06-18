@@ -11,6 +11,7 @@ use common::{extract_sctp_init, remove_sctp_init, replace_sctp_init};
 use str0m::Rtc;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
+use str0m::format::CodecConfig;
 use str0m::format::CodecSpec;
 use str0m::format::FormatParams;
 use str0m::format::PayloadParams;
@@ -184,6 +185,142 @@ pub fn answer_no_match() {
     assert!(!r.codec_config()[0]._is_locked());
     // No remote PTs.
     assert_eq!(r.media(mid).unwrap().remote_pts(), &[]);
+}
+
+// Offerer offers VP8 with RTX, answerer has RTX disabled -> answer has no RTX.
+#[test]
+fn rtx_disabled_when_answerer_has_no_rtx() {
+    init_log();
+    init_crypto_default();
+
+    let mut l = build_params(info_span!("L"), &[vp8_rtx(100, 101)]);
+    let mut r = build_params(info_span!("R"), &[vp8(96)]);
+
+    let (offer, _pending) = l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        change.apply().unwrap()
+    });
+
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+
+    // Answerer kept its "no RTX" config despite the offer carrying RTX.
+    let r_vp8 = r
+        .codec_config()
+        .iter()
+        .find(|p| p.spec().codec == Codec::Vp8)
+        .unwrap();
+    assert_eq!(r_vp8.resend(), None);
+
+    let sdp = answer.to_sdp_string();
+    assert!(
+        !sdp.contains("rtx/90000"),
+        "answer must not offer RTX:\n{sdp}"
+    );
+    assert!(
+        !sdp.contains("apt="),
+        "answer must not contain apt=:\n{sdp}"
+    );
+}
+
+// When both sides offer RTX, the answerer adopts the offerer's RTX PT.
+#[test]
+fn rtx_preserved_when_both_have_rtx() {
+    init_log();
+    init_crypto_default();
+
+    let mut l = build_params(info_span!("L"), &[vp8_rtx(100, 101)]);
+    let mut r = build_params(info_span!("R"), &[vp8_rtx(96, 97)]);
+
+    let (offer, _pending) = l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        change.apply().unwrap()
+    });
+
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+
+    let r_vp8 = r
+        .codec_config()
+        .iter()
+        .find(|p| p.spec().codec == Codec::Vp8)
+        .unwrap();
+    // Answerer adopted the offerer's RTX PT.
+    assert_eq!(r_vp8.resend(), Some(101.into()));
+
+    let sdp = answer.to_sdp_string();
+    assert!(sdp.contains("rtx/90000"), "answer must offer RTX:\n{sdp}");
+    assert!(sdp.contains("apt="), "answer must contain apt=:\n{sdp}");
+}
+
+// Answerer disables RTX and enables Opus NACK -> answer carries no RTX and
+// `a=rtcp-fb:<opus-pt> nack`.
+#[test]
+fn answer_disables_rtx_and_keeps_opus_nack() {
+    init_log();
+    init_crypto_default();
+
+    // Offerer offers Opus with NACK (and the default video codecs with RTX).
+    let mut l = build_default(info_span!("L"), |cc| {
+        for p in cc.iter_mut() {
+            if p.spec().codec == Codec::Opus {
+                p.set_fb_nack(true);
+            }
+        }
+    });
+
+    // Answerer disables RTX for all codecs and enables Opus NACK.
+    let mut r = build_default(info_span!("R"), |cc| {
+        for p in cc.iter_mut() {
+            p.set_resend(None);
+            if p.spec().codec == Codec::Opus {
+                p.set_fb_nack(true);
+            }
+        }
+    });
+
+    let (offer, _pending) = l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        change.apply().unwrap()
+    });
+
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+    let sdp = answer.to_sdp_string();
+
+    // No RTX anywhere in the answer.
+    assert!(
+        !sdp.contains("rtx/90000"),
+        "answer must not offer RTX:\n{sdp}"
+    );
+    assert!(
+        !sdp.contains("apt="),
+        "answer must not contain apt=:\n{sdp}"
+    );
+
+    // Opus carries NACK feedback.
+    let opus_pt = sdp
+        .lines()
+        .find_map(|line| {
+            let rest = line.trim_end().strip_prefix("a=rtpmap:")?;
+            let (pt, codec) = rest.split_once(' ')?;
+            codec
+                .to_lowercase()
+                .starts_with("opus")
+                .then(|| pt.to_string())
+        })
+        .expect("opus in answer");
+    assert!(
+        sdp.contains(&format!("a=rtcp-fb:{opus_pt} nack")),
+        "answer must contain opus NACK feedback:\n{sdp}"
+    );
 }
 
 #[test]
@@ -1286,6 +1423,13 @@ fn build_exts(span: Span, exts: ExtensionMap) -> TestRtc {
     TestRtc::new_with_rtc(span, rtc)
 }
 
+// Full default codec set, then tweak.
+fn build_default(span: Span, configure: impl FnOnce(&mut CodecConfig)) -> TestRtc {
+    let mut b = Rtc::builder();
+    configure(b.codec_config());
+    TestRtc::new_with_rtc(span, b.build(Instant::now()))
+}
+
 fn opus(pt: u8) -> PayloadParams {
     PayloadParams::new(
         pt.into(),
@@ -1303,6 +1447,19 @@ fn vp8(pt: u8) -> PayloadParams {
     PayloadParams::new(
         pt.into(),
         None,
+        CodecSpec {
+            codec: Codec::Vp8,
+            channels: None,
+            clock_rate: Frequency::NINETY_KHZ,
+            format: FormatParams::default(),
+        },
+    )
+}
+
+fn vp8_rtx(pt: u8, rtx: u8) -> PayloadParams {
+    PayloadParams::new(
+        pt.into(),
+        Some(rtx.into()),
         CodecSpec {
             codec: Codec::Vp8,
             channels: None,

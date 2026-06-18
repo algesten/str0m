@@ -298,8 +298,8 @@ impl Streams {
             }
         }
 
-        // If we don't have an RTX PT configured, we don't want NACK.
-        let suppress_nack = payload.resend.is_none();
+        // NACK gated on negotiated `nack` feedback; RTX is just the transport (as in libwebrtc).
+        let suppress_nack = !payload.fb_nack;
 
         // If stream already exists, this might only "fill in" the RTX.
         self.expect_stream_rx(ssrc_main, rtx, midrid, suppress_nack);

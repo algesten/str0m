@@ -208,6 +208,12 @@ impl PayloadParams {
         self.resend
     }
 
+    /// Sets the RTX resend payload type. Use `None` to disable RTX, in which
+    /// case retransmissions (if NACK is enabled) are sent in-band on the main SSRC.
+    pub fn set_resend(&mut self, resend: Option<Pt>) {
+        self.resend = resend;
+    }
+
     /// The codec with settings for this group of parameters.
     pub fn spec(&self) -> CodecSpec {
         self.spec
@@ -578,6 +584,14 @@ impl PayloadParams {
         let mut remote_pt = first.pt;
         let mut remote_rtx = first.resend;
 
+        // The RTX payload type (RFC 4588 §8.6) is a media format, and for unicast
+        // the answerer selects formats (RFC 3264 §6.1, Unicast Streams) "from
+        // amongst those listed in the offer". So if we didn't offer RTX for this
+        // codec, don't adopt the remote's RTX PT.
+        if self.resend.is_none() {
+            remote_rtx = None;
+        }
+
         if self.locked {
             // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
             // (receive-direction). We only want to warn if we get receive direction changes.
@@ -645,6 +659,13 @@ impl PayloadParams {
             if let Some(rtx) = remote_rtx {
                 claimed.assert_claim_once(rtx);
             }
+
+            // The answerer removes rtcp-fb attributes it does not support, and per
+            // RFC 4585 §4.2 "both offerer and answerer MUST only use feedback
+            // mechanisms negotiated in this way". So intersect our local `fb_nack`
+            // with what the remote signaled (`a=rtcp-fb <pt> nack`). Runs once at
+            // lock time, when `self.fb_nack` still holds the local desired value.
+            self.fb_nack = self.fb_nack && first.fb_nack;
 
             // This is now locked.
             self.locked = true;
