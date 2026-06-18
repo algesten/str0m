@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
-use crate::crypto::dtls::{DtlsCert, DtlsOutput};
+use crate::crypto::dtls::{DtlsCert, DtlsOutput, ProtocolVersion};
 use crate::crypto::dtls::{DtlsInstance, DtlsProvider, DtlsVersion};
 use crate::crypto::{CryptoError, DtlsError};
 use crate::io::DatagramSend;
@@ -111,6 +111,11 @@ impl Dtls {
     /// Remote fingerprint, if received.
     pub fn remote_fingerprint(&self) -> Option<&Fingerprint> {
         self.remote_fingerprint.as_ref()
+    }
+
+    /// The negotiated DTLS protocol version, or `None` before handshake completion.
+    pub fn protocol_version(&self) -> Option<ProtocolVersion> {
+        self.instance.protocol_version()
     }
 
     /// Set the remote fingerprint (extracted from peer certificate).

@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use str0m_proto::DATAGRAM_MTU_TARGET;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
-use str0m_proto::crypto::dtls::{KeyingMaterial, SrtpProfile};
+use str0m_proto::crypto::dtls::{KeyingMaterial, ProtocolVersion, SrtpProfile};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
 use crate::sys::{Certificate, Dtls, DtlsEvent};
@@ -247,5 +247,9 @@ impl DtlsInstance for WinCryptoDtlsInstance {
 
     fn is_active(&self) -> bool {
         self.dtls.is_client().unwrap_or(false)
+    }
+
+    fn protocol_version(&self) -> Option<ProtocolVersion> {
+        Some(ProtocolVersion::DTLS1_2)
     }
 }

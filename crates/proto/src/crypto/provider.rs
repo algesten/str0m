@@ -189,6 +189,9 @@ pub trait DtlsInstance: CryptoSafe {
 
     /// Return true if the instance is operating in the client role.
     fn is_active(&self) -> bool;
+
+    /// Return the negotiated DTLS protocol version. May return `None` before handshake completion.
+    fn protocol_version(&self) -> Option<ProtocolVersion>;
 }
 
 // ============================================================================
