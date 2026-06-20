@@ -197,6 +197,9 @@ num_id!(SessionId, u64);
 pub struct SeqNo(u64);
 num_id!(SeqNo, u64);
 
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(Mid, Rid, Ssrc, Pt, SessionId, SeqNo);
+
 /// TWCC-specific sequence number.
 ///
 /// Transport-Wide Congestion Control uses its own sequence number space,

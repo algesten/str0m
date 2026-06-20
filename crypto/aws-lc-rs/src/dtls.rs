@@ -30,6 +30,7 @@ impl DtlsProvider for AwsLcRsDtlsProvider {
         cert: &DtlsCert,
         now: Instant,
         dtls_version: DtlsVersion,
+        mtu: Option<usize>,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         let dimpl_cert = dimpl::DtlsCertificate {
             certificate: cert.certificate.clone(),
@@ -39,6 +40,9 @@ impl DtlsProvider for AwsLcRsDtlsProvider {
         // Create a default dimpl Config with AWS-LC-RS crypto provider
         // ICE verifies return routability before DTLS, making server cookies redundant.
         let mut builder = dimpl::Config::builder().use_server_cookie(false);
+        if let Some(mtu) = mtu {
+            builder = builder.mtu(mtu);
+        }
         if self.is_test() {
             // We need the DTLS impl to be deterministic for the BWE tests.
             builder = builder.dangerously_set_rng_seed(42);

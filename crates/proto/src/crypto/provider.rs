@@ -147,11 +147,15 @@ pub trait DtlsProvider: CryptoSafe {
     fn generate_certificate(&self) -> Option<DtlsCert>;
 
     /// Create a new DTLS instance with the given certificate.
+    ///
+    /// mtu: Backends that can size their record layer according to the provided MTU should do so;
+    /// backends that cannot ignore it. `None` means use the backend's default.
     fn new_dtls(
         &self,
         cert: &DtlsCert,
         now: Instant,
         dtls_version: DtlsVersion,
+        mtu: Option<usize>,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError>;
 
     /// Whether the provider is used in a test context.

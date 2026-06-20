@@ -687,6 +687,27 @@ use streams::RtpPacket;
 use streams::StreamPaused;
 use util::InstantExt;
 
+// Identity `drv::ToStatic` (`Static = Self`) for the `Copy` identity types.
+// Used instead of `#[derive(drv::Input)]` because the derive's generated
+// shadow type isn't `Eq`/`Hash`/`Borrow<Self>`, so it can't be a `HashMap`
+// key inside a `#[drv::memo]` projection; `Static = Self` can. `eq_static`
+// defers to each type's own `PartialEq`. Each module invokes this for its
+// own types.
+#[cfg(feature = "drv")]
+macro_rules! drv_identity_copy {
+    ($($t:ty),* $(,)?) => {
+        $(
+            impl drv::ToStatic for $t {
+                type Static = $t;
+                fn to_static(&self) -> $t { *self }
+                fn eq_static(&self, other: &$t) -> bool { self == other }
+            }
+        )*
+    };
+}
+#[cfg(feature = "drv")]
+pub(crate) use drv_identity_copy;
+
 /// Cryptographic provider traits and implementations.
 ///
 /// This module provides the traits for pluggable cryptographic operations
@@ -707,6 +728,15 @@ pub use is::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, Ice
 #[path = "config.rs"]
 mod config_mod;
 pub use config_mod::RtcConfig;
+
+/// Default target MTU used when none is configured.
+pub use io::DATAGRAM_MTU_TARGET;
+/// Upper bound that the target endpoint of [`RtcConfig::set_mtu`] must satisfy.
+pub use io::DATAGRAM_MTU_TARGET_MAX;
+/// Lower bound that the target endpoint of [`RtcConfig::set_mtu`] must satisfy.
+pub use io::DATAGRAM_MTU_TARGET_MIN;
+/// Default warning threshold for over-sized packets.
+pub use io::DATAGRAM_MTU_WARN;
 
 /// Additional configuration.
 pub mod config {
@@ -752,8 +782,11 @@ pub mod rtp {
     pub use crate::rtp_::{AbsCaptureTime, ExtensionValues, UserExtensionValues};
     pub use crate::rtp_::{Extension, ExtensionMap, ExtensionSerializer};
 
+    pub use crate::packet::{
+        Vp8Descriptor, Vp8DescriptorError, Vp8Patch, Vp8PatchBuilder, Vp8PatchError,
+    };
     pub use crate::rtp_::{RtpHeader, SeqNo, Ssrc, VideoOrientation};
-    pub use crate::streams::{RtpPacket, StreamPaused, StreamRx, StreamTx};
+    pub use crate::streams::{RtpPacket, RtpWrite, StreamPaused, StreamRx, StreamTx};
 
     /// Debug output of the unencrypted RTP and RTCP packets.
     ///
@@ -1176,6 +1209,9 @@ impl Rtc {
 
         let session = Session::new(&config);
 
+        // Capture before any partial moves of `config` below.
+        let mtu = config.mtu.clone();
+
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
         let mut ice = IceAgent::with_hmac(local_creds, crypto_provider.sha1_hmac_provider);
         if config.ice_lite {
@@ -1194,6 +1230,8 @@ impl Rtc {
             ice.set_max_stun_retransmits(max_stun_retransmits);
         }
 
+        ice.set_mtu(mtu.clone());
+
         let dtls_cert = config
             .dtls_cert
             .or_else(|| crypto_provider.dtls_provider.generate_certificate())
@@ -1203,7 +1241,7 @@ impl Rtc {
              crypto provider that supports certificate generation.",
             );
 
-        let mut sctp = RtcSctp::new();
+        let mut sctp = RtcSctp::new(*mtu.start());
         if config.snap_enabled {
             sctp.enable_snap();
         }
@@ -1217,6 +1255,7 @@ impl Rtc {
                 crypto_provider.sha256_provider,
                 start,
                 config.dtls_version,
+                mtu,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,
@@ -1902,6 +1941,9 @@ impl Rtc {
                 let mut snapshot = StatsSnapshot::new(now);
                 snapshot.peer_rx = self.peer_bytes_rx;
                 snapshot.peer_tx = self.peer_bytes_tx;
+                let current_round_trip_time = self.ice.nominated_pair_rtt();
+                let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
+                let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
                 snapshot.selected_candidate_pair =
                     self.send_addr.as_ref().map(|s| CandidatePairStats {
                         protocol: s.proto,
@@ -1909,6 +1951,9 @@ impl Rtc {
                         remote: CandidateStats {
                             addr: s.destination,
                         },
+                        current_round_trip_time,
+                        total_round_trip_time,
+                        responses_received,
                     });
                 self.session.visit_stats(now, &mut snapshot);
                 stats.do_handle_timeout(&mut snapshot);

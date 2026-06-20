@@ -1,9 +1,15 @@
 //! Shared protocol types and traits for str0m.
 
-/// Targeted MTU
-pub const DATAGRAM_MTU: usize = 1150;
+/// Default target MTU when no MTU is explicitly configured via [`RtcConfig::set_mtu`].
+pub const DATAGRAM_MTU_TARGET: usize = 1150;
 
-/// Warn if any packet we are about to send is above this size.
+/// Lower bound for the target MTU.
+pub const DATAGRAM_MTU_TARGET_MIN: usize = 576;
+
+/// Upper bound for the target MTU.
+pub const DATAGRAM_MTU_TARGET_MAX: usize = 1500;
+
+/// Default warning threshold for MTU when no warning threshold is configured via [`RtcConfig::set_mtu`].
 pub const DATAGRAM_MTU_WARN: usize = 1280;
 
 mod bandwidth;

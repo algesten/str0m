@@ -1,6 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
+use std::ops::RangeInclusive;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -11,7 +12,7 @@ use crate::Sha1HmacProvider;
 use crate::preference::default_local_preference;
 use crate::stun::{Class as StunClass, Method as StunMethod, StunTiming};
 use crate::stun::{StunMessage, StunPacket, TransId};
-use str0m_proto::{DATAGRAM_MTU, DATAGRAM_MTU_WARN, Id, Transmit};
+use str0m_proto::{DATAGRAM_MTU_TARGET, DATAGRAM_MTU_WARN, Id, Transmit};
 use str0m_proto::{NonCryptographicRng, Pii, Protocol};
 
 use crate::candidate::{Candidate, CandidateKind};
@@ -106,6 +107,10 @@ pub struct IceAgent {
 
     /// Pluggable calculation of local preference.
     local_preference: LocalPreferenceHolder,
+
+    /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
+    /// target; oversized outgoing datagrams above the warn threshold log a warning.
+    mtu: RangeInclusive<usize>,
 }
 
 /// IceAgent contains only static references to thread-safe traits,
@@ -341,7 +346,23 @@ impl IceAgent {
             timing_config: StunTiming::default(),
             local_preference: LocalPreferenceHolder(Arc::new(default_local_preference)),
             sha1_hmac_provider,
+            mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
         }
+    }
+
+    /// Set the UDP datagram MTU range used for sizing internal buffers (target..=warn).
+    pub fn set_mtu(&mut self, mtu: RangeInclusive<usize>) {
+        self.mtu = mtu;
+    }
+
+    /// Target MTU used for sizing outgoing STUN buffers.
+    pub fn mtu(&self) -> usize {
+        *self.mtu.start()
+    }
+
+    /// Threshold above which an outgoing datagram triggers an MTU warning.
+    pub fn mtu_warn(&self) -> usize {
+        *self.mtu.end()
     }
 
     /// Sets the control tie breaker of this agent.
@@ -1265,8 +1286,8 @@ impl IceAgent {
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         let x = self.transmit.pop_front();
         if let Some(x) = &x {
-            if x.contents.len() > DATAGRAM_MTU_WARN {
-                warn!("ICE above MTU {}: {}", DATAGRAM_MTU_WARN, x.contents.len());
+            if x.contents.len() > self.mtu_warn() {
+                warn!("ICE above MTU {}: {}", self.mtu_warn(), x.contents.len());
             }
             trace!("Poll transmit: {:?}", x);
         }
@@ -1601,7 +1622,7 @@ impl IceAgent {
             local_addr, remote_addr, reply
         );
 
-        let mut buf = vec![0_u8; DATAGRAM_MTU];
+        let mut buf = vec![0_u8; self.mtu()];
 
         let sha1_hmac =
             |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
@@ -1632,7 +1653,7 @@ impl IceAgent {
             req.source,
         );
 
-        let mut buf = vec![0_u8; DATAGRAM_MTU];
+        let mut buf = vec![0_u8; self.mtu()];
 
         let sha1_hmac =
             |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
@@ -1707,7 +1728,7 @@ impl IceAgent {
             binding
         );
 
-        let mut buf = vec![0_u8; DATAGRAM_MTU];
+        let mut buf = vec![0_u8; self.mtu()];
 
         let sha1_hmac =
             |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
@@ -1928,6 +1949,54 @@ impl IceAgent {
         self.candidate_pairs
             .iter()
             .find_map(|p| (p.id() == id).then_some(p.prio()))
+    }
+
+    fn nominated_pair(&self) -> Option<&CandidatePair> {
+        let id = self.nominated_send?;
+        self.candidate_pairs.iter().find(|p| p.id() == id)
+    }
+
+    /// The round-trip time of the most recent successful STUN binding
+    /// transaction on the nominated candidate pair.
+    ///
+    /// Returns `None` if there is no nominated pair, or no successful
+    /// binding response has been recorded on it.
+    ///
+    /// This is the ICE-level equivalent of
+    /// [`RTCIceCandidatePairStats.currentRoundTripTime`][1] and is updated
+    /// on every STUN keepalive/consent exchange — useful for measuring RTT
+    /// on receive-only endpoints where RTP-based RTT estimates aren't
+    /// available.
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-currentroundtriptime
+    pub fn nominated_pair_rtt(&self) -> Option<Duration> {
+        self.nominated_pair().and_then(|p| p.last_successful_rtt())
+    }
+
+    /// Sum of all RTTs measured from successful STUN binding transactions
+    /// on the nominated candidate pair over its lifetime.
+    ///
+    /// Spec equivalent of [`RTCIceCandidatePairStats.totalRoundTripTime`][1].
+    /// Divide by [`nominated_pair_responses_received`] to get the average.
+    ///
+    /// Returns `None` if there is no nominated pair.
+    ///
+    /// [`nominated_pair_responses_received`]: Self::nominated_pair_responses_received
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-totalroundtriptime
+    pub fn nominated_pair_total_rtt(&self) -> Option<Duration> {
+        self.nominated_pair().map(|p| p.total_round_trip_time())
+    }
+
+    /// Total number of STUN binding responses received on the nominated
+    /// candidate pair over its lifetime.
+    ///
+    /// Spec equivalent of [`RTCIceCandidatePairStats.responsesReceived`][1].
+    ///
+    /// Returns `None` if there is no nominated pair.
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcicecandidatepairstats-responsesreceived
+    pub fn nominated_pair_responses_received(&self) -> Option<u64> {
+        self.nominated_pair().map(|p| p.responses_received())
     }
 
     fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
@@ -2624,7 +2693,7 @@ mod test {
     /// Serializing will calculate a message integrity for it. You can then re-parse to get a message
     /// that contains that correct integrity value.
     fn serialize_stun_msg(msg: StunMessage<'_>, password: &str) -> Vec<u8> {
-        let mut buf = vec![0_u8; DATAGRAM_MTU];
+        let mut buf = vec![0_u8; DATAGRAM_MTU_TARGET];
 
         let sha1_hmac =
             |key: &[u8], payloads: &[&[u8]]| DefaultSha1HmacProvider.sha1_hmac(key, payloads);
@@ -2634,5 +2703,16 @@ mod test {
         buf.truncate(n);
 
         buf
+    }
+
+    #[test]
+    fn set_mtu_updates_mtu() {
+        let mut agent = IceAgent::new(IceCreds::new());
+        assert_eq!(agent.mtu(), DATAGRAM_MTU_TARGET);
+        assert_eq!(agent.mtu_warn(), DATAGRAM_MTU_WARN);
+
+        agent.set_mtu(900..=1280);
+        assert_eq!(agent.mtu(), 900);
+        assert_eq!(agent.mtu_warn(), 1280);
     }
 }

@@ -3,7 +3,7 @@ use crate::format::Vp9PacketizerMode;
 use crate::media::ToPayload;
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::Frequency;
-use crate::streams::StreamTx;
+use crate::streams::{RtpWrite, StreamTx};
 
 use super::PacketError;
 use super::{CodecPacketizer, Packetizer};
@@ -48,7 +48,7 @@ impl Payloader {
             ..
         } = to_payload;
 
-        let chunks = self.pack.packetize(mtu, &data)?;
+        let chunks = self.pack.packetize(mtu, data.as_ref())?;
         let len = chunks.len();
 
         for (idx, data) in chunks.into_iter().enumerate() {
@@ -78,15 +78,17 @@ impl Payloader {
             }
 
             stream.write_rtp(
-                pt,
-                seq_no,
-                rtp_time.rebase(self.clock_rate).numer() as u32,
-                wallclock,
-                marker,
-                pkt_ext_vals,
-                nackable,
-                data,
-            )?;
+                RtpWrite::new(
+                    pt,
+                    seq_no,
+                    rtp_time.rebase(self.clock_rate).numer() as u32,
+                    wallclock,
+                    data,
+                )
+                .marker(marker)
+                .ext_vals(pkt_ext_vals)
+                .nackable(nackable),
+            );
         }
 
         Ok(())

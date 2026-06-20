@@ -1,12 +1,11 @@
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::error::PacketError;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
-use crate::io::DATAGRAM_MTU_WARN;
 use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
 use crate::media::Media;
@@ -14,6 +13,7 @@ use crate::media::MediaKind;
 use crate::pacer::QueuePriority;
 use crate::pacer::QueueSnapshot;
 use crate::pacer::QueueState;
+use crate::packet::Vp8Patch;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, Descriptions, Extension, ExtensionMap, ExtensionValues, Frequency};
 use crate::rtp_::{MAX_BLANK_PADDING_PAYLOAD_SIZE, Sdes, SdesType};
@@ -134,10 +134,133 @@ pub struct StreamTx {
 
     // Same as `remote_acked_ssrc`, but for the RTX SSRC
     remote_acked_rtx_ssrc: bool,
+
+    /// MTU warn threshold; used to cap spurious-padding RTX cache lookups.
+    mtu_warn: usize,
+}
+
+/// RTP packet data to enqueue on a direct RTP send stream.
+///
+/// The payload is the RTP payload only, without the RTP header.
+///
+/// Optional RTP fields default to the common unmarked non-nackable packet with
+/// no header extension values, no CSRC entries and no VP8 rewrite.
+#[derive(Debug)]
+pub struct RtpWrite {
+    pt: Pt,
+    seq_no: SeqNo,
+    time: u32,
+    wallclock: Instant,
+    marker: bool,
+    ext_vals: ExtensionValues,
+    nackable: bool,
+    payload: Arc<[u8]>,
+    csrc_count: usize,
+    csrc: [u32; 15],
+    vp8_patch: Option<Vp8Patch>,
+}
+
+impl RtpWrite {
+    /// Create a direct RTP write command.
+    ///
+    /// The `payload` argument is expected to be only the RTP payload, not the
+    /// RTP packet header.
+    ///
+    /// * `pt` Payload type. Declared in the [`Media`][crate::media::Media] this
+    ///        encoded stream belongs to.
+    /// * `seq_no` Sequence number to use for this packet.
+    /// * `time` Time in whatever the clock rate is for the media in question
+    ///          (normally 90_000 for video and 48_000 for audio).
+    /// * `wallclock` Real world time that corresponds to the media time in the
+    ///               RTP packet. For an SFU, this can be hard to know because
+    ///               RTP packets typically only contain the media time (RTP
+    ///               time). In the simplest SFU setup, the wallclock could
+    ///               simply be the arrival time of the incoming RTP data. For
+    ///               better synchronization the SFU probably needs to weigh in
+    ///               clock drifts and data provided via the statistics, receiver
+    ///               reports etc.
+    /// * `payload` RTP packet payload, without header.
+    ///
+    /// Optional fields default to an unmarked packet with no header extension
+    /// values, no CSRC entries, no VP8 patch and no NACK support.
+    /// [`RtpWrite::marker`] for video frame boundaries,
+    /// [`RtpWrite::ext_vals`] for RTP header extension values,
+    /// [`RtpWrite::nackable`] for packets that may answer incoming NACKs,
+    /// [`RtpWrite::csrc`] for contributing source identifiers,
+    /// [`RtpWrite::vp8_patch`] to apply a prevalidated VP8 payload descriptor patch during RTP serialization.
+    pub fn new(
+        pt: Pt,
+        seq_no: SeqNo,
+        time: u32,
+        wallclock: Instant,
+        payload: impl Into<Arc<[u8]>>,
+    ) -> Self {
+        Self {
+            pt,
+            seq_no,
+            time,
+            wallclock,
+            marker: false,
+            ext_vals: ExtensionValues::default(),
+            nackable: false,
+            payload: payload.into(),
+            csrc_count: 0,
+            csrc: [0; 15],
+            vp8_patch: None,
+        }
+    }
+
+    /// Set the RTP marker bit.
+    pub fn marker(mut self, marker: bool) -> Self {
+        self.marker = marker;
+        self
+    }
+
+    /// Set RTP header extension values.
+    pub fn ext_vals(mut self, ext_vals: ExtensionValues) -> Self {
+        self.ext_vals = ext_vals;
+        self
+    }
+
+    /// Set whether this RTP packet should respond to incoming NACKs.
+    pub fn nackable(mut self, nackable: bool) -> Self {
+        self.nackable = nackable;
+        self
+    }
+
+    /// Set contributing source identifiers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if more than 15 entries are supplied.
+    pub fn csrc(mut self, csrc: &[u32]) -> Self {
+        assert!(csrc.len() <= 15, "CSRC count must be <= 15");
+
+        self.csrc = [0; 15];
+        self.csrc[..csrc.len()].copy_from_slice(csrc);
+        self.csrc_count = csrc.len();
+        self
+    }
+
+    /// Apply a prevalidated VP8 payload descriptor patch during RTP serialization.
+    ///
+    /// Build the patch with [`Vp8Descriptor::patch`][crate::rtp::Vp8Descriptor::patch]
+    /// when the caller already parsed the VP8 payload descriptor before
+    /// constructing this write command.
+    pub fn vp8_patch(mut self, patch: Vp8Patch) -> Self {
+        self.vp8_patch = Some(patch);
+        self
+    }
 }
 
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid, enable_stats: bool) -> Self {
+    pub(crate) fn new(
+        ssrc: Ssrc,
+        rtx: Option<Ssrc>,
+        midrid: MidRid,
+        enable_stats: bool,
+        mtu_warn: usize,
+    ) -> Self {
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
         StreamTx {
@@ -167,6 +290,7 @@ impl StreamTx {
             pt_for_padding: None,
             remote_acked_ssrc: false,
             remote_acked_rtx_ssrc: false,
+            mtu_warn,
         }
     }
 
@@ -237,60 +361,22 @@ impl StreamTx {
 
     /// Write RTP packet to a send stream.
     ///
-    /// The `payload` argument is expected to be only the RTP payload, not the RTP packet header.
-    ///
-    /// * `pt` Payload type. Declared in the Media this encoded stream belongs to.
-    /// * `seq_no` Sequence number to use for this packet.
-    /// * `time` Time in whatever the clock rate is for the media in question (normally 90_000 for video
-    ///          and 48_000 for audio).
-    /// * `wallclock` Real world time that corresponds to the media time in the RTP packet. For an SFU,
-    ///               this can be hard to know, since RTP packets typically only contain the media
-    ///               time (RTP time). In the simplest SFU setup, the wallclock could simply be the
-    ///               arrival time of the incoming RTP data. For better synchronization the SFU
-    ///               probably needs to weigh in clock drifts and data provided via the statistics, receiver
-    ///               reports etc.
-    /// * `marker` Whether to "mark" this packet. This is usually done for the last packet belonging to
-    ///            a series of RTP packets constituting the same frame in a video stream.
-    /// * `ext_vals` The RTP header extension values to set. The values must be mapped in the session,
-    ///              or they will not be set on the RTP packet.
-    /// * `nackable` Whether we should respond this packet for incoming NACK from the remote peer. For
-    ///              audio this is always false. For temporal encoded video, some packets are discardable
-    ///              and this flag should be set accordingly.
-    /// * `payload` RTP packet payload, without header.
-    #[allow(clippy::too_many_arguments)]
-    pub fn write_rtp(
-        &mut self,
-        pt: Pt,
-        seq_no: SeqNo,
-        time: u32,
-        wallclock: Instant,
-        marker: bool,
-        ext_vals: ExtensionValues,
-        nackable: bool,
-        payload: Vec<u8>,
-    ) -> Result<(), PacketError> {
-        self.write_rtp_with_csrc(
-            pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload, 0, [0; 15],
-        )
-    }
+    /// The write command carries the RTP payload and optional RTP metadata.
+    pub fn write_rtp(&mut self, rtp: RtpWrite) {
+        let RtpWrite {
+            pt,
+            seq_no,
+            time,
+            wallclock,
+            marker,
+            ext_vals,
+            nackable,
+            payload,
+            csrc_count,
+            csrc,
+            vp8_patch,
+        } = rtp;
 
-    /// Like [`Self::write_rtp`], but with an additional `csrc` parameter for
-    /// contributing source identifiers (up to 15 per RFC 3550).
-    #[allow(clippy::too_many_arguments)]
-    pub fn write_rtp_with_csrc(
-        &mut self,
-        pt: Pt,
-        seq_no: SeqNo,
-        time: u32,
-        wallclock: Instant,
-        marker: bool,
-        ext_vals: ExtensionValues,
-        nackable: bool,
-        payload: Vec<u8>,
-        csrc_count: usize,
-        csrc: [u32; 15],
-    ) -> Result<(), PacketError> {
-        assert!(csrc_count <= 15, "CSRC count must be <= 15");
         let first_call = self.rtp_and_wallclock.is_none();
 
         if first_call && seq_no.roc() > 0 {
@@ -323,6 +409,7 @@ impl StreamTx {
             time: media_time,
             header,
             payload,
+            vp8_patch,
             nackable,
             // The overall idea for str0m is to only drive time forward from handle_input. If we
             // used a "now" argument to write_rtp(), we effectively get a second point that also need
@@ -338,8 +425,6 @@ impl StreamTx {
         };
 
         self.send_queue.push(packet);
-
-        Ok(())
     }
 
     fn padding_enabled(&self) -> bool {
@@ -504,7 +589,11 @@ impl StreamTx {
         let body_len = match next.kind {
             NextPacketKind::Regular | NextPacketKind::Resend(_) => {
                 let body_len = pkt.payload.len();
-                body_out[..body_len].copy_from_slice(&pkt.payload);
+                if let Some(patch) = pkt.vp8_patch.as_ref() {
+                    patch.copy_to(pkt.payload.as_ref(), &mut body_out[..body_len]);
+                } else {
+                    body_out[..body_len].copy_from_slice(pkt.payload.as_ref());
+                }
 
                 // pad for SRTP
                 let pad_len = RtpHeader::pad_packet(
@@ -713,7 +802,7 @@ impl StreamTx {
             if self.padding > MIN_SPURIOUS_PADDING_SIZE {
                 // Find a historic packet that is smaller than this max size. The max size
                 // is a headroom since we can accept slightly larger padding than asked for.
-                let max_size = (self.padding * 2).min(DATAGRAM_MTU_WARN - MAX_RTP_OVERHEAD);
+                let max_size = (self.padding * 2).min(self.mtu_warn - MAX_RTP_OVERHEAD);
 
                 let Some(pkt) = self.rtx_cache.get_cached_packet_smaller_than(max_size) else {
                     // Couldn't find spurious packet, try a blank packet instead.

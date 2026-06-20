@@ -100,6 +100,9 @@ pub struct FormatParams {
     pub sprop_max_don_diff: Option<u16>,
 }
 
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(FormatParams);
+
 impl FormatParams {
     /// Parse an fmtp line to create a FormatParams.
     ///

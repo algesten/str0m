@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.19.0"
+version = "0.20.0"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -39,26 +39,27 @@ exclude = ["crates/fuzz"]
 
 [workspace.dependencies]
 # Internal crates
-str0m = { version = "0.19.0", path = ".", default-features = false }
-str0m-proto = { version = "0.5.0", path = "crates/proto", default-features = false }
-is = { version = "0.9.0", path = "crates/is", default-features = false }
+str0m = { version = "0.20.0", path = ".", default-features = false }
+str0m-proto = { version = "0.5.1", path = "crates/proto", default-features = false }
+is = { version = "0.9.1", path = "crates/is", default-features = false }
 str0m-netem = { version = "0.2.0", path = "crates/netem" }
-str0m-aws-lc-rs = { version = "0.4.0", path = "crypto/aws-lc-rs" }
-str0m-rust-crypto = { version = "0.4.0", path = "crypto/rust-crypto" }
-str0m-openssl = { version = "0.4.0", path = "crypto/openssl" }
-str0m-apple-crypto = { version = "0.4.0", path = "crypto/apple-crypto" }
-str0m-wincrypto = { version = "0.6.0", path = "crypto/wincrypto" }
+str0m-aws-lc-rs = { version = "0.4.1", path = "crypto/aws-lc-rs" }
+str0m-rust-crypto = { version = "0.4.1", path = "crypto/rust-crypto" }
+str0m-openssl = { version = "0.4.1", path = "crypto/openssl" }
+str0m-apple-crypto = { version = "0.4.1", path = "crypto/apple-crypto" }
+str0m-wincrypto = { version = "0.6.1", path = "crypto/wincrypto" }
 _str0m_test = { path = "crates/_str0m_test" }
 
 # Core dependencies
 tracing = "0.1.37"
 fastrand = "2.0.1"
-sctp-proto = "0.9.0"
+sctp-proto = "0.9.1"
 combine = "4.6.6"
 subtle = "2.0.0"
 arrayvec = "0.7.6"
 serde = { version = "1.0.152", features = ["derive"] }
-dimpl = { version = "0.6.1", default-features = false }
+dimpl = { version = "0.6.2", default-features = false }
+drv = { version = "0.4.3" }
 time = "0.3"
 base64ct = "1"
 
@@ -118,6 +119,13 @@ examples = ["rouille/rustls"]
 _internal_dont_use_log_stats = []
 _internal_test_exports = ["str0m-proto/_internal_test_exports", "is/_internal_test_exports"]
 
+# Derives `drv::Input` (drv's memoization cache-key plumbing) on the public
+# identity types — Mid, Rid, Ssrc, Pt, SessionId, SeqNo, Direction, MediaKind,
+# Frequency, Codec, CodecSpec, FormatParams, VideoOrientation, and the H265
+# profile types — so downstream `#[drv::memo]` queries can take them by value.
+# Off by default.
+drv = ["dep:drv"]
+
 [dependencies]
 tracing.workspace = true
 fastrand.workspace = true
@@ -134,6 +142,8 @@ dimpl.workspace = true
 
 str0m-proto = { workspace = true, features = ["dtls"] }
 is.workspace = true
+
+drv = { workspace = true, optional = true }
 
 # Crypto providers
 str0m-aws-lc-rs = { workspace = true, optional = true }

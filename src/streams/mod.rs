@@ -1,11 +1,13 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self};
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media, SenderFeedback};
+use crate::packet::Vp8Patch;
 use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Bitrate, Pt};
@@ -15,7 +17,7 @@ use crate::rtp_::{Rtcp, RtpHeader};
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
-pub use self::send::StreamTx;
+pub use self::send::{RtpWrite, StreamTx};
 
 mod receive;
 pub(crate) mod register;
@@ -61,7 +63,9 @@ pub struct RtpPacket {
     pub header: RtpHeader,
 
     /// RTP payload. This contains no header.
-    pub payload: Vec<u8>,
+    pub payload: Arc<[u8]>,
+
+    vp8_patch: Option<Vp8Patch>,
 
     /// str0m server timestamp.
     ///
@@ -112,7 +116,8 @@ impl RtpPacket {
                 payload_type: BLANK_PACKET_DEFAULT_PT,
                 ..Default::default()
             },
-            payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
+            payload: Arc::default(), // This payload is never used. See RtpHeader::create_padding_packet
+            vp8_patch: None,
             nackable: false,
             last_sender_info: None,
             timestamp: already_happened(),
@@ -154,6 +159,10 @@ pub(crate) struct Streams {
     /// Whether periodic statistics reports are expected to be generated. This informs us on
     /// whether we should be holding onto data needed for those reports or not.
     enable_stats: bool,
+
+    /// Threshold above which an outgoing RTP packet triggers an MTU warning. Used as a
+    /// hard cap when selecting RTX cache entries for spurious padding.
+    mtu_warn: usize,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -170,7 +179,7 @@ struct RxLookup {
 }
 
 impl Streams {
-    pub(crate) fn new(enable_stats: bool) -> Self {
+    pub(crate) fn new(enable_stats: bool, mtu_warn: usize) -> Self {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
@@ -180,6 +189,7 @@ impl Streams {
             mids_to_report: Vec::with_capacity(10),
             any_nack_active: None,
             enable_stats,
+            mtu_warn,
         }
     }
 
@@ -334,7 +344,7 @@ impl Streams {
     ) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid, self.enable_stats))
+            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid, self.enable_stats, self.mtu_warn))
     }
 
     pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {
@@ -462,6 +472,7 @@ impl Streams {
         if now > self.rx_lookup_at() {
             self.rx_lookup
                 .retain(|_, l| now - l.last_used <= RX_LOOKUP_EXPIRY);
+            self.last_rx_lookup_cleanup = now;
         }
     }
 

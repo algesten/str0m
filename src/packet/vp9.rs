@@ -68,7 +68,7 @@ pub struct Vp9CodecExtra {
     /// // We want to receive S1T2 layer.
     /// let (target_spatial, target_temporal) = (1u8, 2u8);
     ///
-    /// let mut media_data: MediaData = todo!();
+    /// let media_data: MediaData = todo!();
     ///
     /// if let CodecExtra::Vp9(vp9_extra) = media_data.codec_extra {
     ///     // Try to get current `temporal layer`. If `None` there is no SVC.
@@ -80,9 +80,8 @@ pub struct Vp9CodecExtra {
     ///             // border of data for the target `spatial layer`.
     ///             vp9_extra.layers_scheme[target_spatial as usize],
     ///         ) {
-    ///             // Cut off unwanted data of `spatial layer`s with spatial
-    ///             // indeces higher than `target_spatial`.
-    ///             media_data.data.drain(end_of_target_layer..);
+    ///             // Keep only the bytes for spatial layers up to `target_spatial`.
+    ///             let data = &media_data.data[..end_of_target_layer];
     ///         }
     ///     }
     /// }
@@ -1542,5 +1541,28 @@ mod test {
         assert!(!detect_vp9_keyframe(&[0xEC])); // I=1, P=1, L=1, B=1, E=1
         assert!(!detect_vp9_keyframe(&[0x40])); // P=1 only
         assert!(!detect_vp9_keyframe(&[0xD5])); // I=1, P=1, F=1, E=1, Z=1
+    }
+
+    #[test]
+    fn packetize_respects_mtu() -> Result<(), PacketError> {
+        // VP9 profile 0 keyframe header followed by payload bytes.
+        let mut payload = vec![0x82u8];
+        payload.extend(std::iter::repeat(0xABu8).take(2000));
+        for &mtu in &[100usize, 300, 600, 1200] {
+            let mut pck = Vp9Packetizer {
+                initial_picture_id: 100,
+                ..Default::default()
+            };
+            let pkts = pck.packetize(mtu, &payload)?;
+            assert!(!pkts.is_empty(), "VP9 produced no packets at mtu {mtu}");
+            for (i, pkt) in pkts.iter().enumerate() {
+                assert!(
+                    pkt.len() <= mtu,
+                    "VP9 packet {i} size {} > mtu {mtu}",
+                    pkt.len()
+                );
+            }
+        }
+        Ok(())
     }
 }

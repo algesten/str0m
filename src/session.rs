@@ -1,4 +1,6 @@
 use std::collections::{HashMap, VecDeque};
+use std::ops::RangeInclusive;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::Event;
@@ -10,7 +12,7 @@ use crate::crypto::dtls::SrtpProfile;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
-use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN, DatagramSend};
+use crate::io::DatagramSend;
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
@@ -97,6 +99,10 @@ pub(crate) struct Session {
     // Whether we sent a single outgoing RTP packet.
     packet_first_sent: bool,
 
+    // Total RTP payload bytes for media, including retransmissions.
+    media_bytes_rx: u64,
+    media_bytes_tx: u64,
+
     pub ice_lite: bool,
 
     /// Whether we are running in RTP-mode.
@@ -119,6 +125,10 @@ pub(crate) struct Session {
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
     // Stored as (sender_ssrc, media_ssrc, payload) tuples.
     pending_app_feedback: VecDeque<(Ssrc, Ssrc, Vec<u8>)>,
+
+    /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
+    /// target; oversized outgoing datagrams above the warn threshold log a warning.
+    mtu: RangeInclusive<usize>,
 
     #[cfg(feature = "_internal_test_exports")]
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
@@ -146,7 +156,7 @@ impl Session {
         Session {
             id,
             medias: vec![],
-            streams: Streams::new(enable_stats),
+            streams: Streams::new(enable_stats, *config.mtu.end()),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
@@ -174,6 +184,8 @@ impl Session {
             poll_packet_buf: vec![0; 2000],
             pending_packet: None,
             packet_first_sent: false,
+            media_bytes_rx: 0,
+            media_bytes_tx: 0,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
             vp9_packetizer_mode: config.vp9_packetizer_mode,
@@ -186,9 +198,18 @@ impl Session {
                 None
             },
             pending_app_feedback: VecDeque::new(),
+            mtu: config.mtu.clone(),
             #[cfg(feature = "_internal_test_exports")]
             pending_probe: None,
         }
+    }
+
+    fn mtu(&self) -> usize {
+        *self.mtu.start()
+    }
+
+    fn mtu_warn(&self) -> usize {
+        *self.mtu.end()
     }
 
     pub fn id(&self) -> SessionId {
@@ -306,7 +327,7 @@ impl Session {
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
         self.last_twcc = now;
-        let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
+        let mut twcc = self.twcc_rx_register.build_report(self.mtu() - 100)?;
 
         // These SSRC are on media level, but twcc is on session level,
         // we fill in the first discovered media SSRC in each direction.
@@ -494,8 +515,11 @@ impl Session {
             return;
         }
 
-        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
-            Some(v) => v,
+        // The decrypted plaintext borrows from the SRTP scratch buffer. We
+        // narrow it down to the actual payload via slicing only, then build
+        // the final `Arc<[u8]>` in a single allocation at the end.
+        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+            Some(d) => d,
             None => {
                 trace!(
                     "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
@@ -511,14 +535,20 @@ impl Session {
             }
         };
 
-        if header.has_padding && !RtpHeader::unpad_payload(&mut data) {
-            // Unpadding failed. Broken data?
-            trace!("unpadding of unprotected payload failed");
-            return;
-        }
+        let data = if header.has_padding {
+            match RtpHeader::unpad_payload(data) {
+                Some(d) => d,
+                None => {
+                    trace!("unpadding of unprotected payload failed");
+                    return;
+                }
+            }
+        } else {
+            data
+        };
 
         if let Some(raw_packets) = &mut self.raw_packets {
-            raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.clone())));
+            raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.to_vec())));
         }
 
         // Mark as received for TWCC purposes
@@ -538,7 +568,7 @@ impl Session {
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
-        let receipt = if is_repair {
+        let (receipt, data) = if is_repair {
             // Drop RTX packets that are just empty padding. The payload here
             // is empty because we would have done RtpHeader::unpad_payload above.
             // For unpausing, it's enough with the stream.update() already done above.
@@ -546,8 +576,8 @@ impl Session {
                 return;
             }
 
-            // Rewrite the header, and removes the resent seq_no from the body.
-            stream.un_rtx(&mut header, &mut data, pt);
+            // Rewrite the header, and strip the resent seq_no prefix from the body.
+            let data = stream.un_rtx(&mut header, data, pt);
 
             let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
 
@@ -560,11 +590,12 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            stream.update_register(now, &header, clock_rate, false, seq_no)
+            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no);
+            (receipt, data)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.
-            receipt_outer
+            (receipt_outer, data)
         };
 
         // Probe packets (SSRC 0) contain only padding, no real media to process
@@ -572,7 +603,13 @@ impl Session {
             return;
         }
 
-        let packet = stream.handle_rtp(now, header, data, seq_no, receipt.time);
+        self.media_bytes_rx += data.len() as u64;
+
+        // One-shot conversion to Arc<[u8]>: a single allocation that copies
+        // only the trimmed payload bytes out of the SRTP scratch buffer.
+        let payload: Arc<[u8]> = Arc::from(data);
+
+        let packet = stream.handle_rtp(now, header, payload, seq_no, receipt.time);
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().
@@ -776,8 +813,8 @@ impl Session {
             // In RTP mode we trust the API user feeds the RTP packet sizes they
             // need for the MTU they are targeting. This warning is only for when
             // str0m does the RTP packetization.
-            if !self.rtp_mode && x.len() > DATAGRAM_MTU_WARN {
-                warn!("RTP above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
+            if !self.rtp_mode && x.len() > self.mtu_warn() {
+                warn!("RTP above MTU {}: {}", self.mtu_warn(), x.len());
             }
         }
 
@@ -801,8 +838,8 @@ impl Session {
     fn poll_standalone_feedback(&mut self) -> Option<net::DatagramSend> {
         let fb = self.standalone_feedback_tx.pop_front()?;
 
-        const ENCRYPTABLE_MTU: usize = (DATAGRAM_MTU - SRTCP_OVERHEAD) & !3;
-        let mut data = vec![0_u8; ENCRYPTABLE_MTU];
+        let encryptable_mtu: usize = (self.mtu() - SRTCP_OVERHEAD) & !3;
+        let mut data = vec![0_u8; encryptable_mtu];
 
         // Extract SSRCs from the feedback message.
         let (sender_ssrc, media_ssrc) = match &fb {
@@ -858,10 +895,10 @@ impl Session {
         }
 
         // Round to nearest multiple of 4 bytes.
-        const ENCRYPTABLE_MTU: usize = (DATAGRAM_MTU - SRTCP_OVERHEAD) & !3;
-        assert!(ENCRYPTABLE_MTU % 4 == 0);
+        let encryptable_mtu: usize = (self.mtu() - SRTCP_OVERHEAD) & !3;
+        assert!(encryptable_mtu % 4 == 0);
 
-        let mut data = vec![0_u8; ENCRYPTABLE_MTU];
+        let mut data = vec![0_u8; encryptable_mtu];
 
         let mut raw_packets = self.raw_packets.as_mut();
         let output = move |fb| {
@@ -882,7 +919,7 @@ impl Session {
         let protected = srtp.protect_rtcp(&data);
 
         assert!(
-            protected.len() < DATAGRAM_MTU,
+            protected.len() < self.mtu(),
             "Encrypted SRTCP should be less than MTU"
         );
 
@@ -952,6 +989,10 @@ impl Session {
         // Update BWE subsystem
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.on_media_sent(payload_size.into(), is_padding, now);
+        }
+
+        if !is_padding && !header.ssrc.is_probe() {
+            self.media_bytes_tx += payload_size as u64;
         }
 
         if !self.packet_first_sent {
@@ -1033,8 +1074,8 @@ impl Session {
             stream.visit_stats(snapshot, now);
         }
 
-        snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
-        snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
+        snapshot.tx = self.media_bytes_tx;
+        snapshot.rx = self.media_bytes_rx;
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
 
         snapshot.egress_loss_fraction = self.twcc_tx_register.loss(Duration::from_secs(1), now);
@@ -1109,11 +1150,13 @@ impl Session {
     }
 
     fn do_payload(&mut self) -> Result<(), RtcError> {
+        let mtu = self.mtu();
         for m in &mut self.medias {
             m.do_payload(
                 &mut self.streams,
                 &self.codec_config,
                 self.vp9_packetizer_mode,
+                mtu,
             )?;
         }
 
@@ -1195,5 +1238,23 @@ fn update_max_seq(map: &mut HashMap<Ssrc, SeqNo>, ssrc: Ssrc, seq_no: SeqNo) {
     let current = map.entry(ssrc).or_insert(seq_no);
     if seq_no > *current {
         *current = seq_no;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RtcConfig;
+    use crate::io::DATAGRAM_MTU_TARGET;
+
+    #[test]
+    fn session_mtu_matches_config() {
+        let cfg = RtcConfig::default();
+        let s = Session::new(&cfg);
+        assert_eq!(s.mtu(), DATAGRAM_MTU_TARGET);
+
+        let cfg = RtcConfig::default().set_mtu(900..=1280);
+        let s = Session::new(&cfg);
+        assert_eq!(s.mtu(), 900);
     }
 }

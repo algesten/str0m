@@ -11,3 +11,4 @@ fuzz/artifacts
 dimpl
 webrtc
 *.pcap
+.wt

@@ -1233,6 +1233,9 @@ pub enum VideoOrientation {
     Deg270 = 1,
 }
 
+#[cfg(feature = "drv")]
+crate::drv_identity_copy!(VideoOrientation);
+
 impl From<u8> for VideoOrientation {
     fn from(value: u8) -> Self {
         match value {

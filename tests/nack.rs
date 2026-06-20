@@ -6,7 +6,7 @@ use str0m::RtcError;
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
-use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
+use str0m::rtp::{ExtensionValues, RawPacket, RtpWrite, SeqNo, Ssrc};
 
 mod common;
 use common::{connect_l_r, init_crypto_default, init_log, progress};
@@ -49,7 +49,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
-    let to_write = &[0x1, 0x2, 0x3, 0x4];
+    let to_write = [0x1, 0x2, 0x3, 0x4];
     let num_packets: usize = 1000;
 
     // write all packets num_packets
@@ -62,20 +62,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
         let time = (index * 1000 + 47_000_000) as u32;
         let seq_no = (47_000 + index as u64).into();
 
-        let exts = ExtensionValues::default();
-
-        stream
-            .write_rtp(
-                pt,
-                seq_no,
-                time,
-                wallclock,
-                false,
-                exts,
-                true,
-                to_write.to_vec(),
-            )
-            .expect("clean write");
+        stream.write_rtp(RtpWrite::new(pt, seq_no, time, wallclock, to_write).nackable(true));
 
         // Disable loss near start and end to let retransmission algo stabilize
         // (see MISORDER_DELAY in register.rs)
@@ -259,18 +246,11 @@ pub fn nack_delay() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        true,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write");
+                stream.write_rtp(
+                    RtpWrite::new(pt, seq_no, time, wallclock, packet)
+                        .ext_vals(exts)
+                        .nackable(true),
+                );
             }
         }
 
