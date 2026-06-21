@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Negotiate SCTP max message size for data channels #852
   * Fix `Simulcast::add_recv_layer` to push to recv instead of send #968
   * Accept any non-empty SDP session name (`s=`), not just `s=-` (RFC 8866 section 5.3)
 
