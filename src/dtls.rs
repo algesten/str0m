@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
-use crate::crypto::dtls::{DtlsCert, DtlsOutput};
+use crate::crypto::dtls::{DtlsCert, DtlsOutput, ProtocolVersion};
 use crate::crypto::dtls::{DtlsInstance, DtlsProvider, DtlsVersion};
 use crate::crypto::{CryptoError, DtlsError};
 use crate::io::DatagramSend;
@@ -113,6 +113,11 @@ impl Dtls {
         self.remote_fingerprint.as_ref()
     }
 
+    /// The negotiated DTLS protocol version, or `None` before handshake completion.
+    pub fn protocol_version(&self) -> Option<ProtocolVersion> {
+        self.instance.protocol_version()
+    }
+
     /// Set the remote fingerprint (extracted from peer certificate).
     pub fn set_remote_fingerprint(&mut self, fingerprint: Fingerprint) {
         self.remote_fingerprint = Some(fingerprint);
@@ -166,6 +171,13 @@ impl Dtls {
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), DtlsError> {
         self.instance
             .handle_timeout(now)
+            .map_err(|e| DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))))
+    }
+
+    /// Initiate graceful shutdown by sending a close_notify alert.
+    pub fn close(&mut self) -> Result<(), DtlsError> {
+        self.instance
+            .close()
             .map_err(|e| DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))))
     }
 }

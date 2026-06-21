@@ -12,6 +12,7 @@ pub mod dtls {
 
     pub use dimpl::DtlsCertificate as DtlsCert;
     pub use dimpl::KeyingMaterial;
+    pub use dimpl::ProtocolVersion;
     pub use dimpl::SrtpProfile;
     // Note: dimpl::Error is renamed to DtlsImplError to avoid conflict with str0m's DtlsError
     pub use super::provider::DtlsVersion;
