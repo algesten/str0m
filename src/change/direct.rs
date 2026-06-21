@@ -4,6 +4,7 @@ use crate::Rtc;
 use crate::RtcError;
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
+use crate::crypto::dtls::ProtocolVersion;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
@@ -98,6 +99,15 @@ impl<'a> DirectApi<'a> {
     /// Returns a reference to the remote DTLS fingerprint used by this peer connection.
     pub fn remote_dtls_fingerprint(&self) -> Option<&Fingerprint> {
         self.rtc.dtls.remote_fingerprint()
+    }
+
+    /// Returns the negotiated DTLS protocol version.
+    ///
+    /// Call this after receiving [`crate::Event::Connected`]
+    /// to learn the negotiated DTLS version. Before the handshake completes,
+    /// this may return `None`
+    pub fn dtls_protocol_version(&self) -> Option<ProtocolVersion> {
+        self.rtc.dtls.protocol_version()
     }
 
     /// Sets the remote DTLS fingerprint.

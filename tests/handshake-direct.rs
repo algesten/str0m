@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use str0m::channel::{ChannelConfig, ChannelId, Reliability};
 use str0m::config::{DtlsVersion, Fingerprint};
+use str0m::crypto::dtls::ProtocolVersion;
 use str0m::ice::IceCreds;
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig, RtcError};
@@ -226,6 +227,8 @@ fn run_direct_handshake(
                     &server_packets_sent_clone,
                 )?;
 
+                timing.dtls_protocol_version = rtc.direct_api().dtls_protocol_version();
+
                 Ok(timing)
             })();
 
@@ -299,6 +302,8 @@ fn run_direct_handshake(
                     &mut packets,
                     &client_packets_sent_clone,
                 )?;
+
+                timing.dtls_protocol_version = rtc.direct_api().dtls_protocol_version();
 
                 Ok(timing)
             })();
@@ -374,6 +379,26 @@ fn run_direct_handshake(
     assert!(
         server_timing.sent_data.is_some(),
         "Server should have sent reply"
+    );
+
+    // Verify the negotiated DTLS protocol version matches the expected outcome
+    // for the requested (client, server) version combination. DTLS 1.3 and Auto
+    // variants are tested only with dimpl.
+    let expected = match (client_dtls, server_dtls) {
+        (DtlsVersion::Dtls12, _) | (_, DtlsVersion::Dtls12) => ProtocolVersion::DTLS1_2,
+        (DtlsVersion::Dtls13, _) | (_, DtlsVersion::Dtls13) => ProtocolVersion::DTLS1_3,
+        (DtlsVersion::Auto, DtlsVersion::Auto) => ProtocolVersion::DTLS1_3,
+        _ => unreachable!("unexpected DTLS version combo: {client_dtls:?}/{server_dtls:?}"),
+    };
+    assert_eq!(
+        client_timing.dtls_protocol_version,
+        Some(expected),
+        "Client negotiated DTLS version mismatch"
+    );
+    assert_eq!(
+        server_timing.dtls_protocol_version,
+        Some(expected),
+        "Server negotiated DTLS version mismatch"
     );
 
     Ok(())
@@ -516,6 +541,7 @@ struct TimingReport {
     channel_open: Option<Instant>,
     sent_data: Option<Instant>,
     received_data: Option<Instant>,
+    dtls_protocol_version: Option<ProtocolVersion>,
 }
 
 impl TimingReport {

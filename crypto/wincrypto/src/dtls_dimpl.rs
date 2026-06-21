@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use str0m_proto::crypto::CryptoError;
 use str0m_proto::crypto::DtlsVersion;
+use str0m_proto::crypto::dtls::ProtocolVersion;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 
 use dimpl::{Config, Dtls, DtlsCertificate};
@@ -96,6 +97,10 @@ impl DtlsInstance for WinCryptoDtlsInstance {
 
     fn is_active(&self) -> bool {
         self.dtls.is_active()
+    }
+
+    fn protocol_version(&self) -> Option<ProtocolVersion> {
+        self.dtls.protocol_version()
     }
 }
 

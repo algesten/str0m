@@ -13,7 +13,7 @@ use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::X509;
 
 use str0m_proto::DATAGRAM_MTU_TARGET;
-use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
+use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, ProtocolVersion, SrtpProfile};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
@@ -610,6 +610,10 @@ impl DtlsInstance for OsslDtlsInstance {
 
     fn is_active(&self) -> bool {
         self.inner.is_active().unwrap_or(false)
+    }
+
+    fn protocol_version(&self) -> Option<ProtocolVersion> {
+        Some(ProtocolVersion::DTLS1_2)
     }
 }
 
