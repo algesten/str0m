@@ -36,7 +36,6 @@ pub enum Codec {
     #[doc(hidden)]
     H265,
     /// H266/VVC.
-    #[doc(hidden)]
     H266,
     Vp8,
     Vp9,
