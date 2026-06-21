@@ -1152,7 +1152,7 @@ mod test {
         assert_eq!(ptl.tier_flag(), 0, "Default H.265 tier should be Main (0)");
     }
 
-    // ── H.266 direction-based negotiation tests ──────────────────────────
+    // H.266 direction-based negotiation tests.
 
     /// Helper: build a CodecConfig containing only H.266 at the given PTL.
     fn h266_config(profile_id: u8, tier_flag: u8, level_id: u8) -> CodecConfig {
@@ -1220,7 +1220,7 @@ mod test {
             .expect("H.266 param missing")
     }
 
-    // ── recvonly: remote sends to us ─────────────────────────────────────
+    // recvonly: remote sends to us.
 
     /// Remote sends at Level 4.0, we can receive at Level 6.0.
     /// Negotiated level should narrow to min(6.0, 4.0) = 4.0.
@@ -1267,7 +1267,7 @@ mod test {
         );
     }
 
-    // ── sendrecv: both sides send and receive ────────────────────────────
+    // sendrecv: both sides send and receive.
 
     /// Both sides sendrecv. Local Level 6.0, remote Level 4.0.
     /// Effective level should narrow to min(6.0, 4.0) = 4.0.
@@ -1319,7 +1319,7 @@ mod test {
         assert_eq!(ptl.level_id(), 64, "Same levels should stay at Level 4.0");
     }
 
-    // ── sendonly: we send, remote receives ───────────────────────────────
+    // sendonly: we send, remote receives.
 
     /// Remote declares recvonly at Level 4.0, we offer sendonly at Level 6.0.
     /// Negotiated level should narrow to 4.0 (receiver wins).
@@ -1364,7 +1364,7 @@ mod test {
         );
     }
 
-    // ── no-fmtp remote ──────────────────────────────────────────────────
+    // no-fmtp remote.
 
     /// Remote has no H.266 fmtp at all. Local should clear both fields.
     #[test]
@@ -1385,7 +1385,7 @@ mod test {
         );
     }
 
-    // ── profile_id field cleanup ─────────────────────────────────────────
+    // profile_id field cleanup.
 
     /// When remote has full PTL, the `profile_id` field must be None
     /// to avoid duplicate serialization (profile-id appears in both
@@ -1421,7 +1421,7 @@ mod test {
         );
     }
 
-    // ── H.266 default level ──────────────────────────────────────────────
+    // H.266 default level.
 
     /// `enable_h266(true)` should add H.266 at Main 10 / Main tier / Level 6.0.
     #[test]
