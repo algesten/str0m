@@ -661,6 +661,17 @@ impl MediaLine {
 
         v
     }
+
+    /// Get the max-message-size attribute value, if present
+    pub fn max_message_size(&self) -> Option<usize> {
+        self.attrs.iter().find_map(|a| {
+            if let MediaAttribute::MaxMessageSize(size) = a {
+                Some(*size)
+            } else {
+                None
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
