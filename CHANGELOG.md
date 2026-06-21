@@ -1,8 +1,12 @@
 # Unreleased
 
   * Negotiate SCTP max message size for data channels #852
+  * Expose the negotiated DTLS protocol version #979
+  * Make MTU size configurable #967
+  * Add optional `drv` feature for using public identity types as `drv::Input` #974 #975
+  * Send DTLS `close_notify` on `Rtc::close()` #956
   * Fix `Simulcast::add_recv_layer` to push to recv instead of send #968
-  * Accept any non-empty SDP session name (`s=`), not just `s=-` (RFC 8866 section 5.3)
+  * Accept any non-empty SDP session name (`s=`), not just `s=-` #969
 
 # 0.20.0
 
