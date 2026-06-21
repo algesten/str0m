@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Support NACK retransmission without RTX, resending in-band on the main SSRC
+  * Add `PayloadParams::set_resend` to configure or disable RTX
   * Fix `Simulcast::add_recv_layer` to push to recv instead of send #968
   * Accept any non-empty SDP session name (`s=`), not just `s=-` (RFC 8866 section 5.3)
 

@@ -1385,9 +1385,13 @@ fn update_media(
             .find(|r| r.repairs == Some(i.ssrc))
             .map(|r| r.ssrc);
 
-        // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
+        // NACK gated on negotiated `nack` feedback; RTX is just the transport (as in libwebrtc).
+        let fb_nack = config
+            .params()
+            .iter()
+            .any(|p| media.remote_pts().contains(&p.pt) && p.fb_nack());
         let midrid = MidRid(media.mid(), None);
-        let suppress_nack = repair_ssrc.is_none();
+        let suppress_nack = !fb_nack;
         streams.expect_stream_rx(i.ssrc, repair_ssrc, midrid, suppress_nack);
     }
 }
