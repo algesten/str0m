@@ -1407,7 +1407,7 @@ fn extract_max_message_size(mut media_lines: Iter<MediaLine>) -> Option<u32> {
             let max_size = if max_size == 0 {
                 u32::MAX
             } else {
-                max_size as u32
+                u32::try_from(max_size).unwrap_or(u32::MAX)
             };
             return Some(max_size);
         }
@@ -2664,6 +2664,36 @@ mod test {
             rtc2.sctp.remote_max_message_size(),
             u32::MAX,
             "a=max-message-size:0 should be treated as unbounded (u32::MAX)"
+        );
+    }
+
+    #[test]
+    fn test_remote_max_message_size_too_large_clamps_to_unbounded() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut rtc1 = Rtc::new(now);
+        let mut rtc2 = Rtc::new(now);
+
+        let mut change1 = rtc1.sdp_api();
+        change1.add_channel("test-channel".into());
+        let (offer1, _pending1) = change1.apply().unwrap();
+
+        let sdp_string = offer1.to_sdp_string();
+        let modified_sdp = sdp_string.replace(
+            &format!("a=max-message-size:{}", crate::sctp::LOCAL_MAX_MESSAGE_SIZE),
+            "a=max-message-size:4294967296",
+        );
+
+        let modified_offer =
+            SdpOffer::from_sdp_string(&modified_sdp).expect("modified SDP should parse");
+
+        rtc2.sdp_api().accept_offer(modified_offer).unwrap();
+
+        assert_eq!(
+            rtc2.sctp.remote_max_message_size(),
+            u32::MAX,
+            "a=max-message-size larger than u32::MAX should be treated as unbounded"
         );
     }
 }

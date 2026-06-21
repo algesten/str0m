@@ -1479,7 +1479,12 @@ impl Rtc {
             return Ok(());
         }
 
-        self.sctp.init(client, self.last_now, sctp_init_data, remote_max_message_size)?;
+        self.sctp.init(
+            client,
+            self.last_now,
+            sctp_init_data,
+            remote_max_message_size,
+        )?;
         Ok(())
     }
 

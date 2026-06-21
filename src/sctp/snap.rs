@@ -7,7 +7,7 @@ use std::sync::Arc;
 use base64ct::{Base64, Encoding};
 use sctp_proto::{ClientConfig, TransportConfig, generate_snap_token};
 
-use super::{SctpError as Error, LOCAL_MAX_MESSAGE_SIZE};
+use super::{LOCAL_MAX_MESSAGE_SIZE, SctpError as Error};
 
 /// Build the WebRTC transport config with unlimited retransmits.
 ///
