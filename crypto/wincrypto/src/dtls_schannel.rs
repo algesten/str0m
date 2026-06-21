@@ -252,4 +252,10 @@ impl DtlsInstance for WinCryptoDtlsInstance {
     fn protocol_version(&self) -> Option<ProtocolVersion> {
         Some(ProtocolVersion::DTLS1_2)
     }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        Err(DtlsImplError::CryptoError(
+            "SChannel native DTLS does not support close_notify".into(),
+        ))
+    }
 }
