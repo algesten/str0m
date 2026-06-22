@@ -31,25 +31,31 @@ impl RtcpPacket for AppSpecificFeedback {
 
     fn length_words(&self) -> usize {
         // 1 (RTCP header) + 2 (sender_ssrc + media_ssrc) + payload words
-        let payload_words = (self.payload.len() + 3) / 4;
+        let payload_words = self.payload.len().div_ceil(4);
         1 + 2 + payload_words
     }
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
+        let total_len = self.length_words() * 4;
+        assert!(
+            buf.len() >= total_len,
+            "AppSpecificFeedback::write_to: buffer too small ({} < {})",
+            buf.len(),
+            total_len,
+        );
+
         self.header().write_to(&mut buf[..4]);
         buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
         buf[8..12].copy_from_slice(&self.media_ssrc.to_be_bytes());
 
         let payload_len = self.payload.len();
-        buf[12..12 + payload_len].copy_from_slice(&self.payload);
+        buf[12..][..payload_len].copy_from_slice(&self.payload);
 
         // Pad to 4-byte boundary
-        let padded_payload_len = (payload_len + 3) / 4 * 4;
-        for b in &mut buf[12 + payload_len..12 + padded_payload_len] {
-            *b = 0;
-        }
+        let pad_len = payload_len.next_multiple_of(4) - payload_len;
+        buf[12 + payload_len..][..pad_len].fill(0);
 
-        12 + padded_payload_len
+        12 + payload_len + pad_len
     }
 }
 
@@ -61,14 +67,14 @@ impl<'a> TryFrom<&'a [u8]> for AppSpecificFeedback {
             return Err("AppSpecificFeedback less than 8 bytes");
         }
 
-        let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-        let media_ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
-        let payload = buf[8..].to_vec();
+        let (ssrc_buf, payload) = buf.split_at(8);
+        let sender_ssrc = u32::from_be_bytes([ssrc_buf[0], ssrc_buf[1], ssrc_buf[2], ssrc_buf[3]]).into();
+        let media_ssrc = u32::from_be_bytes([ssrc_buf[4], ssrc_buf[5], ssrc_buf[6], ssrc_buf[7]]).into();
 
         Ok(AppSpecificFeedback {
             sender_ssrc,
             media_ssrc,
-            payload,
+            payload: payload.to_vec(),
         })
     }
 }
