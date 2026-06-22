@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 
+use crate::packet::H266ProfileTierLevel;
 use crate::packet::MediaKind;
 use crate::rtp_::Pt;
 use crate::rtp_::{Direction, Frequency};
@@ -39,6 +40,12 @@ pub(crate) const PT_H265: Pt = Pt::new_with_value(102);
 /// Default payload type for H265 RTX.
 pub(crate) const PT_H265_RTX: Pt = Pt::new_with_value(103);
 
+/// Default payload type for H266 (VVC).
+pub(crate) const PT_H266: Pt = Pt::new_with_value(104);
+
+/// Default payload type for H266 RTX.
+pub(crate) const PT_H266_RTX: Pt = Pt::new_with_value(105);
+
 /// Default payload type for Opus.
 pub(crate) const PT_OPUS: Pt = Pt::new_with_value(111);
 
@@ -69,6 +76,8 @@ impl CodecConfig {
         c.enable_vp8(true);
         c.enable_h264(true);
         c.enable_h265(true);
+        // H266/VVC off by default: no browser supports it.
+        c.enable_h266(false);
         c.enable_vp9(true);
         c.enable_av1(true);
 
@@ -281,6 +290,49 @@ impl CodecConfig {
         //   https://source.chromium.org/chromium/chromium/src/+/main:
         //   third_party/webrtc/api/video_codecs/h265_profile_tier_level.h
         self.add_h265(PT_H265, Some(PT_H265_RTX), 1, 0, 180); // Main, Main tier, Level 6.0
+    }
+
+    /// Convenience for adding a h266 payload type.
+    pub fn add_h266(
+        &mut self,
+        pt: Pt,
+        resend: Option<Pt>,
+        profile_id: u8,
+        tier_flag: u8,
+        level_id: u8,
+    ) {
+        let ptl = H266ProfileTierLevel::new(profile_id, tier_flag, level_id)
+            .unwrap_or(H266ProfileTierLevel::FALLBACK);
+
+        self.add_config(
+            pt,
+            resend,
+            Codec::H266,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams {
+                h266_profile_tier_level: Some(ptl),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Add a default H266 (VVC) payload type.
+    ///
+    /// Enables H266 as a video codec (clock rate 90kHz) with a default RTX
+    /// payload type. Profile/tier/level negotiation happens via the SDP fmtp
+    /// parameters profile-id / tier-flag / level-id (RFC 9328 §7.2).
+    pub fn enable_h266(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::H266);
+        if !enabled {
+            return;
+        }
+
+        // Single default configuration with a high capability level.
+        //
+        // Level 6.0 (level_id=96) — per ITU-T H.266 Annex A the level_id is
+        // 16*major + 3*minor, e.g. Level 6.0 → 16*6 = 96.
+        self.add_h266(PT_H266, Some(PT_H266_RTX), 1, 0, 96); // Main 10, Main tier, Level 6.0
     }
 
     /// Add a default VP9 payload type.
@@ -1098,5 +1150,297 @@ mod test {
             "Default H.265 profile should be Main (1)"
         );
         assert_eq!(ptl.tier_flag(), 0, "Default H.265 tier should be Main (0)");
+    }
+
+    // H.266 direction-based negotiation tests.
+
+    /// Helper: build a CodecConfig containing only H.266 at the given PTL.
+    fn h266_config(profile_id: u8, tier_flag: u8, level_id: u8) -> CodecConfig {
+        let mut config = CodecConfig::empty();
+        config.add_h266(PT_H266, Some(PT_H266_RTX), profile_id, tier_flag, level_id);
+        config
+    }
+
+    /// Helper: build a single-element remote PayloadParams for H.266 with full PTL.
+    fn h266_remote_ptl(profile_id: u8, tier_flag: u8, level_id: u8) -> Vec<PayloadParams> {
+        vec![PayloadParams::new(
+            PT_H266,
+            Some(PT_H266_RTX),
+            CodecSpec {
+                codec: Codec::H266,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    h266_profile_tier_level: Some(
+                        H266ProfileTierLevel::new(profile_id, tier_flag, level_id).unwrap(),
+                    ),
+                    ..Default::default()
+                },
+            },
+        )]
+    }
+
+    /// Helper: build a single-element remote PayloadParams for H.266 with profile-id only.
+    fn h266_remote_profile_only(profile_id: u32) -> Vec<PayloadParams> {
+        vec![PayloadParams::new(
+            PT_H266,
+            Some(PT_H266_RTX),
+            CodecSpec {
+                codec: Codec::H266,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    profile_id: Some(profile_id),
+                    ..Default::default()
+                },
+            },
+        )]
+    }
+
+    /// Helper: build a single-element remote PayloadParams for H.266 with no fmtp.
+    fn h266_remote_no_fmtp() -> Vec<PayloadParams> {
+        vec![PayloadParams::new(
+            PT_H266,
+            Some(PT_H266_RTX),
+            CodecSpec {
+                codec: Codec::H266,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        )]
+    }
+
+    /// Helper: extract the H.266 param from a config (panics if missing).
+    fn get_h266(config: &CodecConfig) -> &PayloadParams {
+        config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::H266)
+            .expect("H.266 param missing")
+    }
+
+    // recvonly: remote sends to us.
+
+    /// Remote sends at Level 4.0, we can receive at Level 6.0.
+    /// Negotiated level should narrow to min(6.0, 4.0) = 4.0.
+    #[test]
+    fn test_h266_recvonly_remote_level_lower() {
+        let mut config = h266_config(1, 0, 96); // Main 10, Main tier, Level 6.0
+        let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
+
+        // Direction::SendOnly = remote is sending (we receive)
+        config.update_params(&remote, Direction::SendOnly);
+
+        let ptl = get_h266(&config)
+            .spec()
+            .format
+            .h266_profile_tier_level
+            .unwrap();
+        assert_eq!(
+            ptl.level_id(),
+            64,
+            "Should narrow to min(96,64) = Level 4.0"
+        );
+        assert_eq!(ptl.profile_id(), 1, "Profile should be preserved");
+        assert_eq!(ptl.tier_flag(), 0, "Tier should be preserved");
+    }
+
+    /// Remote sends at Level 6.0, we can receive at Level 4.0.
+    /// Negotiated level should narrow to min(4.0, 6.0) = 4.0.
+    #[test]
+    fn test_h266_recvonly_local_level_lower() {
+        let mut config = h266_config(1, 0, 64); // Level 4.0
+        let remote = h266_remote_ptl(1, 0, 96); // Level 6.0
+
+        config.update_params(&remote, Direction::SendOnly);
+
+        let ptl = get_h266(&config)
+            .spec()
+            .format
+            .h266_profile_tier_level
+            .unwrap();
+        assert_eq!(
+            ptl.level_id(),
+            64,
+            "Should narrow to min(64,96) = Level 4.0"
+        );
+    }
+
+    // sendrecv: both sides send and receive.
+
+    /// Both sides sendrecv. Local Level 6.0, remote Level 4.0.
+    /// Effective level should narrow to min(6.0, 4.0) = 4.0.
+    #[test]
+    fn test_h266_sendrecv_remote_level_lower() {
+        let mut config = h266_config(1, 0, 96); // Level 6.0
+        let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let ptl = get_h266(&config)
+            .spec()
+            .format
+            .h266_profile_tier_level
+            .unwrap();
+        assert_eq!(ptl.level_id(), 64, "sendrecv: should narrow to Level 4.0");
+    }
+
+    /// Both sides sendrecv. Local Level 4.0, remote Level 6.0.
+    /// Effective level should narrow to min(4.0, 6.0) = 4.0.
+    #[test]
+    fn test_h266_sendrecv_local_level_lower() {
+        let mut config = h266_config(1, 0, 64); // Level 4.0
+        let remote = h266_remote_ptl(1, 0, 96); // Level 6.0
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let ptl = get_h266(&config)
+            .spec()
+            .format
+            .h266_profile_tier_level
+            .unwrap();
+        assert_eq!(ptl.level_id(), 64, "sendrecv: should narrow to Level 4.0");
+    }
+
+    /// Same level on both sides. Should remain unchanged.
+    #[test]
+    fn test_h266_sendrecv_same_level() {
+        let mut config = h266_config(1, 0, 64); // Level 4.0
+        let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let ptl = get_h266(&config)
+            .spec()
+            .format
+            .h266_profile_tier_level
+            .unwrap();
+        assert_eq!(ptl.level_id(), 64, "Same levels should stay at Level 4.0");
+    }
+
+    // sendonly: we send, remote receives.
+
+    /// Remote declares recvonly at Level 4.0, we offer sendonly at Level 6.0.
+    /// Negotiated level should narrow to 4.0 (receiver wins).
+    #[test]
+    fn test_h266_sendonly_receiver_level_lower() {
+        let mut config = h266_config(1, 0, 96); // Level 6.0
+        let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
+
+        // Direction::RecvOnly = remote is receiving (we send)
+        config.update_params(&remote, Direction::RecvOnly);
+
+        let ptl = get_h266(&config)
+            .spec()
+            .format
+            .h266_profile_tier_level
+            .unwrap();
+        assert_eq!(
+            ptl.level_id(),
+            64,
+            "sendonly: should narrow to receiver's Level 4.0"
+        );
+    }
+
+    /// Remote offers only profile-id=1, no tier/level.
+    /// Local should drop its full PTL and echo back profile-id only.
+    #[test]
+    fn test_h266_profile_only_remote_mirrors() {
+        let mut config = h266_config(1, 0, 96); // Full PTL
+        let remote = h266_remote_profile_only(1); // profile-id only
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let h266 = get_h266(&config);
+        assert!(
+            h266.spec().format.h266_profile_tier_level.is_none(),
+            "Full PTL should be cleared when remote only offers profile-id"
+        );
+        assert_eq!(
+            h266.spec().format.profile_id,
+            Some(1),
+            "profile_id should mirror the remote's value"
+        );
+    }
+
+    // no-fmtp remote.
+
+    /// Remote has no H.266 fmtp at all. Local should clear both fields.
+    #[test]
+    fn test_h266_no_fmtp_remote_clears() {
+        let mut config = h266_config(1, 0, 96); // Full PTL
+        let remote = h266_remote_no_fmtp();
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let h266 = get_h266(&config);
+        assert!(
+            h266.spec().format.h266_profile_tier_level.is_none(),
+            "PTL should be cleared when remote has no fmtp"
+        );
+        assert!(
+            h266.spec().format.profile_id.is_none(),
+            "profile_id should be cleared when remote has no fmtp"
+        );
+    }
+
+    // profile_id field cleanup.
+
+    /// When remote has full PTL, the `profile_id` field must be None
+    /// to avoid duplicate serialization (profile-id appears in both
+    /// h266_profile_tier_level AND the VP9-style profile_id field).
+    #[test]
+    fn test_h266_profile_id_cleared_on_ptl_match() {
+        let mut config = CodecConfig::empty();
+        // Artificially set both fields to simulate a misconfigured state
+        config.add_config(
+            PT_H266,
+            Some(PT_H266_RTX),
+            Codec::H266,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams {
+                h266_profile_tier_level: Some(H266ProfileTierLevel::new(1, 0, 96).unwrap()),
+                profile_id: Some(1), // should be cleared after negotiation
+                ..Default::default()
+            },
+        );
+        let remote = h266_remote_ptl(1, 0, 64);
+
+        config.update_params(&remote, Direction::SendRecv);
+
+        let h266 = get_h266(&config);
+        assert!(
+            h266.spec().format.profile_id.is_none(),
+            "profile_id field must be None when full PTL is present"
+        );
+        assert!(
+            h266.spec().format.h266_profile_tier_level.is_some(),
+            "PTL should still be present"
+        );
+    }
+
+    // H.266 default level.
+
+    /// `enable_h266(true)` should add H.266 at Main 10 / Main tier / Level 6.0.
+    #[test]
+    fn test_h266_enable_default_level() {
+        let mut config = CodecConfig::empty();
+        config.enable_h266(true);
+
+        let h266 = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::H266)
+            .expect("H.266 param missing");
+        let ptl = h266.spec().format.h266_profile_tier_level.unwrap();
+        assert_eq!(
+            ptl.profile_id(),
+            1,
+            "Default H.266 profile should be Main 10 (1)"
+        );
+        assert_eq!(ptl.tier_flag(), 0, "Default H.266 tier should be Main (0)");
+        assert_eq!(ptl.level_id(), 96, "Default H.266 level should be 6.0 (96)");
     }
 }

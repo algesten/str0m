@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use str0m_proto::crypto::dtls::DtlsImplError;
+use str0m_proto::crypto::dtls::ProtocolVersion;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
@@ -106,5 +107,13 @@ impl DtlsInstance for DimplDtlsInstance {
 
     fn is_active(&self) -> bool {
         self.dtls.is_active()
+    }
+
+    fn protocol_version(&self) -> Option<ProtocolVersion> {
+        self.dtls.protocol_version()
+    }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        self.dtls.close()
     }
 }

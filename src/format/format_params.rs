@@ -94,6 +94,16 @@ pub struct FormatParams {
     /// See ITU-T H.265 Annex A for complete definitions.
     pub h265_profile_tier_level: Option<crate::packet::H265ProfileTierLevel>,
 
+    /// H.266/VVC profile, tier, and level.
+    ///
+    /// Contains:
+    /// * profile: Main 10, Main 10 4:4:4, etc.
+    /// * tier: Main or High.
+    /// * level: 3.1, 4.0, 5.0, etc.
+    ///
+    /// See ITU-T H.266 Annex A and RFC 9328 §7.2 for complete definitions.
+    pub h266_profile_tier_level: Option<crate::packet::H266ProfileTierLevel>,
+
     /// H.265 sprop-max-don-diff parameter (RFC 7798 §7.1).
     /// When > 0, DONL fields are included in H.265 RTP packets to support
     /// out-of-order NAL unit decoding.
@@ -144,6 +154,7 @@ impl FormatParams {
             LevelIdx(v) => self.level_idx = Some(*v),
             Tier(v) => self.tier = Some(*v),
             H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
+            H266ProfileTierLevel(v) => self.h266_profile_tier_level = Some(*v),
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
             Apt(_) => {}
             Unknown => {}
@@ -193,6 +204,10 @@ impl FormatParams {
         // H.265 Profile/Tier/Level: Keep as composite, it serializes all three params
         if let Some(ptl) = self.h265_profile_tier_level {
             r.push(H265ProfileTierLevel(ptl));
+        }
+        // H.266 Profile/Tier/Level: serialized as one composite (all three fmtp params).
+        if let Some(ptl) = self.h266_profile_tier_level {
+            r.push(H266ProfileTierLevel(ptl));
         }
         if let Some(v) = self.sprop_max_don_diff {
             r.push(SpropMaxDonDiff(v));
@@ -271,6 +286,31 @@ mod test {
         // Parse back
         let parsed = FormatParams::parse_line(&fmtp_str);
         assert_eq!(parsed.h265_profile_tier_level, Some(ptl));
+        assert_eq!(parsed.sprop_max_don_diff, Some(32));
+    }
+
+    #[test]
+    fn h266_combined_params_roundtrip() {
+        use crate::packet::H266ProfileTierLevel;
+
+        // Test H.266 with both profile/tier/level and sprop-max-don-diff
+        let ptl = H266ProfileTierLevel::new(1, 0, 51).unwrap();
+        let f = FormatParams {
+            h266_profile_tier_level: Some(ptl),
+            sprop_max_don_diff: Some(32),
+            ..Default::default()
+        };
+
+        // Serialize to string
+        let fmtp_str = f.to_string();
+        assert!(fmtp_str.contains("profile-id=1"));
+        assert!(fmtp_str.contains("tier-flag=0"));
+        assert!(fmtp_str.contains("level-id=51"));
+        assert!(fmtp_str.contains("sprop-max-don-diff=32"));
+
+        // Parse back
+        let parsed = FormatParams::parse_line(&fmtp_str);
+        assert_eq!(parsed.h266_profile_tier_level, Some(ptl));
         assert_eq!(parsed.sprop_max_don_diff, Some(32));
     }
 }

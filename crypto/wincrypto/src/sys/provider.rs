@@ -409,4 +409,10 @@ impl DtlsInstance for WinCryptoDtlsInstance {
     fn is_active(&self) -> bool {
         self.dtls.is_client().unwrap_or(false)
     }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        Err(DtlsImplError::CryptoError(
+            "SChannel native DTLS does not support close_notify".into(),
+        ))
+    }
 }

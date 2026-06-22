@@ -13,7 +13,7 @@ use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::X509;
 
 use str0m_proto::DATAGRAM_MTU_TARGET;
-use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
+use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, ProtocolVersion, SrtpProfile};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
@@ -434,6 +434,10 @@ pub(super) struct OsslDtlsInstance {
     queued_app_data: VecDeque<Vec<u8>>,
     next_timeout: Option<Instant>,
     connected_emitted: bool,
+    /// Close handling
+    close_notify_received: bool,
+    close_notify_emitted: bool,
+    close_notify_sent: bool,
 }
 
 impl std::fmt::Debug for OsslDtlsInstance {
@@ -454,6 +458,9 @@ impl OsslDtlsInstance {
             queued_app_data: VecDeque::new(),
             next_timeout: None,
             connected_emitted: false,
+            close_notify_received: false,
+            close_notify_emitted: false,
+            close_notify_sent: false,
         })
     }
 
@@ -498,7 +505,30 @@ impl DtlsInstance for OsslDtlsInstance {
     fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DtlsImplError> {
         match self.inner.handle_receive(packet) {
             Ok(Some(data)) => {
-                self.pending_application_data.push_back(data);
+                if data.is_empty() {
+                    // Zero-length read — confirm it's a close_notify via SSL_get_shutdown
+                    let is_shutdown =
+                        if let State::Established(ref mut stream) = self.inner.tls.state {
+                            stream
+                                .get_shutdown()
+                                .contains(openssl::ssl::ShutdownState::RECEIVED)
+                        } else {
+                            false
+                        };
+                    if is_shutdown {
+                        self.close_notify_received = true;
+                        // Send reciprocal close_notify per RFC 5246 §7.2.1,
+                        // but only if we haven't already sent one ourselves.
+                        if !self.close_notify_sent {
+                            if let State::Established(ref mut stream) = self.inner.tls.state {
+                                let _ = stream.shutdown();
+                            }
+                            self.close_notify_sent = true;
+                        }
+                    }
+                } else {
+                    self.pending_application_data.push_back(data);
+                }
             }
             Ok(None) => {}
             Err(e) => {
@@ -568,6 +598,12 @@ impl DtlsInstance for OsslDtlsInstance {
             }
         }
 
+        // Return close_notify event (after packets so reciprocal alert goes out first)
+        if self.close_notify_received && !self.close_notify_emitted {
+            self.close_notify_emitted = true;
+            return DtlsOutput::CloseNotify;
+        }
+
         // Return application data
         if let Some(data) = self.pending_application_data.pop_front() {
             if data.len() <= buf.len() {
@@ -610,6 +646,19 @@ impl DtlsInstance for OsslDtlsInstance {
 
     fn is_active(&self) -> bool {
         self.inner.is_active().unwrap_or(false)
+    }
+
+    fn protocol_version(&self) -> Option<ProtocolVersion> {
+        Some(ProtocolVersion::DTLS1_2)
+    }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        if let State::Established(ref mut stream) = self.inner.tls.state {
+            let _ = stream.shutdown();
+            self.close_notify_sent = true;
+            self.collect_output();
+        }
+        Ok(())
     }
 }
 

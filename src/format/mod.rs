@@ -5,15 +5,18 @@
 pub use crate::packet::CodecExtra;
 pub use crate::packet::H264CodecExtra;
 pub use crate::packet::H265CodecExtra;
+pub use crate::packet::H266CodecExtra;
 pub use crate::packet::Vp8CodecExtra;
 pub use crate::packet::Vp9CodecExtra;
 pub use crate::packet::Vp9PacketizerMode;
 pub use crate::packet::detect_av1_keyframe;
 pub use crate::packet::detect_h264_keyframe;
 pub use crate::packet::detect_h265_keyframe;
+pub use crate::packet::detect_h266_keyframe;
 pub use crate::packet::detect_vp8_keyframe;
 pub use crate::packet::detect_vp9_keyframe;
 pub use crate::packet::{H265Level, H265Profile, H265ProfileTierLevel, H265Tier};
+pub use crate::packet::{H266Level, H266Profile, H266ProfileTierLevel, H266Tier};
 
 mod codec;
 mod codec_config;

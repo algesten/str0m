@@ -269,6 +269,15 @@ impl RtcConfig {
         self
     }
 
+    /// Enable H266 (VVC) video codec.
+    ///
+    /// Disabled by default: no major browser (Chrome, Safari, Firefox)
+    /// currently supports H.266/VVC, so it is opt-in.
+    pub fn enable_h266(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_h266(enabled);
+        self
+    }
+
     /// Enable VP9 video codec.
     ///
     /// Enabled by default.

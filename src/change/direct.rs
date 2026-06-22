@@ -4,6 +4,7 @@ use crate::Rtc;
 use crate::RtcError;
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
+use crate::crypto::dtls::ProtocolVersion;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
@@ -100,6 +101,15 @@ impl<'a> DirectApi<'a> {
         self.rtc.dtls.remote_fingerprint()
     }
 
+    /// Returns the negotiated DTLS protocol version.
+    ///
+    /// Call this after receiving [`crate::Event::Connected`]
+    /// to learn the negotiated DTLS version. Before the handshake completes,
+    /// this may return `None`
+    pub fn dtls_protocol_version(&self) -> Option<ProtocolVersion> {
+        self.rtc.dtls.protocol_version()
+    }
+
     /// Sets the remote DTLS fingerprint.
     pub fn set_remote_fingerprint(&mut self, dtls_fingerprint: Fingerprint) {
         self.rtc.remote_fingerprint = Some(dtls_fingerprint);
@@ -116,7 +126,7 @@ impl<'a> DirectApi<'a> {
     /// connecting party.
     pub fn start_sctp(&mut self, client: bool) {
         self.rtc
-            .try_init_sctp(client, None)
+            .try_init_sctp(client, None, None)
             .expect("starting SCTP should be infallible")
     }
 
@@ -152,7 +162,7 @@ impl<'a> DirectApi<'a> {
         client: bool,
         sctp_init_data: SctpInitData,
     ) -> Result<(), RtcError> {
-        self.rtc.try_init_sctp(client, Some(sctp_init_data))
+        self.rtc.try_init_sctp(client, Some(sctp_init_data), None)
     }
 
     /// Create a new data channel.
