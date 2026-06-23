@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::rtp::Ssrc;
 
 use super::RtcpType;
@@ -15,7 +17,7 @@ pub struct AppSpecificFeedback {
     /// SSRC of the media source this feedback relates to.
     pub media_ssrc: Ssrc,
     /// Application-dependent payload (after sender_ssrc and media_ssrc).
-    pub payload: Vec<u8>,
+    pub payload: Arc<[u8]>,
 }
 
 impl RtcpPacket for AppSpecificFeedback {
@@ -74,7 +76,7 @@ impl<'a> TryFrom<&'a [u8]> for AppSpecificFeedback {
         Ok(AppSpecificFeedback {
             sender_ssrc,
             media_ssrc,
-            payload: payload.to_vec(),
+            payload: payload.into(),
         })
     }
 }
@@ -88,7 +90,7 @@ mod tests {
         let input = AppSpecificFeedback {
             sender_ssrc: 1.into(),
             media_ssrc: 2.into(),
-            payload: vec![0x01, 0x00, 0x00, 0x44, 0xAA, 0xBB, 0xCC, 0xDD],
+            payload: vec![0x01, 0x00, 0x00, 0x44, 0xAA, 0xBB, 0xCC, 0xDD].into(),
         };
 
         let mut buf = [0u8; 256];
@@ -106,7 +108,7 @@ mod tests {
         let fb = AppSpecificFeedback {
             sender_ssrc: 0.into(),
             media_ssrc: 0.into(),
-            payload: vec![1, 2, 3, 4],
+            payload: vec![1, 2, 3, 4].into(),
         };
 
         let header = fb.header();
@@ -119,7 +121,7 @@ mod tests {
         let input = AppSpecificFeedback {
             sender_ssrc: 100.into(),
             media_ssrc: 200.into(),
-            payload: vec![0xAA, 0xBB, 0xCC], // 3 bytes, needs 1 byte padding
+            payload: vec![0xAA, 0xBB, 0xCC].into(), // 3 bytes, needs 1 byte padding
         };
 
         let mut buf = [0u8; 256];
@@ -142,7 +144,7 @@ mod tests {
         let input = AppSpecificFeedback {
             sender_ssrc: 1.into(),
             media_ssrc: 2.into(),
-            payload: vec![],
+            payload: vec![].into(),
         };
 
         let mut buf = [0u8; 256];

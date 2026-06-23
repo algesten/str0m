@@ -124,7 +124,7 @@ pub(crate) struct Session {
 
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
     // Stored as (sender_ssrc, media_ssrc, payload) tuples.
-    pending_app_feedback: VecDeque<(Ssrc, Ssrc, Vec<u8>)>,
+    pending_app_feedback: VecDeque<(Ssrc, Ssrc, Arc<[u8]>)>,
 
     /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
     /// target; oversized outgoing datagrams above the warn threshold log a warning.
@@ -341,9 +341,9 @@ impl Session {
 
     /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
     /// transmission in its own standalone SRTCP compound datagram.
-    pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: Vec<u8>) {
+    pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: impl Into<std::sync::Arc<[u8]>>) {
         self.standalone_feedback_tx.push_back(Rtcp::AppSpecificFeedback(
-            crate::rtp_::AppSpecificFeedback { sender_ssrc, media_ssrc, payload }
+            crate::rtp_::AppSpecificFeedback { sender_ssrc, media_ssrc, payload: payload.into() }
         ));
     }
 

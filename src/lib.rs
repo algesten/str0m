@@ -1030,7 +1030,7 @@ pub enum Event {
         /// SSRC of the media source this feedback relates to.
         media_ssrc: rtp::Ssrc,
         /// Application-dependent payload.
-        payload: Vec<u8>,
+        payload: Arc<[u8]>,
     },
 
     /// We have received the DTLS close packet

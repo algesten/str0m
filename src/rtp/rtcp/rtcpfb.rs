@@ -109,7 +109,7 @@ mod tests {
         let fb = AppSpecificFeedback {
             sender_ssrc: 100.into(),
             media_ssrc: 200.into(),
-            payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            payload: vec![0xDE, 0xAD, 0xBE, 0xEF].into(),
         };
 
         let rtcp_items = vec![Rtcp::AppSpecificFeedback(fb)];
@@ -125,7 +125,7 @@ mod tests {
         let fb = AppSpecificFeedback {
             sender_ssrc: 1001.into(),
             media_ssrc: 2002.into(),
-            payload: vec![0x01, 0x00, 0x00, 0x44, 0xAA, 0xBB, 0xCC, 0xDD],
+            payload: vec![0x01, 0x00, 0x00, 0x44, 0xAA, 0xBB, 0xCC, 0xDD].into(),
         };
 
         // Write the RTCP packet
@@ -157,7 +157,7 @@ mod tests {
             sender_ssrc: 42.into(),
             media_ssrc: 0.into(),
             // Payload that does NOT start with "REMB" magic bytes
-            payload: vec![0x01, 0x02, 0x03, 0x04],
+            payload: vec![0x01, 0x02, 0x03, 0x04].into(),
         };
 
         let rtcp = Rtcp::AppSpecificFeedback(fb);

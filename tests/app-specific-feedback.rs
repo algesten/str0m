@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use str0m::media::MediaKind;
@@ -181,7 +182,7 @@ pub fn app_specific_feedback_multiple_messages() -> Result<(), RtcError> {
     }
 
     let deadline = l.last + Duration::from_secs(5);
-    let mut received_payloads: Vec<Vec<u8>> = Vec::new();
+    let mut received_payloads: Vec<Arc<[u8]>> = Vec::new();
 
     loop {
         if received_payloads.len() >= 3 || l.last > deadline || r.last > deadline {

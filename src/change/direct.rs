@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::Candidate;
 use crate::IceCreds;
 use crate::Rtc;
@@ -400,7 +402,7 @@ impl<'a> DirectApi<'a> {
         &mut self,
         sender_ssrc: Ssrc,
         media_ssrc: Ssrc,
-        payload: Vec<u8>,
+        payload: impl Into<Arc<[u8]>>,
     ) {
         self.rtc.session.send_app_specific_feedback(sender_ssrc, media_ssrc, payload);
     }
