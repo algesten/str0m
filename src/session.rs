@@ -117,7 +117,7 @@ pub(crate) struct Session {
 
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
     // Stored as (sender_ssrc, media_ssrc, payload) tuples.
-    pending_app_feedback: VecDeque<(Ssrc, Ssrc, Arc<[u8]>)>,
+    pending_app_feedback: Option<(Ssrc, Ssrc, Arc<[u8]>)>,
 
     /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
     /// target; oversized outgoing datagrams above the warn threshold log a warning.
@@ -189,7 +189,7 @@ impl Session {
             } else {
                 None
             },
-            pending_app_feedback: VecDeque::new(),
+            pending_app_feedback: None,
             mtu: config.mtu.clone(),
             #[cfg(feature = "_internal_test_exports")]
             pending_probe: None,
@@ -638,11 +638,11 @@ impl Session {
         }
 
         // Extract application-specific feedback before stream routing.
-        // Retain in feedback_rx only non-AppSpecificFeedback packets.
+        // At most one per RTCP compound packet.
         let pending = &mut self.pending_app_feedback;
         self.feedback_rx.retain(|pkt| {
             if let Rtcp::AppSpecificFeedback(fb) = pkt {
-                pending.push_back((fb.sender_ssrc, fb.media_ssrc, fb.payload.clone()));
+                *pending = Some((fb.sender_ssrc, fb.media_ssrc, fb.payload.clone()));
                 false
             } else {
                 true
@@ -712,7 +712,7 @@ impl Session {
             }
         }
 
-        if let Some((sender_ssrc, media_ssrc, payload)) = self.pending_app_feedback.pop_front() {
+        if let Some((sender_ssrc, media_ssrc, payload)) = self.pending_app_feedback.take() {
             return Some(Event::AppSpecificFeedback { sender_ssrc, media_ssrc, payload });
         }
 

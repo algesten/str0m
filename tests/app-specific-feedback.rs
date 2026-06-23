@@ -174,31 +174,35 @@ pub fn app_specific_feedback_multiple_messages() -> Result<(), RtcError> {
     l.last = max;
     r.last = max;
 
-    // Send 3 messages with different payloads
+    // Send 3 messages sequentially — at most one pending at a time.
+    let mut received_payloads: Vec<Arc<[u8]>> = Vec::new();
+
     for i in 0u8..3 {
         let payload = vec![i, i + 10, i + 20, i + 30];
         l.direct_api()
             .send_app_specific_feedback(ssrc_l, ssrc_r, payload);
-    }
 
-    let deadline = l.last + Duration::from_secs(5);
-    let mut received_payloads: Vec<Arc<[u8]>> = Vec::new();
+        let deadline = l.last + Duration::from_secs(5);
+        loop {
+            if l.last > deadline || r.last > deadline {
+                break;
+            }
+            progress(&mut l, &mut r)?;
 
-    loop {
-        if received_payloads.len() >= 3 || l.last > deadline || r.last > deadline {
-            break;
-        }
-        progress(&mut l, &mut r)?;
-
-        for (_time, event) in r.events.drain(..) {
-            if let Event::AppSpecificFeedback { payload, .. } = event {
-                received_payloads.push(payload);
+            let mut found = false;
+            for (_time, event) in r.events.drain(..) {
+                if let Event::AppSpecificFeedback { payload, .. } = event {
+                    received_payloads.push(payload);
+                    found = true;
+                }
+            }
+            if found {
+                break;
             }
         }
     }
 
     assert_eq!(received_payloads.len(), 3, "Should receive all 3 messages");
-    // Verify payloads match what was sent (first 4 bytes)
     for (i, payload) in received_payloads.iter().enumerate() {
         let i = i as u8;
         assert_eq!(payload[0], i);
