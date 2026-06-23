@@ -25,7 +25,6 @@ use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
-use crate::rtp_::{ReceiverReport, ReceptionReport, ReportList};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
@@ -114,12 +113,6 @@ pub(crate) struct Session {
     feedback_tx: VecDeque<Rtcp>,
     feedback_rx: VecDeque<Rtcp>,
 
-    // Standalone feedback queue — sent in their own SRTCP compound datagrams (not bundled
-    // with the regular SR/RR). This is needed when the remote RTCP demuxer routes compound
-    // packets based on the first SSRC; bundling feedback with an unrelated SR/RR would cause
-    // misrouting. Each entry is sent as a minimal compound packet (empty RR + feedback).
-    standalone_feedback_tx: VecDeque<Rtcp>,
-
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
@@ -191,7 +184,6 @@ impl Session {
             vp9_packetizer_mode: config.vp9_packetizer_mode,
             feedback_tx: VecDeque::new(),
             feedback_rx: VecDeque::new(),
-            standalone_feedback_tx: VecDeque::new(),
             raw_packets: if config.enable_raw_packets {
                 Some(VecDeque::new())
             } else {
@@ -340,9 +332,9 @@ impl Session {
     }
 
     /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
-    /// transmission in its own standalone SRTCP compound datagram.
+    /// transmission as part of the regular RTCP compound packet.
     pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: impl Into<std::sync::Arc<[u8]>>) {
-        self.standalone_feedback_tx.push_back(Rtcp::AppSpecificFeedback(
+        self.feedback_tx.push_back(Rtcp::AppSpecificFeedback(
             crate::rtp_::AppSpecificFeedback { sender_ssrc, media_ssrc, payload: payload.into() }
         ));
     }
@@ -805,7 +797,6 @@ impl Session {
         }
 
         let x = None
-            .or_else(|| self.poll_standalone_feedback())
             .or_else(|| self.poll_feedback())
             .or_else(|| self.poll_packet(now));
 
@@ -826,67 +817,6 @@ impl Session {
     pub fn clear_feedback(&mut self) {
         self.feedback_rx.clear();
         self.feedback_tx.clear();
-        self.standalone_feedback_tx.clear();
-    }
-
-    /// Send standalone feedback as a valid RTCP compound packet (RR + feedback).
-    ///
-    /// RFC 3550 requires compound packets to start with SR or RR. We prepend an RR
-    /// with a dummy report block whose SSRC matches the feedback's `media_ssrc`.
-    /// This allows remote RTCP demuxers that route by the first SSRC in the compound
-    /// packet to deliver the feedback to the correct media session.
-    fn poll_standalone_feedback(&mut self) -> Option<net::DatagramSend> {
-        let fb = self.standalone_feedback_tx.pop_front()?;
-
-        let encryptable_mtu: usize = (self.mtu() - SRTCP_OVERHEAD) & !3;
-        let mut data = vec![0_u8; encryptable_mtu];
-
-        // Extract SSRCs from the feedback message.
-        let (sender_ssrc, media_ssrc) = match &fb {
-            Rtcp::AppSpecificFeedback(p) => (p.sender_ssrc, p.media_ssrc),
-            _ => {
-                warn!("Non-feedback message in standalone queue, dropping");
-                return None;
-            }
-        };
-
-        // Build a compound packet: RR (with report block) + feedback.
-        // The report block's SSRC gives the remote demuxer a routable SSRC
-        // in the correct media session's range.
-        let report_ssrc = if media_ssrc != Ssrc::from(0u32) {
-            media_ssrc
-        } else {
-            sender_ssrc
-        };
-        let mut reports = ReportList::new();
-        reports.push(ReceptionReport {
-            ssrc: report_ssrc,
-            fraction_lost: 0,
-            packets_lost: 0,
-            max_seq: 0,
-            jitter: 0,
-            last_sr_time: 0,
-            last_sr_delay: 0,
-        });
-        let mut compound = VecDeque::new();
-        compound.push_back(Rtcp::ReceiverReport(ReceiverReport {
-            sender_ssrc,
-            reports,
-        }));
-        compound.push_back(fb);
-
-        let len = Rtcp::write_packet(&mut compound, &mut data, |_| {});
-        if len == 0 {
-            return None;
-        }
-        data.truncate(len);
-
-        let Some(srtp) = self.srtp_tx.as_mut() else {
-            return None;
-        };
-        let protected = srtp.protect_rtcp(&data);
-        trace!("Standalone feedback compound packet: {} bytes", protected.len());
-        Some(protected.into())
     }
 
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
