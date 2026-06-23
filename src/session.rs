@@ -637,19 +637,12 @@ impl Session {
             }
         }
 
-        // Extract application-specific feedback before stream routing.
-        // At most one per RTCP compound packet.
-        let pending = &mut self.pending_app_feedback;
-        self.feedback_rx.retain(|pkt| {
-            if let Rtcp::AppSpecificFeedback(fb) = pkt {
-                *pending = Some((fb.sender_ssrc, fb.media_ssrc, fb.payload.clone()));
-                false
-            } else {
-                true
-            }
-        });
-
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
+            if let RtcpFb::AppSpecificFeedback(asf) = fb {
+                self.pending_app_feedback = Some((asf.sender_ssrc, asf.media_ssrc, asf.payload));
+                continue;
+            }
+
             if let RtcpFb::Twcc(twcc) = fb {
                 trace!("Handle TWCC: {:?}", twcc);
                 let maybe_records = self.twcc_tx_register.apply_report(twcc, now);

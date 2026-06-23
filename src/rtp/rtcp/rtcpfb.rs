@@ -1,4 +1,4 @@
-use super::{DlrrItem, FirEntry, NackEntry, ReceptionReport, Remb, ReportBlock, ReportList};
+use super::{AppSpecificFeedback, DlrrItem, FirEntry, NackEntry, ReceptionReport, Remb, ReportBlock, ReportList};
 use super::{Rrtr, Rtcp, Sdes, SenderInfo, Ssrc, Twcc};
 
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
@@ -16,6 +16,7 @@ pub enum RtcpFb {
     Fir(FirEntry),                     // rx -> tx
     Twcc(Twcc),                        // rx -> tx
     Remb(Remb),                        // rx -> tx
+    AppSpecificFeedback(AppSpecificFeedback), // not stream-routed
 }
 
 impl RtcpFb {
@@ -72,9 +73,9 @@ impl RtcpFb {
                 Rtcp::Remb(v) => {
                     q.push(RtcpFb::Remb(v));
                 }
-                // Application-specific feedback is not stream-routed;
-                // it is handled directly at the session level.
-                Rtcp::AppSpecificFeedback(_) => {}
+                Rtcp::AppSpecificFeedback(v) => {
+                    q.push(RtcpFb::AppSpecificFeedback(v));
+                }
             }
         }
         q.into_iter()
@@ -93,6 +94,7 @@ impl RtcpFb {
             RtcpFb::Fir(v) => v.ssrc,
             RtcpFb::Twcc(v) => v.ssrc,
             RtcpFb::Remb(v) => v.ssrcs.first().map(|ssrc| (*ssrc).into()).unwrap_or(v.ssrc),
+            RtcpFb::AppSpecificFeedback(v) => v.media_ssrc,
         }
     }
 }
@@ -104,8 +106,7 @@ mod tests {
     use std::collections::VecDeque;
 
     #[test]
-    fn app_specific_feedback_skipped_in_rtcpfb() {
-        // AppSpecificFeedback is not stream-routed, so from_rtcp should skip it
+    fn app_specific_feedback_passes_through_rtcpfb() {
         let fb = AppSpecificFeedback {
             sender_ssrc: 100.into(),
             media_ssrc: 200.into(),
@@ -115,7 +116,8 @@ mod tests {
         let rtcp_items = vec![Rtcp::AppSpecificFeedback(fb)];
         let result: Vec<_> = RtcpFb::from_rtcp(rtcp_items).collect();
 
-        assert_eq!(result.len(), 0, "AppSpecificFeedback should not produce RtcpFb items");
+        assert_eq!(result.len(), 1);
+        assert!(matches!(&result[0], RtcpFb::AppSpecificFeedback(v) if v.media_ssrc == 200.into()));
     }
 
     #[test]
