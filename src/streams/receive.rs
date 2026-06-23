@@ -564,6 +564,10 @@ impl StreamRx {
         now >= self.receiver_report_at()
     }
 
+    pub(crate) fn next_rr(&self) -> Instant {
+        self.receiver_report_at()
+    }
+
     pub(crate) fn create_rr_and_update(
         &mut self,
         now: Instant,

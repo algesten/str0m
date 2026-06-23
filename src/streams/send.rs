@@ -928,6 +928,10 @@ impl StreamTx {
         now >= self.sender_report_at()
     }
 
+    pub(crate) fn next_sr(&self) -> Instant {
+        self.sender_report_at()
+    }
+
     pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
         let sr = self.create_sender_report(now);
 

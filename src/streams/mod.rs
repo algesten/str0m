@@ -1,4 +1,5 @@
-use std::collections::{HashMap, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, VecDeque};
 use std::fmt::{self};
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,6 +43,26 @@ fn rr_interval(audio: bool) -> Duration {
         RR_INTERVAL_AUDIO
     } else {
         RR_INTERVAL_VIDEO
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct StreamDeadline {
+    deadline: Instant,
+    ssrc: Ssrc,
+    is_tx: bool,
+}
+
+impl Ord for StreamDeadline {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse comparison to turn BinaryHeap into a Min-Heap (earliest time first)
+        other.deadline.cmp(&self.deadline)
+    }
+}
+
+impl PartialOrd for StreamDeadline {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -163,6 +184,8 @@ pub(crate) struct Streams {
     /// Threshold above which an outgoing RTP packet triggers an MTU warning. Used as a
     /// hard cap when selecting RTX cache entries for spurious padding.
     mtu_warn: usize,
+
+    deadline_heap: BinaryHeap<StreamDeadline>,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -190,6 +213,7 @@ impl Streams {
             any_nack_active: None,
             enable_stats,
             mtu_warn,
+            deadline_heap: BinaryHeap::new(),
         }
     }
 
@@ -315,10 +339,20 @@ impl Streams {
         // New stream might have enabled nacks.
         self.any_nack_active = None;
 
-        let stream = self
-            .streams_rx
-            .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc, midrid, suppress_nack));
+        let mut was_inserted = false;
+        let stream = self.streams_rx.entry(ssrc).or_insert_with(|| {
+            was_inserted = true;
+            StreamRx::new(ssrc, midrid, suppress_nack)
+        });
+
+        // Bootstrap the heap if this stream was just newly created
+        if was_inserted {
+            self.deadline_heap.push(StreamDeadline {
+                deadline: stream.next_rr(),
+                ssrc,
+                is_tx: false,
+            });
+        }
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);
@@ -342,9 +376,17 @@ impl Streams {
         rtx: Option<Ssrc>,
         midrid: MidRid,
     ) -> &mut StreamTx {
-        self.streams_tx
-            .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid, self.enable_stats, self.mtu_warn))
+        self.streams_tx.entry(ssrc).or_insert_with(|| {
+            let stream = StreamTx::new(ssrc, rtx, midrid, self.enable_stats, self.mtu_warn);
+
+            self.deadline_heap.push(StreamDeadline {
+                deadline: stream.next_sr(),
+                ssrc,
+                is_tx: true,
+            });
+
+            stream
+        })
     }
 
     pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {
@@ -423,52 +465,54 @@ impl Streams {
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
     ) {
-        self.mids_to_report.clear(); // Clear for checking StreamRx.
-        for stream in self.streams_rx.values() {
-            if stream.need_rr(now) {
-                self.mids_to_report.push(stream.mid());
+        self.mids_to_report.clear();
+
+        while let Some(entry) = self.deadline_heap.peek() {
+            if entry.deadline > now {
+                break; // Earliest scheduled track work is in the future. Exit immediately.
+            }
+
+            let entry = self.deadline_heap.pop().unwrap();
+
+            if entry.is_tx {
+                if let Some(stream) = self.streams_tx.get_mut(&entry.ssrc) {
+                    let mid = stream.mid();
+                    stream.create_sr_and_update(now, feedback);
+
+                    let get_media =
+                        move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
+                    stream.handle_timeout(now, get_media);
+
+                    // Re-enqueue for its next predictable interval
+                    self.deadline_heap.push(StreamDeadline {
+                        deadline: stream.next_sr(),
+                        ssrc: entry.ssrc,
+                        is_tx: true,
+                    });
+                }
+            } else {
+                if let Some(stream) = self.streams_rx.get_mut(&entry.ssrc) {
+                    stream.maybe_create_keyframe_request(sender_ssrc, feedback);
+                    stream.maybe_create_remb_request(sender_ssrc, feedback);
+                    stream.create_rr_and_update(now, sender_ssrc, feedback);
+
+                    if do_nack {
+                        stream.maybe_create_nack(sender_ssrc, feedback);
+                    }
+
+                    stream.handle_timeout(now);
+
+                    // Re-enqueue for its next predictable interval
+                    self.deadline_heap.push(StreamDeadline {
+                        deadline: stream.next_rr(),
+                        ssrc: entry.ssrc,
+                        is_tx: false,
+                    });
+                }
             }
         }
 
-        for stream in self.streams_rx.values_mut() {
-            stream.maybe_create_keyframe_request(sender_ssrc, feedback);
-            stream.maybe_create_remb_request(sender_ssrc, feedback);
-
-            // All StreamRx belonging to the same Mid are reported together.
-            if self.mids_to_report.contains(&stream.mid()) {
-                stream.create_rr_and_update(now, sender_ssrc, feedback);
-            }
-
-            if do_nack {
-                stream.maybe_create_nack(sender_ssrc, feedback);
-            }
-
-            stream.handle_timeout(now);
-        }
-
-        self.mids_to_report.clear(); // start over for StreamTx.
-        for stream in self.streams_tx.values() {
-            if stream.need_sr(now) {
-                self.mids_to_report.push(stream.mid());
-            }
-        }
-
-        for stream in self.streams_tx.values_mut() {
-            let mid = stream.mid();
-
-            // All StreamTx belonging to the same Mid are reported together.
-            if self.mids_to_report.contains(&mid) {
-                stream.create_sr_and_update(now, feedback);
-            }
-
-            // Finding the first (main) PT that also has RTX for the Media is expensive,
-            // this closure is run only when needed.
-            // The unwrap is okay because we cannot have StreamTx with a Mid without the corresponding Media.
-            let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
-
-            stream.handle_timeout(now, get_media);
-        }
-
+        // --- 3. COARSE TIME LOOKUP CLEANUP ---
         if now > self.rx_lookup_at() {
             self.rx_lookup
                 .retain(|_, l| now - l.last_used <= RX_LOOKUP_EXPIRY);
@@ -656,9 +700,18 @@ impl Streams {
         if did_change {
             // Unwrap is OK, see above.
             let to_change = self.streams_rx.remove(&ssrc_from).unwrap();
+            let active_deadline = to_change.next_rr();
 
             // Reinsert under new SSRC key.
             self.streams_rx.insert(ssrc_to, to_change);
+            // Register the stream under its new key tracker immediately.
+            // The old ghost entry for ssrc_from will simply float to the top later,
+            // get() a None value out of the HashMap, and dissolve gracefully.
+            self.deadline_heap.push(StreamDeadline {
+                deadline: active_deadline,
+                ssrc: ssrc_to,
+                is_tx: false,
+            });
 
             // Remove previous mappings for the SSRC
             self.rx_lookup
