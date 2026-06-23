@@ -637,19 +637,19 @@ impl Session {
             }
         }
 
-        // Extract application-specific feedback directly before stream routing.
-        // These are not stream-routed and are surfaced as events to the application.
-        let drained: Vec<Rtcp> = self.feedback_rx.drain(..).collect();
-        let mut for_rtcpfb = Vec::new();
-        for pkt in drained {
+        // Extract application-specific feedback before stream routing.
+        // Retain in feedback_rx only non-AppSpecificFeedback packets.
+        let pending = &mut self.pending_app_feedback;
+        self.feedback_rx.retain(|pkt| {
             if let Rtcp::AppSpecificFeedback(fb) = pkt {
-                self.pending_app_feedback.push_back((fb.sender_ssrc, fb.media_ssrc, fb.payload));
+                pending.push_back((fb.sender_ssrc, fb.media_ssrc, fb.payload.clone()));
+                false
             } else {
-                for_rtcpfb.push(pkt);
+                true
             }
-        }
+        });
 
-        for fb in RtcpFb::from_rtcp(for_rtcpfb) {
+        for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::Twcc(twcc) = fb {
                 trace!("Handle TWCC: {:?}", twcc);
                 let maybe_records = self.twcc_tx_register.apply_report(twcc, now);
