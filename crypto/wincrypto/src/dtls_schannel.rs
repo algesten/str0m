@@ -45,6 +45,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         _now: Instant,
         dtls_version: DtlsVersion,
         mtu: Option<usize>,
+        _client_certificate_required: bool,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         if !matches!(dtls_version, DtlsVersion::Dtls12 | DtlsVersion::Auto) {
             return Err(CryptoError::Other(

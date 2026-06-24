@@ -50,6 +50,7 @@ pub struct RtcConfig {
     pub(crate) rtp_mode: bool,
     pub(crate) enable_raw_packets: bool,
     pub(crate) dtls_version: DtlsVersion,
+    pub(crate) dtls_client_certificate_required: bool,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
     pub(crate) mtu: RangeInclusive<usize>,
@@ -596,6 +597,22 @@ impl RtcConfig {
         self.dtls_version
     }
 
+    /// Set whether passive DTLS endpoints request and require a client certificate.
+    ///
+    /// Dimpl-backed providers do not send `CertificateRequest` when this is disabled,
+    /// so the passive endpoint will not verify the client's DTLS certificate fingerprint.
+    ///
+    /// Defaults to `true`.
+    pub fn set_dtls_client_certificate_required(mut self, required: bool) -> Self {
+        self.dtls_client_certificate_required = required;
+        self
+    }
+
+    /// Get whether passive DTLS endpoints require a client certificate.
+    pub fn dtls_client_certificate_required(&self) -> bool {
+        self.dtls_client_certificate_required
+    }
+
     /// Set the MTU as a `target..=warn` inclusive range.
     ///
     /// * `*range.start()` is the **target** MTU: the size str0m aims for when
@@ -699,6 +716,7 @@ impl Default for RtcConfig {
             rtp_mode: false,
             enable_raw_packets: false,
             dtls_version: DtlsVersion::Dtls12,
+            dtls_client_certificate_required: true,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
             mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
@@ -726,6 +744,15 @@ mod tests {
         let cfg = RtcConfig::default().set_mtu(900..=usize::MAX);
         assert_eq!(cfg.mtu(), 900);
         assert_eq!(cfg.mtu_warn(), usize::MAX);
+    }
+
+    #[test]
+    fn dtls_client_certificate_required_round_trips() {
+        let cfg = RtcConfig::default();
+        assert!(cfg.dtls_client_certificate_required());
+
+        let cfg = cfg.set_dtls_client_certificate_required(false);
+        assert!(!cfg.dtls_client_certificate_required());
     }
 
     #[test]

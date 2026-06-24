@@ -61,9 +61,16 @@ impl Dtls {
         now: Instant,
         dtls_version: DtlsVersion,
         mtu: RangeInclusive<usize>,
+        client_certificate_required: bool,
     ) -> Result<Self, DtlsError> {
         let instance = dtls_provider
-            .new_dtls(cert, now, dtls_version, Some(*mtu.start()))
+            .new_dtls(
+                cert,
+                now,
+                dtls_version,
+                Some(*mtu.start()),
+                client_certificate_required,
+            )
             .map_err(DtlsError::CryptoError)?;
 
         // Compute fingerprint from the certificate DER bytes

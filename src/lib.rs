@@ -1247,6 +1247,7 @@ impl Rtc {
                 start,
                 config.dtls_version,
                 mtu,
+                config.dtls_client_certificate_required,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,

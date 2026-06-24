@@ -150,12 +150,16 @@ pub trait DtlsProvider: CryptoSafe {
     ///
     /// mtu: Backends that can size their record layer according to the provided MTU should do so;
     /// backends that cannot ignore it. `None` means use the backend's default.
+    ///
+    /// client_certificate_required: Servers request and require a client certificate when true;
+    /// backends that cannot configure this behavior ignore it.
     fn new_dtls(
         &self,
         cert: &DtlsCert,
         now: Instant,
         dtls_version: DtlsVersion,
         mtu: Option<usize>,
+        client_certificate_required: bool,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError>;
 
     /// Whether the provider is used in a test context.

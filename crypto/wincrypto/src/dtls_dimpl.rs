@@ -28,6 +28,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         now: Instant,
         dtls_version: DtlsVersion,
         mtu: Option<usize>,
+        client_certificate_required: bool,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         let dimpl_cert = DtlsCertificate {
             certificate: cert.certificate.clone(),
@@ -35,7 +36,9 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         };
 
         // ICE verifies return routability before DTLS, making server cookies redundant.
-        let mut builder = Config::builder().use_server_cookie(false);
+        let mut builder = Config::builder()
+            .use_server_cookie(false)
+            .require_client_certificate(client_certificate_required);
         if let Some(mtu) = mtu {
             builder = builder.mtu(mtu);
         }

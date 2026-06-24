@@ -685,6 +685,7 @@ impl DtlsProvider for OsslDtlsProvider {
         _now: Instant,
         dtls_version: DtlsVersion,
         mtu: Option<usize>,
+        _client_certificate_required: bool,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
         let mtu = mtu.unwrap_or(DATAGRAM_MTU_TARGET);
         match dtls_version {
