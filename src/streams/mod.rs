@@ -55,7 +55,6 @@ struct StreamDeadline {
 
 impl Ord for StreamDeadline {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse comparison to turn BinaryHeap into a Min-Heap (earliest time first)
         other.deadline.cmp(&self.deadline)
     }
 }
@@ -478,22 +477,8 @@ impl Streams {
                     let get_media =
                         move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
                     stream.handle_timeout(now, get_media);
-
-                    // --- LAZY VALIDATION FOR TX ---
-                    // If external packet actions pushed this deadline forward into the future,
-                    // re-enqueue it with its current updated schedule and skip handling now.
-                    if !stream.need_sr(now) {
-                        self.deadline_heap.push(StreamDeadline {
-                            deadline: stream.next_sr(),
-                            ssrc: entry.ssrc,
-                            is_tx: true,
-                        });
-                        continue;
-                    }
-
                     stream.create_sr_and_update(now, feedback);
 
-                    // Re-enqueue for its next predictable interval
                     self.deadline_heap.push(StreamDeadline {
                         deadline: stream.next_sr(),
                         ssrc: entry.ssrc,
@@ -503,18 +488,6 @@ impl Streams {
             } else {
                 if let Some(stream) = self.streams_rx.get_mut(&entry.ssrc) {
                     stream.handle_timeout(now);
-                    // --- LAZY VALIDATION FOR RX ---
-                    // If an incoming packet or explicit pull updated our timing,
-                    // we don't need a receiver report yet. Skip and re-enqueue.
-                    if !stream.need_rr(now) {
-                        self.deadline_heap.push(StreamDeadline {
-                            deadline: stream.next_rr(),
-                            ssrc: entry.ssrc,
-                            is_tx: false,
-                        });
-                        continue;
-                    }
-
                     stream.maybe_create_keyframe_request(sender_ssrc, feedback);
                     stream.maybe_create_remb_request(sender_ssrc, feedback);
                     stream.create_rr_and_update(now, sender_ssrc, feedback);
@@ -533,7 +506,6 @@ impl Streams {
             }
         }
 
-        // --- 3. COARSE TIME LOOKUP CLEANUP ---
         if now > self.rx_lookup_at() {
             self.rx_lookup
                 .retain(|_, l| now - l.last_used <= RX_LOOKUP_EXPIRY);
@@ -725,9 +697,7 @@ impl Streams {
 
             // Reinsert under new SSRC key.
             self.streams_rx.insert(ssrc_to, to_change);
-            // Register the stream under its new key tracker immediately.
-            // The old ghost entry for ssrc_from will simply float to the top later,
-            // get() a None value out of the HashMap, and dissolve gracefully.
+            // Ghost SSRC gets evicted lazily
             self.deadline_heap.push(StreamDeadline {
                 deadline: active_deadline,
                 ssrc: ssrc_to,
