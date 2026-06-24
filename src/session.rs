@@ -910,7 +910,6 @@ impl Session {
         let pacing_at = self.pacer.poll_timeout();
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let paused_at = self.paused_at();
-        let send_stream_at = self.streams.send_stream();
 
         // Gives us built-in reason
         let bwe_at = self
@@ -926,7 +925,6 @@ impl Session {
             .soonest(pacing_at)
             .soonest((packetize_at, Reason::Packetize))
             .soonest((paused_at, Reason::PauseCheck))
-            .soonest((send_stream_at, Reason::SendStream))
             .soonest(bwe_at)
     }
 
