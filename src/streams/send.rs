@@ -1119,8 +1119,6 @@ impl StreamTx {
             let (media, config) = get_media();
             self.on_first_timeout(media, config);
         }
-
-        self.send_queue.handle_timeout(now);
     }
 
     fn on_first_timeout(&mut self, media: &Media, config: &CodecConfig) {

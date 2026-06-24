@@ -87,6 +87,7 @@ impl SendQueue {
     }
 
     pub(crate) fn snapshot(&mut self, now: Instant) -> QueueSnapshot {
+        self.handle_timeout(now);
         self.total.move_time_forward(now);
 
         QueueSnapshot {
@@ -232,11 +233,11 @@ mod test {
             queue.snapshot(snapshot_at),
             QueueSnapshot {
                 created_at: snapshot_at,
-                packet_count: 0,
+                packet_count: 1,
                 size: 0,
                 total_queue_time_origin: Duration::ZERO,
-                first_unsent: None,
-                priority: QueuePriority::Empty,
+                first_unsent: Some(snapshot_at),
+                priority: QueuePriority::Media,
                 ..Default::default()
             }
         );

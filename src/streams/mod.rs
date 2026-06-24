@@ -348,7 +348,7 @@ impl Streams {
         // Bootstrap the heap if this stream was just newly created
         if was_inserted {
             self.deadline_heap.push(StreamDeadline {
-                deadline: stream.next_rr(),
+                deadline: already_happened(),
                 ssrc,
                 is_tx: false,
             });
@@ -380,7 +380,7 @@ impl Streams {
             let stream = StreamTx::new(ssrc, rtx, midrid, self.enable_stats, self.mtu_warn);
 
             self.deadline_heap.push(StreamDeadline {
-                deadline: stream.next_sr(),
+                deadline: already_happened(),
                 ssrc,
                 is_tx: true,
             });
@@ -435,9 +435,7 @@ impl Streams {
     }
 
     pub(crate) fn regular_feedback_at(&self) -> Option<Instant> {
-        let r = self.streams_rx.values().map(|s| s.receiver_report_at());
-        let s = self.streams_tx.values().map(|s| s.sender_report_at());
-        r.chain(s).min()
+        self.deadline_heap.peek().map(|entry| entry.deadline)
     }
 
     pub(crate) fn paused_at(&self) -> Option<Instant> {
@@ -477,11 +475,23 @@ impl Streams {
             if entry.is_tx {
                 if let Some(stream) = self.streams_tx.get_mut(&entry.ssrc) {
                     let mid = stream.mid();
-                    stream.create_sr_and_update(now, feedback);
-
                     let get_media =
                         move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
                     stream.handle_timeout(now, get_media);
+
+                    // --- LAZY VALIDATION FOR TX ---
+                    // If external packet actions pushed this deadline forward into the future,
+                    // re-enqueue it with its current updated schedule and skip handling now.
+                    if !stream.need_sr(now) {
+                        self.deadline_heap.push(StreamDeadline {
+                            deadline: stream.next_sr(),
+                            ssrc: entry.ssrc,
+                            is_tx: true,
+                        });
+                        continue;
+                    }
+
+                    stream.create_sr_and_update(now, feedback);
 
                     // Re-enqueue for its next predictable interval
                     self.deadline_heap.push(StreamDeadline {
@@ -492,6 +502,19 @@ impl Streams {
                 }
             } else {
                 if let Some(stream) = self.streams_rx.get_mut(&entry.ssrc) {
+                    stream.handle_timeout(now);
+                    // --- LAZY VALIDATION FOR RX ---
+                    // If an incoming packet or explicit pull updated our timing,
+                    // we don't need a receiver report yet. Skip and re-enqueue.
+                    if !stream.need_rr(now) {
+                        self.deadline_heap.push(StreamDeadline {
+                            deadline: stream.next_rr(),
+                            ssrc: entry.ssrc,
+                            is_tx: false,
+                        });
+                        continue;
+                    }
+
                     stream.maybe_create_keyframe_request(sender_ssrc, feedback);
                     stream.maybe_create_remb_request(sender_ssrc, feedback);
                     stream.create_rr_and_update(now, sender_ssrc, feedback);
@@ -499,8 +522,6 @@ impl Streams {
                     if do_nack {
                         stream.maybe_create_nack(sender_ssrc, feedback);
                     }
-
-                    stream.handle_timeout(now);
 
                     // Re-enqueue for its next predictable interval
                     self.deadline_heap.push(StreamDeadline {
