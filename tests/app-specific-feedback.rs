@@ -63,15 +63,11 @@ pub fn app_specific_feedback_direct_api() -> Result<(), RtcError> {
 
         // Check R's events for the feedback
         for (_time, event) in r.events.drain(..) {
-            if let Event::AppSpecificFeedback {
-                sender_ssrc,
-                media_ssrc,
-                payload,
-            } = event
+            if let Event::AppSpecificFeedback(fb) = event
             {
-                assert_eq!(sender_ssrc, ssrc_l);
-                assert_eq!(media_ssrc, ssrc_r);
-                assert_eq!(&payload[..test_payload.len()], &test_payload[..]);
+                assert_eq!(fb.sender_ssrc, ssrc_l);
+                assert_eq!(fb.media_ssrc, ssrc_r);
+                assert_eq!(&fb.payload[..test_payload.len()], &test_payload[..]);
                 received = true;
             }
         }
@@ -130,15 +126,15 @@ pub fn app_specific_feedback_bidirectional() -> Result<(), RtcError> {
         progress(&mut l, &mut r)?;
 
         for (_time, event) in r.events.drain(..) {
-            if let Event::AppSpecificFeedback { payload, .. } = event {
-                assert_eq!(&payload[..payload_l_to_r.len()], &payload_l_to_r[..]);
+            if let Event::AppSpecificFeedback(fb) = event {
+                assert_eq!(&fb.payload[..payload_l_to_r.len()], &payload_l_to_r[..]);
                 r_received = true;
             }
         }
 
         for (_time, event) in l.events.drain(..) {
-            if let Event::AppSpecificFeedback { payload, .. } = event {
-                assert_eq!(&payload[..payload_r_to_l.len()], &payload_r_to_l[..]);
+            if let Event::AppSpecificFeedback(fb) = event {
+                assert_eq!(&fb.payload[..payload_r_to_l.len()], &payload_r_to_l[..]);
                 l_received = true;
             }
         }
@@ -191,8 +187,8 @@ pub fn app_specific_feedback_multiple_messages() -> Result<(), RtcError> {
 
             let mut found = false;
             for (_time, event) in r.events.drain(..) {
-                if let Event::AppSpecificFeedback { payload, .. } = event {
-                    received_payloads.push(payload);
+                if let Event::AppSpecificFeedback(fb) = event {
+                    received_payloads.push(fb.payload);
                     found = true;
                 }
             }

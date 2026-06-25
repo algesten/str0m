@@ -828,6 +828,7 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
+use media::AppSpecificFeedback as AppSpecificFeedbackEvent;
 use media::SenderFeedback;
 use media::{Direction, Media, Mid, Pt, Rid, Writer};
 use media::{KeyframeRequest, KeyframeRequestKind};
@@ -1024,14 +1025,7 @@ pub enum Event {
     ///
     /// Emitted when a non-REMB FMT=15 RTCP PSFB message is received. The payload
     /// is opaque and application-defined (RFC 4585 Section 6.4).
-    AppSpecificFeedback {
-        /// SSRC of the sender of this feedback message.
-        sender_ssrc: rtp::Ssrc,
-        /// SSRC of the media source this feedback relates to.
-        media_ssrc: rtp::Ssrc,
-        /// Application-dependent payload.
-        payload: Arc<[u8]>,
-    },
+    AppSpecificFeedback(AppSpecificFeedbackEvent),
 
     /// We have received the DTLS close packet
     Closed,

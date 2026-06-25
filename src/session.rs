@@ -24,7 +24,7 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
-use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
+use crate::rtp_::{AppSpecificFeedback, Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
@@ -116,8 +116,7 @@ pub(crate) struct Session {
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
-    // Stored as (sender_ssrc, media_ssrc, payload) tuples.
-    pending_app_feedback: Option<(Ssrc, Ssrc, Arc<[u8]>)>,
+    pending_app_feedback: Option<crate::media::AppSpecificFeedback>,
 
     /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
     /// target; oversized outgoing datagrams above the warn threshold log a warning.
@@ -333,9 +332,9 @@ impl Session {
 
     /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
     /// transmission as part of the regular RTCP compound packet.
-    pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: impl Into<std::sync::Arc<[u8]>>) {
+    pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: impl Into<Arc<[u8]>>) {
         self.feedback_tx.push_back(Rtcp::AppSpecificFeedback(
-            crate::rtp_::AppSpecificFeedback { sender_ssrc, media_ssrc, payload: payload.into() }
+            AppSpecificFeedback { sender_ssrc, media_ssrc, payload: payload.into() }
         ));
     }
 
@@ -639,7 +638,11 @@ impl Session {
 
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::AppSpecificFeedback(asf) = fb {
-                self.pending_app_feedback = Some((asf.sender_ssrc, asf.media_ssrc, asf.payload));
+                self.pending_app_feedback = Some(crate::media::AppSpecificFeedback {
+                    sender_ssrc: asf.sender_ssrc,
+                    media_ssrc: asf.media_ssrc,
+                    payload: asf.payload,
+                });
                 continue;
             }
 
@@ -705,8 +708,8 @@ impl Session {
             }
         }
 
-        if let Some((sender_ssrc, media_ssrc, payload)) = self.pending_app_feedback.take() {
-            return Some(Event::AppSpecificFeedback { sender_ssrc, media_ssrc, payload });
+        if let Some(feedback) = self.pending_app_feedback.take() {
+            return Some(Event::AppSpecificFeedback(feedback));
         }
 
         // This must be before pending_packet.take() since we need to emit the unpaused event
