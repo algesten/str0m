@@ -123,13 +123,6 @@ pub(crate) struct Session {
     /// target; oversized outgoing datagrams above the warn threshold log a warning.
     mtu: RangeInclusive<usize>,
 
-    // RTP drop counters for diagnostics
-    rtp_drop_no_ssrc: u64,
-    rtp_drop_no_srtp: u64,
-    rtp_drop_no_params: u64,
-    rtp_drop_dupe: u64,
-    rtp_drop_srtp_fail: u64,
-
     #[cfg(feature = "_internal_test_exports")]
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
 }
@@ -198,11 +191,6 @@ impl Session {
             },
             pending_app_feedback: None,
             mtu: config.mtu.clone(),
-            rtp_drop_no_ssrc: 0,
-            rtp_drop_no_srtp: 0,
-            rtp_drop_no_params: 0,
-            rtp_drop_dupe: 0,
-            rtp_drop_srtp_fail: 0,
             #[cfg(feature = "_internal_test_exports")]
             pending_probe: None,
         }
@@ -468,11 +456,6 @@ impl Session {
         // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(now, &header) else {
             debug!("No mid/SSRC for header: {:?}", header);
-            self.rtp_drop_no_ssrc += 1;
-            if self.rtp_drop_no_ssrc <= 5 || self.rtp_drop_no_ssrc % 100 == 0 {
-                warn!("str0m RTP drop: no SSRC match. ssrc={} pt={} count={}",
-                    header.ssrc, header.payload_type, self.rtp_drop_no_ssrc);
-            }
             return;
         };
 
@@ -480,7 +463,6 @@ impl Session {
             Some(v) => v,
             None => {
                 trace!("Rejecting SRTP while missing SrtpContext");
-                self.rtp_drop_no_srtp += 1;
                 return;
             }
         };
@@ -498,11 +480,10 @@ impl Session {
         let params = match maybe_params {
             Some(p) => p,
             None => {
-                self.rtp_drop_no_params += 1;
-                if self.rtp_drop_no_params <= 5 || self.rtp_drop_no_params % 100 == 0 {
-                    warn!("str0m RTP drop: no payload params. ssrc={} pt={} count={}",
-                        header.ssrc, header.payload_type, self.rtp_drop_no_params);
-                }
+                trace!(
+                    "No payload params could be found (main or RTX) for {:?}",
+                    header.payload_type
+                );
                 return;
             }
         };
@@ -519,11 +500,10 @@ impl Session {
         if !stream.is_new_packet(is_repair, seq_no) {
             // Dupe packet. This could be a potential SRTP replay attack, which means
             // we should not spend any CPU cycles towards decrypting it.
-            self.rtp_drop_dupe += 1;
-            if self.rtp_drop_dupe <= 5 || self.rtp_drop_dupe % 100 == 0 {
-                warn!("str0m RTP drop: dupe/replay. ssrc={} seq={} mid={} count={}",
-                    header.ssrc, seq_no, mid, self.rtp_drop_dupe);
-            }
+            trace!(
+                "Ignoring dupe packet mid: {} seq_no: {} is_repair: {}",
+                mid, seq_no, is_repair
+            );
             return;
         }
 
@@ -533,11 +513,16 @@ impl Session {
         let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(d) => d,
             None => {
-                self.rtp_drop_srtp_fail += 1;
-                if self.rtp_drop_srtp_fail <= 5 || self.rtp_drop_srtp_fail % 100 == 0 {
-                    warn!("str0m RTP drop: SRTP decrypt failed. ssrc={} seq={} mid={} count={}",
-                        header.ssrc, seq_no, mid, self.rtp_drop_srtp_fail);
-                }
+                trace!(
+                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
+                    rid: {:?} seq_no: {} is_repair: {}",
+                    header.ssrc,
+                    pt,
+                    stream.mid(),
+                    stream.rid(),
+                    seq_no,
+                    is_repair
+                );
                 return;
             }
         };
