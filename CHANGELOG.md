@@ -1,6 +1,5 @@
 # Unreleased
 
-  * Add RTCP PSFB FMT=15 (AppSpecificFeedback) send/receive via Direct API
   * Add H266/VVC RTP packetizer and depacketizer #971
   * Negotiate SCTP max message size for data channels #852
   * Expose the negotiated DTLS protocol version #979
@@ -9,6 +8,7 @@
   * Send DTLS `close_notify` on `Rtc::close()` #956
   * Fix `Simulcast::add_recv_layer` to push to recv instead of send #968
   * Accept any non-empty SDP session name (`s=`), not just `s=-` #969
+  * Add RTCP PSFB FMT=15 (AppSpecificFeedback) send/receive via Direct API
 
 # 0.20.0
 
