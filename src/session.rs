@@ -13,6 +13,7 @@ use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
 use crate::io::DatagramSend;
+use crate::media::AppSpecificFeedback;
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
@@ -24,7 +25,6 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
-use crate::media::AppSpecificFeedback;
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
@@ -334,9 +334,9 @@ impl Session {
     /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
     /// transmission as part of the regular RTCP compound packet.
     pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: impl Into<Arc<[u8]>>) {
-        self.feedback_tx.push_back(Rtcp::AppSpecificFeedback(
-            crate::rtp_::AppSpecificFeedback { sender_ssrc, media_ssrc, payload: payload.into() }
-        ));
+        use crate::rtp_::AppSpecificFeedback as RtcpAppFeedback;
+        let feedback = RtcpAppFeedback { sender_ssrc, media_ssrc, payload: payload.into() };
+        self.feedback_tx.push_back(Rtcp::AppSpecificFeedback(feedback));
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
