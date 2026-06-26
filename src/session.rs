@@ -24,7 +24,8 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
-use crate::rtp_::{AppSpecificFeedback, Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
+use crate::media::AppSpecificFeedback;
+use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
@@ -116,7 +117,7 @@ pub(crate) struct Session {
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
-    pending_app_feedback: Option<crate::media::AppSpecificFeedback>,
+    pending_app_feedback: Option<AppSpecificFeedback>,
 
     /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
     /// target; oversized outgoing datagrams above the warn threshold log a warning.
@@ -334,7 +335,7 @@ impl Session {
     /// transmission as part of the regular RTCP compound packet.
     pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: impl Into<Arc<[u8]>>) {
         self.feedback_tx.push_back(Rtcp::AppSpecificFeedback(
-            AppSpecificFeedback { sender_ssrc, media_ssrc, payload: payload.into() }
+            crate::rtp_::AppSpecificFeedback { sender_ssrc, media_ssrc, payload: payload.into() }
         ));
     }
 
@@ -638,7 +639,7 @@ impl Session {
 
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::AppSpecificFeedback(asf) = fb {
-                self.pending_app_feedback = Some(crate::media::AppSpecificFeedback {
+                self.pending_app_feedback = Some(AppSpecificFeedback {
                     sender_ssrc: asf.sender_ssrc,
                     media_ssrc: asf.media_ssrc,
                     payload: asf.payload,
