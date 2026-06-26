@@ -589,6 +589,44 @@ fn max_bundle_offer_accepted() {
     );
 }
 
+/// A remote offer advertising a codec at a payload type outside the 7-bit RTP range must be
+/// rejected, not panic. Before the fix the out-of-range PT was claimed against a 128-entry table
+/// and indexed out of bounds; now the malformed `a=rtpmap` is ignored, leaving the m-line PT
+/// without a codec, so the offer is rejected at parse instead.
+#[test]
+fn offer_with_out_of_range_pt_is_rejected() {
+    init_log();
+    init_crypto_default();
+
+    let offer = "\
+        v=0\r\n\
+        o=- 123456789 2 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=group:BUNDLE 0\r\n\
+        a=msid-semantic:WMS *\r\n\
+        a=fingerprint:sha-256 00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00\r\n\
+        a=ice-ufrag:testufrag\r\n\
+        a=ice-pwd:testpassword12345678\r\n\
+        a=setup:actpass\r\n\
+        m=audio 9 UDP/TLS/RTP/SAVPF 200\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=mid:0\r\n\
+        a=sendrecv\r\n\
+        a=rtcp-mux\r\n\
+        a=rtpmap:200 opus/48000/2\r\n\
+        ";
+
+    // Before the fix this parsed and then panicked when the PT was claimed; now it is rejected.
+    let result = SdpOffer::from_sdp_string(offer);
+    assert!(
+        result.is_err(),
+        "offer with out-of-range PT must be rejected: {result:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // SNAP (SCTP Negotiation Acceleration Protocol) tests
 // ---------------------------------------------------------------------------

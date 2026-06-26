@@ -547,9 +547,17 @@ where
 
     let pt = || {
         not_sp().and_then(|s| {
-            s.parse::<u8>()
-                .map(Pt::from)
-                .map_err(StreamErrorFor::<Input>::message_format)
+            let pt = s
+                .parse::<u8>()
+                .map_err(StreamErrorFor::<Input>::message_format)?;
+            // RTP payload type is 7-bit; reject out-of-range values rather than panicking later
+            // when PTs are claimed against a 128-entry table.
+            if pt > 127 {
+                return Err(StreamErrorFor::<Input>::message_format(format!(
+                    "payload type out of range (0-127): {pt}"
+                )));
+            }
+            Ok(Pt::from(pt))
         })
     };
 
@@ -1005,6 +1013,23 @@ mod test {
                 ""
             ))
         );
+    }
+
+    #[test]
+    fn rtpmap_payload_type_over_127_is_rejected() {
+        // RTP payload type is 7-bit. An out-of-range PT in a=rtpmap must not be accepted as an
+        // RtpMap; otherwise it becomes a PayloadParams that panics when claimed against a
+        // 128-entry table. It instead falls through to Unused and is ignored (the m-line then
+        // fails its own "missing a=rtpmap" check). 127 is the largest valid PT.
+        let bad = media_attribute_line().parse("a=rtpmap:200 opus/48000/2");
+        assert!(
+            !matches!(bad, Ok((MediaAttribute::RtpMap { .. }, _))),
+            "out-of-range rtpmap PT must not parse as RtpMap: {bad:?}"
+        );
+        assert!(matches!(
+            media_attribute_line().parse("a=rtpmap:127 opus/48000/2"),
+            Ok((MediaAttribute::RtpMap { .. }, _))
+        ));
     }
 
     #[test]
