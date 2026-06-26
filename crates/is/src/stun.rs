@@ -941,6 +941,12 @@ impl<'a> Attributes<'a> {
                         attributes.message_integrity = Some(&buf[4..24]);
                     }
                     Self::ERROR_CODE => {
+                        if len < 4 {
+                            return Err(StunError::Parse(
+                                "Error code length must be at least 4".into(),
+                            ));
+                        }
+
                         if buf[4] != 0 || buf[5] != 0 || buf[6] & 0b1111_1000 != 0 {
                             return Err(StunError::Parse("Expected 0 at top of error code".into()));
                         }
@@ -1029,6 +1035,9 @@ impl<'a> Attributes<'a> {
                         warn!("STUN got AlternateServer");
                     }
                     Self::FINGERPRINT => {
+                        if len != 4 {
+                            return Err(StunError::Parse("Fingerprint length must be 4".into()));
+                        }
                         let bytes = [buf[4], buf[5], buf[6], buf[7]];
                         attributes.fingerprint = Some(u32::from_be_bytes(bytes));
                     }

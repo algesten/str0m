@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TOOLCHAINS: com.apple.dt.toolchain.XcodeDefault
+
 jobs:
   test:
     strategy:

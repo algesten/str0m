@@ -11,6 +11,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  TOOLCHAINS: com.apple.dt.toolchain.XcodeDefault
+
 jobs:
   # Generate matrix of all crypto combinations for each platform
   windows-crypto-test:
