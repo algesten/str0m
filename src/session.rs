@@ -1033,6 +1033,7 @@ impl Session {
         }
     }
 
+    #[allow(dead_code)]
     pub fn line_count(&self) -> usize {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
