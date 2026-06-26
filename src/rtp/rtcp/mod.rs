@@ -42,7 +42,9 @@ pub use twcc::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRecord, TwccSendReg
 mod rtcpfb;
 pub use rtcpfb::RtcpFb;
 
+mod psfbapp;
 mod remb;
+pub use psfbapp::AppSpecificFeedback;
 pub use remb::Remb;
 
 use super::SeqNo;
@@ -88,6 +90,9 @@ pub enum Rtcp {
     Twcc(Twcc),
     /// Receiver Estimated Maximum Bitrate. Feedback to the sender about the maximum bitrate.
     Remb(Remb),
+    /// Application-specific Payload-Specific Feedback (FMT=15, PT=206) that is not REMB.
+    /// Used for application-specific PSFB feedback (RFC 4585 Section 6.4).
+    AppSpecificFeedback(AppSpecificFeedback),
 }
 
 impl Rtcp {
@@ -236,6 +241,7 @@ impl Rtcp {
             Rtcp::Fir(v) => v.reports.is_full(),
             Rtcp::Twcc(_) => true,
             Rtcp::Remb(_) => true,
+            Rtcp::AppSpecificFeedback(_) => true,
         }
     }
 
@@ -263,6 +269,8 @@ impl Rtcp {
             Rtcp::Twcc(_) => false,
             // A REMB report is never empty.
             Rtcp::Remb(_) => false,
+            // An AppSpecificFeedback report is never empty.
+            Rtcp::AppSpecificFeedback(_) => false,
         }
     }
 
@@ -340,6 +348,7 @@ impl Rtcp {
             Fir(_) => 5,
             Twcc(_) => 6,
             Remb(_) => 7,
+            AppSpecificFeedback(_) => 8,
             ExtendedReport(_) => 10,
 
             // Goodbye last since they remove stuff.
@@ -361,6 +370,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Fir(v) => v.header(),
             Rtcp::Twcc(v) => v.header(),
             Rtcp::Remb(v) => v.header(),
+            Rtcp::AppSpecificFeedback(v) => v.header(),
         }
     }
 
@@ -376,6 +386,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Fir(v) => v.length_words(),
             Rtcp::Twcc(v) => v.length_words(),
             Rtcp::Remb(v) => v.length_words(),
+            Rtcp::AppSpecificFeedback(v) => v.length_words(),
         }
     }
 
@@ -391,6 +402,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Fir(v) => v.write_to(buf),
             Rtcp::Twcc(v) => v.write_to(buf),
             Rtcp::Remb(v) => v.write_to(buf),
+            Rtcp::AppSpecificFeedback(v) => v.write_to(buf),
         }
     }
 }
@@ -440,6 +452,10 @@ impl<'a> TryFrom<&'a [u8]> for Rtcp {
                         if header.rtcp_type() == RtcpType::PayloadSpecificFeedback {
                             if let Ok(remb) = Remb::try_from(buf) {
                                 return Ok(Rtcp::Remb(remb));
+                            }
+                            // Not REMB — parse as generic application-specific feedback
+                            if let Ok(fb) = AppSpecificFeedback::try_from(buf) {
+                                return Ok(Rtcp::AppSpecificFeedback(fb));
                             }
                         }
                         return Err("Ignore PayloadType: ApplicationLayer");

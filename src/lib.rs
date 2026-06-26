@@ -769,6 +769,7 @@ use rtp_::{Bitrate, DataSize};
 pub mod rtp {
     /// Feedback for RTP.
     pub mod rtcp {
+        pub use crate::rtp_::AppSpecificFeedback;
         pub use crate::rtp_::{Descriptions, ExtendedReport, Fir, Goodbye, Nack, Pli};
         pub use crate::rtp_::{Dlrr, NackEntry, ReceptionReport, ReportBlock};
         pub use crate::rtp_::{FirEntry, ReceiverReport, SenderInfo, SenderReport, Twcc};
@@ -827,6 +828,7 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
+use media::AppSpecificFeedback;
 use media::SenderFeedback;
 use media::{Direction, Media, Mid, Pt, Rid, Writer};
 use media::{KeyframeRequest, KeyframeRequestKind};
@@ -1018,6 +1020,12 @@ pub enum Event {
 
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
+
+    /// Incoming application-specific Payload-Specific Feedback (PSFB FMT=15, PT=206).
+    ///
+    /// Emitted when a non-REMB FMT=15 RTCP PSFB message is received. The payload
+    /// is opaque and application-defined (RFC 4585 Section 6.4).
+    AppSpecificFeedback(AppSpecificFeedback),
 
     /// We have received the DTLS close packet
     Closed,

@@ -13,6 +13,7 @@ use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
 use crate::io::DatagramSend;
+use crate::media::AppSpecificFeedback;
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
@@ -115,6 +116,9 @@ pub(crate) struct Session {
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
+    // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
+    pending_app_feedback: Option<AppSpecificFeedback>,
+
     /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
     /// target; oversized outgoing datagrams above the warn threshold log a warning.
     mtu: RangeInclusive<usize>,
@@ -185,6 +189,7 @@ impl Session {
             } else {
                 None
             },
+            pending_app_feedback: None,
             mtu: config.mtu.clone(),
             #[cfg(feature = "_internal_test_exports")]
             pending_probe: None,
@@ -324,6 +329,24 @@ impl Session {
         trace!("Created feedback TWCC: {:?}", twcc);
         self.feedback_tx.push_front(Rtcp::Twcc(twcc));
         Some(())
+    }
+
+    /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
+    /// transmission as part of the regular RTCP compound packet.
+    pub(crate) fn send_app_specific_feedback(
+        &mut self,
+        sender_ssrc: Ssrc,
+        media_ssrc: Ssrc,
+        payload: impl Into<Arc<[u8]>>,
+    ) {
+        use crate::rtp_::AppSpecificFeedback as RtcpAppFeedback;
+        let feedback = RtcpAppFeedback {
+            sender_ssrc,
+            media_ssrc,
+            payload: payload.into(),
+        };
+        self.feedback_tx
+            .push_back(Rtcp::AppSpecificFeedback(feedback));
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
@@ -625,6 +648,15 @@ impl Session {
         }
 
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
+            if let RtcpFb::AppSpecificFeedback(asf) = fb {
+                self.pending_app_feedback = Some(AppSpecificFeedback {
+                    sender_ssrc: asf.sender_ssrc,
+                    media_ssrc: asf.media_ssrc,
+                    payload: asf.payload,
+                });
+                continue;
+            }
+
             if let RtcpFb::Twcc(twcc) = fb {
                 trace!("Handle TWCC: {:?}", twcc);
                 let maybe_records = self.twcc_tx_register.apply_report(twcc, now);
@@ -685,6 +717,10 @@ impl Session {
             if let Some(p) = raw_packets.pop_front() {
                 return Some(Event::RawPacket(p));
             }
+        }
+
+        if let Some(feedback) = self.pending_app_feedback.take() {
+            return Some(Event::AppSpecificFeedback(feedback));
         }
 
         // This must be before pending_packet.take() since we need to emit the unpaused event

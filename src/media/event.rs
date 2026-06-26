@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::packet::MediaKind;
-use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SenderInfo, SeqNo};
+use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SenderInfo, SeqNo, Ssrc};
 use crate::sdp::SimulcastLayer as SdpSimulcastLayer;
 use crate::sdp::{RestrictionId, Simulcast as SdpSimulcast, SimulcastGroups as SdpSimulcastGroups};
 
@@ -325,6 +325,20 @@ pub enum KeyframeRequestKind {
     /// Full Intra Request (FIR) is a more severe keyframe request that should only
     /// be used when it's impossible for an end peer to show a video stream.
     Fir,
+}
+
+/// Incoming application-specific Payload-Specific Feedback (PSFB FMT=15, PT=206).
+///
+/// Emitted when a non-REMB FMT=15 RTCP PSFB message is received. The payload
+/// is opaque and application-defined (RFC 4585 Section 6.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppSpecificFeedback {
+    /// SSRC of the sender of this feedback message.
+    pub sender_ssrc: Ssrc,
+    /// SSRC of the media source this feedback relates to.
+    pub media_ssrc: Ssrc,
+    /// Application-dependent payload.
+    pub payload: Arc<[u8]>,
 }
 
 /// Incoming feedback from a sender.
