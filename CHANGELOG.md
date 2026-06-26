@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Add RTCP PSFB FMT=15 (AppSpecificFeedback) send/receive via Direct API
   * Add H266/VVC RTP packetizer and depacketizer #971
   * Negotiate SCTP max message size for data channels #852
   * Expose the negotiated DTLS protocol version #979
