@@ -42,10 +42,10 @@ pub use twcc::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRecord, TwccSendReg
 mod rtcpfb;
 pub use rtcpfb::RtcpFb;
 
-mod remb;
 mod psfbapp;
-pub use remb::Remb;
+mod remb;
 pub use psfbapp::AppSpecificFeedback;
+pub use remb::Remb;
 
 use super::SeqNo;
 use super::Ssrc;

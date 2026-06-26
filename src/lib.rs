@@ -769,11 +769,11 @@ use rtp_::{Bitrate, DataSize};
 pub mod rtp {
     /// Feedback for RTP.
     pub mod rtcp {
+        pub use crate::rtp_::AppSpecificFeedback;
         pub use crate::rtp_::{Descriptions, ExtendedReport, Fir, Goodbye, Nack, Pli};
         pub use crate::rtp_::{Dlrr, NackEntry, ReceptionReport, ReportBlock};
         pub use crate::rtp_::{FirEntry, ReceiverReport, SenderInfo, SenderReport, Twcc};
         pub use crate::rtp_::{ReportList, Rrtr, Rtcp, Sdes, SdesType};
-        pub use crate::rtp_::AppSpecificFeedback;
     }
     use self::rtcp::Rtcp;
 

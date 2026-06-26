@@ -333,10 +333,20 @@ impl Session {
 
     /// Enqueue an application-specific feedback message (PSFB FMT=15, PT=206) for
     /// transmission as part of the regular RTCP compound packet.
-    pub(crate) fn send_app_specific_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc, payload: impl Into<Arc<[u8]>>) {
+    pub(crate) fn send_app_specific_feedback(
+        &mut self,
+        sender_ssrc: Ssrc,
+        media_ssrc: Ssrc,
+        payload: impl Into<Arc<[u8]>>,
+    ) {
         use crate::rtp_::AppSpecificFeedback as RtcpAppFeedback;
-        let feedback = RtcpAppFeedback { sender_ssrc, media_ssrc, payload: payload.into() };
-        self.feedback_tx.push_back(Rtcp::AppSpecificFeedback(feedback));
+        let feedback = RtcpAppFeedback {
+            sender_ssrc,
+            media_ssrc,
+            payload: payload.into(),
+        };
+        self.feedback_tx
+            .push_back(Rtcp::AppSpecificFeedback(feedback));
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {

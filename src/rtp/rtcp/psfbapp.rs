@@ -70,8 +70,10 @@ impl<'a> TryFrom<&'a [u8]> for AppSpecificFeedback {
         }
 
         let (ssrc_buf, payload) = buf.split_at(8);
-        let sender_ssrc = u32::from_be_bytes([ssrc_buf[0], ssrc_buf[1], ssrc_buf[2], ssrc_buf[3]]).into();
-        let media_ssrc = u32::from_be_bytes([ssrc_buf[4], ssrc_buf[5], ssrc_buf[6], ssrc_buf[7]]).into();
+        let sender_ssrc =
+            u32::from_be_bytes([ssrc_buf[0], ssrc_buf[1], ssrc_buf[2], ssrc_buf[3]]).into();
+        let media_ssrc =
+            u32::from_be_bytes([ssrc_buf[4], ssrc_buf[5], ssrc_buf[6], ssrc_buf[7]]).into();
 
         Ok(AppSpecificFeedback {
             sender_ssrc,

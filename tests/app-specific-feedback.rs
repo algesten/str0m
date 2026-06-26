@@ -46,8 +46,8 @@ pub fn app_specific_feedback_direct_api() -> Result<(), RtcError> {
 
     // L sends AppSpecificFeedback to R
     l.direct_api().send_app_specific_feedback(
-        ssrc_l,  // sender_ssrc
-        ssrc_r,  // media_ssrc
+        ssrc_l, // sender_ssrc
+        ssrc_r, // media_ssrc
         test_payload.clone(),
     );
 
@@ -63,8 +63,7 @@ pub fn app_specific_feedback_direct_api() -> Result<(), RtcError> {
 
         // Check R's events for the feedback
         for (_time, event) in r.events.drain(..) {
-            if let Event::AppSpecificFeedback(fb) = event
-            {
+            if let Event::AppSpecificFeedback(fb) = event {
                 assert_eq!(fb.sender_ssrc, ssrc_l);
                 assert_eq!(fb.media_ssrc, ssrc_r);
                 assert_eq!(&fb.payload[..test_payload.len()], &test_payload[..]);
@@ -77,7 +76,10 @@ pub fn app_specific_feedback_direct_api() -> Result<(), RtcError> {
         }
     }
 
-    assert!(received, "R should have received AppSpecificFeedback from L");
+    assert!(
+        received,
+        "R should have received AppSpecificFeedback from L"
+    );
 
     Ok(())
 }

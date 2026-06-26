@@ -404,6 +404,8 @@ impl<'a> DirectApi<'a> {
         media_ssrc: Ssrc,
         payload: impl Into<Arc<[u8]>>,
     ) {
-        self.rtc.session.send_app_specific_feedback(sender_ssrc, media_ssrc, payload);
+        self.rtc
+            .session
+            .send_app_specific_feedback(sender_ssrc, media_ssrc, payload);
     }
 }

@@ -1,21 +1,24 @@
-use super::{AppSpecificFeedback, DlrrItem, FirEntry, NackEntry, ReceptionReport, Remb, ReportBlock, ReportList};
+use super::{
+    AppSpecificFeedback, DlrrItem, FirEntry, NackEntry, ReceptionReport, Remb, ReportBlock,
+    ReportList,
+};
 use super::{Rrtr, Rtcp, Sdes, SenderInfo, Ssrc, Twcc};
 
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum RtcpFb {
-    SenderInfo(SenderInfo),            // tx -> rx
-    ReceptionReport(ReceptionReport),  // rx -> tx
-    DlrrItem(DlrrItem),                // rx <- tx
-    Rrtr((Rrtr, Ssrc)),                // rx -> tx
-    SourceDescription(Sdes),           // tx -> rx
-    Goodbye(Ssrc),                     // tx -> rx
-    Nack(Ssrc, ReportList<NackEntry>), // rx -> tx
-    Pli(Ssrc),                         // rx -> tx
-    Fir(FirEntry),                     // rx -> tx
-    Twcc(Twcc),                        // rx -> tx
-    Remb(Remb),                        // rx -> tx
+    SenderInfo(SenderInfo),                   // tx -> rx
+    ReceptionReport(ReceptionReport),         // rx -> tx
+    DlrrItem(DlrrItem),                       // rx <- tx
+    Rrtr((Rrtr, Ssrc)),                       // rx -> tx
+    SourceDescription(Sdes),                  // tx -> rx
+    Goodbye(Ssrc),                            // tx -> rx
+    Nack(Ssrc, ReportList<NackEntry>),        // rx -> tx
+    Pli(Ssrc),                                // rx -> tx
+    Fir(FirEntry),                            // rx -> tx
+    Twcc(Twcc),                               // rx -> tx
+    Remb(Remb),                               // rx -> tx
     AppSpecificFeedback(AppSpecificFeedback), // not stream-routed
 }
 
@@ -101,8 +104,8 @@ impl RtcpFb {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::AppSpecificFeedback;
+    use super::*;
     use std::collections::VecDeque;
 
     #[test]
