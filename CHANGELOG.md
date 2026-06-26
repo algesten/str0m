@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Reject SDP payload types > 127 instead of panicking when claiming PTs #983
   * Add RTCP PSFB FMT=15 (AppSpecificFeedback) send/receive via Direct API #981
   * Add H266/VVC RTP packetizer and depacketizer #971
   * Negotiate SCTP max message size for data channels #852
