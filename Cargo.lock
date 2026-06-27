@@ -1715,9 +1715,9 @@ dependencies = [
 
 [[package]]
 name = "sctp-proto"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8423ea59db998985015bc5d0145837eab48f60ec449a2dc01f5870499afe0a4"
+checksum = "5376eaf8a764118abd6bee29673c68eab91f0913b448fe2944e74488b63c37b5"
 dependencies = [
  "bytes",
  "crc",
