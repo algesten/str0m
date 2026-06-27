@@ -1030,11 +1030,6 @@ pub enum Event {
     /// We have received the DTLS close packet
     Closed,
 
-    /// The sctp association has been closed.
-    ///
-    /// Emitted when the peer emitted an SCTP abort packet.
-    SctpAssociationClosed,
-
     /// Debug output of incoming and outgoing RTCP/RTP packets.
     ///
     /// Enable using [`RtcConfig::enable_raw_packets()`].
@@ -1750,10 +1745,7 @@ impl Rtc {
                     return Ok(Output::Event(Event::ChannelClose(id)));
                 }
                 SctpEvent::AssociationLost => {
-                    // The SCTP association was lost. SCTP is the data-channel transport,
-                    // it is up to the user to keep the webrtc connection alive or
-                    // loosing the data-channel implies a close of the whole Rtc.
-                    return Ok(Output::Event(Event::SctpAssociationClosed));
+                    return Ok(Output::Event(Event::Closed));
                 }
                 SctpEvent::Data { id, binary, data } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
