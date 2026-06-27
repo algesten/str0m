@@ -177,9 +177,18 @@ impl<'a> TryFrom<&'a [u8]> for Descriptions {
             let report: Sdes = buf.try_into()?;
 
             let len = report.word_size() * 4;
-            buf = &buf[len..];
 
             reports.push(report);
+
+            // word_size() pads up to a 32-bit boundary and may report more bytes
+            // than remain for a trailing or truncated chunk. Guard against slicing
+            // past the end (which would panic) and against a zero len that would
+            // otherwise spin forever.
+            if len == 0 || len >= buf.len() {
+                break;
+            }
+
+            buf = &buf[len..];
         }
 
         Ok(Descriptions {
@@ -203,6 +212,13 @@ impl<'a> TryFrom<&'a [u8]> for Sdes {
         let mut abs = 0;
 
         loop {
+            // SDES items are END-terminated rather than count-bounded, so a
+            // malformed chunk could contain more than the ReportList capacity.
+            // Stop at the cap rather than panicking on the 32nd push.
+            if values.is_full() {
+                break;
+            }
+
             // Per RFC 3550 Section 6.5:
             // "The list of items in each chunk MUST be terminated by one or more null octets,
             // the first of which is interpreted as an item type of end of list.
