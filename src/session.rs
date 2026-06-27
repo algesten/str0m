@@ -497,7 +497,7 @@ impl Session {
                 return;
             }
         };
-        let clock_rate = params.spec().clock_rate;
+        let clock_rate = params.spec().rtp_clock_rate();
         let pt = params.pt();
         let is_repair = pt != header.payload_type;
 

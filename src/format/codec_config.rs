@@ -16,6 +16,9 @@ pub(crate) const PT_PCMU: Pt = Pt::new_with_value(0);
 /// Default payload type for PCMA (G.711 A-law).
 pub(crate) const PT_PCMA: Pt = Pt::new_with_value(8);
 
+/// Default payload type for G722.
+pub(crate) const PT_G722: Pt = Pt::new_with_value(9);
+
 /// Default payload type for VP8.
 pub(crate) const PT_VP8: Pt = Pt::new_with_value(96);
 
@@ -207,6 +210,27 @@ impl CodecConfig {
             None,
             Codec::PCMA,
             Frequency::EIGHT_KHZ,
+            None,
+            Default::default(),
+        );
+    }
+
+    /// Convenience for adding a G722 payload type.
+    ///
+    /// G722 samples audio at 16 kHz, but per RFC 3551 §4.5.2 the RTP clock rate is
+    /// 8000 Hz. The codec is configured at 16 kHz here; str0m maps to 8 kHz for the
+    /// SDP `a=rtpmap` line and when converting to/from RTP timestamps. See
+    /// <https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55>
+    pub fn enable_g722(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::G722);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            PT_G722,
+            None,
+            Codec::G722,
+            Frequency::SIXTEEN_KHZ,
             None,
             Default::default(),
         );
