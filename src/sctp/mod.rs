@@ -137,6 +137,7 @@ pub(crate) enum SctpEvent {
     BufferedAmountLow {
         id: u16,
     },
+    AssociationLost,
 }
 
 /// These are the possible paths:
@@ -713,7 +714,10 @@ impl RtcSctp {
                 return self.poll();
             }
 
-            // TODO: Do we need to handle AssociationLost?
+            if let Event::AssociationLost { ref reason } = e {
+                debug!("Association lost, reason: {}", reason);
+                return Some(SctpEvent::AssociationLost);
+            }
 
             if let Event::Stream(se) = e {
                 match se {
@@ -1087,6 +1091,7 @@ impl fmt::Debug for SctpEvent {
             Self::BufferedAmountLow { id } => {
                 f.debug_struct("BufferedAmountLow").field("id", id).finish()
             }
+            Self::AssociationLost => f.debug_struct("AssociationLost").finish(),
         }
     }
 }

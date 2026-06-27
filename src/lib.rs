@@ -1744,6 +1744,9 @@ impl Rtc {
                     self.chan.remove_channel(id, self.last_now);
                     return Ok(Output::Event(Event::ChannelClose(id)));
                 }
+                SctpEvent::AssociationLost => {
+                    return Ok(Output::Event(Event::Closed));
+                }
                 SctpEvent::Data { id, binary, data } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
                         warn!("Drop ChannelData event for id: {:?}", id);
