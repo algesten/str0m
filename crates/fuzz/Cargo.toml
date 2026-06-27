@@ -62,3 +62,27 @@ name = "receive_register"
 path = "fuzz_targets/receive_register.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "receive"
+path = "fuzz_targets/receive.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "stun"
+path = "fuzz_targets/stun.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rtcp"
+path = "fuzz_targets/rtcp.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "depack_direct"
+path = "fuzz_targets/depack_direct.rs"
+test = false
+doc = false
