@@ -245,6 +245,18 @@ impl RtcConfig {
         self
     }
 
+    /// Enable G722 audio codec.
+    ///
+    /// This is 16 kHz audio compressed to 64 kbit/s as specified by G.722. Note that
+    /// per RFC 3551 §4.5.2 the RTP clock rate on the wire is 8000 Hz even though the
+    /// codec samples at 16 kHz. str0m treats G722 as a 16 kHz codec in the API and
+    /// handles the 8 kHz RTP timestamp mapping internally. See
+    /// <https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55>
+    pub fn enable_g722(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_g722(enabled);
+        self
+    }
+
     /// Enable VP8 video codec.
     ///
     /// Enabled by default.

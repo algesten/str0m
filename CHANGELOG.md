@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Support G722 audio codec (16 kHz codec with 8 kHz RTP clock per RFC 3551)
+
 # 0.21.0
 
   * Upgrade to  dimpl 0.7.0 (breaking)

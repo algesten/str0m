@@ -514,7 +514,7 @@ impl StreamTx {
                     next.pkt.nackable = false;
                 }
 
-                let clock_rate = param.spec().clock_rate;
+                let clock_rate = param.spec().rtp_clock_rate();
                 set_cr = Some(clock_rate);
 
                 // Modify the cached packet time. This is so write_rtp can use u32 media time without

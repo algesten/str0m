@@ -334,7 +334,13 @@ impl Media {
                     pt: *pt,
                     rid: *rid,
                     params: *codec,
-                    time: dep.time,
+                    // The depacketized time is in the RTP wire clock rate. For the
+                    // media (samples/frame) API we present it in the codec's nominal
+                    // clock rate. These differ only for G722, which has a 16 kHz
+                    // nominal rate but an 8 kHz RTP clock rate (RFC 3551 §4.5.2). For
+                    // all other codecs this rebase is a no-op. See
+                    // https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55
+                    time: dep.time.rebase(codec.spec().clock_rate),
                     network_time: dep.first_network_time(),
                     seq_range: dep.seq_range(),
                     contiguous: dep.contiguous,
