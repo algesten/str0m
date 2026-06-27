@@ -1941,6 +1941,7 @@ name = "str0m-apple-crypto"
 version = "0.4.1"
 dependencies = [
  "apple-cryptokit-rs",
+ "cc",
  "core-foundation",
  "der",
  "dimpl",
