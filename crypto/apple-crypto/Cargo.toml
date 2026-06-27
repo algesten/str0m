@@ -30,6 +30,11 @@ x509-cert.workspace = true
 # Constant-time comparison for crypto
 subtle.workspace = true
 
+[build-dependencies]
+# Compiles a tiny stub object that satisfies the Swift back-deployment autolink
+# symbols removed in Xcode 26.x (see build.rs).
+cc = "1"
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 unused_import_braces = "deny"
