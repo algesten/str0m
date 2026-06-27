@@ -13,7 +13,9 @@ use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::X509;
 
 use str0m_proto::DATAGRAM_MTU_TARGET;
-use str0m_proto::crypto::dtls::{DtlsCert, KeyingMaterial, ProtocolVersion, SrtpProfile};
+use str0m_proto::crypto::dtls::{
+    DtlsCert, DtlsCryptoError, DtlsCryptoOperation, KeyingMaterial, ProtocolVersion, SrtpProfile,
+};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
@@ -83,6 +85,10 @@ impl io::Write for IoBuffer {
 // ============================================================================
 
 const DTLS_KEY_LABEL: &str = "EXTRACTOR-dtls_srtp";
+
+fn dtls_crypto_error(operation: DtlsCryptoOperation) -> DtlsImplError {
+    DtlsImplError::CryptoError(DtlsCryptoError::OperationFailed(operation))
+}
 
 struct TlsStream<S> {
     active: Option<bool>,
@@ -487,9 +493,9 @@ impl OsslDtlsInstance {
     /// Flush any application data that was queued before the handshake completed.
     fn flush_queued_app_data(&mut self) -> Result<(), DtlsImplError> {
         while let Some(queued) = self.queued_app_data.pop_front() {
-            if let Err(e) = self.inner.handle_input(&queued) {
+            if self.inner.handle_input(&queued).is_err() {
                 self.queued_app_data.push_front(queued);
-                return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
+                return Err(dtls_crypto_error(DtlsCryptoOperation::Encrypt));
             }
             self.collect_output();
         }
@@ -537,10 +543,10 @@ impl DtlsInstance for OsslDtlsInstance {
                     if io_err.kind() == std::io::ErrorKind::WouldBlock {
                         // This is fine
                     } else {
-                        return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
+                        return Err(dtls_crypto_error(DtlsCryptoOperation::Decrypt));
                     }
                 } else {
-                    return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
+                    return Err(dtls_crypto_error(DtlsCryptoOperation::Decrypt));
                 }
             }
         }
@@ -636,8 +642,8 @@ impl DtlsInstance for OsslDtlsInstance {
         self.flush_queued_app_data()?;
 
         // Now send current data
-        if let Err(e) = self.inner.handle_input(data) {
-            return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
+        if self.inner.handle_input(data).is_err() {
+            return Err(dtls_crypto_error(DtlsCryptoOperation::Encrypt));
         }
 
         self.collect_output();

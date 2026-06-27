@@ -4,6 +4,7 @@ use dimpl::crypto::SupportedDtls12CipherSuite;
 use dimpl::crypto::SupportedDtls13CipherSuite;
 use dimpl::crypto::{Aad, Cipher, Dtls12CipherSuite, HashAlgorithm, Nonce};
 use dimpl::crypto::{Buf, Dtls13CipherSuite, TmpBuf};
+use dimpl::{CryptoError, CryptoOperation};
 
 use openssl::cipher::CipherRef;
 use openssl::cipher_ctx::CipherCtx;
@@ -22,29 +23,32 @@ pub(super) fn aead_encrypt(
     aad: Aad,
     nonce: Nonce,
     tag_len: usize,
-) -> Result<(), String> {
+) -> Result<(), CryptoError> {
     debug_assert!(tag_len <= 16);
 
-    let mut ctx = CipherCtx::new().map_err(|e| format!("{e}"))?;
+    let mut ctx =
+        CipherCtx::new().map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
 
     ctx.encrypt_init(Some(cipher), Some(key), Some(&nonce))
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
 
-    ctx.cipher_update(&aad, None).map_err(|e| format!("{e}"))?;
+    ctx.cipher_update(&aad, None)
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
 
     // OpenSSL may write up to block_size extra bytes during cipher_update/cipher_final.
     let mut ciphertext = vec![0u8; plaintext.len() + tag_len + 16];
     let count = ctx
         .cipher_update(plaintext, Some(&mut ciphertext))
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
     let final_count = ctx
         .cipher_final(&mut ciphertext[count..])
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
 
     let ct_len = count + final_count;
 
     let mut tag = [0u8; 16];
-    ctx.tag(&mut tag[..tag_len]).map_err(|e| format!("{e}"))?;
+    ctx.tag(&mut tag[..tag_len])
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
 
     plaintext.clear();
     plaintext.extend_from_slice(&ciphertext[..ct_len]);
@@ -60,32 +64,38 @@ pub(super) fn aead_decrypt(
     aad: Aad,
     nonce: Nonce,
     tag_len: usize,
-) -> Result<(), String> {
+) -> Result<(), CryptoError> {
     if ciphertext.len() < tag_len {
-        return Err("Ciphertext too short for authentication tag".into());
+        return Err(CryptoError::CiphertextTooShort {
+            minimum: tag_len.min(u8::MAX as usize) as u8,
+            actual: ciphertext.len().min(u8::MAX as usize) as u8,
+        });
     }
 
     let ct_len = ciphertext.len() - tag_len;
     let (ct, tag) = ciphertext.as_ref().split_at(ct_len);
 
-    let mut ctx = CipherCtx::new().map_err(|e| format!("{e}"))?;
+    let mut ctx =
+        CipherCtx::new().map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
 
     ctx.decrypt_init(Some(cipher), Some(key), Some(&nonce))
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
 
-    ctx.cipher_update(&aad, None).map_err(|e| format!("{e}"))?;
+    ctx.cipher_update(&aad, None)
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
 
     // OpenSSL may write up to block_size extra bytes during cipher_update/cipher_final.
     let mut plaintext = vec![0u8; ct_len + 16];
     let count = ctx
         .cipher_update(ct, Some(&mut plaintext))
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
 
-    ctx.set_tag(tag).map_err(|e| format!("{e}"))?;
+    ctx.set_tag(tag)
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
 
     let final_count = ctx
         .cipher_final(&mut plaintext[count..])
-        .map_err(|e| format!("{e}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
 
     let pt_len = count + final_count;
     ciphertext.truncate(pt_len);
@@ -113,9 +123,11 @@ impl std::fmt::Debug for AesGcm {
 }
 
 impl AesGcm {
-    fn new(key: &[u8]) -> Result<Self, String> {
+    fn new(key: &[u8]) -> Result<Self, CryptoError> {
         if key.len() != 16 && key.len() != 32 {
-            return Err(format!("Invalid key size for AES-GCM: {}", key.len()));
+            return Err(CryptoError::InvalidAesGcmKeySize {
+                actual: key.len().min(u16::MAX as usize) as u16,
+            });
         }
         let mut buf = [0u8; 32];
         buf[..key.len()].copy_from_slice(key);
@@ -148,7 +160,7 @@ impl Drop for AesGcm {
 }
 
 impl Cipher for AesGcm {
-    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), CryptoError> {
         aead_encrypt(
             self.cipher(),
             self.key_bytes(),
@@ -159,7 +171,12 @@ impl Cipher for AesGcm {
         )
     }
 
-    fn decrypt(&mut self, ciphertext: &mut TmpBuf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn decrypt(
+        &mut self,
+        ciphertext: &mut TmpBuf,
+        aad: Aad,
+        nonce: Nonce,
+    ) -> Result<(), CryptoError> {
         aead_decrypt(
             self.cipher(),
             self.key_bytes(),
@@ -196,7 +213,7 @@ impl SupportedDtls12CipherSuite for Aes128GcmSha256 {
         AES_GCM_TAG_LEN
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 }
@@ -226,7 +243,7 @@ impl SupportedDtls12CipherSuite for Aes256GcmSha384 {
         AES_GCM_TAG_LEN
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 }
@@ -264,7 +281,7 @@ impl SupportedDtls13CipherSuite for Tls13Aes128GcmSha256 {
         16 // GCM tag
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 
@@ -298,7 +315,7 @@ impl SupportedDtls13CipherSuite for Tls13Aes256GcmSha384 {
         16 // GCM tag
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 

@@ -12,6 +12,8 @@ pub use error::{CryptoError, DtlsError};
 pub mod dtls {
     pub use super::provider::{DtlsInstance, DtlsProvider};
 
+    pub use dimpl::CryptoError as DtlsCryptoError;
+    pub use dimpl::CryptoOperation as DtlsCryptoOperation;
     pub use dimpl::DtlsCertificate as DtlsCert;
     pub use dimpl::KeyingMaterial;
     pub use dimpl::ProtocolVersion;

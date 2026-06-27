@@ -5,6 +5,7 @@ use std::str;
 use dimpl::crypto::Buf;
 use dimpl::crypto::{HashAlgorithm, KeyProvider};
 use dimpl::crypto::{SignatureAlgorithm, SignatureVerifier, SigningKey as SigningKeyTrait};
+use dimpl::{CryptoError, CryptoOperation, NamedGroup};
 
 use windows::Win32::Security::Cryptography::BCRYPT_ECCPRIVATE_BLOB;
 use windows::Win32::Security::Cryptography::BCRYPT_ECCPUBLIC_BLOB;
@@ -62,13 +63,18 @@ impl std::fmt::Debug for EcdsaSigningKey {
 }
 
 impl SigningKeyTrait for EcdsaSigningKey {
-    fn sign(&mut self, data: &[u8], hash_alg: HashAlgorithm, out: &mut Buf) -> Result<(), String> {
+    fn sign(
+        &mut self,
+        data: &[u8],
+        hash_alg: HashAlgorithm,
+        out: &mut Buf,
+    ) -> Result<(), CryptoError> {
         let key_hash = self.hash_algorithm();
         if hash_alg != key_hash {
-            return Err(format!(
-                "wincrypto ECDSA key is locked to {:?} but {:?} was requested",
-                key_hash, hash_alg
-            ));
+            return Err(CryptoError::SigningKeyHashMismatch {
+                key_hash,
+                requested: hash_alg,
+            });
         }
 
         // Hash the data.
@@ -84,7 +90,7 @@ impl SigningKeyTrait for EcdsaSigningKey {
         // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcrypthash
         unsafe {
             WinCryptoError::from_ntstatus(BCryptHash(bcrypt_hash_alg, None, data, &mut hash))
-                .map_err(|e| format!("Hash failed: {e}"))?;
+                .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Sign))?;
         }
 
         // Sign the hash.
@@ -108,13 +114,13 @@ impl SigningKeyTrait for EcdsaSigningKey {
                 &mut sig_len,
                 BCRYPT_FLAGS(0),
             ))
-            .map_err(|e| format!("BCryptSignHash failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Sign))?;
         }
 
         raw_sig.truncate(sig_len as usize);
 
         // Convert raw (r,s) to DER-encoded ECDSA-Sig-Value.
-        let der_sig = raw_rs_to_der(&raw_sig)?;
+        let der_sig = raw_rs_to_der(&raw_sig).map_err(|_| CryptoError::InvalidSignatureFormat)?;
 
         out.clear();
         out.extend_from_slice(&der_sig);
@@ -147,7 +153,7 @@ impl SigningKeyTrait for EcdsaSigningKey {
 pub(super) struct WinCngKeyProvider;
 
 impl KeyProvider for WinCngKeyProvider {
-    fn load_private_key(&self, key_der: &[u8]) -> Result<Box<dyn SigningKeyTrait>, String> {
+    fn load_private_key(&self, key_der: &[u8]) -> Result<Box<dyn SigningKeyTrait>, CryptoError> {
         // Try PEM format first.
         if let Ok(pem_str) = str::from_utf8(key_der) {
             if pem_str.contains("-----BEGIN") {
@@ -161,7 +167,8 @@ impl KeyProvider for WinCngKeyProvider {
         let sec1_der = try_unwrap_pkcs8(key_der).unwrap_or_else(|| key_der.to_vec());
 
         // Parse SEC1 ECPrivateKey.
-        let (curve_hint, private_key_bytes, public_key_opt) = parse_ec_private_key(&sec1_der)?;
+        let (curve_hint, private_key_bytes, public_key_opt) =
+            parse_ec_private_key(&sec1_der).map_err(|_| CryptoError::InvalidPrivateKey)?;
 
         let curve = if let Some(c) = curve_hint {
             c
@@ -170,14 +177,10 @@ impl KeyProvider for WinCngKeyProvider {
         } else if private_key_bytes.len() == 48 {
             EcCurve::P384
         } else {
-            return Err(format!(
-                "Could not determine EC curve from key length: {}",
-                private_key_bytes.len()
-            ));
+            return Err(CryptoError::InvalidPrivateKey);
         };
 
-        let public_key_bytes = public_key_opt
-            .ok_or_else(|| "EC private key missing public key component".to_string())?;
+        let public_key_bytes = public_key_opt.ok_or(CryptoError::InvalidPrivateKey)?;
 
         let coord_size = match curve {
             EcCurve::P256 => 32usize,
@@ -186,11 +189,7 @@ impl KeyProvider for WinCngKeyProvider {
 
         let expected_pub_len = 1 + 2 * coord_size;
         if public_key_bytes.len() != expected_pub_len || public_key_bytes[0] != 0x04 {
-            return Err(format!(
-                "Unexpected public key length: {} (expected {})",
-                public_key_bytes.len(),
-                expected_pub_len
-            ));
+            return Err(CryptoError::InvalidPrivateKey);
         }
 
         let x = &public_key_bytes[1..1 + coord_size];
@@ -233,7 +232,7 @@ impl KeyProvider for WinCngKeyProvider {
                 &blob,
                 0,
             ))
-            .map_err(|e| format!("BCryptImportKeyPair failed: {e}"))?;
+            .map_err(|_| CryptoError::InvalidPrivateKey)?;
             key_handle
         };
 
@@ -264,40 +263,40 @@ impl SignatureVerifier for WinCngSignatureVerifier {
         signature: &[u8],
         hash_alg: HashAlgorithm,
         sig_alg: SignatureAlgorithm,
-    ) -> Result<(), String> {
+    ) -> Result<(), CryptoError> {
         if sig_alg != SignatureAlgorithm::ECDSA {
-            return Err(format!("Unsupported signature algorithm: {sig_alg:?}"));
+            return Err(CryptoError::UnsupportedSignatureAlgorithm(sig_alg));
         }
 
-        let (alg_oid, pubkey_bytes) = extract_spki_from_cert(cert_der)?;
+        let (alg_oid, pubkey_bytes) =
+            extract_spki_from_cert(cert_der).map_err(|_| CryptoError::CertificateParseFailed)?;
 
         if alg_oid != OID_EC_PUBLIC_KEY {
-            return Err("Unsupported public key algorithm OID".into());
+            return Err(CryptoError::UnsupportedPublicKeyAlgorithm);
         }
 
         // Verify uncompressed EC point format (0x04 prefix).
         if pubkey_bytes.is_empty() || pubkey_bytes[0] != 0x04 {
-            return Err("EC public key is not in uncompressed format (0x04)".into());
+            return Err(CryptoError::InvalidSubjectPublicKey);
         }
 
         // Determine key size from public key length.
-        let (alg_handle, coord_size, magic) = if pubkey_bytes.len() == 65 {
+        let (alg_handle, coord_size, magic, group) = if pubkey_bytes.len() == 65 {
             (
                 BCRYPT_ECDSA_P256_ALG_HANDLE,
                 32usize,
                 0x31534345u32, // BCRYPT_ECDSA_PUBLIC_P256_MAGIC
+                NamedGroup::Secp256r1,
             )
         } else if pubkey_bytes.len() == 97 {
             (
                 BCRYPT_ECDSA_P384_ALG_HANDLE,
                 48usize,
                 0x33534345u32, // BCRYPT_ECDSA_PUBLIC_P384_MAGIC
+                NamedGroup::Secp384r1,
             )
         } else {
-            return Err(format!(
-                "Unsupported EC public key size: {} bytes",
-                pubkey_bytes.len()
-            ));
+            return Err(CryptoError::InvalidSubjectPublicKey);
         };
 
         // Hash the data.
@@ -305,9 +304,10 @@ impl SignatureVerifier for WinCngSignatureVerifier {
             HashAlgorithm::SHA256 => (BCRYPT_SHA256_ALG_HANDLE, 32usize),
             HashAlgorithm::SHA384 => (BCRYPT_SHA384_ALG_HANDLE, 48usize),
             _ => {
-                return Err(format!(
-                    "Unsupported hash algorithm for ECDSA: {hash_alg:?}"
-                ));
+                return Err(CryptoError::UnsupportedSignaturePair {
+                    signature: sig_alg,
+                    hash: hash_alg,
+                });
             }
         };
 
@@ -318,7 +318,7 @@ impl SignatureVerifier for WinCngSignatureVerifier {
         // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcrypthash
         unsafe {
             WinCryptoError::from_ntstatus(BCryptHash(hash_bcrypt_alg, None, data, &mut hash))
-                .map_err(|e| format!("Hash failed: {e}"))?;
+                .map_err(|_| CryptoError::OperationFailed(CryptoOperation::VerifySignature))?;
         }
 
         // Import the public key.
@@ -342,12 +342,13 @@ impl SignatureVerifier for WinCngSignatureVerifier {
                 &blob,
                 0,
             ))
-            .map_err(|e| format!("Import public key failed: {e}"))?;
+            .map_err(|_| CryptoError::InvalidSubjectPublicKey)?;
             key_handle
         };
 
         // Convert DER signature to raw (r,s) format.
-        let raw_sig = der_to_raw_rs(signature, coord_size)?;
+        let raw_sig = der_to_raw_rs(signature, coord_size)
+            .map_err(|_| CryptoError::InvalidSignatureFormat)?;
 
         // Verify.
         // SAFETY: Microsoft Learn documents `BCryptVerifySignature` as
@@ -362,7 +363,11 @@ impl SignatureVerifier for WinCngSignatureVerifier {
                 &raw_sig,
                 BCRYPT_FLAGS(0),
             ))
-            .map_err(|e| format!("ECDSA signature verification failed: {e}"))?;
+            .map_err(|_| CryptoError::SignatureVerificationFailed {
+                signature: sig_alg,
+                hash: hash_alg,
+                group,
+            })?;
         }
 
         Ok(())

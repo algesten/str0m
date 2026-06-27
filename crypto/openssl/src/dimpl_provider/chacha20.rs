@@ -3,6 +3,7 @@
 //! This module is compiled out when the `fips140` feature is enabled,
 //! since ChaCha20 is not a FIPS 140 approved algorithm.
 
+use dimpl::CryptoError;
 use dimpl::crypto::{Aad, Buf, Cipher, Dtls13CipherSuite, HashAlgorithm, Nonce};
 use dimpl::crypto::{SupportedDtls13CipherSuite, TmpBuf};
 
@@ -26,10 +27,12 @@ impl std::fmt::Debug for ChaCha20Poly1305 {
 }
 
 impl ChaCha20Poly1305 {
-    fn new(key: &[u8]) -> Result<Self, String> {
-        let key: [u8; CHACHA20_POLY1305_KEY_LEN] = key
-            .try_into()
-            .map_err(|_| format!("Invalid key size for ChaCha20-Poly1305: {}", key.len()))?;
+    fn new(key: &[u8]) -> Result<Self, CryptoError> {
+        let key: [u8; CHACHA20_POLY1305_KEY_LEN] =
+            key.try_into()
+                .map_err(|_| CryptoError::InvalidChacha20Poly1305KeySize {
+                    actual: key.len().min(u16::MAX as usize) as u16,
+                })?;
         Ok(Self { key })
     }
 }
@@ -44,7 +47,7 @@ impl Drop for ChaCha20Poly1305 {
 }
 
 impl Cipher for ChaCha20Poly1305 {
-    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), CryptoError> {
         aead_encrypt(
             openssl::cipher::Cipher::chacha20_poly1305(),
             &self.key,
@@ -55,7 +58,12 @@ impl Cipher for ChaCha20Poly1305 {
         )
     }
 
-    fn decrypt(&mut self, ciphertext: &mut TmpBuf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn decrypt(
+        &mut self,
+        ciphertext: &mut TmpBuf,
+        aad: Aad,
+        nonce: Nonce,
+    ) -> Result<(), CryptoError> {
         aead_decrypt(
             openssl::cipher::Cipher::chacha20_poly1305(),
             &self.key,
@@ -92,7 +100,7 @@ impl SupportedDtls13CipherSuite for Tls13ChaCha20Poly1305Sha256 {
         CHACHA20_POLY1305_TAG_LEN
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(ChaCha20Poly1305::new(key)?))
     }
 

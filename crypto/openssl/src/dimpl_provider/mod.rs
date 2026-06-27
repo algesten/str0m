@@ -33,8 +33,9 @@ pub(crate) fn default_provider() -> CryptoProvider {
 struct OsslSecureRandom;
 
 impl SecureRandom for OsslSecureRandom {
-    fn fill(&self, buf: &mut [u8]) -> Result<(), String> {
-        openssl::rand::rand_bytes(buf).map_err(|e| format!("OpenSSL random failed: {e}"))
+    fn fill(&self, buf: &mut [u8]) -> Result<(), dimpl::CryptoError> {
+        openssl::rand::rand_bytes(buf)
+            .map_err(|_| dimpl::CryptoError::OperationFailed(dimpl::CryptoOperation::FillRandom))
     }
 }
 

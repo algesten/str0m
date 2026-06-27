@@ -14,6 +14,7 @@ pub(crate) mod sign;
 mod x25519;
 
 use dimpl::crypto::{CryptoProvider, SecureRandom};
+use dimpl::{CryptoError, CryptoOperation};
 
 use crate::WinCryptoError;
 
@@ -35,7 +36,7 @@ pub fn default_provider() -> CryptoProvider {
 struct WinCngSecureRandom;
 
 impl SecureRandom for WinCngSecureRandom {
-    fn fill(&self, buf: &mut [u8]) -> Result<(), String> {
+    fn fill(&self, buf: &mut [u8]) -> Result<(), CryptoError> {
         use windows::Win32::Security::Cryptography::BCRYPT_USE_SYSTEM_PREFERRED_RNG;
         use windows::Win32::Security::Cryptography::BCryptGenRandom;
         // SAFETY: Microsoft Learn documents `BCryptGenRandom` as filling the
@@ -48,7 +49,7 @@ impl SecureRandom for WinCngSecureRandom {
                 buf,
                 BCRYPT_USE_SYSTEM_PREFERRED_RNG,
             ))
-            .map_err(|e| format!("BCryptGenRandom failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::FillRandom))?;
         }
         Ok(())
     }

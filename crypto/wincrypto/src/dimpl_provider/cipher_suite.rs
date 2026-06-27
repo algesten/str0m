@@ -7,6 +7,7 @@ use dimpl::crypto::SupportedDtls12CipherSuite;
 use dimpl::crypto::SupportedDtls13CipherSuite;
 use dimpl::crypto::{Aad, Cipher, Dtls12CipherSuite, HashAlgorithm, Nonce};
 use dimpl::crypto::{Buf, Dtls13CipherSuite, TmpBuf};
+use dimpl::{CryptoError, CryptoOperation};
 
 use windows::Win32::Security::Cryptography::BCRYPT_AES_ECB_ALG_HANDLE;
 use windows::Win32::Security::Cryptography::BCRYPT_AES_GCM_ALG_HANDLE;
@@ -42,9 +43,11 @@ impl std::fmt::Debug for AesGcm {
 }
 
 impl AesGcm {
-    fn new(key: &[u8]) -> Result<Self, String> {
+    fn new(key: &[u8]) -> Result<Self, CryptoError> {
         if key.len() != 16 && key.len() != 32 {
-            return Err(format!("Invalid key size for AES-GCM: {}", key.len()));
+            return Err(CryptoError::InvalidAesGcmKeySize {
+                actual: key.len().min(u16::MAX as usize) as u16,
+            });
         }
         // SAFETY: Microsoft Learn documents `BCryptGenerateSymmetricKey` as
         // borrowing the caller-provided key bytes and output handle only for
@@ -59,7 +62,7 @@ impl AesGcm {
                 key,
                 0,
             ))
-            .map_err(|e| format!("AES-GCM key creation failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CreateCipher))?;
             key_handle
         };
         Ok(Self { key: key_handle })
@@ -67,7 +70,7 @@ impl AesGcm {
 }
 
 impl Cipher for AesGcm {
-    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), CryptoError> {
         let plain_len = plaintext.len();
         let mut ciphertext = vec![0u8; plain_len];
         let mut tag = [0u8; AES_GCM_TAG_LEN];
@@ -100,7 +103,7 @@ impl Cipher for AesGcm {
                 &mut count,
                 BCRYPT_FLAGS(0),
             ))
-            .map_err(|e| format!("AES-GCM encrypt failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
         }
 
         plaintext.clear();
@@ -109,9 +112,17 @@ impl Cipher for AesGcm {
         Ok(())
     }
 
-    fn decrypt(&mut self, ciphertext: &mut TmpBuf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn decrypt(
+        &mut self,
+        ciphertext: &mut TmpBuf,
+        aad: Aad,
+        nonce: Nonce,
+    ) -> Result<(), CryptoError> {
         if ciphertext.len() < AES_GCM_TAG_LEN {
-            return Err("Ciphertext too short for AES-GCM".into());
+            return Err(CryptoError::CiphertextTooShort {
+                minimum: AES_GCM_TAG_LEN as u8,
+                actual: ciphertext.len().min(u8::MAX as usize) as u8,
+            });
         }
 
         let ct_len = ciphertext.len() - AES_GCM_TAG_LEN;
@@ -149,7 +160,7 @@ impl Cipher for AesGcm {
                 &mut count,
                 BCRYPT_FLAGS(0),
             ))
-            .map_err(|e| format!("AES-GCM decrypt failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
         }
 
         ciphertext.truncate(count as usize);
@@ -185,7 +196,7 @@ impl SupportedDtls12CipherSuite for Aes128GcmSha256 {
         16
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 }
@@ -215,7 +226,7 @@ impl SupportedDtls12CipherSuite for Aes256GcmSha384 {
         16
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 }
@@ -253,7 +264,7 @@ impl SupportedDtls13CipherSuite for Tls13Aes128GcmSha256 {
         16
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 
@@ -287,7 +298,7 @@ impl SupportedDtls13CipherSuite for Tls13Aes256GcmSha384 {
         16
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 

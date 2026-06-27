@@ -4,6 +4,7 @@ use dimpl::crypto::SupportedDtls12CipherSuite;
 use dimpl::crypto::SupportedDtls13CipherSuite;
 use dimpl::crypto::{Aad, Cipher, Dtls12CipherSuite, HashAlgorithm, Nonce};
 use dimpl::crypto::{Buf, Dtls13CipherSuite, TmpBuf};
+use dimpl::{CryptoError, CryptoOperation};
 
 const AES_GCM_TAG_LEN: usize = 16;
 
@@ -19,16 +20,18 @@ impl std::fmt::Debug for AesGcm {
 }
 
 impl AesGcm {
-    fn new(key: &[u8]) -> Result<Self, String> {
+    fn new(key: &[u8]) -> Result<Self, CryptoError> {
         if key.len() != 16 && key.len() != 32 {
-            return Err(format!("Invalid key size for AES-GCM: {}", key.len()));
+            return Err(CryptoError::InvalidAesGcmKeySize {
+                actual: key.len().min(u16::MAX as usize) as u16,
+            });
         }
         Ok(Self { key: key.to_vec() })
     }
 }
 
 impl Cipher for AesGcm {
-    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), CryptoError> {
         let ciphertext_length = plaintext.len() + AES_GCM_TAG_LEN;
         let mut ciphertext = OutputBuffer::new(ciphertext_length);
         let output_size = apple_cryptokit::symmetric::aes::aes_gcm_encrypt_to_with_aad(
@@ -38,13 +41,24 @@ impl Cipher for AesGcm {
             &aad,
             ciphertext.as_mut_slice(),
         )
-        .map_err(|err| format!("{err:?}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
         plaintext.clear();
         plaintext.extend_from_slice(&ciphertext.as_slice()[..output_size]);
         Ok(())
     }
 
-    fn decrypt(&mut self, ciphertext: &mut TmpBuf, aad: Aad, nonce: Nonce) -> Result<(), String> {
+    fn decrypt(
+        &mut self,
+        ciphertext: &mut TmpBuf,
+        aad: Aad,
+        nonce: Nonce,
+    ) -> Result<(), CryptoError> {
+        if ciphertext.len() < AES_GCM_TAG_LEN {
+            return Err(CryptoError::CiphertextTooShort {
+                minimum: AES_GCM_TAG_LEN as u8,
+                actual: ciphertext.len().min(u8::MAX as usize) as u8,
+            });
+        }
         let plaintext_length = ciphertext.len() - AES_GCM_TAG_LEN;
         let mut output = OutputBuffer::new(plaintext_length);
         let output_size = apple_cryptokit::symmetric::aes::aes_gcm_decrypt_to_with_aad(
@@ -54,7 +68,7 @@ impl Cipher for AesGcm {
             &aad,
             output.as_mut_slice(),
         )
-        .map_err(|err| format!("{err:?}"))?;
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
         ciphertext.truncate(output_size);
         ciphertext
             .as_mut()
@@ -88,7 +102,7 @@ impl SupportedDtls12CipherSuite for Aes128GcmSha256 {
         16
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 }
@@ -118,7 +132,7 @@ impl SupportedDtls12CipherSuite for Aes256GcmSha384 {
         16
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 }
@@ -154,7 +168,7 @@ impl SupportedDtls13CipherSuite for Tls13Aes128GcmSha256 {
         16 // GCM tag
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 
@@ -188,7 +202,7 @@ impl SupportedDtls13CipherSuite for Tls13Aes256GcmSha384 {
         16 // GCM tag
     }
 
-    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, String> {
+    fn create_cipher(&self, key: &[u8]) -> Result<Box<dyn Cipher>, CryptoError> {
         Ok(Box::new(AesGcm::new(key)?))
     }
 

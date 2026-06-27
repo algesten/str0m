@@ -1,6 +1,7 @@
 //! HMAC implementations using OpenSSL.
 
 use dimpl::crypto::HmacProvider;
+use dimpl::{CryptoError, CryptoOperation};
 
 use openssl::hash::MessageDigest;
 
@@ -14,21 +15,26 @@ impl HmacProvider for OsslHmacProvider {
         key: &[u8],
         data: &[u8],
         out: &mut [u8],
-    ) -> Result<usize, String> {
-        let pkey = openssl::pkey::PKey::hmac(key).map_err(|e| format!("{e}"))?;
+    ) -> Result<usize, CryptoError> {
+        let pkey = openssl::pkey::PKey::hmac(key)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))?;
         let mut signer = match hash {
             dimpl::HashAlgorithm::SHA256 => {
                 openssl::sign::Signer::new(MessageDigest::sha256(), &pkey)
-                    .map_err(|e| format!("{e}"))
+                    .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
             }
             dimpl::HashAlgorithm::SHA384 => {
                 openssl::sign::Signer::new(MessageDigest::sha384(), &pkey)
-                    .map_err(|e| format!("{e}"))
+                    .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
             }
-            _ => Err(format!("Unsupported HMAC Hash: {hash:?}")),
+            _ => Err(CryptoError::UnsupportedHmacHash(hash)),
         }?;
-        signer.update(data).map_err(|e| format!("{e}"))?;
-        signer.sign(out).map_err(|e| format!("{e}"))
+        signer
+            .update(data)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))?;
+        signer
+            .sign(out)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
     }
 }
 

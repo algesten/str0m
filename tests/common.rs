@@ -478,7 +478,7 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
         "apple-crypto" => str0m_apple_crypto::default_provider(),
 
         _ => {
-            let mut available = Vec::new();
+            let mut available: Vec<&'static str> = Vec::new();
             #[cfg(feature = "aws-lc-rs")]
             available.push("aws-lc-rs");
             #[cfg(feature = "rust-crypto")]

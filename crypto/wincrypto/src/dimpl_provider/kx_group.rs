@@ -2,6 +2,7 @@
 
 use dimpl::crypto::Buf;
 use dimpl::crypto::{ActiveKeyExchange, NamedGroup, SupportedKxGroup};
+use dimpl::{CryptoError, CryptoOperation};
 
 use windows::Win32::Security::Cryptography::BCRYPT_ALG_HANDLE;
 use windows::Win32::Security::Cryptography::BCRYPT_ECCPUBLIC_BLOB;
@@ -43,11 +44,11 @@ impl std::fmt::Debug for EcdhKeyExchange {
 }
 
 impl EcdhKeyExchange {
-    fn new(group: NamedGroup, mut buf: Buf) -> Result<Self, String> {
+    fn new(group: NamedGroup, mut buf: Buf) -> Result<Self, CryptoError> {
         let (alg_handle, coord_size) = match group {
             NamedGroup::Secp256r1 => (BCRYPT_ECDH_P256_ALG_HANDLE, 32usize),
             NamedGroup::Secp384r1 => (BCRYPT_ECDH_P384_ALG_HANDLE, 48usize),
-            _ => return Err(format!("Unsupported group: {group:?}")),
+            _ => return Err(CryptoError::UnsupportedKeyExchangeGroup(group)),
         };
 
         // SAFETY: Microsoft Learn documents `BCryptGenerateKeyPair` and
@@ -63,16 +64,17 @@ impl EcdhKeyExchange {
                 (coord_size * 8) as u32,
                 0,
             ))
-            .map_err(|e| format!("BCryptGenerateKeyPair failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::GenerateEphemeralKey))?;
 
             WinCryptoError::from_ntstatus(BCryptFinalizeKeyPair(*key_handle, 0))
-                .map_err(|e| format!("BCryptFinalizeKeyPair failed: {e}"))?;
+                .map_err(|_| CryptoError::OperationFailed(CryptoOperation::GenerateEphemeralKey))?;
 
             key_handle
         };
 
         // Export public key as SEC1 uncompressed point: 04 || X || Y
-        let pub_key_bytes = export_ec_public_key(*key_handle, coord_size)?;
+        let pub_key_bytes = export_ec_public_key(*key_handle, coord_size)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputePublicKey))?;
 
         buf.clear();
         buf.extend_from_slice(&pub_key_bytes);
@@ -90,30 +92,27 @@ impl ActiveKeyExchange for EcdhKeyExchange {
         &self.public_key_bytes
     }
 
-    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), String> {
+    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), CryptoError> {
         let coord_size = match self.group {
             NamedGroup::Secp256r1 => 32usize,
             NamedGroup::Secp384r1 => 48usize,
-            _ => return Err("Unsupported group".into()),
+            _ => return Err(CryptoError::UnsupportedKeyExchangeGroup(self.group)),
         };
 
         let alg_handle = match self.group {
             NamedGroup::Secp256r1 => BCRYPT_ECDH_P256_ALG_HANDLE,
             NamedGroup::Secp384r1 => BCRYPT_ECDH_P384_ALG_HANDLE,
-            _ => return Err("Unsupported group".into()),
+            _ => return Err(CryptoError::UnsupportedKeyExchangeGroup(self.group)),
         };
 
         // peer_pub should be uncompressed point: 04 || X || Y
         if peer_pub.len() != 1 + 2 * coord_size || peer_pub[0] != 0x04 {
-            return Err(format!(
-                "Invalid peer public key length: {} (expected {})",
-                peer_pub.len(),
-                1 + 2 * coord_size,
-            ));
+            return Err(CryptoError::InvalidPublicKey(self.group));
         }
 
         // Import peer public key as BCRYPT_ECCPUBLIC_BLOB
-        let peer_key_handle = import_ec_public_key(alg_handle, peer_pub, coord_size)?;
+        let peer_key_handle = import_ec_public_key(alg_handle, peer_pub, coord_size)
+            .map_err(|_| CryptoError::InvalidPublicKey(self.group))?;
 
         // Perform ECDH key exchange
         // SAFETY: Microsoft Learn documents `BCryptSecretAgreement` as
@@ -128,10 +127,11 @@ impl ActiveKeyExchange for EcdhKeyExchange {
                 &mut *secret_handle,
                 0,
             ))
-            .map_err(|e| format!("BCryptSecretAgreement failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CompleteKeyExchange))?;
 
             // Derive raw shared secret
-            derive_raw_secret(*secret_handle)?
+            derive_raw_secret(*secret_handle)
+                .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CompleteKeyExchange))?
         };
 
         // Windows returns the raw shared secret in big-endian, which is what we want.
@@ -287,7 +287,7 @@ impl SupportedKxGroup for P256 {
         NamedGroup::Secp256r1
     }
 
-    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, CryptoError> {
         Ok(Box::new(EcdhKeyExchange::new(NamedGroup::Secp256r1, buf)?))
     }
 }
@@ -301,7 +301,7 @@ impl SupportedKxGroup for P384 {
         NamedGroup::Secp384r1
     }
 
-    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, CryptoError> {
         Ok(Box::new(EcdhKeyExchange::new(NamedGroup::Secp384r1, buf)?))
     }
 }

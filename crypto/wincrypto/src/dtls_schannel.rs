@@ -4,11 +4,18 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 use str0m_proto::DATAGRAM_MTU_TARGET;
-use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::dtls::{
+    DtlsCert, DtlsCryptoError, DtlsCryptoOperation, DtlsImplError, DtlsInstance, DtlsOutput,
+    DtlsProvider,
+};
 use str0m_proto::crypto::dtls::{KeyingMaterial, ProtocolVersion, SrtpProfile};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
 use crate::sys::{Certificate, Dtls, DtlsEvent};
+
+fn dtls_crypto_error(operation: DtlsCryptoOperation) -> DtlsImplError {
+    DtlsImplError::CryptoError(DtlsCryptoError::OperationFailed(operation))
+}
 
 /// Cache for Windows certificates, keyed by their DER bytes.
 /// This ensures the same Windows certificate handle is used for both
@@ -150,7 +157,7 @@ impl WinCryptoDtlsInstance {
             let sent = self
                 .dtls
                 .send_data(&queued)
-                .map_err(|e| DtlsImplError::CryptoError(format!("DTLS send: {}", e)))?;
+                .map_err(|_| dtls_crypto_error(DtlsCryptoOperation::Encrypt))?;
             if !sent {
                 // Handshake not complete yet, put data back
                 self.queued_app_data.push_front(queued);
@@ -170,7 +177,7 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         let event = self
             .dtls
             .handle_receive(Some(packet))
-            .map_err(|e| DtlsImplError::CryptoError(format!("DTLS error: {}", e)))?;
+            .map_err(|_| dtls_crypto_error(DtlsCryptoOperation::Decrypt))?;
 
         // Store the event for poll_output to retrieve
         self.process_dtls_event(event);
@@ -241,7 +248,7 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         // Now send current data
         self.dtls
             .send_data(data)
-            .map_err(|e| DtlsImplError::CryptoError(format!("DTLS send: {}", e)))?;
+            .map_err(|_| dtls_crypto_error(DtlsCryptoOperation::Encrypt))?;
         Ok(())
     }
 
@@ -254,8 +261,6 @@ impl DtlsInstance for WinCryptoDtlsInstance {
     }
 
     fn close(&mut self) -> Result<(), DtlsImplError> {
-        Err(DtlsImplError::CryptoError(
-            "SChannel native DTLS does not support close_notify".into(),
-        ))
+        Err(dtls_crypto_error(DtlsCryptoOperation::Encrypt))
     }
 }

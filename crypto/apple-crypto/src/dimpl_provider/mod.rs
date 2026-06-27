@@ -31,11 +31,11 @@ pub fn default_provider() -> CryptoProvider {
 struct AppleSecureRandom;
 
 impl SecureRandom for AppleSecureRandom {
-    fn fill(&self, buf: &mut [u8]) -> Result<(), String> {
+    fn fill(&self, buf: &mut [u8]) -> Result<(), dimpl::CryptoError> {
         use security_framework::random::SecRandom;
         let rng = SecRandom::default();
         rng.copy_bytes(buf)
-            .map_err(|_| "Failed to generate random bytes".to_string())
+            .map_err(|_| dimpl::CryptoError::OperationFailed(dimpl::CryptoOperation::FillRandom))
     }
 }
 

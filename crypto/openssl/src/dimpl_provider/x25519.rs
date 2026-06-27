@@ -4,6 +4,7 @@
 //! since X25519 is not NIST approved (SP 800-56A).
 
 use dimpl::crypto::{ActiveKeyExchange, Buf, NamedGroup, SupportedKxGroup};
+use dimpl::{CryptoError, CryptoOperation};
 
 use openssl::pkey::PKey;
 
@@ -16,7 +17,7 @@ impl SupportedKxGroup for X25519 {
         NamedGroup::X25519
     }
 
-    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, CryptoError> {
         Ok(Box::new(X25519KeyExchange::new(buf)?))
     }
 }
@@ -36,13 +37,13 @@ impl std::fmt::Debug for X25519KeyExchange {
 }
 
 impl X25519KeyExchange {
-    fn new(mut buf: Buf) -> Result<Self, String> {
-        let private_key =
-            PKey::generate_x25519().map_err(|e| format!("X25519 key generation failed: {e}"))?;
+    fn new(mut buf: Buf) -> Result<Self, CryptoError> {
+        let private_key = PKey::generate_x25519()
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::GenerateEphemeralKey))?;
 
         let raw_pub = private_key
             .raw_public_key()
-            .map_err(|e| format!("X25519 public key export failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputePublicKey))?;
 
         buf.clear();
         buf.extend_from_slice(&raw_pub);
@@ -59,15 +60,19 @@ impl ActiveKeyExchange for X25519KeyExchange {
         &self.public_key_bytes
     }
 
-    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), String> {
+    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), CryptoError> {
         let peer_key = PKey::public_key_from_raw_bytes(peer_pub, openssl::pkey::Id::X25519)
-            .map_err(|e| format!("Invalid X25519 peer public key: {e}"))?;
+            .map_err(|_| CryptoError::InvalidPublicKey(NamedGroup::X25519))?;
 
-        let mut deriver =
-            openssl::derive::Deriver::new(&self.private_key).map_err(|e| format!("{e}"))?;
-        deriver.set_peer(&peer_key).map_err(|e| format!("{e}"))?;
+        let mut deriver = openssl::derive::Deriver::new(&self.private_key)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CompleteKeyExchange))?;
+        deriver
+            .set_peer(&peer_key)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CompleteKeyExchange))?;
 
-        let shared_secret = deriver.derive_to_vec().map_err(|e| format!("{e}"))?;
+        let shared_secret = deriver
+            .derive_to_vec()
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CompleteKeyExchange))?;
 
         out.clear();
         out.extend_from_slice(&shared_secret);

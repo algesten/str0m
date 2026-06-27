@@ -1,6 +1,7 @@
 //! HMAC implementations using Windows CNG.
 
 use dimpl::crypto::HmacProvider;
+use dimpl::{CryptoError, CryptoOperation};
 
 use windows::Win32::Security::Cryptography::BCRYPT_HASH_HANDLE;
 use windows::Win32::Security::Cryptography::BCRYPT_HMAC_SHA256_ALG_HANDLE;
@@ -22,36 +23,31 @@ impl HmacProvider for WinCngHmacProvider {
         key: &[u8],
         data: &[u8],
         out: &mut [u8],
-    ) -> Result<usize, String> {
+    ) -> Result<usize, CryptoError> {
         match hash {
             dimpl::HashAlgorithm::SHA256 => {
-                let result = win_hmac_sha256(key, data).map_err(|err| format!("{err:?}"))?;
+                let result = win_hmac_sha256(key, data)
+                    .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))?;
                 let hmac_len = result.len();
-                out[0..hmac_len].copy_from_slice(&result);
                 if hmac_len <= out.len() {
                     out[0..hmac_len].copy_from_slice(&result);
                     Ok(hmac_len)
                 } else {
-                    Err(format!(
-                        "Output buffer too small for SHA256. Needed: {hmac_len}, Was: {}",
-                        out.len()
-                    ))
+                    Err(CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
                 }
             }
             dimpl::HashAlgorithm::SHA384 => {
-                let result = win_hmac_sha384(key, data).map_err(|err| format!("{err:?}"))?;
+                let result = win_hmac_sha384(key, data)
+                    .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))?;
                 let hmac_len = result.len();
                 if hmac_len <= out.len() {
                     out[0..hmac_len].copy_from_slice(&result);
                     Ok(hmac_len)
                 } else {
-                    Err(format!(
-                        "Output buffer too small for SHA384. Needed: {hmac_len}, Was: {}",
-                        out.len()
-                    ))
+                    Err(CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
                 }
             }
-            _ => Err(format!("Unsupported HMAC Hash: {hash:?}")),
+            _ => Err(CryptoError::UnsupportedHmacHash(hash)),
         }
     }
 }

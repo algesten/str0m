@@ -6,6 +6,7 @@
 use std::sync::LazyLock;
 
 use dimpl::crypto::{ActiveKeyExchange, Buf, NamedGroup, SupportedKxGroup};
+use dimpl::{CryptoError, CryptoOperation};
 
 use windows::Win32::Security::Cryptography::BCRYPT_ALG_HANDLE;
 use windows::Win32::Security::Cryptography::BCRYPT_ECCPUBLIC_BLOB;
@@ -89,7 +90,7 @@ impl std::fmt::Debug for X25519KeyExchange {
 }
 
 impl X25519KeyExchange {
-    fn new(mut buf: Buf) -> Result<Self, String> {
+    fn new(mut buf: Buf) -> Result<Self, CryptoError> {
         let alg_handle = X25519_PROVIDER.0;
 
         // SAFETY: Microsoft Learn documents `BCryptGenerateKeyPair` and
@@ -105,16 +106,17 @@ impl X25519KeyExchange {
                 255,
                 0,
             ))
-            .map_err(|e| format!("BCryptGenerateKeyPair X25519 failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::GenerateEphemeralKey))?;
 
             WinCryptoError::from_ntstatus(BCryptFinalizeKeyPair(*key_handle, 0))
-                .map_err(|e| format!("BCryptFinalizeKeyPair X25519 failed: {e}"))?;
+                .map_err(|_| CryptoError::OperationFailed(CryptoOperation::GenerateEphemeralKey))?;
 
             key_handle
         };
 
         // Export public key — 32 raw bytes for X25519
-        let pub_key = export_x25519_public_key(*key_handle)?;
+        let pub_key = export_x25519_public_key(*key_handle)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputePublicKey))?;
 
         buf.clear();
         buf.extend_from_slice(&pub_key);
@@ -131,16 +133,14 @@ impl ActiveKeyExchange for X25519KeyExchange {
         &self.public_key_bytes
     }
 
-    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), String> {
+    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), CryptoError> {
         if peer_pub.len() != 32 {
-            return Err(format!(
-                "Invalid X25519 public key length: {} (expected 32)",
-                peer_pub.len(),
-            ));
+            return Err(CryptoError::InvalidPublicKey(NamedGroup::X25519));
         }
 
         let alg_handle = X25519_PROVIDER.0;
-        let peer_key_handle = import_x25519_public_key(alg_handle, peer_pub)?;
+        let peer_key_handle = import_x25519_public_key(alg_handle, peer_pub)
+            .map_err(|_| CryptoError::InvalidPublicKey(NamedGroup::X25519))?;
 
         // SAFETY: Microsoft Learn documents `BCryptSecretAgreement` as
         // borrowing both key handles and the output secret handle for the
@@ -154,14 +154,17 @@ impl ActiveKeyExchange for X25519KeyExchange {
                 &mut *secret_handle,
                 0,
             ))
-            .map_err(|e| format!("BCryptSecretAgreement X25519 failed: {e}"))?;
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CompleteKeyExchange))?;
 
-            derive_raw_secret(*secret_handle)?
+            derive_raw_secret(*secret_handle)
+                .map_err(|_| CryptoError::OperationFailed(CryptoOperation::CompleteKeyExchange))?
         };
 
         // RFC 7748 §6.1: reject all-zero shared secret (non-contributory / low-order point)
         if shared_secret.iter().all(|&b| b == 0) {
-            return Err("X25519 shared secret is zero (non-contributory)".into());
+            return Err(CryptoError::OperationFailed(
+                CryptoOperation::CompleteKeyExchange,
+            ));
         }
 
         // BCryptDeriveKey with BCRYPT_KDF_RAW_SECRET returns the raw secret in
@@ -270,7 +273,7 @@ impl SupportedKxGroup for X25519Kx {
         NamedGroup::X25519
     }
 
-    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, CryptoError> {
         Ok(Box::new(X25519KeyExchange::new(buf)?))
     }
 }

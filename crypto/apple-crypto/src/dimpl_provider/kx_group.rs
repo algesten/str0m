@@ -3,10 +3,10 @@
 use core_foundation::base::{CFType, TCFType};
 use core_foundation::data::CFData;
 use core_foundation::dictionary::CFMutableDictionary;
-use core_foundation::error::CFError;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use dimpl::crypto::Buf;
+use dimpl::{CryptoError, CryptoOperation};
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 
 use dimpl::crypto::{ActiveKeyExchange, NamedGroup, SupportedKxGroup};
@@ -64,11 +64,11 @@ impl std::fmt::Debug for EcdhKeyExchange {
 }
 
 impl EcdhKeyExchange {
-    fn new(group: NamedGroup, mut buf: Buf) -> Result<Self, String> {
+    fn new(group: NamedGroup, mut buf: Buf) -> Result<Self, CryptoError> {
         let key_size = match group {
             NamedGroup::Secp256r1 => 256,
             NamedGroup::Secp384r1 => 384,
-            _ => return Err("Unsupported group".to_string()),
+            _ => return Err(CryptoError::UnsupportedKeyExchangeGroup(group)),
         };
 
         // Generate ephemeral EC key pair using Security framework
@@ -76,17 +76,22 @@ impl EcdhKeyExchange {
         options.set_key_type(KeyType::ec());
         options.set_size_in_bits(key_size);
 
-        let private_key =
-            SecKey::new(&options).map_err(|e| format!("Failed to generate EC key pair: {e}"))?;
+        let private_key = SecKey::new(&options)
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::GenerateEphemeralKey))?;
 
         let public_key = private_key
             .public_key()
-            .ok_or_else(|| "Failed to get public key".to_string())?;
+            .ok_or(CryptoError::OperationFailed(
+                CryptoOperation::ComputePublicKey,
+            ))?;
 
         // Export public key as SEC1 uncompressed point format
-        let public_key_data = public_key
-            .external_representation()
-            .ok_or_else(|| "Failed to export public key".to_string())?;
+        let public_key_data =
+            public_key
+                .external_representation()
+                .ok_or(CryptoError::OperationFailed(
+                    CryptoOperation::ComputePublicKey,
+                ))?;
 
         buf.clear();
         buf.extend_from_slice(&public_key_data);
@@ -104,14 +109,14 @@ impl ActiveKeyExchange for EcdhKeyExchange {
         &self.public_key_bytes
     }
 
-    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), String> {
+    fn complete(self: Box<Self>, peer_pub: &[u8], out: &mut Buf) -> Result<(), CryptoError> {
         // Import the peer's public key
         let peer_key_data = CFData::from_buffer(peer_pub);
 
         let key_size = match self.group {
             NamedGroup::Secp256r1 => 256,
             NamedGroup::Secp384r1 => 384,
-            _ => return Err("Unsupported group".to_string()),
+            _ => return Err(CryptoError::UnsupportedKeyExchangeGroup(self.group)),
         };
 
         // Build attributes dictionary using CFMutableDictionary
@@ -144,13 +149,7 @@ impl ActiveKeyExchange for EcdhKeyExchange {
         };
 
         if peer_public_key.is_null() {
-            let error_msg = if !error.is_null() {
-                let cf_error = unsafe { CFError::wrap_under_create_rule(error) };
-                format!("{cf_error}")
-            } else {
-                "Unknown error".to_string()
-            };
-            return Err(format!("Failed to import peer public key: {error_msg}"));
+            return Err(CryptoError::InvalidPublicKey(self.group));
         }
 
         let peer_public_key = unsafe { SecKey::wrap_under_create_rule(peer_public_key as *mut _) };
@@ -169,13 +168,9 @@ impl ActiveKeyExchange for EcdhKeyExchange {
         };
 
         if shared_secret.is_null() {
-            let error_msg = if !error.is_null() {
-                let cf_error = unsafe { CFError::wrap_under_create_rule(error) };
-                format!("{cf_error}")
-            } else {
-                "Unknown error".to_string()
-            };
-            return Err(format!("ECDH key exchange failed: {error_msg}"));
+            return Err(CryptoError::OperationFailed(
+                CryptoOperation::CompleteKeyExchange,
+            ));
         }
 
         let shared_secret_data =
@@ -201,7 +196,7 @@ impl SupportedKxGroup for P256 {
         NamedGroup::Secp256r1
     }
 
-    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, CryptoError> {
         Ok(Box::new(EcdhKeyExchange::new(NamedGroup::Secp256r1, buf)?))
     }
 }
@@ -215,7 +210,7 @@ impl SupportedKxGroup for P384 {
         NamedGroup::Secp384r1
     }
 
-    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, String> {
+    fn start_exchange(&self, buf: Buf) -> Result<Box<dyn ActiveKeyExchange>, CryptoError> {
         Ok(Box::new(EcdhKeyExchange::new(NamedGroup::Secp384r1, buf)?))
     }
 }
