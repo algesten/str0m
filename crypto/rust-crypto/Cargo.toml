@@ -1,6 +1,6 @@
 [package]
 name = "str0m-rust-crypto"
-version = "0.4.1"
+version = "0.5.0"
 authors = ["Martin Algesten <martin@algesten.se>"]
 description = "Pure Rust crypto backend for str0m WebRTC"
 license = "MIT OR Apache-2.0"

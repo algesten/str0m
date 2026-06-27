@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.20.0"
+version = "0.21.0"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -33,21 +33,21 @@ members = [
   "crypto/rust-crypto",
   "crypto/openssl",
   "crypto/apple-crypto",
-  "crypto/wincrypto",
+  "crypto/wincrypto"
 ]
 exclude = ["crates/fuzz"]
 
 [workspace.dependencies]
 # Internal crates
-str0m = { version = "0.20.0", path = ".", default-features = false }
+str0m = { version = "0.21.0", path = ".", default-features = false }
 str0m-proto = { version = "0.6.0", path = "crates/proto", default-features = false }
 is = { version = "0.10.0", path = "crates/is", default-features = false }
-str0m-netem = { version = "0.2.0", path = "crates/netem" }
-str0m-aws-lc-rs = { version = "0.4.1", path = "crypto/aws-lc-rs" }
-str0m-rust-crypto = { version = "0.4.1", path = "crypto/rust-crypto" }
-str0m-openssl = { version = "0.4.1", path = "crypto/openssl" }
-str0m-apple-crypto = { version = "0.4.1", path = "crypto/apple-crypto" }
-str0m-wincrypto = { version = "0.6.1", path = "crypto/wincrypto" }
+str0m-netem = { version = "0.3.0", path = "crates/netem" }
+str0m-aws-lc-rs = { version = "0.5.0", path = "crypto/aws-lc-rs" }
+str0m-rust-crypto = { version = "0.5.0", path = "crypto/rust-crypto" }
+str0m-openssl = { version = "0.5.0", path = "crypto/openssl" }
+str0m-apple-crypto = { version = "0.5.0", path = "crypto/apple-crypto" }
+str0m-wincrypto = { version = "0.7.0", path = "crypto/wincrypto" }
 _str0m_test = { path = "crates/_str0m_test" }
 
 # Core dependencies
@@ -170,7 +170,7 @@ regex.workspace = true
 rand.workspace = true
 
 # Package rename not supported with workspace inheritance
-netem = { package = "str0m-netem", version = "0.2.0", path = "crates/netem" }
+netem = { package = "str0m-netem", version = "0.3.0", path = "crates/netem" }
 
 # dummy package that enables "_internal_test_exports"
 _str0m_test = { path = "crates/_str0m_test" }
