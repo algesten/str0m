@@ -974,6 +974,27 @@ pub enum FormatParam {
     /// out-of-order NAL unit decoding. Valid range: 0–32767.
     SpropMaxDonDiff(u16),
 
+    /// AMR-WB octet alignment (RFC 4867). `octet-align=1` selects the
+    /// octet-aligned layout; absence/`0` is bandwidth-efficient.
+    OctetAlign(bool),
+
+    /// AMR-WB mode-change capability (RFC 4867). `mode-change-capability=2`
+    /// is the most common value.
+    ModeChangeCapability(u8),
+
+    /// AMR-WB maximum frame redundancy in milliseconds (RFC 4867). `max-red=0`
+    /// disables redundancy.
+    MaxRed(u32),
+
+    /// AMR-WB payload CRC (RFC 4867). `crc=1` enables per-frame CRC.
+    Crc(bool),
+
+    /// AMR-WB frame interleaving (RFC 4867). Unsupported when enabled.
+    Interleaving(bool),
+
+    /// AMR-WB robust sorting (RFC 4867). Unsupported when enabled.
+    RobustSorting(bool),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -1005,6 +1026,12 @@ impl FormatParam {
                 .ok()
                 .filter(|&v| v <= 32767)
                 .map(SpropMaxDonDiff),
+            "octet-align" => Some(OctetAlign(v == "1")),
+            "mode-change-capability" => v.parse().map(ModeChangeCapability).ok(),
+            "max-red" => v.parse().map(MaxRed).ok(),
+            "crc" => Some(Crc(v == "1")),
+            "interleaving" => Some(Interleaving(v == "1")),
+            "robust-sorting" => Some(RobustSorting(v == "1")),
             "apt" => v.parse::<u8>().map(|v| Apt(Pt::from(v))).ok(),
             _ => None,
         }
@@ -1092,6 +1119,12 @@ impl fmt::Display for FormatParam {
                 )
             }
             SpropMaxDonDiff(v) => write!(f, "sprop-max-don-diff={}", *v),
+            OctetAlign(v) => write!(f, "octet-align={}", i32::from(*v)),
+            ModeChangeCapability(v) => write!(f, "mode-change-capability={}", *v),
+            MaxRed(v) => write!(f, "max-red={}", *v),
+            Crc(v) => write!(f, "crc={}", i32::from(*v)),
+            Interleaving(v) => write!(f, "interleaving={}", i32::from(*v)),
+            RobustSorting(v) => write!(f, "robust-sorting={}", i32::from(*v)),
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }

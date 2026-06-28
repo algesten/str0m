@@ -32,6 +32,12 @@ impl Payloader {
             }
         }
 
+        // Select the AMR-WB layout from the octet-align fmtp param (RFC 4867);
+        // absent means bandwidth-efficient.
+        if let CodecPacketizer::AmrWb(ref mut amr) = pack {
+            *amr = amr.with_octet_align(spec.format.octet_align.unwrap_or(false));
+        }
+
         Payloader {
             pack,
             clock_rate: spec.clock_rate,

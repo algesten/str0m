@@ -13,6 +13,9 @@ pub use av1::Av1CodecExtra;
 pub use av1::detect_av1_keyframe;
 use av1::{Av1Depacketizer, Av1Packetizer};
 
+mod amr_wb;
+use amr_wb::{AmrWbDepacketizer, AmrWbPacketizer};
+
 mod g7xx;
 use g7xx::{G711Depacketizer, G711Packetizer, G722Packetizer};
 
@@ -286,6 +289,7 @@ pub(crate) enum CodecPacketizer {
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
     Av1(Av1Packetizer),
+    AmrWb(AmrWbPacketizer),
     Null(NullPacketizer),
     #[allow(unused)]
     Boxed(Box<dyn Packetizer + Send + Sync + UnwindSafe>),
@@ -301,6 +305,7 @@ pub(crate) enum CodecDepacketizer {
     Vp8(Vp8Depacketizer),
     Vp9(Vp9Depacketizer),
     Av1(Av1Depacketizer),
+    AmrWb(AmrWbDepacketizer),
     Null(NullDepacketizer),
     #[allow(unused)]
     Boxed(Box<dyn Depacketizer + Send + Sync + UnwindSafe>),
@@ -312,6 +317,7 @@ impl CodecPacketizer {
             Codec::Opus => CodecPacketizer::Opus(OpusPacketizer),
             Codec::PCMU => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::PCMA => CodecPacketizer::G711(G711Packetizer::default()),
+            Codec::AmrWb => CodecPacketizer::AmrWb(AmrWbPacketizer::default()),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => CodecPacketizer::H265(H265Packetizer::default()),
             Codec::H266 => CodecPacketizer::H266(H266Packetizer::default()),
@@ -337,6 +343,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Opus => CodecDepacketizer::Opus(OpusDepacketizer),
             Codec::PCMU => CodecDepacketizer::G711(G711Depacketizer),
             Codec::PCMA => CodecDepacketizer::G711(G711Depacketizer),
+            Codec::AmrWb => CodecDepacketizer::AmrWb(AmrWbDepacketizer::default()),
             Codec::H264 => CodecDepacketizer::H264(H264Depacketizer::default()),
             Codec::H265 => CodecDepacketizer::H265(H265Depacketizer::default()),
             Codec::H266 => CodecDepacketizer::H266(H266Depacketizer::default()),
@@ -363,6 +370,7 @@ impl Packetizer for CodecPacketizer {
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
             Av1(v) => v.packetize(mtu, b),
+            AmrWb(v) => v.packetize(mtu, b),
             Null(v) => v.packetize(mtu, b),
             Boxed(v) => v.packetize(mtu, b),
         }
@@ -379,6 +387,7 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::Vp8(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Vp9(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Av1(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::AmrWb(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Null(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Boxed(v) => v.is_marker(data, previous, last),
         }
@@ -397,6 +406,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp8(v) => v.out_size_hint(packets_size),
             Vp9(v) => v.out_size_hint(packets_size),
             Av1(v) => v.out_size_hint(packets_size),
+            AmrWb(v) => v.out_size_hint(packets_size),
             Null(v) => v.out_size_hint(packets_size),
             Boxed(v) => v.out_size_hint(packets_size),
         }
@@ -418,6 +428,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp8(v) => v.depacketize(packet, out, extra),
             Vp9(v) => v.depacketize(packet, out, extra),
             Av1(v) => v.depacketize(packet, out, extra),
+            AmrWb(v) => v.depacketize(packet, out, extra),
             Null(v) => v.depacketize(packet, out, extra),
             Boxed(v) => v.depacketize(packet, out, extra),
         }
@@ -434,6 +445,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp8(v) => v.is_partition_head(packet),
             Vp9(v) => v.is_partition_head(packet),
             Av1(v) => v.is_partition_head(packet),
+            AmrWb(v) => v.is_partition_head(packet),
             Null(v) => v.is_partition_head(packet),
             Boxed(v) => v.is_partition_head(packet),
         }
@@ -450,6 +462,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp8(v) => v.is_partition_tail(marker, packet),
             Vp9(v) => v.is_partition_tail(marker, packet),
             Av1(v) => v.is_partition_tail(marker, packet),
+            AmrWb(v) => v.is_partition_tail(marker, packet),
             Null(v) => v.is_partition_tail(marker, packet),
             Boxed(v) => v.is_partition_tail(marker, packet),
         }

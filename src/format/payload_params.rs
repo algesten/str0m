@@ -285,7 +285,7 @@ impl PayloadParams {
             return None;
         }
 
-        if c0.channels != c1.channels {
+        if !Self::channels_match(c0, c1) {
             // Channels must match
             return None;
         }
@@ -312,6 +312,10 @@ impl PayloadParams {
 
         if c0.codec == Codec::Av1 {
             return Self::match_av1_score(c0, c1);
+        }
+
+        if c0.codec == Codec::AmrWb {
+            return Self::match_amr_wb_score(c0, c1);
         }
 
         // TODO: Fuzzy matching for any other audio codecs
@@ -363,6 +367,18 @@ impl PayloadParams {
         score
     }
 
+    fn channels_match(c0: CodecSpec, c1: CodecSpec) -> bool {
+        if c0.channels == c1.channels {
+            return true;
+        }
+
+        if c0.codec == Codec::AmrWb && c1.codec == Codec::AmrWb {
+            return c0.channels.unwrap_or(1) == 1 && c1.channels.unwrap_or(1) == 1;
+        }
+
+        false
+    }
+
     fn match_vp9_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
         // Default profile_id is 0. https://datatracker.ietf.org/doc/html/draft-ietf-payload-vp9-16#section-6
         let c0_profile_id = c0.format.profile_id.unwrap_or(0);
@@ -403,6 +419,37 @@ impl PayloadParams {
             return None;
         }
 
+        Some(Self::EXACT_MATCH_SCORE)
+    }
+
+    fn match_amr_wb_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // The octet-align mode selects the on-the-wire framing (RFC 4867 §4.3);
+        // octet-aligned and bandwidth-efficient payloads are not interchangeable,
+        // so the two sides must agree. The default (absent) is bandwidth-efficient.
+        let c0_octet_align = c0.format.octet_align.unwrap_or(false);
+        let c1_octet_align = c1.format.octet_align.unwrap_or(false);
+        if c0_octet_align != c1_octet_align {
+            return None;
+        }
+
+        // str0m can neither generate nor decode the per-frame payload CRC that
+        // crc=1 adds (RFC 4867 §4.3). Rather than agree to it and then mis-decode
+        // the stream, decline any peer that requires it. The default is no CRC.
+        if c0.format.crc.unwrap_or(false) || c1.format.crc.unwrap_or(false) {
+            return None;
+        }
+
+        // Interleaving and robust sorting add RTP payload fields/layouts that
+        // str0m does not implement, so decline peers that require either.
+        if c0.format.interleaving.unwrap_or(false) || c1.format.interleaving.unwrap_or(false) {
+            return None;
+        }
+        if c0.format.robust_sorting.unwrap_or(false) || c1.format.robust_sorting.unwrap_or(false) {
+            return None;
+        }
+
+        // mode-change-capability and max-red are capability hints that do not
+        // affect interoperability, so they don't influence the match.
         Some(Self::EXACT_MATCH_SCORE)
     }
 
@@ -1843,6 +1890,166 @@ mod test {
                 nalu.len(),
                 "No DONL field when sprop-max-don-diff=0"
             );
+        }
+    }
+
+    mod amr_wb {
+        use super::*;
+
+        fn amr_wb_codec_spec(
+            octet_align: Option<bool>,
+            crc: Option<bool>,
+            mode_change_capability: Option<u8>,
+            max_red: Option<u32>,
+        ) -> CodecSpec {
+            amr_wb_codec_spec_with_channels(
+                Some(1),
+                octet_align,
+                crc,
+                mode_change_capability,
+                max_red,
+                None,
+                None,
+            )
+        }
+
+        fn amr_wb_codec_spec_with_channels(
+            channels: Option<u8>,
+            octet_align: Option<bool>,
+            crc: Option<bool>,
+            mode_change_capability: Option<u8>,
+            max_red: Option<u32>,
+            interleaving: Option<bool>,
+            robust_sorting: Option<bool>,
+        ) -> CodecSpec {
+            CodecSpec {
+                codec: Codec::AmrWb,
+                clock_rate: Frequency::SIXTEEN_KHZ,
+                channels,
+                format: FormatParams {
+                    octet_align,
+                    crc,
+                    mode_change_capability,
+                    max_red,
+                    interleaving,
+                    robust_sorting,
+                    ..Default::default()
+                },
+            }
+        }
+
+        #[test]
+        fn test_amr_wb_matching() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                must_match: bool,
+                msg: &'static str,
+            }
+
+            let cases = [
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    must_match: true,
+                    msg: "identical octet-aligned configs should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec_with_channels(
+                        None,
+                        Some(true),
+                        None,
+                        Some(2),
+                        Some(0),
+                        None,
+                        None,
+                    ),
+                    must_match: true,
+                    msg: "AMR-WB /16000 and /16000/1 are both mono and should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(None, None, None, None),
+                    c1: amr_wb_codec_spec(None, None, None, None),
+                    must_match: true,
+                    msg: "both bandwidth-efficient (the RFC defaults) should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), None, Some(1), Some(220)),
+                    must_match: true,
+                    msg: "mode-change-capability and max-red are hints; should still match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), None),
+                    c1: amr_wb_codec_spec(None, None, Some(2), None),
+                    must_match: false,
+                    msg: "octet-aligned vs bandwidth-efficient framings must not match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(false), Some(2), Some(0)),
+                    must_match: true,
+                    msg: "an explicit crc=0 means no CRC and must match our (absent) default",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), Some(false), Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(false), Some(2), Some(0)),
+                    must_match: true,
+                    msg: "crc=0 on both sides means no CRC and should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(true), Some(2), Some(0)),
+                    must_match: false,
+                    msg: "a peer requiring crc=1 must be declined; str0m cannot decode CRC",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), Some(true), Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(true), Some(2), Some(0)),
+                    must_match: false,
+                    msg: "crc=1 is never agreed to, even if both sides signal it",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec_with_channels(
+                        Some(1),
+                        Some(true),
+                        None,
+                        Some(2),
+                        Some(0),
+                        Some(true),
+                        None,
+                    ),
+                    must_match: false,
+                    msg: "interleaving=1 must be declined because it changes the RTP payload layout",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec_with_channels(
+                        Some(1),
+                        Some(true),
+                        None,
+                        Some(2),
+                        Some(0),
+                        None,
+                        Some(true),
+                    ),
+                    must_match: false,
+                    msg: "robust-sorting=1 must be declined because it changes the RTP payload layout",
+                },
+            ];
+
+            for Case {
+                c0,
+                c1,
+                must_match,
+                msg,
+            } in cases.into_iter()
+            {
+                let matched = PayloadParams::match_amr_wb_score(c0, c1).is_some();
+                assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+            }
         }
     }
 }

@@ -108,6 +108,43 @@ pub struct FormatParams {
     /// When > 0, DONL fields are included in H.265 RTP packets to support
     /// out-of-order NAL unit decoding.
     pub sprop_max_don_diff: Option<u16>,
+
+    /// AMR-WB specific parameter (RFC 4867).
+    ///
+    /// When `true` the payload is octet-aligned (`octet-align=1`); when absent
+    /// or `false` the bandwidth-efficient layout is used (the RFC default).
+    pub octet_align: Option<bool>,
+
+    /// AMR-WB specific parameter (RFC 4867).
+    ///
+    /// Signals the receiver's mode-change capability. `2` (the most common
+    /// value) means the sender may change mode at any frame boundary.
+    pub mode_change_capability: Option<u8>,
+
+    /// AMR-WB specific parameter (RFC 4867).
+    ///
+    /// The maximum amount of frame redundancy, in milliseconds, the receiver
+    /// accepts. `0` disables redundancy.
+    pub max_red: Option<u32>,
+
+    /// AMR-WB specific parameter (RFC 4867).
+    ///
+    /// When `true` (`crc=1`) each frame carries a payload CRC. str0m can neither
+    /// generate nor decode that CRC, so it never offers `crc=1` and declines a
+    /// peer that requires it; this field exists only to recognise and reject it.
+    pub crc: Option<bool>,
+
+    /// AMR-WB specific parameter (RFC 4867).
+    ///
+    /// When `true` (`interleaving=1`) the RTP payload carries interleaving
+    /// metadata that str0m does not support, so peers requiring it are declined.
+    pub interleaving: Option<bool>,
+
+    /// AMR-WB specific parameter (RFC 4867).
+    ///
+    /// When `true` (`robust-sorting=1`) the RTP payload uses a robust sorting
+    /// layout that str0m does not support, so peers requiring it are declined.
+    pub robust_sorting: Option<bool>,
 }
 
 #[cfg(feature = "drv")]
@@ -156,6 +193,12 @@ impl FormatParams {
             H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
             H266ProfileTierLevel(v) => self.h266_profile_tier_level = Some(*v),
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
+            OctetAlign(v) => self.octet_align = Some(*v),
+            ModeChangeCapability(v) => self.mode_change_capability = Some(*v),
+            MaxRed(v) => self.max_red = Some(*v),
+            Crc(v) => self.crc = Some(*v),
+            Interleaving(v) => self.interleaving = Some(*v),
+            RobustSorting(v) => self.robust_sorting = Some(*v),
             Apt(_) => {}
             Unknown => {}
         }
@@ -211,6 +254,25 @@ impl FormatParams {
         }
         if let Some(v) = self.sprop_max_don_diff {
             r.push(SpropMaxDonDiff(v));
+        }
+
+        if let Some(v) = self.octet_align {
+            r.push(OctetAlign(v));
+        }
+        if let Some(v) = self.mode_change_capability {
+            r.push(ModeChangeCapability(v));
+        }
+        if let Some(v) = self.max_red {
+            r.push(MaxRed(v));
+        }
+        if let Some(v) = self.crc {
+            r.push(Crc(v));
+        }
+        if let Some(v) = self.interleaving {
+            r.push(Interleaving(v));
+        }
+        if let Some(v) = self.robust_sorting {
+            r.push(RobustSorting(v));
         }
 
         r
@@ -312,5 +374,108 @@ mod test {
         let parsed = FormatParams::parse_line(&fmtp_str);
         assert_eq!(parsed.h266_profile_tier_level, Some(ptl));
         assert_eq!(parsed.sprop_max_don_diff, Some(32));
+    }
+
+    #[test]
+    fn amr_wb_default_fmtp_roundtrip() {
+        // The most common production AMR-WB offer.
+        let f = FormatParams {
+            octet_align: Some(true),
+            mode_change_capability: Some(2),
+            max_red: Some(0),
+            ..Default::default()
+        };
+
+        let fmtp_str = f.to_string();
+        assert_eq!(fmtp_str, "octet-align=1;mode-change-capability=2;max-red=0");
+
+        let parsed = FormatParams::parse_line(&fmtp_str);
+        assert_eq!(parsed, f);
+    }
+
+    #[test]
+    fn amr_wb_production_fmtp_variants_parse() {
+        // The variants seen most often across SIP, IMS, VoLTE and SBC deployments.
+        let cases: &[(&str, FormatParams)] = &[
+            (
+                "mode-change-capability=2",
+                FormatParams {
+                    mode_change_capability: Some(2),
+                    ..Default::default()
+                },
+            ),
+            (
+                "mode-change-capability=2;max-red=0",
+                FormatParams {
+                    mode_change_capability: Some(2),
+                    max_red: Some(0),
+                    ..Default::default()
+                },
+            ),
+            (
+                "mode-change-capability=2;max-red=220",
+                FormatParams {
+                    mode_change_capability: Some(2),
+                    max_red: Some(220),
+                    ..Default::default()
+                },
+            ),
+            (
+                "octet-align=1;mode-change-capability=2",
+                FormatParams {
+                    octet_align: Some(true),
+                    mode_change_capability: Some(2),
+                    ..Default::default()
+                },
+            ),
+            (
+                "octet-align=1;mode-change-capability=2;max-red=0",
+                FormatParams {
+                    octet_align: Some(true),
+                    mode_change_capability: Some(2),
+                    max_red: Some(0),
+                    ..Default::default()
+                },
+            ),
+            (
+                "octet-align=1;mode-change-capability=2;max-red=220",
+                FormatParams {
+                    octet_align: Some(true),
+                    mode_change_capability: Some(2),
+                    max_red: Some(220),
+                    ..Default::default()
+                },
+            ),
+            (
+                "octet-align=1;crc=1;mode-change-capability=2",
+                FormatParams {
+                    octet_align: Some(true),
+                    crc: Some(true),
+                    mode_change_capability: Some(2),
+                    ..Default::default()
+                },
+            ),
+            (
+                "octet-align=1;interleaving=1;robust-sorting=1",
+                FormatParams {
+                    octet_align: Some(true),
+                    interleaving: Some(true),
+                    robust_sorting: Some(true),
+                    ..Default::default()
+                },
+            ),
+        ];
+
+        for (line, expected) in cases {
+            let parsed = FormatParams::parse_line(line);
+            assert_eq!(&parsed, expected, "parsing AMR-WB fmtp line `{line}`");
+        }
+    }
+
+    #[test]
+    fn amr_wb_octet_align_zero_parses_false() {
+        let parsed = FormatParams::parse_line("octet-align=0;mode-change-capability=2");
+        assert_eq!(parsed.octet_align, Some(false));
+        assert_eq!(parsed.mode_change_capability, Some(2));
     }
 }
