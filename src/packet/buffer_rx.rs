@@ -141,6 +141,7 @@ impl DepacketizingBuffer {
             | CodecDepacketizer::Boxed(_)
             | CodecDepacketizer::Opus(_)
             | CodecDepacketizer::G711(_)
+            | CodecDepacketizer::AmrWb(_)
             | CodecDepacketizer::Null(_) => Contiguity::None,
         };
 

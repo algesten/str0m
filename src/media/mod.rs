@@ -404,6 +404,12 @@ impl Media {
                 }
             }
 
+            // Select the AMR-WB layout negotiated via the octet-align fmtp param
+            // (RFC 4867); absent means bandwidth-efficient.
+            if let CodecDepacketizer::AmrWb(ref mut amr) = depack {
+                *amr = amr.with_octet_align(params.spec.format.octet_align.unwrap_or(false));
+            }
+
             let buffer = DepacketizingBuffer::new(depack, hold_back);
 
             self.depayloaders.insert((pt, rid), buffer);

@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Support single-channel AMR-WB audio in octet-aligned and bandwidth-efficient modes
   * Expose the latest send queue information on `StreamTx` #1005
   * Fix VP9 non-flexible SS advertising a bogus R=0 GOF for single-layer streams #999
   * Support G722 audio codec (16 kHz codec with 8 kHz RTP clock per RFC 3551) #992
