@@ -1023,6 +1023,27 @@ pub enum FormatParam {
     /// Bare slash-separated payload list, interpreted only with a RED rtpmap.
     BarePtList(Pt),
 
+    /// AMR-WB octet-aligned (`1`) or bandwidth-efficient (`0`, default) payloads (RFC 4867).
+    OctetAlign(bool),
+
+    /// AMR-WB allowed speech modes as a bitmask (RFC 4867).
+    ModeSet(u16),
+
+    /// AMR-WB frame-blocks between mode changes the receiver requires (RFC 4867).
+    ModeChangePeriod(u8),
+
+    /// AMR-WB maximum redundancy delay in milliseconds (RFC 4867).
+    MaxRed(u16),
+
+    /// AMR-WB per-frame payload CRCs (RFC 4867).
+    Crc(bool),
+
+    /// AMR-WB robust payload sorting (RFC 4867).
+    RobustSorting(bool),
+
+    /// AMR-WB maximum interleaving-group size (RFC 4867).
+    Interleaving(u16),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -1032,6 +1053,13 @@ pub enum FormatParam {
 
     /// Unrecognized fmtp.
     Unknown,
+}
+
+fn parse_amr_wb_mode_set(value: &str) -> Option<u16> {
+    value.split(',').try_fold(0u16, |mask, mode| {
+        let mode: u8 = mode.trim().parse().ok()?;
+        (mode <= 8).then_some(mask | (1 << mode))
+    })
 }
 
 impl FormatParam {
@@ -1046,7 +1074,7 @@ impl FormatParam {
 
     pub fn parse(k: &str, v: &str) -> Self {
         use FormatParam::*;
-        match k {
+        match k.to_ascii_lowercase().as_str() {
             "minptime" => v.parse().map(MinPTime).ok(),
             "useinbandfec" => Some(UseInbandFec(v == "1")),
             "usedtx" => Some(UseDtx(v == "1")),
@@ -1067,6 +1095,13 @@ impl FormatParam {
                 .ok()
                 .filter(|&v| v <= 32767)
                 .map(SpropMaxDonDiff),
+            "octet-align" => Some(OctetAlign(v == "1")),
+            "mode-set" => parse_amr_wb_mode_set(v).map(ModeSet),
+            "mode-change-period" => v.parse().map(ModeChangePeriod).ok(),
+            "max-red" => v.parse().map(MaxRed).ok(),
+            "crc" => Some(Crc(v == "1")),
+            "robust-sorting" => Some(RobustSorting(v == "1")),
+            "interleaving" => v.parse().map(Interleaving).ok(),
             "apt" => v.parse::<u8>().map(|v| Apt(Pt::from(v))).ok(),
             _ => None,
         }
@@ -1162,6 +1197,21 @@ impl fmt::Display for FormatParam {
             TelephoneEvents(v) => write!(f, "0-{v}"),
             BareRange(v) => write!(f, "0-{v}"),
             BarePtList(v) => write!(f, "{v}/{v}"),
+            OctetAlign(v) => write!(f, "octet-align={}", i32::from(*v)),
+            ModeSet(mask) => {
+                write!(f, "mode-set=")?;
+                let mut separator = "";
+                for mode in (0..=8).filter(|mode| mask & (1 << mode) != 0) {
+                    write!(f, "{separator}{mode}")?;
+                    separator = ",";
+                }
+                Ok(())
+            }
+            ModeChangePeriod(v) => write!(f, "mode-change-period={v}"),
+            MaxRed(v) => write!(f, "max-red={v}"),
+            Crc(v) => write!(f, "crc={}", i32::from(*v)),
+            RobustSorting(v) => write!(f, "robust-sorting={}", i32::from(*v)),
+            Interleaving(v) => write!(f, "interleaving={v}"),
             Apt(v) => write!(f, "apt={v}"),
             Red(v) => write!(f, "{v}/{v}"),
             Unknown => Ok(()),

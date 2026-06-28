@@ -282,7 +282,7 @@ impl PayloadParams {
         let c0 = self.spec;
         let c1 = o.spec;
 
-        if c0 == c1 {
+        if c0 == c1 && c0.codec != Codec::AmrWb {
             // Exact match
             return Some(Self::EXACT_MATCH_SCORE);
         }
@@ -301,6 +301,12 @@ impl PayloadParams {
         // Telephone events match by clock rate, regardless of channel count.
         if c0.codec.is_tele() {
             return Some(Self::EXACT_MATCH_SCORE);
+        }
+
+        // AMR-WB defaults an omitted channel count to mono, so it must match
+        // before the generic channel comparison below.
+        if c0.codec == Codec::AmrWb {
+            return Self::match_amr_wb_score(c0, c1);
         }
 
         if c0.channels != c1.channels {
@@ -422,6 +428,35 @@ impl PayloadParams {
         }
 
         Some(Self::EXACT_MATCH_SCORE)
+    }
+
+    fn match_amr_wb_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // Only single-channel payloads without CRCs, robust sorting or interleaving
+        // are implemented, and mode changes of application frames can't be held to
+        // every other frame-block (mode-change-period=2).
+        let supported = |c: &CodecSpec| {
+            c.channels.unwrap_or(1) == 1
+                && c.format.crc != Some(true)
+                && c.format.robust_sorting != Some(true)
+                && c.format.interleaving.is_none()
+                && c.format.mode_change_period != Some(2)
+        };
+        if !supported(&c0) || !supported(&c1) {
+            return None;
+        }
+
+        // Octet-aligned and bandwidth-efficient payloads are not interchangeable.
+        if c0.format.octet_align.unwrap_or(false) != c1.format.octet_align.unwrap_or(false) {
+            return None;
+        }
+
+        // A mode-set binds both peers (RFC 4867 §8.3.1), so prefer unrestricted
+        // payload types when the remote offers both.
+        match (c0.format.mode_set, c1.format.mode_set) {
+            (None, None) => Some(Self::EXACT_MATCH_SCORE),
+            (Some(a), Some(b)) if a != b => None,
+            _ => Some(Self::EXACT_MATCH_SCORE - 1),
+        }
     }
 
     pub(crate) fn match_h264_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
@@ -711,6 +746,18 @@ impl PayloadParams {
         // narrowing it to `min(local, remote)`. Per RFC 6184 §8.2.2, when
         // `level-asymmetry-allowed` is not set the answer should use the lower
         // level.
+
+        // RFC 4867 §8.3.1: an answer repeats the offer's octet-align, crc,
+        // robust-sorting and channels unmodified (interleaving never matches), and a
+        // mode-set from either side applies to both directions.
+        if self.spec.codec == Codec::AmrWb {
+            let remote = first.spec;
+            self.spec.channels = remote.channels;
+            self.spec.format.octet_align = remote.format.octet_align;
+            self.spec.format.crc = remote.format.crc;
+            self.spec.format.robust_sorting = remote.format.robust_sorting;
+            self.spec.format.mode_set = self.spec.format.mode_set.or(remote.format.mode_set);
+        }
 
         let mut remote_pt = first.pt;
         let mut remote_rtx = first.resend;
@@ -2010,6 +2057,124 @@ mod test {
                 nalu.len(),
                 "No DONL field when sprop-max-don-diff=0"
             );
+        }
+    }
+
+    mod amr_wb {
+        use super::*;
+
+        fn amr_wb(channels: Option<u8>, format: FormatParams) -> PayloadParams {
+            let spec = CodecSpec {
+                codec: Codec::AmrWb,
+                clock_rate: Frequency::SIXTEEN_KHZ,
+                channels,
+                format,
+            };
+            PayloadParams::new(122.into(), None, spec)
+        }
+
+        fn octet_aligned() -> FormatParams {
+            FormatParams {
+                octet_align: Some(true),
+                ..Default::default()
+            }
+        }
+
+        #[test]
+        fn matching() {
+            let local = amr_wb(Some(1), octet_aligned());
+            let score = |remote: PayloadParams| local.match_score(&remote);
+
+            assert!(score(local).is_some());
+            assert!(score(amr_wb(None, octet_aligned())).is_some());
+            let hints = FormatParams {
+                max_red: Some(220),
+                crc: Some(false),
+                robust_sorting: Some(false),
+                ..octet_aligned()
+            };
+            assert!(score(amr_wb(Some(1), hints)).is_some());
+            assert!(score(amr_wb(Some(1), FormatParams::default())).is_none());
+
+            let bandwidth_efficient = FormatParams {
+                octet_align: Some(false),
+                ..Default::default()
+            };
+            let default = amr_wb(None, FormatParams::default());
+            assert!(
+                default
+                    .match_score(&amr_wb(None, bandwidth_efficient))
+                    .is_some()
+            );
+
+            let modes = |mode_set| FormatParams {
+                mode_set: Some(mode_set),
+                ..octet_aligned()
+            };
+            let restricted = amr_wb(Some(1), modes(0b111));
+            assert!(score(restricted).is_some_and(|s| Some(s) < score(local)));
+            assert!(restricted.match_score(&amr_wb(None, modes(0b11))).is_none());
+
+            for format in [
+                FormatParams {
+                    crc: Some(true),
+                    ..octet_aligned()
+                },
+                FormatParams {
+                    robust_sorting: Some(true),
+                    ..octet_aligned()
+                },
+                FormatParams {
+                    interleaving: Some(30),
+                    ..octet_aligned()
+                },
+                FormatParams {
+                    mode_change_period: Some(2),
+                    ..octet_aligned()
+                },
+            ] {
+                let unsupported = amr_wb(Some(1), format);
+                assert!(score(unsupported).is_none(), "{format:?}");
+                assert!(
+                    unsupported.match_score(&unsupported).is_none(),
+                    "{format:?}"
+                );
+            }
+
+            let stereo = amr_wb(Some(2), octet_aligned());
+            assert!(stereo.match_score(&stereo).is_none());
+        }
+
+        #[test]
+        fn update_param_mirrors_transport_parameters_and_mode_set() {
+            let local_format = FormatParams {
+                max_red: Some(0),
+                ..Default::default()
+            };
+            let mut local = amr_wb(Some(1), local_format);
+            let remote = amr_wb(
+                None,
+                FormatParams {
+                    octet_align: Some(false),
+                    crc: Some(false),
+                    robust_sorting: Some(false),
+                    mode_set: Some(0b111),
+                    max_red: Some(220),
+                    ..Default::default()
+                },
+            );
+
+            local.update_param(&[remote], &mut [false; 128], false, &mut HashSet::new());
+
+            let expected = FormatParams {
+                octet_align: Some(false),
+                crc: Some(false),
+                robust_sorting: Some(false),
+                mode_set: Some(0b111),
+                ..local_format
+            };
+            assert_eq!(local.spec.channels, None);
+            assert_eq!(local.spec.format, expected);
         }
     }
 }

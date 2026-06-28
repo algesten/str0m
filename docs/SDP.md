@@ -124,6 +124,18 @@ that range in both directions and on every m-line sharing the PT. SDP can
 express different receive capabilities in each direction and on different
 m-lines; str0m does not model those distinctions.
 
+### AMR-WB parameters
+
+str0m supports single-channel AMR-WB in the octet-aligned and bandwidth-efficient
+layouts (RFC 4867). It declines payload types that need CRCs, robust sorting,
+interleaving, more than one channel, or `mode-change-period=2`. str0m doesn't
+encode audio, so it can't hold application frames to restricted mode changes
+and never claims `mode-change-capability=2`. As RFC 4867 §8.3.1 requires, an
+answer repeats the offer's `octet-align`, `crc`, `robust-sorting` and channel
+count unmodified. A `mode-set` from either peer is kept in
+`Session::codec_config` and binds both directions; the application must only
+write frames in those modes.
+
 ### Renegotiation and narrowed PT lists
 
 On renegotiation of an existing m-line, str0m keeps the remote payload type list
