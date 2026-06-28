@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Support single-channel AMR-WB audio in octet-aligned and bandwidth-efficient modes
   * Add RFC 2198 RED (redundant audio) support for all audio codecs #982
   * Preserve the RFC 6464 audio-level voice activity bit when serializing #1032
 
