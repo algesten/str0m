@@ -305,6 +305,16 @@ impl RtcConfig {
         self
     }
 
+    /// Enable AMR-WB (Adaptive Multi-Rate Wideband) audio codec.
+    ///
+    /// 16 kHz mono telephony/IMS audio using the octet-aligned RFC 4867 layout.
+    /// See [`Codec::AmrWb`][crate::format::Codec::AmrWb] for the media format.
+    /// Disabled by default.
+    pub fn enable_amr_wb(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_amr_wb(enabled);
+        self
+    }
+
     /// Enable VP8 video codec.
     ///
     /// Enabled by default.
