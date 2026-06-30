@@ -27,7 +27,7 @@ mod error;
 pub use error::SctpError;
 
 /// Bytes that can be buffered inside str0m across all streams.
-const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
+const DEFAULT_MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
 
 /// Maximum message size we advertise in SDP (what we can receive)
 pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
@@ -48,6 +48,7 @@ pub(crate) struct RtcSctp {
     remote_max_message_size: u32,
     snap_enabled: bool,
     snap_init: Option<SctpInitData>,
+    max_buffered: usize,
     #[cfg(test)]
     max_payload_size: usize,
 }
@@ -281,6 +282,7 @@ impl RtcSctp {
             remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
             snap_enabled: false,
             snap_init: None,
+            max_buffered: DEFAULT_MAX_BUFFERED_ACROSS_STREAMS,
             #[cfg(test)]
             max_payload_size,
         }
@@ -370,6 +372,10 @@ impl RtcSctp {
         }
 
         Ok(())
+    }
+
+    pub fn max_buffered_across_streams(&mut self, bufsize: usize) {
+        self.max_buffered = bufsize;
     }
 
     pub fn is_client(&self) -> bool {
@@ -549,7 +555,7 @@ impl RtcSctp {
             })
             .sum();
 
-        MAX_BUFFERED_ACROSS_STREAMS - total
+        self.max_buffered - total
     }
 
     pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {

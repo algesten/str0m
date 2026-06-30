@@ -53,6 +53,7 @@ pub struct RtcConfig {
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
     pub(crate) mtu: RangeInclusive<usize>,
+    pub(crate) sctp_max_buffered: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -583,6 +584,12 @@ impl RtcConfig {
         self
     }
 
+    /// set the maximum amount of outgoing data buffered for the sctp associations
+    pub fn set_sctp_max_buffered(mut self, bufsize: usize) -> Self {
+        self.sctp_max_buffered = Some(bufsize);
+        self
+    }
+
     /// Set which DTLS version to use.
     ///
     /// Defaults to [`DtlsVersion::Dtls12`].
@@ -702,6 +709,7 @@ impl Default for RtcConfig {
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
             mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
+            sctp_max_buffered: None,
         }
     }
 }
