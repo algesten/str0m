@@ -157,6 +157,7 @@ impl FormatParams {
             H266ProfileTierLevel(v) => self.h266_profile_tier_level = Some(*v),
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
             Apt(_) => {}
+            Red(_) => {}
             Unknown => {}
         }
     }

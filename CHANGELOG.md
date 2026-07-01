@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Add RFC 2198 RED (redundant audio) for Opus via `RtcConfig::enable_red`: transparent send/recv
+    with single-loss recovery in frame mode, pass-through in rtp mode, and public `RedEncoder`/`RedDecoder` #982
+
 # 0.21.0
 
   * Upgrade to  dimpl 0.7.0 (breaking)

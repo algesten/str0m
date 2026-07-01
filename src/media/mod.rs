@@ -442,11 +442,16 @@ impl Media {
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
     ) -> &mut Payloader {
-        self.payloaders.entry((pt, rid)).or_insert_with(|| {
+        let payloader = self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
             Payloader::new(params.spec, vp9_mode)
-        })
+        });
+        // Keep the RED linkage current with the negotiated params so a remapped or dropped RED
+        // PT can't go stale in the cached payloader.
+        let red = params.iter().find(|p| p.pt == pt).and_then(|p| p.red);
+        payloader.set_red(red, pt);
+        payloader
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {

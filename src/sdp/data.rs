@@ -380,6 +380,23 @@ impl MediaLine {
                         }
                     }
                 }
+
+                // find red pt, if there is one (RFC 2198). The red fmtp's primary PT
+                // points back to this codec, mirroring how `apt` links RTX. str0m only
+                // supports RED for Opus, so never fold it onto any other codec.
+                for fp in values.iter() {
+                    if let FormatParam::Red(primary) = fp {
+                        if *primary == p.pt {
+                            // ensure the owning rtpmap is actually red
+                            let is_red = rtp_maps
+                                .iter()
+                                .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Red);
+                            if is_red && p.spec.codec == Codec::Opus {
+                                p.red = Some(**pt);
+                            }
+                        }
+                    }
+                }
             }
 
             // rtcp feedback mechanisms
@@ -977,6 +994,10 @@ pub enum FormatParam {
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
+    /// RFC 2198 RED redundancy. Carries the primary PT this RED stream wraps
+    /// (the first entry of the `<primary>/<redundant>...` fmtp payload-type list).
+    Red(Pt),
+
     /// Unrecognized fmtp.
     Unknown,
 }
@@ -1093,6 +1114,7 @@ impl fmt::Display for FormatParam {
             }
             SpropMaxDonDiff(v) => write!(f, "sprop-max-don-diff={}", *v),
             Apt(v) => write!(f, "apt={v}"),
+            Red(v) => write!(f, "{v}/{v}"),
             Unknown => Ok(()),
         }
     }
@@ -1156,6 +1178,21 @@ impl PayloadParams {
             attrs.push(MediaAttribute::Fmtp {
                 pt,
                 values: vec![FormatParam::Apt(self.pt)],
+            });
+        }
+
+        if let Some(pt) = self.red {
+            attrs.push(MediaAttribute::RtpMap {
+                pt,
+                value: RtpMap {
+                    codec: Codec::Red,
+                    clock_rate: self.spec.clock_rate,
+                    channels: self.spec.channels,
+                },
+            });
+            attrs.push(MediaAttribute::Fmtp {
+                pt,
+                values: vec![FormatParam::Red(self.pt)],
             });
         }
     }
@@ -2282,6 +2319,203 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
 
             // Check RTX
             assert_eq!(h265_payload.resend, Some(97.into()));
+        }
+
+        #[test]
+        fn red_fmtp_parses_and_displays() {
+            // Single-level same-codec RED renders as "<primary>/<primary>".
+            assert_eq!(FormatParam::Red(111.into()).to_string(), "111/111");
+
+            let input = "v=0\r\n\
+            o=- 1 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=audio 9 UDP/TLS/RTP/SAVPF 111 63\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:111 opus/48000/2\r\n\
+            a=rtpmap:63 red/48000/2\r\n\
+            a=fmtp:63 111/111\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+            let sdp = Sdp::parse(input).expect("should parse");
+            let has_red = sdp.media_lines[0].attrs.iter().any(|a| {
+                matches!(a, MediaAttribute::Fmtp { pt, values }
+                    if *pt == 63.into() && values == &vec![FormatParam::Red(111.into())])
+            });
+            assert!(
+                has_red,
+                "red fmtp should parse to FormatParam::Red(primary)"
+            );
+        }
+
+        #[test]
+        fn red_folds_onto_opus_and_emits() {
+            let input = "v=0\r\n\
+            o=- 1 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=audio 9 UDP/TLS/RTP/SAVPF 111 63\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:111 opus/48000/2\r\n\
+            a=rtpmap:63 red/48000/2\r\n\
+            a=fmtp:63 111/111\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+            let sdp = Sdp::parse(input).expect("should parse");
+            let params = sdp.media_lines[0].rtp_params();
+
+            let opus = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::Opus)
+                .expect("opus");
+            assert_eq!(opus.red, Some(63.into()));
+            // RED is folded onto the primary, never a standalone payload.
+            assert!(!params.iter().any(|p| p.pt == 63.into()));
+
+            // Emit: opus re-emits the red rtpmap + fmtp.
+            let mut attrs = Vec::new();
+            opus.as_media_attrs(&mut attrs);
+            let has_red_rtpmap = attrs.iter().any(|a| {
+                matches!(a, MediaAttribute::RtpMap { pt, value }
+                    if *pt == 63.into() && value.codec == Codec::Red && value.channels == Some(2))
+            });
+            let has_red_fmtp = attrs.iter().any(|a| {
+                matches!(a, MediaAttribute::Fmtp { pt, values }
+                    if *pt == 63.into() && values == &vec![FormatParam::Red(111.into())])
+            });
+            assert!(has_red_rtpmap, "should emit red rtpmap");
+            assert!(has_red_fmtp, "should emit red fmtp");
+        }
+
+        #[test]
+        fn red_folds_in_real_chrome_audio_mline() {
+            // Real captured Chrome offer audio section (see docs/chrome-sdp.json): RED (63) sits in
+            // the m-line fmt list right after Opus (111), among 16 payload types.
+            let input = "v=0\r\n\
+            o=- 2954344436352400798 4 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=audio 9 UDP/TLS/RTP/SAVPF 111 63 103 104 9 0 8 106 105 13 110 112 113 126\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtcp-mux\r\n\
+            a=rtpmap:111 opus/48000/2\r\n\
+            a=rtcp-fb:111 transport-cc\r\n\
+            a=fmtp:111 minptime=10;useinbandfec=1\r\n\
+            a=rtpmap:63 red/48000/2\r\n\
+            a=fmtp:63 111/111\r\n\
+            a=rtpmap:103 ISAC/16000\r\n\
+            a=rtpmap:104 ISAC/32000\r\n\
+            a=rtpmap:9 G722/8000\r\n\
+            a=rtpmap:0 PCMU/8000\r\n\
+            a=rtpmap:8 PCMA/8000\r\n\
+            a=rtpmap:106 CN/32000\r\n\
+            a=rtpmap:105 CN/16000\r\n\
+            a=rtpmap:13 CN/8000\r\n\
+            a=rtpmap:110 telephone-event/48000\r\n\
+            a=rtpmap:112 telephone-event/32000\r\n\
+            a=rtpmap:113 telephone-event/16000\r\n\
+            a=rtpmap:126 telephone-event/8000\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+            let sdp = Sdp::parse(input).expect("parse real chrome audio m-line");
+            let params = sdp.media_lines[0].rtp_params();
+
+            let opus = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::Opus)
+                .expect("opus");
+            assert_eq!(
+                opus.red,
+                Some(63.into()),
+                "RED must fold onto Opus among real Chrome PTs"
+            );
+            assert!(
+                !params.iter().any(|p| p.pt == 63.into()),
+                "RED is folded, not a standalone payload"
+            );
+            // Opus fmtp is not clobbered by the RED fold.
+            assert_eq!(opus.spec.format.use_inband_fec, Some(true));
+            // Real-world neighbours still parse alongside.
+            assert!(params.iter().any(|p| p.spec.codec == Codec::PCMU));
+            assert!(params.iter().any(|p| p.spec.codec == Codec::PCMA));
+        }
+
+        #[test]
+        fn red_not_folded_onto_video() {
+            // str0m supports RED only for Opus. A video m-line that links red to a video codec
+            // must not have red folded onto it; the video param's `red` stays None.
+            let input = "v=0\r\n\
+            o=- 1 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 96 116\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 VP8/90000\r\n\
+            a=rtpmap:116 red/90000\r\n\
+            a=fmtp:116 96/96\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+            let sdp = Sdp::parse(input).expect("parse video m-line with red");
+            let params = sdp.media_lines[0].rtp_params();
+
+            let vp8 = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::Vp8)
+                .expect("vp8");
+            assert_eq!(vp8.red, None, "RED must not fold onto a video codec");
+        }
+
+        #[test]
+        fn red_not_folded_onto_non_opus_audio() {
+            // str0m supports RED only for Opus. A remote that links red to a non-Opus audio
+            // codec (PCMU) must not have red folded onto it; the PCMU param's `red` stays None.
+            let input = "v=0\r\n\
+            o=- 1 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0\r\n\
+            m=audio 9 UDP/TLS/RTP/SAVPF 0 63\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:0 PCMU/8000\r\n\
+            a=rtpmap:63 red/8000\r\n\
+            a=fmtp:63 0/0\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword\r\n\
+            ";
+            let sdp = Sdp::parse(input).expect("parse audio m-line with red on PCMU");
+            let params = sdp.media_lines[0].rtp_params();
+
+            let pcmu = params
+                .iter()
+                .find(|p| p.spec.codec == Codec::PCMU)
+                .expect("pcmu");
+            assert_eq!(
+                pcmu.red, None,
+                "RED must fold only onto Opus, not other audio codecs"
+            );
         }
     }
 

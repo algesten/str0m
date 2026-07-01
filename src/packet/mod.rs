@@ -45,6 +45,10 @@ pub use h266_profile::{H266Level, H266Profile, H266ProfileTierLevel, H266Tier};
 mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};
 
+mod red;
+pub(crate) use red::red_recovery_blocks;
+pub use red::{RedBlock, RedDecoder, RedEncoder, RedundantBlock};
+
 mod vp8;
 pub use vp8::Vp8CodecExtra;
 pub use vp8::Vp8Descriptor;
@@ -320,6 +324,7 @@ impl CodecPacketizer {
             Codec::Av1 => CodecPacketizer::Av1(Av1Packetizer::default()),
             Codec::Null => CodecPacketizer::Null(NullPacketizer),
             Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
+            Codec::Red => panic!("Cant instantiate packetizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
         }
     }
@@ -345,6 +350,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Av1 => CodecDepacketizer::Av1(Av1Depacketizer::default()),
             Codec::Null => CodecDepacketizer::Null(NullDepacketizer),
             Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
+            Codec::Red => panic!("Cant instantiate depacketizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
         }
     }

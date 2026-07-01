@@ -86,3 +86,9 @@ name = "depack_direct"
 path = "fuzz_targets/depack_direct.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "red_decode"
+path = "fuzz_targets/red_decode.rs"
+test = false
+doc = false
