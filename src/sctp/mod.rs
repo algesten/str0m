@@ -27,13 +27,16 @@ mod error;
 pub use error::SctpError;
 
 /// Bytes that can be buffered inside str0m across all streams.
-const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
+const DEFAULT_MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
 
 /// Maximum message size we advertise in SDP (what we can receive)
 pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
 
 /// Default max message size if remote doesn't advertise
 pub const DEFAULT_REMOTE_MAX_MESSAGE_SIZE: u32 = 64 * 1024;
+
+/// Headroom for max_buffered_across_streams vs remote_max_message_size
+pub const BUFFER_MULTIPLIER: u32 = 2;
 
 pub(crate) struct RtcSctp {
     state: RtcSctpState,
@@ -46,6 +49,7 @@ pub(crate) struct RtcSctp {
     last_now: Instant,
     client: bool,
     remote_max_message_size: u32,
+    max_buffered_across_streams: usize,
     snap_enabled: bool,
     snap_init: Option<SctpInitData>,
     #[cfg(test)]
@@ -279,6 +283,7 @@ impl RtcSctp {
             last_now: Instant::now(), // placeholder until init()
             client: false,
             remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
+            max_buffered_across_streams: DEFAULT_MAX_BUFFERED_ACROSS_STREAMS,
             snap_enabled: false,
             snap_init: None,
             #[cfg(test)]
@@ -323,6 +328,12 @@ impl RtcSctp {
             self.remote_max_message_size = max_msg_size;
         }
 
+        let bufsize: usize =
+            BUFFER_MULTIPLIER.saturating_mul(self.remote_max_message_size) as usize;
+        if self.max_buffered_across_streams < bufsize {
+            self.max_buffered_across_streams = bufsize;
+        }
+
         if let Some(snap_data) = sctp_init_data {
             // SNAP path: both local and remote INIT chunks must be present.
             if snap_data.local_init.is_none() || snap_data.remote_init.is_none() {
@@ -341,6 +352,7 @@ impl RtcSctp {
                 .connect(config, self.fake_addr)
                 .map_err(|e| SctpError::Proto(ProtoError::Other(e.to_string())))?;
             assoc.set_max_send_message_size(self.remote_max_message_size);
+
             self.handle = handle;
             self.assoc = Some(assoc);
 
@@ -569,7 +581,7 @@ impl RtcSctp {
             })
             .sum();
 
-        MAX_BUFFERED_ACROSS_STREAMS - total
+        self.max_buffered_across_streams - total
     }
 
     pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
