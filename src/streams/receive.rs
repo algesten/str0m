@@ -133,6 +133,8 @@ pub(crate) struct StreamRxStats {
     plis: u64,
     /// count of NACKs sent
     nacks: u64,
+    /// interarrival jitter (RTP timestamp units) from the last RR we sent
+    jitter: u32,
     /// round trip time from the last DLRR, if any
     rtt: Option<Duration>,
     /// fraction of packets lost from the last RR, if any
@@ -574,8 +576,9 @@ impl StreamRx {
         rr.sender_ssrc = sender_ssrc;
 
         if !rr.reports.is_empty() {
-            let l = rr.reports[rr.reports.len() - 1].fraction_lost;
-            self.stats.update_loss(l);
+            let report = &rr.reports[rr.reports.len() - 1];
+            self.stats.update_loss(report.fraction_lost);
+            self.stats.jitter = report.jitter;
         }
 
         let xr = self.create_extended_receiver_report(now);
@@ -829,6 +832,7 @@ impl StreamRxStats {
             firs: self.firs,
             plis: self.plis,
             nacks: self.nacks,
+            jitter: self.jitter,
             rtt: self.rtt,
             loss: self.loss,
             timestamp: now,

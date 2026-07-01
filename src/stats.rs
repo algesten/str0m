@@ -197,6 +197,9 @@ pub struct MediaIngressStats {
     pub plis: u64,
     /// Number of nacks sent.
     pub nacks: u64,
+    /// Interarrival jitter, in RTP timestamp units, as reported in the last RTCP
+    /// receiver report we sent for this stream.
+    pub jitter: u32,
     /// Round-trip-time extracted from the last RTCP XR DLRR report block.
     pub rtt: Option<Duration>,
     /// Fraction of packets lost extracted from the last RTCP receiver report.
@@ -220,10 +223,10 @@ impl MediaIngressStats {
             self.rid == other.rid,
             "Cannot merge MediaIngressStats for different rids"
         );
-        let (rtt, loss) = if self.timestamp > other.timestamp {
-            (self.rtt, self.loss)
+        let (jitter, rtt, loss) = if self.timestamp > other.timestamp {
+            (self.jitter, self.rtt, self.loss)
         } else {
-            (other.rtt, other.loss)
+            (other.jitter, other.rtt, other.loss)
         };
 
         *self = Self {
@@ -234,6 +237,7 @@ impl MediaIngressStats {
             firs: self.firs + other.firs,
             plis: self.plis + other.plis,
             nacks: self.nacks + other.nacks,
+            jitter,
             rtt,
             loss,
             timestamp: self.timestamp.max(other.timestamp),
