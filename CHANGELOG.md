@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix VP9 non-flexible SS advertising a bogus R=0 GOF for single-layer streams #999
+
 # 0.21.0
 
   * Upgrade to  dimpl 0.7.0 (breaking)
