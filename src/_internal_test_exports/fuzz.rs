@@ -79,7 +79,7 @@ pub fn sdp_answer(data: &[u8]) -> Option<()> {
 pub fn depack(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
 
-    let codec = match rng.u8(8)? {
+    let codec = match rng.u8(9)? {
         0 => Codec::Opus,
         1 => Codec::Vp8,
         2 => Codec::Vp9,
@@ -89,10 +89,17 @@ pub fn depack(data: &[u8]) -> Option<()> {
         6 => Codec::Av1,
         7 => Codec::PCMU,
         8 => Codec::PCMA,
+        9 => Codec::AmrWb,
         _ => unreachable!(),
     };
 
-    let mut depack = DepacketizingBuffer::new(codec.into(), rng.usize(300)?);
+    let mut cd: CodecDepacketizer = codec.into();
+    // AMR-WB has two on-the-wire layouts (RFC 4867); fuzz both.
+    if let CodecDepacketizer::AmrWb(ref mut amr) = cd {
+        *amr = amr.with_octet_align(rng.bool()?);
+    }
+
+    let mut depack = DepacketizingBuffer::new(cd, rng.usize(300)?);
 
     let exts = random_extmap(&mut rng, 10)?;
 
@@ -208,7 +215,7 @@ pub fn rtcp(data: &[u8]) -> Option<()> {
 pub fn depack_direct(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
 
-    let codec = match rng.u8(8)? {
+    let codec = match rng.u8(9)? {
         0 => Codec::Opus,
         1 => Codec::Vp8,
         2 => Codec::Vp9,
@@ -218,10 +225,15 @@ pub fn depack_direct(data: &[u8]) -> Option<()> {
         6 => Codec::Av1,
         7 => Codec::PCMU,
         8 => Codec::PCMA,
+        9 => Codec::AmrWb,
         _ => unreachable!(),
     };
 
     let mut depack: CodecDepacketizer = codec.into();
+    // AMR-WB has two on-the-wire layouts (RFC 4867); fuzz both.
+    if let CodecDepacketizer::AmrWb(ref mut amr) = depack {
+        *amr = amr.with_octet_align(rng.bool()?);
+    }
     let mut out = Vec::new();
     let mut extra = CodecExtra::None;
 

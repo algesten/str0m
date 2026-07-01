@@ -18,6 +18,7 @@ pub enum PacketError {
     ErrVP8CorruptedPacket,
     ErrVP9CorruptedPacket,
     ErrAv1CorruptedPacket,
+    ErrAmrWbCorruptedPacket,
 }
 
 impl fmt::Display for PacketError {
@@ -43,6 +44,7 @@ impl fmt::Display for PacketError {
             PacketError::ErrVP8CorruptedPacket => write!(f, "VP8 corrupted packet"),
             PacketError::ErrVP9CorruptedPacket => write!(f, "VP9 corrupted packet"),
             PacketError::ErrAv1CorruptedPacket => write!(f, "AV1 corrupted packet"),
+            PacketError::ErrAmrWbCorruptedPacket => write!(f, "AMR-WB corrupted packet"),
         }
     }
 }

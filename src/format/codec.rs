@@ -31,6 +31,8 @@ pub enum Codec {
     Opus,
     PCMU,
     PCMA,
+    /// AMR Wideband (RFC 4867), 16 kHz mono telephony/IMS audio.
+    AmrWb,
     H264,
     // TODO show this when we support h265.
     #[doc(hidden)]
@@ -60,7 +62,7 @@ impl Codec {
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {
         use Codec::*;
-        matches!(self, Opus | PCMU | PCMA)
+        matches!(self, Opus | PCMU | PCMA | AmrWb)
     }
 
     /// Tells if codec is video.
@@ -86,6 +88,7 @@ impl<'a> From<&'a str> for Codec {
             "opus" => Codec::Opus,
             "pcmu" => Codec::PCMU,
             "pcma" => Codec::PCMA,
+            "amr-wb" => Codec::AmrWb,
             "h264" => Codec::H264,
             "h265" => Codec::H265,
             "h266" => Codec::H266,
@@ -104,6 +107,7 @@ impl fmt::Display for Codec {
             Codec::Opus => write!(f, "opus"),
             Codec::PCMU => write!(f, "PCMU"),
             Codec::PCMA => write!(f, "PCMA"),
+            Codec::AmrWb => write!(f, "AMR-WB"),
             Codec::H264 => write!(f, "H264"),
             Codec::H265 => write!(f, "H265"),
             Codec::H266 => write!(f, "H266"),
