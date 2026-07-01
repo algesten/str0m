@@ -1008,7 +1008,6 @@ impl RtcSctp {
             .and_then(|s| s.config.as_ref())
     }
 
-    #[cfg(test)]
     pub(crate) fn remote_max_message_size(&self) -> u32 {
         self.remote_max_message_size
     }
