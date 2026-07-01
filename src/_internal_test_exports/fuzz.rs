@@ -79,7 +79,7 @@ pub fn sdp_answer(data: &[u8]) -> Option<()> {
 pub fn depack(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
 
-    let codec = match rng.u8(8)? {
+    let codec = match rng.u8(9)? {
         0 => Codec::Opus,
         1 => Codec::Vp8,
         2 => Codec::Vp9,
@@ -89,6 +89,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
         6 => Codec::Av1,
         7 => Codec::PCMU,
         8 => Codec::PCMA,
+        9 => Codec::G722,
         _ => unreachable!(),
     };
 
@@ -208,7 +209,7 @@ pub fn rtcp(data: &[u8]) -> Option<()> {
 pub fn depack_direct(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
 
-    let codec = match rng.u8(8)? {
+    let codec = match rng.u8(9)? {
         0 => Codec::Opus,
         1 => Codec::Vp8,
         2 => Codec::Vp9,
@@ -218,6 +219,7 @@ pub fn depack_direct(data: &[u8]) -> Option<()> {
         6 => Codec::Av1,
         7 => Codec::PCMU,
         8 => Codec::PCMA,
+        9 => Codec::G722,
         _ => unreachable!(),
     };
 

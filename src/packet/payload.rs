@@ -34,7 +34,7 @@ impl Payloader {
 
         Payloader {
             pack,
-            clock_rate: spec.clock_rate,
+            clock_rate: spec.rtp_clock_rate(),
         }
     }
 
