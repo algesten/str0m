@@ -17,7 +17,7 @@ pub enum Vp9PacketizerMode {
     /// Flexible mode (F=1): minimal 3-byte header (flags + 15-bit PID).
     /// Simpler but causes issues with Safari which drops inter-frames.
     Flexible,
-    /// Non-flexible mode (F=0): 5-8 byte header with layer indices and
+    /// Non-flexible mode (F=0): 5-6 byte header with layer indices and
     /// scalability structure. Compatible with all major browsers.
     #[default]
     NonFlexible,
@@ -1033,6 +1033,25 @@ mod test {
                 None,
             ),
             (
+                "ScalabilityStructureNoPictureGroupNoPayload",
+                &[
+                    0x0A,
+                    1 << 3, // NS:0 Y:0 G:1
+                    0,      // N_G=0, valid: single temporal layer / no fixed dependency info
+                ],
+                Vp9Depacketizer {
+                    b: true,
+                    v: true,
+                    ns: 0,
+                    y: false,
+                    g: true,
+                    ng: 0,
+                    ..Default::default()
+                },
+                &[],
+                None,
+            ),
+            (
                 "ScalabilityStructureThreeLayers",
                 &[
                     0x0A,
@@ -1129,7 +1148,7 @@ mod test {
         //   Bytes 1-2: 15-bit PID (M=1)
         //   Byte 3: TID(3)|U(1)|SID(3)|D(1) = 0x10 (TID=0, U=1, SID=0, D=0)
         //   Byte 4: tl0picidx (wrapping u8, increments every frame)
-        //   [Bytes 5-7]: SS data on keyframe first packet only
+        //   [Byte 5]: SS data on keyframe first packet only (N_S=0, Y=0, G=0)
         //
         // Flags byte (non-keyframe): I=1,P=1,L=1,F=0 = 0xE0 base
         //   + B=0x08, E=0x04
