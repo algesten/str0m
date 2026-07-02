@@ -284,6 +284,13 @@ impl<'a> DirectApi<'a> {
         self.rtc.session.streams.stream_rx_by_midrid(midrid, true)
     }
 
+    /// Get sctp max-message-size
+    ///
+    /// This returns the maximum buffer size that channel.write will accept
+    pub fn sctp_max_message_size(&self) -> u32 {
+        self.rtc.sctp.remote_max_message_size()
+    }
+
     /// Declare the intention to send data using the given SSRC.
     ///
     /// * The resend RTX is optional but necessary to do resends. str0m does not do
