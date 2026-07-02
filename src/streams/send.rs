@@ -928,6 +928,10 @@ impl StreamTx {
         now >= self.sender_report_at()
     }
 
+    pub(crate) fn next_sr(&self) -> Instant {
+        self.sender_report_at()
+    }
+
     pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
         let sr = self.create_sender_report(now);
 
@@ -1115,8 +1119,6 @@ impl StreamTx {
             let (media, config) = get_media();
             self.on_first_timeout(media, config);
         }
-
-        self.send_queue.handle_timeout(now);
     }
 
     fn on_first_timeout(&mut self, media: &Media, config: &CodecConfig) {
