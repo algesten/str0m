@@ -2,8 +2,8 @@ use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 use std::fmt;
 
-/// Max VP9 RTP payload descriptor size for non-flexible mode:
-/// flags(1) + 15-bit PID(2) + L byte(1) + tl0picidx(1) + SS(3 on keyframes) = 8
+/// Max non-flexible VP9 descriptor size reserved for MTU headroom:
+/// flags(1) + PID(2) + L(1) + tl0picidx(1) + ≤1 SS byte on keyframe first-packets; 8 is a safe bound.
 const VP9_NON_FLEXIBLE_HEADER_SIZE: usize = 8;
 /// VP9 RTP payload descriptor size for flexible mode:
 /// flags(1) + 15-bit PID(2) = 3
@@ -17,7 +17,7 @@ pub enum Vp9PacketizerMode {
     /// Flexible mode (F=1): minimal 3-byte header (flags + 15-bit PID).
     /// Simpler but causes issues with Safari which drops inter-frames.
     Flexible,
-    /// Non-flexible mode (F=0): 5-8 byte header with layer indices and
+    /// Non-flexible mode (F=0): 5-6 byte header with layer indices and
     /// scalability structure. Compatible with all major browsers.
     #[default]
     NonFlexible,
@@ -291,8 +291,8 @@ impl Vp9Packetizer {
             let is_last = payload_data_remaining == current_fragment_size;
 
             // Non-keyframe: 5 bytes (flags + 15-bit PID + L + tl0picidx)
-            // Keyframe first packet: 8 bytes (+ 3 bytes SS data)
-            let ss_size = if is_keyframe && is_first { 3 } else { 0 };
+            // Keyframe first packet: 6 bytes (+ 1 byte SS data, G=0)
+            let ss_size = if is_keyframe && is_first { 1 } else { 0 };
             let header_size = 5 + ss_size;
             let mut out = Vec::with_capacity(header_size + current_fragment_size);
 
@@ -322,13 +322,10 @@ impl Vp9Packetizer {
             // tl0picidx (required when F=0 and L=1)
             out.push(self.tl0picidx);
 
-            // SS data on keyframe first packet (V=1)
+            // SS byte on keyframe first packet: N_S=0, Y=0, G=0 (no GOF). A single-layer stream has no
+            // GOF to advertise; a G=1/R=0 GOF mis-signals references (see commit msg). This matches what
+            // libwebrtc emits for non-scalable VP9 (g_bit = num_frames_in_gof > 0). RFC 9628 §4.2.
             if is_keyframe && is_first {
-                // N_S(3)|Y(1)|G(1)|RES(3) = N_S=0 (1 spatial layer), Y=0, G=1
-                out.push(0x08);
-                // N_G = 1 (1 picture in GOF)
-                out.push(0x01);
-                // GOF[0]: TID(3)|U(1)|R(2)|RES(2) = TID=0, U=0, R=0
                 out.push(0x00);
             }
 
@@ -1036,6 +1033,25 @@ mod test {
                 None,
             ),
             (
+                "ScalabilityStructureNoPictureGroupNoPayload",
+                &[
+                    0x0A,
+                    1 << 3, // NS:0 Y:0 G:1
+                    0,      // N_G=0, valid: single temporal layer / no fixed dependency info
+                ],
+                Vp9Depacketizer {
+                    b: true,
+                    v: true,
+                    ns: 0,
+                    y: false,
+                    g: true,
+                    ng: 0,
+                    ..Default::default()
+                },
+                &[],
+                None,
+            ),
+            (
                 "ScalabilityStructureThreeLayers",
                 &[
                     0x0A,
@@ -1132,7 +1148,7 @@ mod test {
         //   Bytes 1-2: 15-bit PID (M=1)
         //   Byte 3: TID(3)|U(1)|SID(3)|D(1) = 0x10 (TID=0, U=1, SID=0, D=0)
         //   Byte 4: tl0picidx (wrapping u8, increments every frame)
-        //   [Bytes 5-7]: SS data on keyframe first packet only
+        //   [Byte 5]: SS data on keyframe first packet only (N_S=0, Y=0, G=0)
         //
         // Flags byte (non-keyframe): I=1,P=1,L=1,F=0 = 0xE0 base
         //   + B=0x08, E=0x04
@@ -1258,14 +1274,18 @@ mod test {
         assert_eq!(pkt[3], 0x10);
         // tl0picidx = 1 (first frame)
         assert_eq!(pkt[4], 1);
-        // SS: N_S=0, Y=0, G=1 → 0x08
-        assert_eq!(pkt[5], 0x08);
-        // N_G=1
-        assert_eq!(pkt[6], 0x01);
-        // GOF[0]: TID=0, U=0, R=0
-        assert_eq!(pkt[7], 0x00);
-        // Payload
-        assert_eq!(&pkt[8..], &keyframe[..]);
+        // SS: N_S=0, Y=0, G=0 (no GOF) → 0x00 (1 byte)
+        assert_eq!(pkt[5], 0x00);
+        // Payload starts right after the 1-byte SS
+        assert_eq!(&pkt[6..], &keyframe[..]);
+
+        // Parse-side: the emitted SS decodes as a single-layer, no-GOF structure (N_S=0, Y/G false).
+        let mut dep = Vp9Depacketizer::default();
+        let mut out = Vec::new();
+        let mut extra = CodecExtra::None;
+        dep.depacketize(pkt, &mut out, &mut extra)?;
+        assert!(dep.v && dep.ns == 0 && !dep.y && !dep.g && dep.ng == 0);
+        assert_eq!(&out[..], &keyframe[..]);
 
         // Now an inter-frame: 0x84 = 0b10_00_0_1_00 (frame_type=1)
         let inter = vec![0x84, 0xCC];
@@ -1290,8 +1310,8 @@ mod test {
         };
 
         // VP9 profile 0 keyframe: 0x82 = frame_marker=10, profile=00, show_existing=0, frame_type=0
-        // 10 bytes of payload, MTU=12 → max_frag = 12 - 8 = 4
-        // First packet: 8-byte header (with SS) + 4 bytes payload = 12 ≤ MTU
+        // 10 bytes of payload, MTU=12 → max_frag = 12 - 8 = 4 (conservative reserve)
+        // First packet: 6-byte header (with 1-byte G=0 SS) + 4 bytes payload = 10 ≤ MTU
         // Second packet: 5-byte header + 4 bytes payload = 9 ≤ MTU
         // Third packet: 5-byte header + 2 bytes payload = 7 ≤ MTU
         let keyframe = vec![0x82, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09];
@@ -1306,13 +1326,11 @@ mod test {
         // Packet 1: B=1, E=0, V=1 (keyframe first)
         // Flags: I=1,P=0,L=1,F=0,B=1,E=0,V=1,Z=0 = 0xAA
         assert_eq!(packets[0][0], 0xAA);
-        assert_eq!(packets[0].len(), 12); // 8-byte header + 4-byte payload
+        assert_eq!(packets[0].len(), 10); // 6-byte header + 4-byte payload
         assert_eq!(packets[0][3], 0x10); // L byte
         assert_eq!(packets[0][4], 1); // tl0picidx
-        assert_eq!(packets[0][5], 0x08); // SS byte 1
-        assert_eq!(packets[0][6], 0x01); // SS byte 2 (N_G)
-        assert_eq!(packets[0][7], 0x00); // SS byte 3 (GOF[0])
-        assert_eq!(&packets[0][8..], &keyframe[0..4]); // payload
+        assert_eq!(packets[0][5], 0x00); // SS byte: N_S=0, Y=0, G=0 (no GOF)
+        assert_eq!(&packets[0][6..], &keyframe[0..4]); // payload
 
         // Packet 2: B=0, E=0, V=0 (middle)
         // Flags: I=1,P=0,L=1,F=0,B=0,E=0,V=0,Z=0 = 0xA0
