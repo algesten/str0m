@@ -257,6 +257,20 @@ impl RtcConfig {
         self
     }
 
+    /// Enable the telephone-event (DTMF) payload type.
+    ///
+    /// This enables sending and receiving telephone events (DTMF tones and other
+    /// telephony signals) per RFC 4733, negotiated inside audio m-lines. Disabled
+    /// by default.
+    ///
+    /// Send tones with [`Writer::write_dtmf`][crate::media::Writer::write_dtmf]
+    /// and observe received tones via
+    /// [`Event::DtmfEvent`][crate::Event::DtmfEvent].
+    pub fn enable_telephone_event(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_telephone_event(enabled);
+        self
+    }
+
     /// Enable VP8 video codec.
     ///
     /// Enabled by default.

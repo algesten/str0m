@@ -40,6 +40,9 @@ pub enum RtcError {
     /// The PT attempted to write to is not known.
     UnknownPt(Pt),
 
+    /// The DTMF event was not advertised by the remote peer.
+    UnsupportedDtmfEvent(u8),
+
     /// The Rid attempted to write is not known.
     UnknownRid(Rid),
 
@@ -96,6 +99,9 @@ impl fmt::Display for RtcError {
             RtcError::Dtls(err) => write!(f, "{}", err),
             RtcError::Packet(mid, pt, err) => write!(f, "{} {} {}", mid, pt, err),
             RtcError::UnknownPt(pt) => write!(f, "PT is unknown {}", pt),
+            RtcError::UnsupportedDtmfEvent(event) => {
+                write!(f, "DTMF event is not negotiated: {}", event)
+            }
             RtcError::UnknownRid(rid) => write!(f, "RID is unknown {}", rid),
             RtcError::NoSenderSource => write!(f, "No sender source"),
             RtcError::ResendRequiresRtxPt => write!(

@@ -64,6 +64,12 @@ pub enum Codec {
     // TODO show this when we support Av1.
     #[doc(hidden)]
     Av1,
+    /// Telephone events (DTMF tones and telephony signals), per RFC 4733.
+    ///
+    /// Not a media codec: it carries named events (DTMF digits etc.) rather than
+    /// audio samples, but is negotiated inside an audio m-line alongside a real
+    /// audio codec.
+    TelephoneEvent,
     /// Technically not a codec, but used in places where codecs go
     /// in `a=rtpmap` lines.
     #[doc(hidden)]
@@ -91,9 +97,17 @@ impl Codec {
         matches!(self, H266 | H265 | H264 | Vp8 | Vp9 | Av1)
     }
 
+    /// Tells if this is the telephone-event (RFC 4733) payload.
+    pub fn is_telephone_event(&self) -> bool {
+        matches!(self, Codec::TelephoneEvent)
+    }
+
     /// Audio/Video.
+    ///
+    /// The telephone-event payload is negotiated inside audio m-lines and is
+    /// therefore reported as [`MediaKind::Audio`].
     pub fn kind(&self) -> MediaKind {
-        if self.is_audio() {
+        if self.is_audio() || self.is_telephone_event() {
             MediaKind::Audio
         } else {
             MediaKind::Video
@@ -115,6 +129,7 @@ impl<'a> From<&'a str> for Codec {
             "vp8" => Codec::Vp8,
             "vp9" => Codec::Vp9,
             "av1" => Codec::Av1,
+            "telephone-event" => Codec::TelephoneEvent,
             "rtx" => Codec::Rtx, // resends
             _ => Codec::Unknown,
         }
@@ -134,6 +149,7 @@ impl fmt::Display for Codec {
             Codec::Vp8 => write!(f, "VP8"),
             Codec::Vp9 => write!(f, "VP9"),
             Codec::Av1 => write!(f, "AV1"),
+            Codec::TelephoneEvent => write!(f, "telephone-event"),
             Codec::Rtx => write!(f, "rtx"),
             Codec::Null => write!(f, "null"),
             Codec::Unknown => write!(f, "unknown"),

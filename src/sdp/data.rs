@@ -353,7 +353,7 @@ impl MediaLine {
 
         let mut params: Vec<_> = rtp_maps
             .iter()
-            .filter(|(_, c)| c.codec.is_audio() | c.codec.is_video())
+            .filter(|(_, c)| c.codec.is_audio() | c.codec.is_video() | c.codec.is_telephone_event())
             .map(|(pt, c)| PayloadParams::new(*pt, None, (*c).into()))
             .collect();
 
@@ -410,6 +410,28 @@ impl MediaLine {
         }
 
         params
+    }
+
+    pub(crate) fn telephone_events(&self, pt: Pt) -> Option<crate::format::TelephoneEvents> {
+        self.attrs.iter().find_map(|attr| {
+            let MediaAttribute::Fmtp {
+                pt: fmtp_pt,
+                values,
+            } = attr
+            else {
+                return None;
+            };
+            if *fmtp_pt != pt {
+                return None;
+            }
+            values.iter().find_map(|value| {
+                if let FormatParam::TelephoneEvents(events) = value {
+                    Some(*events)
+                } else {
+                    None
+                }
+            })
+        })
     }
 
     pub fn check_consistent(&self) -> Option<String> {
@@ -974,6 +996,9 @@ pub enum FormatParam {
     /// out-of-order NAL unit decoding. Valid range: 0–32767.
     SpropMaxDonDiff(u16),
 
+    /// Telephone-event (RFC 4733) supported event codes, e.g. `0-16`.
+    TelephoneEvents(crate::format::TelephoneEvents),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -1092,6 +1117,7 @@ impl fmt::Display for FormatParam {
                 )
             }
             SpropMaxDonDiff(v) => write!(f, "sprop-max-don-diff={}", *v),
+            TelephoneEvents(v) => write!(f, "{v}"),
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }
@@ -1136,7 +1162,17 @@ impl PayloadParams {
             });
         }
 
-        let fmtps = self.spec.format.to_format_param();
+        let mut fmtps = self.spec.format.to_format_param();
+
+        // The telephone-event (RFC 4733) payload carries its supported event
+        // range in the fmtp line. We advertise the standard DTMF range. This is
+        // emitted here rather than stored per-FormatParams to keep MediaData small.
+        if self.spec.codec == Codec::TelephoneEvent {
+            fmtps.push(FormatParam::TelephoneEvents(
+                crate::format::TelephoneEvents::dtmf(),
+            ));
+        }
+
         if !fmtps.is_empty() {
             attrs.push(MediaAttribute::Fmtp {
                 pt: self.pt,
