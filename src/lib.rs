@@ -899,8 +899,7 @@ pub use error::RtcError;
 /// }
 /// ```
 pub struct Rtc {
-    alive: bool,
-    closing: bool,
+    state: RtcState,
     ice: IceAgent,
     dtls: Dtls,
     dtls_connected: bool,
@@ -921,6 +920,13 @@ pub struct Rtc {
     last_timeout_reason: Reason,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RtcState {
+    Alive,
+    Closing,
+    Closed,
 }
 
 struct SendAddr {
@@ -1245,8 +1251,7 @@ impl Rtc {
         }
 
         Ok(Rtc {
-            alive: true,
-            closing: false,
+            state: RtcState::Alive,
             ice,
             dtls: Dtls::new(
                 &dtls_cert,
@@ -1297,7 +1302,7 @@ impl Rtc {
     /// assert!(!rtc.is_alive());
     /// ```
     pub fn is_alive(&self) -> bool {
-        self.alive
+        self.state != RtcState::Closed
     }
 
     /// Force disconnects the instance making [`Rtc::is_alive()`] return `false`.
@@ -1314,10 +1319,7 @@ impl Rtc {
     /// assert!(!rtc.is_alive());
     /// ```
     pub fn disconnect(&mut self) {
-        if self.alive {
-            debug!("Set alive=false");
-            self.alive = false;
-        }
+        self.state = RtcState::Closed;
     }
 
     /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
@@ -1446,7 +1448,7 @@ impl Rtc {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
 
-        if !self.alive {
+        if self.state == RtcState::Closed {
             return None;
         }
 
@@ -1560,37 +1562,8 @@ impl Rtc {
     }
 
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
-        if !self.alive {
-            self.last_timeout_reason = Reason::NotHappening;
-            return Ok(Output::Timeout(not_happening()));
-        }
-
-        if self.closing {
-            // Drain DTLS output to move packets into the poll_packet queue
-            loop {
-                if let DtlsOutput::Timeout(_) = self.dtls.poll_output(&mut self.dtls_buf) {
-                    break;
-                }
-            }
-
-            // Transmit pending DTLS packets one at a time (the close_notify record).
-            // The caller must keep calling poll_output() until we return Timeout.
-            if let Some(send) = &self.send_addr {
-                if let Some(contents) = self.dtls.poll_packet() {
-                    let t = net::Transmit {
-                        proto: send.proto,
-                        source: send.source,
-                        destination: send.destination,
-                        contents,
-                    };
-                    return Ok(Output::Transmit(t));
-                }
-            }
-
-            // All packets drained — mark as not alive
-            self.alive = false;
-            self.last_timeout_reason = Reason::NotHappening;
-            return Ok(Output::Timeout(not_happening()));
+        if self.state != RtcState::Alive {
+            return self.poll_inactive_output();
         }
 
         while let Some(e) = self.ice.poll_event() {
@@ -1833,6 +1806,36 @@ impl Rtc {
         Ok(Output::Timeout(next))
     }
 
+    #[cold]
+    #[inline(never)]
+    fn poll_inactive_output(&mut self) -> Result<Output, RtcError> {
+        if self.state == RtcState::Closed {
+            self.last_timeout_reason = Reason::NotHappening;
+            return Ok(Output::Timeout(not_happening()));
+        }
+
+        loop {
+            if let DtlsOutput::Timeout(_) = self.dtls.poll_output(&mut self.dtls_buf) {
+                break;
+            }
+        }
+
+        if let Some(send) = &self.send_addr {
+            if let Some(contents) = self.dtls.poll_packet() {
+                return Ok(Output::Transmit(net::Transmit {
+                    proto: send.proto,
+                    source: send.source,
+                    destination: send.destination,
+                    contents,
+                }));
+            }
+        }
+
+        self.state = RtcState::Closed;
+        self.last_timeout_reason = Reason::NotHappening;
+        Ok(Output::Timeout(not_happening()))
+    }
+
     /// The reason for the last [`Output::Timeout`]
     ///
     /// This is updated when calling [`Rtc::poll_output()`] and the next output
@@ -1937,7 +1940,7 @@ impl Rtc {
     /// }
     /// ```
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
-        if !self.alive {
+        if self.state == RtcState::Closed {
             return Ok(());
         }
 
@@ -1957,7 +1960,9 @@ impl Rtc {
     /// as a `Transmit`. Once the packet is drained, the `Rtc` instance becomes
     /// not alive.
     pub fn close(&mut self) -> Result<(), RtcError> {
-        self.closing = true;
+        if self.state != RtcState::Closed {
+            self.state = RtcState::Closing;
+        }
         Ok(self.dtls.close()?)
     }
 
@@ -2063,7 +2068,7 @@ impl Rtc {
     /// // TODO write data channel data.
     /// ```
     pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
-        if !self.alive {
+        if self.state == RtcState::Closed {
             return None;
         }
 
