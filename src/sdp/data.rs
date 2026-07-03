@@ -1149,7 +1149,7 @@ impl PayloadParams {
                 pt,
                 value: RtpMap {
                     codec: Codec::Rtx,
-                    clock_rate: self.spec.clock_rate,
+                    clock_rate: self.spec.rtp_clock_rate(),
                     channels: None,
                 },
             });
@@ -1170,10 +1170,23 @@ pub struct RtpMap {
 
 impl From<RtpMap> for CodecSpec {
     fn from(v: RtpMap) -> Self {
+        // G722 uses an 8000 Hz RTP clock rate in SDP (RFC 3551 §4.5.2), but str0m
+        // treats it as a 16 kHz mono codec everywhere user facing. Normalize on the way in.
+        // See https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55
+        let (clock_rate, channels) = if v.codec == Codec::G722 {
+            let channels = if v.channels == Some(1) {
+                None
+            } else {
+                v.channels
+            };
+            (Frequency::SIXTEEN_KHZ, channels)
+        } else {
+            (v.clock_rate, v.channels)
+        };
         CodecSpec {
             codec: v.codec,
-            clock_rate: v.clock_rate,
-            channels: v.channels,
+            clock_rate,
+            channels,
             format: FormatParams::default(),
         }
     }
@@ -1183,7 +1196,10 @@ impl From<CodecSpec> for RtpMap {
     fn from(v: CodecSpec) -> Self {
         RtpMap {
             codec: v.codec,
-            clock_rate: v.clock_rate,
+            // G722 is signalled with an 8000 Hz clock rate in SDP (RFC 3551 §4.5.2),
+            // even though it samples at 16 kHz. See
+            // https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55
+            clock_rate: v.rtp_clock_rate(),
             channels: v.channels,
         }
     }
