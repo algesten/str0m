@@ -71,6 +71,9 @@ use null::{NullDepacketizer, NullPacketizer};
 mod comfort_noise;
 use comfort_noise::{ComfortNoiseDepacketizer, ComfortNoisePacketizer};
 
+mod telephone_event;
+pub use telephone_event::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
+
 mod buffer_rx;
 pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
 
@@ -296,6 +299,8 @@ pub(crate) enum CodecPacketizer {
     Av1(Av1Packetizer),
     Null(NullPacketizer),
     #[allow(unused)]
+    TelephoneEvent(TelephoneEventPacketizer),
+    #[allow(unused)]
     Boxed(Box<dyn Packetizer + Send + Sync + UnwindSafe>),
 }
 
@@ -311,6 +316,7 @@ pub(crate) enum CodecDepacketizer {
     Vp9(Vp9Depacketizer),
     Av1(Av1Depacketizer),
     Null(NullDepacketizer),
+    TelephoneEvent(TelephoneEventDepacketizer),
     #[allow(unused)]
     Boxed(Box<dyn Depacketizer + Send + Sync + UnwindSafe>),
 }
@@ -330,6 +336,7 @@ impl CodecPacketizer {
             Codec::Vp9 => CodecPacketizer::Vp9(Vp9Packetizer::with_mode(vp9_mode)),
             Codec::Av1 => CodecPacketizer::Av1(Av1Packetizer::default()),
             Codec::Null => CodecPacketizer::Null(NullPacketizer),
+            Codec::TelephoneEvent => CodecPacketizer::TelephoneEvent(TelephoneEventPacketizer),
             Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
             Codec::Red => panic!("Cant instantiate packetizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
@@ -358,6 +365,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Vp9 => CodecDepacketizer::Vp9(Vp9Depacketizer::default()),
             Codec::Av1 => CodecDepacketizer::Av1(Av1Depacketizer::default()),
             Codec::Null => CodecDepacketizer::Null(NullDepacketizer),
+            Codec::TelephoneEvent => CodecDepacketizer::TelephoneEvent(TelephoneEventDepacketizer),
             Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
             Codec::Red => panic!("Cant instantiate depacketizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
@@ -380,6 +388,7 @@ impl Packetizer for CodecPacketizer {
             Vp9(v) => v.packetize(mtu, b),
             Av1(v) => v.packetize(mtu, b),
             Null(v) => v.packetize(mtu, b),
+            TelephoneEvent(v) => v.packetize(mtu, b),
             Boxed(v) => v.packetize(mtu, b),
         }
     }
@@ -397,6 +406,7 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::Vp9(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Av1(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Null(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::TelephoneEvent(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Boxed(v) => v.is_marker(data, previous, last),
         }
     }
@@ -416,6 +426,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp9(v) => v.out_size_hint(packets_size),
             Av1(v) => v.out_size_hint(packets_size),
             Null(v) => v.out_size_hint(packets_size),
+            TelephoneEvent(v) => v.out_size_hint(packets_size),
             Boxed(v) => v.out_size_hint(packets_size),
         }
     }
@@ -438,6 +449,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp9(v) => v.depacketize(packet, out, extra),
             Av1(v) => v.depacketize(packet, out, extra),
             Null(v) => v.depacketize(packet, out, extra),
+            TelephoneEvent(v) => v.depacketize(packet, out, extra),
             Boxed(v) => v.depacketize(packet, out, extra),
         }
     }
@@ -455,6 +467,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp9(v) => v.is_partition_head(packet),
             Av1(v) => v.is_partition_head(packet),
             Null(v) => v.is_partition_head(packet),
+            TelephoneEvent(v) => v.is_partition_head(packet),
             Boxed(v) => v.is_partition_head(packet),
         }
     }
@@ -472,6 +485,7 @@ impl Depacketizer for CodecDepacketizer {
             Vp9(v) => v.is_partition_tail(marker, packet),
             Av1(v) => v.is_partition_tail(marker, packet),
             Null(v) => v.is_partition_tail(marker, packet),
+            TelephoneEvent(v) => v.is_partition_tail(marker, packet),
             Boxed(v) => v.is_partition_tail(marker, packet),
         }
     }
