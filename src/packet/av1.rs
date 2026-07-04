@@ -366,10 +366,11 @@ impl Depacketizer for Av1Depacketizer {
         }
         *codec_extra = CodecExtra::Av1(Av1CodecExtra { is_keyframe });
 
-        let mut obu_idx = 0;
+        let mut obu_idx: usize = 0;
         while reader.remaining_bits() > 0 {
             let is_first_obu = obu_idx == 0;
-            let mut is_last_obu = self.obu_count != 0 && obu_idx == (self.obu_count - 1);
+            let mut is_last_obu =
+                self.obu_count != 0 && obu_idx == (self.obu_count as usize - 1);
 
             // Read the length of obu
             let fragment_obu_length = if self.obu_count == 0 || !is_last_obu {
