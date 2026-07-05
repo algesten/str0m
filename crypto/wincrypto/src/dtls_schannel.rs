@@ -85,6 +85,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
             pending_outputs: VecDeque::new(),
             queued_app_data: VecDeque::new(),
             last_timeout: None,
+            close_requested: false,
         }))
     }
 }
@@ -100,6 +101,8 @@ struct WinCryptoDtlsInstance {
     queued_app_data: VecDeque<Vec<u8>>,
     /// The last time we were given via handle_timeout, used for calculating next timeout.
     last_timeout: Option<Instant>,
+    /// Native SChannel DTLS currently has no close_notify support.
+    close_requested: bool,
 }
 
 #[derive(Debug)]
@@ -260,7 +263,16 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         Some(ProtocolVersion::DTLS1_2)
     }
 
+    fn is_closing(&self) -> bool {
+        self.close_requested
+    }
+
+    fn is_closed(&self) -> bool {
+        self.close_requested && self.pending_outputs.is_empty()
+    }
+
     fn close(&mut self) -> Result<(), DtlsImplError> {
-        Err(dtls_crypto_error(DtlsCryptoOperation::Encrypt))
+        self.close_requested = true;
+        Ok(())
     }
 }

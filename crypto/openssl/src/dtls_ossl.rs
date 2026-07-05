@@ -658,12 +658,20 @@ impl DtlsInstance for OsslDtlsInstance {
         Some(ProtocolVersion::DTLS1_2)
     }
 
+    fn is_closing(&self) -> bool {
+        self.close_notify_sent || self.close_notify_received
+    }
+
+    fn is_closed(&self) -> bool {
+        self.close_notify_sent && self.pending_packets.is_empty()
+    }
+
     fn close(&mut self) -> Result<(), DtlsImplError> {
         if let State::Established(ref mut stream) = self.inner.tls.state {
             let _ = stream.shutdown();
-            self.close_notify_sent = true;
             self.collect_output();
         }
+        self.close_notify_sent = true;
         Ok(())
     }
 }
