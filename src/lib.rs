@@ -1033,7 +1033,11 @@ pub enum Event {
     /// is opaque and application-defined (RFC 4585 Section 6.4).
     AppSpecificFeedback(AppSpecificFeedback),
 
-    /// We have received the DTLS close packet
+    /// The remote DTLS connection or SCTP association has closed.
+    ///
+    /// When this event is emitted, `Rtc` starts graceful local shutdown and
+    /// remains alive only while [`Rtc::poll_output()`] drains pending protocol
+    /// output such as the DTLS close_notify response.
     Closed,
 
     /// Debug output of incoming and outgoing RTCP/RTP packets.
@@ -1291,6 +1295,11 @@ impl Rtc {
     ///
     /// The instance can be manually disconnected using [`Rtc::disconnect()`].
     ///
+    /// During graceful shutdown, this remains `true` until [`Rtc::poll_output()`]
+    /// has drained pending protocol output. App-facing operations such as
+    /// [`Rtc::writer()`] and [`Rtc::channel()`] are unavailable during that
+    /// closing drain.
+    ///
     /// ```
     /// # use std::time::Instant;
     /// # use str0m::Rtc;
@@ -1448,7 +1457,7 @@ impl Rtc {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
 
-        if self.state == RtcState::Closed {
+        if self.state != RtcState::Alive {
             return None;
         }
 
@@ -1562,8 +1571,9 @@ impl Rtc {
     }
 
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
-        if self.state != RtcState::Alive {
-            return self.poll_inactive_output();
+        if self.state == RtcState::Closed {
+            self.last_timeout_reason = Reason::NotHappening;
+            return Ok(Output::Timeout(not_happening()));
         }
 
         while let Some(e) = self.ice.poll_event() {
@@ -1665,6 +1675,7 @@ impl Rtc {
                     break;
                 }
                 DtlsOutput::CloseNotify => {
+                    self.start_close()?;
                     return Ok(Output::Event(Event::Closed));
                 }
                 other => {
@@ -1718,6 +1729,7 @@ impl Rtc {
                     return Ok(Output::Event(Event::ChannelClose(id)));
                 }
                 SctpEvent::AssociationLost => {
+                    self.start_close()?;
                     return Ok(Output::Event(Event::Closed));
                 }
                 SctpEvent::Data { id, binary, data } => {
@@ -1801,39 +1813,14 @@ impl Rtc {
             time
         };
 
-        self.last_timeout_reason = reason;
-
-        Ok(Output::Timeout(next))
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn poll_inactive_output(&mut self) -> Result<Output, RtcError> {
-        if self.state == RtcState::Closed {
+        if self.state == RtcState::Closing {
+            self.state = RtcState::Closed;
             self.last_timeout_reason = Reason::NotHappening;
             return Ok(Output::Timeout(not_happening()));
         }
 
-        loop {
-            if let DtlsOutput::Timeout(_) = self.dtls.poll_output(&mut self.dtls_buf) {
-                break;
-            }
-        }
-
-        if let Some(send) = &self.send_addr {
-            if let Some(contents) = self.dtls.poll_packet() {
-                return Ok(Output::Transmit(net::Transmit {
-                    proto: send.proto,
-                    source: send.source,
-                    destination: send.destination,
-                    contents,
-                }));
-            }
-        }
-
-        self.state = RtcState::Closed;
-        self.last_timeout_reason = Reason::NotHappening;
-        Ok(Output::Timeout(not_happening()))
+        self.last_timeout_reason = reason;
+        Ok(Output::Timeout(next))
     }
 
     /// The reason for the last [`Output::Timeout`]
@@ -1956,14 +1943,20 @@ impl Rtc {
 
     /// Sends the DTLS close_notify to the remote.
     ///
-    /// The close_notify packet will be emitted via the next `poll_output()` call
-    /// as a `Transmit`. Once the packet is drained, the `Rtc` instance becomes
-    /// not alive.
+    /// The `Rtc` instance enters a closing drain state where app-facing
+    /// operations stop, but [`Rtc::poll_output()`] continues polling the normal
+    /// protocol subsystems until pending shutdown output has drained. Once the
+    /// drain is complete, [`Rtc::is_alive()`] returns `false`.
     pub fn close(&mut self) -> Result<(), RtcError> {
-        if self.state != RtcState::Closed {
+        self.start_close()
+    }
+
+    fn start_close(&mut self) -> Result<(), RtcError> {
+        if self.state == RtcState::Alive {
+            self.dtls.close()?;
             self.state = RtcState::Closing;
         }
-        Ok(self.dtls.close()?)
+        Ok(())
     }
 
     fn init_time(&mut self, now: Instant) {
@@ -2068,7 +2061,7 @@ impl Rtc {
     /// // TODO write data channel data.
     /// ```
     pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
-        if self.state == RtcState::Closed {
+        if self.state != RtcState::Alive {
             return None;
         }
 

@@ -1,5 +1,4 @@
-//! Test that calling `Rtc::close()` sends a DTLS close_notify alert
-//! and marks the Rtc instance as not alive.
+//! Tests for the Rtc shutdown states.
 #![cfg(any(
     feature = "aws-lc-rs",
     feature = "rust-crypto",
@@ -12,14 +11,13 @@
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
-use str0m::{Candidate, Event, Rtc};
+use str0m::{Candidate, Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
 use common::{TestRtc, init_crypto_default, init_log, progress};
 
-#[test]
-fn close_notify_received_by_remote() {
+fn direct_pair() -> (TestRtc, TestRtc) {
     init_log();
     init_crypto_default();
 
@@ -52,51 +50,107 @@ fn close_notify_received_by_remote() {
     l.direct_api().start_sctp(true);
     r.direct_api().start_sctp(false);
 
-    // Drive both sides until connected.
-    let mut iterations = 0;
-    while !(l.is_connected() && r.is_connected()) {
-        progress(&mut l, &mut r).unwrap();
-        iterations += 1;
-        assert!(iterations < 500, "DTLS handshake did not complete");
+    progress_until(&mut l, &mut r, "DTLS handshake", |l, r| {
+        l.is_connected() && r.is_connected()
+    });
+
+    (l, r)
+}
+
+fn progress_until(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    label: &str,
+    mut done: impl FnMut(&TestRtc, &TestRtc) -> bool,
+) {
+    for _ in 0..500 {
+        if done(l, r) {
+            return;
+        }
+        progress(l, r).unwrap();
     }
-    println!("Both peers connected after {iterations} iterations");
 
-    // L initiates close.
-    println!("L calling close()");
-    l.rtc.close().expect("L close");
+    panic!("{label} did not complete");
+}
 
-    // Drive the close_notify packet from L to R.
-    let mut r_got_closed = false;
-    for i in 0..100 {
-        progress(&mut l, &mut r).unwrap();
-        if r.events.iter().any(|(_, e)| matches!(e, Event::Closed)) {
-            println!("R received Event::Closed after {i} progress iterations");
-            r_got_closed = true;
-            break;
+fn next_transmit(rtc: &mut TestRtc) -> str0m::net::Transmit {
+    for _ in 0..100 {
+        match rtc.rtc.poll_output().unwrap() {
+            Output::Transmit(transmit) => return transmit,
+            Output::Event(event) => rtc.events.push((rtc.last, event)),
+            Output::Timeout(_) => {}
         }
     }
+
+    panic!("expected transmit");
+}
+
+fn deliver(transmit: &str0m::net::Transmit, rtc: &mut TestRtc) -> Result<(), RtcError> {
+    rtc.rtc
+        .handle_input(Input::Receive(rtc.last, transmit.try_into()?))
+}
+
+fn deliver_until_closed_event(
+    sender: &mut TestRtc,
+    receiver: &mut TestRtc,
+) -> Result<(), RtcError> {
+    for _ in 0..100 {
+        let transmit = next_transmit(sender);
+        deliver(&transmit, receiver)?;
+
+        for _ in 0..100 {
+            match receiver.rtc.poll_output()? {
+                Output::Event(Event::Closed) => return Ok(()),
+                Output::Event(event) => receiver.events.push((receiver.last, event)),
+                Output::Transmit(_) => {}
+                Output::Timeout(_) => break,
+            }
+        }
+    }
+
+    panic!("expected remote closed event");
+}
+
+#[test]
+fn local_dtls_close_drains_before_rtc_closes() -> Result<(), RtcError> {
+    let (mut l, mut r) = direct_pair();
+
+    l.rtc.close()?;
 
     assert!(
-        r_got_closed,
-        "R should receive Event::Closed after L sends close_notify"
+        l.rtc.is_alive(),
+        "local close_notify still needs to be emitted"
     );
 
-    // After close, L should no longer be alive
-    assert!(!l.rtc.is_alive(), "L should not be alive after close");
+    progress_until(&mut l, &mut r, "local DTLS close", |l, r| {
+        !l.rtc.is_alive()
+            && r.events
+                .iter()
+                .any(|(_, event)| matches!(event, Event::Closed))
+    });
 
-    // R also initiates close and drains.
-    println!("R calling close()");
-    r.rtc.close().expect("R close");
+    assert!(!l.rtc.is_alive());
 
-    // poll_output needs to be called on R to drain the close and set alive=false.
-    // We need enough progress() calls to let R catch up timewise with L
-    // since progress() uses a 5ms window per call.
-    for _ in 0..100 {
-        progress(&mut l, &mut r).unwrap();
-        if !r.rtc.is_alive() {
-            break;
-        }
-    }
+    Ok(())
+}
 
-    assert!(!r.rtc.is_alive(), "R should not be alive after close");
+#[test]
+fn remote_dtls_close_auto_replies_before_rtc_closes() -> Result<(), RtcError> {
+    let (mut l, mut r) = direct_pair();
+
+    l.rtc.close()?;
+    deliver_until_closed_event(&mut l, &mut r)?;
+
+    assert!(
+        r.rtc.is_alive(),
+        "remote close_notify should leave Rtc alive until the response close_notify drains"
+    );
+
+    progress_until(&mut l, &mut r, "remote DTLS close reply", |_, r| {
+        !r.rtc.is_alive()
+    });
+
+    assert!(!r.rtc.is_alive());
+
+    Ok(())
 }
