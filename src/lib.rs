@@ -920,6 +920,7 @@ pub struct Rtc {
     last_timeout_reason: Reason,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
+    close_dtls_started: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1035,9 +1036,9 @@ pub enum Event {
 
     /// The remote DTLS connection or SCTP association has closed.
     ///
-    /// When this event is emitted, `Rtc` starts graceful local shutdown and
-    /// remains alive only while [`Rtc::poll_output()`] drains pending protocol
-    /// output such as the DTLS close_notify response.
+    /// When this event is emitted, `Rtc` starts local shutdown signals and
+    /// remains alive only while [`Rtc::poll_output()`] drains pending local
+    /// close output such as RTCP BYE and the DTLS close_notify response.
     Closed,
 
     /// Debug output of incoming and outgoing RTCP/RTP packets.
@@ -1284,6 +1285,7 @@ impl Rtc {
             last_timeout_reason: Reason::NotHappening,
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
+            close_dtls_started: false,
         })
     }
 
@@ -1295,8 +1297,8 @@ impl Rtc {
     ///
     /// The instance can be manually disconnected using [`Rtc::disconnect()`].
     ///
-    /// During graceful shutdown, this remains `true` until [`Rtc::poll_output()`]
-    /// has drained pending protocol output. App-facing operations such as
+    /// During shutdown, this remains `true` until [`Rtc::poll_output()`]
+    /// has drained pending local close output. App-facing operations such as
     /// [`Rtc::writer()`] and [`Rtc::channel()`] are unavailable during that
     /// closing drain.
     ///
@@ -1698,6 +1700,15 @@ impl Rtc {
                             if is_would_block(&e) {
                                 self.sctp.push_back_transmit(packets);
                                 break;
+                            } else if self.state == RtcState::Closing {
+                                debug!(
+                                    "Dropping SCTP transmit while closing after DTLS error: {e}"
+                                );
+                                packets.pop_front();
+                                if !packets.is_empty() {
+                                    self.sctp.push_back_transmit(packets);
+                                }
+                                return self.do_poll_output();
                             } else {
                                 return Err(e.into());
                             }
@@ -1791,7 +1802,7 @@ impl Rtc {
             self.session.clear_feedback();
         }
 
-        let stats = self.stats.as_mut();
+        let stats_timeout = self.stats.as_mut().and_then(|s| s.poll_timeout());
 
         let time_and_reason = (None, Reason::NotHappening)
             .soonest((self.next_dtls_timeout, Reason::DTLS))
@@ -1799,7 +1810,7 @@ impl Rtc {
             .soonest(self.session.poll_timeout())
             .soonest((self.sctp.poll_timeout(), Reason::Sctp))
             .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
-            .soonest((stats.and_then(|s| s.poll_timeout()), Reason::Stats));
+            .soonest((stats_timeout, Reason::Stats));
 
         // trace!("poll_output timeout reason: {}", time_and_reason.1);
 
@@ -1813,7 +1824,7 @@ impl Rtc {
             time
         };
 
-        if self.state == RtcState::Closing {
+        if self.state == RtcState::Closing && self.close_drain_complete() {
             self.state = RtcState::Closed;
             self.last_timeout_reason = Reason::NotHappening;
             return Ok(Output::Timeout(not_happening()));
@@ -1941,22 +1952,42 @@ impl Rtc {
         Ok(())
     }
 
-    /// Sends the DTLS close_notify to the remote.
+    /// Starts local shutdown.
     ///
-    /// The `Rtc` instance enters a closing drain state where app-facing
-    /// operations stop, but [`Rtc::poll_output()`] continues polling the normal
-    /// protocol subsystems until pending shutdown output has drained. Once the
+    /// The `Rtc` instance schedules RTCP BYE, requests SCTP shutdown, and sends
+    /// DTLS close_notify without waiting for remote replies. It enters a closing
+    /// drain state where app-facing operations stop, but [`Rtc::poll_output()`]
+    /// continues polling until pending local close output has drained. Once the
     /// drain is complete, [`Rtc::is_alive()`] returns `false`.
     pub fn close(&mut self) -> Result<(), RtcError> {
         self.start_close()
     }
 
     fn start_close(&mut self) -> Result<(), RtcError> {
-        if self.state == RtcState::Alive {
-            self.dtls.close()?;
+        if self.state == RtcState::Closed {
+            return Ok(());
+        }
+
+        if self.state != RtcState::Closing {
+            self.session.close_rtp();
+            self.sctp.close()?;
             self.state = RtcState::Closing;
         }
+
+        self.start_dtls_close()
+    }
+
+    fn start_dtls_close(&mut self) -> Result<(), RtcError> {
+        if !self.close_dtls_started {
+            self.dtls.close()?;
+            self.close_dtls_started = true;
+        }
+
         Ok(())
+    }
+
+    fn close_drain_complete(&self) -> bool {
+        self.close_dtls_started && self.dtls.is_closed() && self.session.is_rtp_closed()
     }
 
     fn init_time(&mut self, now: Instant) {

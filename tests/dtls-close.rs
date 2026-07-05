@@ -11,19 +11,26 @@
 use std::net::Ipv4Addr;
 use std::time::Instant;
 
-use str0m::{Candidate, Event, Input, Output, Rtc, RtcError};
+use str0m::media::MediaKind;
+use str0m::rtp::rtcp::Rtcp;
+use str0m::rtp::{RawPacket, Ssrc};
+use str0m::{Candidate, Event, Input, Output, Rtc, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
 use common::{TestRtc, init_crypto_default, init_log, progress};
 
 fn direct_pair() -> (TestRtc, TestRtc) {
+    direct_pair_with_config(|c| c)
+}
+
+fn direct_pair_with_config(configure: impl Fn(RtcConfig) -> RtcConfig) -> (TestRtc, TestRtc) {
     init_log();
     init_crypto_default();
 
     let now = Instant::now();
-    let mut l = TestRtc::new_with_rtc(info_span!("L"), Rtc::new(now));
-    let mut r = TestRtc::new_with_rtc(info_span!("R"), Rtc::new(now));
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), configure(Rtc::builder()).build(now));
+    let mut r = TestRtc::new_with_rtc(info_span!("R"), configure(Rtc::builder()).build(now));
 
     let host_l = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
     let host_r = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
@@ -151,6 +158,29 @@ fn remote_dtls_close_auto_replies_before_rtc_closes() -> Result<(), RtcError> {
     });
 
     assert!(!r.rtc.is_alive());
+
+    Ok(())
+}
+
+#[test]
+fn close_sends_rtcp_bye_for_local_senders() -> Result<(), RtcError> {
+    let (mut l, mut r) = direct_pair_with_config(|c| c.enable_raw_packets(true));
+    let mid = "aud".into();
+    let ssrc: Ssrc = 42.into();
+
+    l.direct_api().declare_media(mid, MediaKind::Audio);
+    l.direct_api().declare_stream_tx(ssrc, None, mid, None);
+
+    l.rtc.close()?;
+
+    progress_until(&mut l, &mut r, "RTCP BYE", |l, _| {
+        l.events.iter().any(|(_, event)| {
+            matches!(
+                event.as_raw_packet(),
+                Some(RawPacket::RtcpTx(Rtcp::Goodbye(bye))) if bye.reports.iter().any(|s| *s == ssrc)
+            )
+        })
+    });
 
     Ok(())
 }

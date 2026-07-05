@@ -295,6 +295,14 @@ impl RtcSctp {
         self.state != RtcSctpState::Uninited
     }
 
+    pub fn is_closing(&self) -> bool {
+        self.assoc.as_ref().is_some_and(|a| a.is_closing())
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.assoc.as_ref().is_none_or(|a| a.is_closed())
+    }
+
     pub fn init(
         &mut self,
         client: bool,
@@ -519,6 +527,18 @@ impl RtcSctp {
         }
     }
 
+    pub fn close(&mut self) -> Result<(), SctpError> {
+        let Some(assoc) = &mut self.assoc else {
+            return Ok(());
+        };
+
+        if assoc.is_closing() || assoc.is_closed() {
+            return Ok(());
+        }
+
+        Ok(assoc.shutdown()?)
+    }
+
     pub fn is_open(&self, id: u16) -> bool {
         if self.state != RtcSctpState::Established {
             return false;
@@ -553,7 +573,7 @@ impl RtcSctp {
     }
 
     pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
-        if self.state != RtcSctpState::Established {
+        if self.state != RtcSctpState::Established || self.is_closing() || self.is_closed() {
             return Err(SctpError::WriteBeforeEstablished);
         }
 

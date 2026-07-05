@@ -572,9 +572,9 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.7.0"
+version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a11091ebc139b18d6b5878d8769ca43ad5ea8a7e2f5ed1e1f25e172951ef0ce"
+checksum = "bb2b8390bf0021eae92cf96a0e3a54c531b6315c47edfe9220f5fc61bc9e1f63"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1715,9 +1715,9 @@ dependencies = [
 
 [[package]]
 name = "sctp-proto"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5376eaf8a764118abd6bee29673c68eab91f0913b448fe2944e74488b63c37b5"
+checksum = "199c5c38008c2c151e27afd228230b1b69f849b1f7629f5df86662ee1f456187"
 dependencies = [
  "bytes",
  "crc",

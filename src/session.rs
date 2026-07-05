@@ -25,7 +25,7 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
-use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
+use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
@@ -113,6 +113,7 @@ pub(crate) struct Session {
 
     feedback_tx: VecDeque<Rtcp>,
     feedback_rx: VecDeque<Rtcp>,
+    rtp_closing: bool,
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
@@ -184,6 +185,7 @@ impl Session {
             vp9_packetizer_mode: config.vp9_packetizer_mode,
             feedback_tx: VecDeque::new(),
             feedback_rx: VecDeque::new(),
+            rtp_closing: false,
             raw_packets: if config.enable_raw_packets {
                 Some(VecDeque::new())
             } else {
@@ -243,6 +245,10 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+        if self.rtp_closing {
+            return Ok(());
+        }
+
         // Payload any waiting frames
         self.do_payload()?;
 
@@ -803,9 +809,12 @@ impl Session {
             return None;
         }
 
-        let x = None
-            .or_else(|| self.poll_feedback())
-            .or_else(|| self.poll_packet(now));
+        let x = if self.rtp_closing {
+            self.poll_feedback()
+        } else {
+            None.or_else(|| self.poll_feedback())
+                .or_else(|| self.poll_packet(now))
+        };
 
         if let Some(x) = &x {
             // In RTP mode we trust the API user feeds the RTP packet sizes they
@@ -824,6 +833,25 @@ impl Session {
     pub fn clear_feedback(&mut self) {
         self.feedback_rx.clear();
         self.feedback_tx.clear();
+    }
+
+    pub fn close_rtp(&mut self) {
+        if self.rtp_closing {
+            return;
+        }
+
+        self.rtp_closing = true;
+        self.clear_feedback();
+        self.streams.reset_send_buffers();
+
+        for reports in ReportList::lists_from_iter(self.streams.local_sender_ssrcs()) {
+            self.feedback_tx
+                .push_back(Rtcp::Goodbye(Goodbye { reports }));
+        }
+    }
+
+    pub fn is_rtp_closed(&self) -> bool {
+        self.rtp_closing && self.feedback_tx.is_empty()
     }
 
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
@@ -940,6 +968,14 @@ impl Session {
     }
 
     pub fn poll_timeout(&mut self) -> (Option<Instant>, Reason) {
+        if self.rtp_closing {
+            return if self.feedback_tx.is_empty() {
+                (None, Reason::NotHappening)
+            } else {
+                (Some(already_happened()), Reason::Feedback)
+            };
+        }
+
         let feedback_at = self.regular_feedback_at();
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();

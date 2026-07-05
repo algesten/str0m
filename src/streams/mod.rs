@@ -351,6 +351,19 @@ impl Streams {
         self.streams_tx.remove(&ssrc).is_some()
     }
 
+    pub(crate) fn local_sender_ssrcs(&self) -> Vec<Ssrc> {
+        self.streams_tx
+            .values()
+            .flat_map(|s| std::iter::once(s.ssrc()).chain(s.rtx()))
+            .collect()
+    }
+
+    pub(crate) fn reset_send_buffers(&mut self) {
+        for stream in self.streams_tx.values_mut() {
+            stream.reset_buffers();
+        }
+    }
+
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
         self.streams_rx.get_mut(ssrc)
     }
