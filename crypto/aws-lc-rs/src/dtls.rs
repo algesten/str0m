@@ -112,6 +112,14 @@ impl DtlsInstance for AwsLcRsDtlsInstance {
         self.dtls.protocol_version()
     }
 
+    fn is_closing(&self) -> bool {
+        self.dtls.is_closing()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.dtls.is_closed()
+    }
+
     fn close(&mut self) -> Result<(), DtlsImplError> {
         self.dtls.close()
     }

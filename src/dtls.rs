@@ -118,6 +118,10 @@ impl Dtls {
         self.instance.protocol_version()
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.pending_packets.is_empty() && self.instance.is_closed()
+    }
+
     /// Set the remote fingerprint (extracted from peer certificate).
     pub fn set_remote_fingerprint(&mut self, fingerprint: Fingerprint) {
         self.remote_fingerprint = Some(fingerprint);
