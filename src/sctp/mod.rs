@@ -921,6 +921,13 @@ impl RtcSctp {
                                 warn!("Received DcepOpen for configured stream: {}", entry.id);
                             }
 
+                            // Apply DcepOpen's reliability parameters to the sctp-proto stream.
+                            // Without this, the DCEP-receiving side of an in-band channel sends
+                            // with stream defaults: ordered and fully reliable.
+                            if !entry.configure_reliability(&mut stream) {
+                                continue;
+                            }
+
                             let mut obuf = [0];
                             DcepAck.marshal_to(&mut obuf);
                             match stream.write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep) {
@@ -1305,6 +1312,55 @@ mod tests {
         // Verify entry transitioned to Closed.
         let entry = client.entries.iter().find(|e| e.id == stream_id).unwrap();
         assert_eq!(entry.state, StreamEntryState::Closed);
+    }
+
+    /// Regression test: the DCEP-receiving side of an in-band channel must apply
+    /// the DcepOpen reliability parameters (here: unordered) to its sctp-proto
+    /// stream, instead of sending with stream defaults (ordered, fully reliable).
+    #[test]
+    fn dcep_receiver_applies_reliability_params() {
+        let now = Instant::now();
+        let (mut client, mut server) = connect_client_server();
+
+        // Drain `from`, feeding packets to `to` and returning the raw bytes.
+        let pump = |from: &mut RtcSctp, to: &mut RtcSctp| {
+            let mut wire = vec![];
+            while let Some(e) = from.do_poll() {
+                if let SctpEvent::Transmit { packets } = e {
+                    for p in packets {
+                        to.handle_input(now, &p);
+                        wire.extend(p);
+                    }
+                }
+            }
+            wire
+        };
+
+        // Client opens an unordered in-band (DCEP) channel; once the handshake is
+        // pumped through, the server (DCEP receiver) sends data back.
+        client.open_stream(
+            0,
+            ChannelConfig {
+                ordered: false,
+                ..Default::default()
+            },
+        );
+        pump(&mut client, &mut server); // DcepOpen
+        pump(&mut server, &mut client); // DcepAck, server side now open
+        let payload = b"from dcep receiver";
+        server.write(0, true, payload).unwrap();
+
+        // The 16-byte DATA chunk header puts the flags byte 15 bytes before the
+        // payload it carries. 0x04 is the U (unordered) flag.
+        let wire = pump(&mut server, &mut client);
+        let pos = wire
+            .windows(payload.len())
+            .position(|w| w == payload)
+            .unwrap();
+        assert!(
+            wire[pos - 15] & 0x04 != 0,
+            "DCEP receiver should send unordered"
+        );
     }
 
     #[test]
