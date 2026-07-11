@@ -360,7 +360,6 @@ impl StreamTx {
     /// Information sampled during the latest pacer update for this stream's send queue.
     ///
     /// This is `None` until the pacer has observed the stream for the first time.
-    /// The returned information is only valid when bandwidth estimation (BWE) is enabled.
     pub fn queue_info(&self) -> Option<&dyn StreamTxQueueInfo> {
         self.queue_info
             .as_ref()
