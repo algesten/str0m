@@ -406,17 +406,23 @@ impl Streams {
     }
 
     pub(crate) fn regular_feedback_at(&mut self) -> Option<Instant> {
-        let r = self.streams_rx.values_mut().map(|s| s.receiver_report_at());
-        let s = self.streams_tx.values_mut().map(|s| s.sender_report_at());
+        let r = self
+            .streams_rx
+            .values_mut()
+            .map(|s| s.poll_receiver_report_at());
+        let s = self
+            .streams_tx
+            .values_mut()
+            .map(|s| s.poll_sender_report_at());
         r.chain(s).min()
     }
 
-    pub(crate) fn paused_at(&mut self) -> Option<Instant> {
-        self.streams_rx.values_mut().find_map(|s| s.paused_at())
+    pub(crate) fn paused_at(&self) -> Option<Instant> {
+        self.streams_rx.values().find_map(|s| s.paused_at())
     }
 
-    pub(crate) fn send_stream(&mut self) -> Option<Instant> {
-        self.streams_tx.values_mut().find_map(|s| s.send_at())
+    pub(crate) fn send_stream(&self) -> Option<Instant> {
+        self.streams_tx.values().find_map(|s| s.send_at())
     }
 
     pub(crate) fn is_receiving(&self) -> bool {
@@ -433,7 +439,7 @@ impl Streams {
         feedback: &mut VecDeque<Rtcp>,
     ) {
         self.mids_to_report.clear(); // Clear for checking StreamRx.
-        for stream in self.streams_rx.values_mut() {
+        for stream in self.streams_rx.values() {
             if stream.need_rr(now) {
                 self.mids_to_report.push(stream.mid());
             }
@@ -461,7 +467,7 @@ impl Streams {
         }
 
         self.mids_to_report.clear(); // start over for StreamTx.
-        for stream in self.streams_tx.values_mut() {
+        for stream in self.streams_tx.values() {
             if stream.need_sr(now) {
                 self.mids_to_report.push(stream.mid());
             }

@@ -255,19 +255,14 @@ impl StreamRx {
         self.suppress_nack = suppress;
     }
 
-    fn calculate_receiver_report_at(&self) -> Instant {
+    pub(crate) fn receiver_report_at(&self) -> Instant {
         let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
         self.last_receiver_report + rr_interval(is_audio)
     }
 
     #[inline(always)]
-    pub(crate) fn receiver_report_at(&mut self) -> Instant {
+    pub(crate) fn poll_receiver_report_at(&mut self) -> Instant {
         self.poll_timeout().feedback_at
-    }
-
-    #[inline(always)]
-    pub(crate) fn paused_at(&mut self) -> Option<Instant> {
-        self.poll_timeout().paused_at
     }
 
     #[inline(always)]
@@ -277,7 +272,7 @@ impl StreamRx {
         }
 
         let cache = TimeoutCache {
-            feedback_at: self.calculate_receiver_report_at(),
+            feedback_at: self.receiver_report_at(),
             paused_at: self.check_paused_at,
             has_pending_feedback: self.pending_request_keyframe.is_some()
                 || self.pending_request_remb.is_some(),
@@ -371,6 +366,10 @@ impl StreamRx {
         let ntp_time = now.to_ntp_duration();
         let rtt = calculate_rtt(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
         self.stats.rtt = rtt;
+    }
+
+    pub(crate) fn paused_at(&self) -> Option<Instant> {
+        self.check_paused_at
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
@@ -625,7 +624,7 @@ impl StreamRx {
         x
     }
 
-    pub(crate) fn need_rr(&mut self, now: Instant) -> bool {
+    pub(crate) fn need_rr(&self, now: Instant) -> bool {
         if self.ssrc.is_probe() {
             return false;
         }
@@ -955,7 +954,7 @@ mod tests {
         stream.last_receiver_report = now;
 
         let report_at = now + rr_interval(false);
-        assert_eq!(stream.receiver_report_at(), report_at);
+        assert_eq!(stream.poll_receiver_report_at(), report_at);
         assert!(!stream.timeout_due(now, false, false));
         assert!(stream.timeout_due(report_at, true, false));
 
@@ -969,10 +968,10 @@ mod tests {
         let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
         stream.last_receiver_report = now;
 
-        assert_eq!(stream.receiver_report_at(), now + rr_interval(true));
+        assert_eq!(stream.poll_receiver_report_at(), now + rr_interval(true));
 
         stream.maybe_reset_rtx(8.into());
-        assert_eq!(stream.receiver_report_at(), now + rr_interval(false));
+        assert_eq!(stream.poll_receiver_report_at(), now + rr_interval(false));
     }
 
     #[test]

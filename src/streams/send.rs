@@ -860,7 +860,7 @@ impl StreamTx {
         })
     }
 
-    fn calculate_sender_report_at(&self) -> Instant {
+    pub(crate) fn sender_report_at(&self) -> Instant {
         let Some(kind) = self.kind else {
             // First handle_timeout sets the kind. No sender report until then.
             return not_happening();
@@ -869,13 +869,14 @@ impl StreamTx {
     }
 
     #[inline(always)]
-    pub(crate) fn sender_report_at(&mut self) -> Instant {
+    pub(crate) fn poll_sender_report_at(&mut self) -> Instant {
         self.poll_timeout().feedback_at
     }
 
     #[inline(always)]
-    pub(crate) fn send_at(&mut self) -> Option<Instant> {
-        self.poll_timeout().send_at
+    pub(crate) fn send_at(&self) -> Option<Instant> {
+        self.timeout_cache
+            .map_or(Some(already_happened()), |cache| cache.send_at)
     }
 
     #[inline(always)]
@@ -885,7 +886,7 @@ impl StreamTx {
         }
 
         let cache = TimeoutCache {
-            feedback_at: self.calculate_sender_report_at(),
+            feedback_at: self.sender_report_at(),
             send_at: (self.kind.is_none() || self.need_timeout()).then_some(already_happened()),
         };
         self.timeout_cache = Some(cache);
@@ -984,7 +985,7 @@ impl StreamTx {
         Some(())
     }
 
-    pub(crate) fn need_sr(&mut self, now: Instant) -> bool {
+    pub(crate) fn need_sr(&self, now: Instant) -> bool {
         now >= self.sender_report_at()
     }
 
@@ -1299,7 +1300,7 @@ mod tests {
         stream.last_sender_report = now;
 
         let report_at = now + rr_interval(false);
-        assert_eq!(stream.sender_report_at(), report_at);
+        assert_eq!(stream.poll_sender_report_at(), report_at);
         assert!(!stream.timeout_due(now, false));
         assert!(stream.timeout_due(report_at, true));
 
@@ -1311,6 +1312,7 @@ mod tests {
     fn uninitialized_stream_requests_immediate_timeout() {
         let mut stream = StreamTx::new(7.into(), None, MidRid("mid".into(), None), false, 1200);
 
+        stream.poll_sender_report_at();
         assert_eq!(stream.send_at(), Some(already_happened()));
     }
 }

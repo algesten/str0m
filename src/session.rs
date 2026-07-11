@@ -1010,7 +1010,7 @@ impl Session {
         self.streams.regular_feedback_at()
     }
 
-    fn paused_at(&mut self) -> Option<Instant> {
+    fn paused_at(&self) -> Option<Instant> {
         self.streams.paused_at()
     }
 
