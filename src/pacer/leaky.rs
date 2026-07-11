@@ -368,7 +368,7 @@ impl LeakyBucketPacer {
                     (
                         acc.0 + q.snapshot.total_queue_time(now),
                         acc.1 + q.snapshot.packet_count,
-                        acc.2 + DataSize::from(q.snapshot.size),
+                        acc.2 + DataSize::from(q.snapshot.byte_size),
                     )
                 });
         if queued_packets == 0 {
@@ -886,7 +886,7 @@ mod test {
             use_for_padding: true,
             snapshot: QueueSnapshot {
                 created_at: now,
-                size: 10_usize,
+                byte_size: 10_usize,
                 packet_count: 1332,
                 total_queue_time_origin: duration_ms(1_000),
                 last_emitted: Some(now + duration_ms(500)),
@@ -901,7 +901,7 @@ mod test {
             use_for_padding: false,
             snapshot: QueueSnapshot {
                 created_at: now,
-                size: 30_usize,
+                byte_size: 30_usize,
                 packet_count: 5,
                 total_queue_time_origin: duration_ms(337),
                 last_emitted: None,
@@ -913,7 +913,7 @@ mod test {
         state.snapshot.merge(&other.snapshot);
 
         assert_eq!(state.midrid.mid(), Mid::from("001"));
-        assert_eq!(state.snapshot.size, 40_usize);
+        assert_eq!(state.snapshot.byte_size, 40_usize);
         assert_eq!(state.snapshot.packet_count, 1337);
         assert_eq!(state.snapshot.total_queue_time_origin, duration_ms(1337));
 
@@ -1347,7 +1347,7 @@ mod test {
                     use_for_padding: !self.is_audio && self.last_emitted.is_some(),
                     snapshot: QueueSnapshot {
                         created_at: now,
-                        size: self.queue.iter().map(QueuedPacket::size).sum(),
+                        byte_size: self.queue.iter().map(QueuedPacket::size).sum(),
                         packet_count: self.packet_count,
                         total_queue_time_origin: self.total_time_spent_queued,
                         last_emitted: self.last_emitted,

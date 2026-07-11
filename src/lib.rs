@@ -790,7 +790,9 @@ pub mod rtp {
         Vp8Descriptor, Vp8DescriptorError, Vp8Patch, Vp8PatchBuilder, Vp8PatchError,
     };
     pub use crate::rtp_::{RtpHeader, SeqNo, Ssrc, VideoOrientation};
-    pub use crate::streams::{RtpPacket, RtpWrite, StreamPaused, StreamRx, StreamTx};
+    pub use crate::streams::{
+        RtpPacket, RtpWrite, StreamPaused, StreamRx, StreamTx, StreamTxQueueInfo,
+    };
 
     /// Debug output of the unencrypted RTP and RTCP packets.
     ///

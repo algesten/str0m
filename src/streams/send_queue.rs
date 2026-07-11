@@ -91,7 +91,7 @@ impl SendQueue {
 
         QueueSnapshot {
             created_at: now,
-            size: self.total.unsent_size,
+            byte_size: self.total.unsent_size,
             packet_count: self.total.unsent_count as u32,
             total_queue_time_origin: self.total.queue_time,
             last_emitted: self.last_emitted,
@@ -233,7 +233,7 @@ mod test {
             QueueSnapshot {
                 created_at: snapshot_at,
                 packet_count: 0,
-                size: 0,
+                byte_size: 0,
                 total_queue_time_origin: Duration::ZERO,
                 first_unsent: None,
                 priority: QueuePriority::Empty,
@@ -270,7 +270,7 @@ mod test {
             QueueSnapshot {
                 created_at: snapshot_at,
                 packet_count: 1,
-                size: 2,
+                byte_size: 2,
                 total_queue_time_origin: Duration::from_secs(3),
                 first_unsent: Some(start),
                 priority: QueuePriority::Media,

@@ -19,7 +19,7 @@ use crate::scheduler::Scheduler;
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
-pub use self::send::{RtpWrite, StreamTx};
+pub use self::send::{RtpWrite, StreamTx, StreamTxQueueInfo};
 
 mod receive;
 pub(crate) mod register;
