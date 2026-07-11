@@ -449,10 +449,9 @@ impl StreamTx {
             (next, false)
         } else if let Some(next) = self.poll_packet_regular(now) {
             (next, false)
-        } else if let Some(next) = self.poll_packet_padding(now) {
-            (next, true)
         } else {
-            return None;
+            let next = self.poll_packet_padding(now)?;
+            (next, true)
         };
 
         let pop_send_queue = next.kind == NextPacketKind::Regular;

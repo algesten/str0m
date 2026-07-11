@@ -59,7 +59,7 @@ impl io::Read for IoBuffer {
         buf[..max].copy_from_slice(&self.incoming[..max]);
 
         if max == self.incoming.len() {
-            self.incoming.truncate(0);
+            self.incoming.clear();
         } else {
             self.incoming.drain(..max);
         }

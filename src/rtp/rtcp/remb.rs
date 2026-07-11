@@ -7,7 +7,7 @@ const BITRATE_MAX: f32 = 2.417_842_4e24; //0x3FFFFp+63;
 const MANTISSA_MAX: u32 = 0x7FFFFF;
 const REMB_OFFSET: usize = 16;
 
-const UNIQUE_IDENTIFIER: [u8; 4] = [b'R', b'E', b'M', b'B'];
+const UNIQUE_IDENTIFIER: [u8; 4] = *b"REMB";
 
 /*
     0                   1                   2                   3
