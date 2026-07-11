@@ -18,6 +18,13 @@ use super::StreamPaused;
 use super::register::ReceiverRegister;
 use super::{RtpPacket, rr_interval};
 
+#[derive(Debug, Clone, Copy)]
+struct TimeoutCache {
+    feedback_at: Instant,
+    paused_at: Option<Instant>,
+    has_pending_feedback: bool,
+}
+
 /// Incoming encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
@@ -107,6 +114,10 @@ pub struct StreamRx {
 
     /// The configured threshold before considering the lack of packets as going into paused.
     pause_threshold: Duration,
+
+    /// Timeout state calculated while polling output. Mutable entry points
+    /// invalidate this so the next time update visits the stream.
+    timeout_cache: Option<TimeoutCache>,
 }
 
 /// The last sender info we recieved.
@@ -168,6 +179,7 @@ impl StreamRx {
             paused: true,
             need_paused_event: false,
             pause_threshold: Duration::from_millis(1500),
+            timeout_cache: None,
         }
     }
 
@@ -206,6 +218,7 @@ impl StreamRx {
     ///
     /// This event is emitted when no packet have received for this duration.
     pub fn set_pause_threshold(&mut self, t: Duration) {
+        self.invalidate_timeout();
         self.pause_threshold = t;
     }
 
@@ -221,6 +234,7 @@ impl StreamRx {
     /// * SSRC the identifier of the remote encoded stream to request a keyframe for.
     /// * kind PLI or FIR.
     pub fn request_keyframe(&mut self, kind: KeyframeRequestKind) {
+        self.invalidate_timeout();
         self.pending_request_keyframe = Some(kind);
     }
 
@@ -228,6 +242,7 @@ impl StreamRx {
     ///
     /// * bitrate Bitrate.
     pub fn request_remb(&mut self, bitrate: Bitrate) {
+        self.invalidate_timeout();
         self.pending_request_remb = Some(bitrate);
     }
 
@@ -236,15 +251,59 @@ impl StreamRx {
     /// Normally NACK is disabled by not having an RTX SSRC set. In some situations it might be
     /// desirable to manually suppress NACK sending regardless of RTX setting.
     pub fn suppress_nack(&mut self, suppress: bool) {
+        self.invalidate_timeout();
         self.suppress_nack = suppress;
     }
 
-    pub(crate) fn receiver_report_at(&self) -> Instant {
+    fn calculate_receiver_report_at(&self) -> Instant {
         let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
         self.last_receiver_report + rr_interval(is_audio)
     }
 
+    #[inline(always)]
+    pub(crate) fn receiver_report_at(&mut self) -> Instant {
+        self.poll_timeout().feedback_at
+    }
+
+    #[inline(always)]
+    pub(crate) fn paused_at(&mut self) -> Option<Instant> {
+        self.poll_timeout().paused_at
+    }
+
+    #[inline(always)]
+    fn poll_timeout(&mut self) -> TimeoutCache {
+        if let Some(cache) = self.timeout_cache {
+            return cache;
+        }
+
+        let cache = TimeoutCache {
+            feedback_at: self.calculate_receiver_report_at(),
+            paused_at: self.check_paused_at,
+            has_pending_feedback: self.pending_request_keyframe.is_some()
+                || self.pending_request_remb.is_some(),
+        };
+        self.timeout_cache = Some(cache);
+        cache
+    }
+
+    #[inline(always)]
+    pub(crate) fn timeout_due(&self, now: Instant, report_due: bool, do_nack: bool) -> bool {
+        report_due
+            || (do_nack && self.nack_enabled())
+            || self.timeout_cache.is_none_or(|cache| {
+                cache.has_pending_feedback
+                    || cache.paused_at.is_some_and(|deadline| deadline <= now)
+            })
+    }
+
+    #[inline(always)]
+    fn invalidate_timeout(&mut self) {
+        self.timeout_cache = None;
+    }
+
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
+        self.invalidate_timeout();
+
         use RtcpFb::*;
         match fb {
             SenderInfo(v) => {
@@ -314,11 +373,9 @@ impl StreamRx {
         self.stats.rtt = rtt;
     }
 
-    pub(crate) fn paused_at(&self) -> Option<Instant> {
-        self.check_paused_at
-    }
-
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        self.invalidate_timeout();
+
         // No scheduled paused check?
         if self.check_paused_at.is_none() {
             return;
@@ -343,6 +400,8 @@ impl StreamRx {
         is_repair: bool,
         max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>,
     ) -> SeqNo {
+        self.invalidate_timeout();
+
         // Select reference to register to use depending on RTX or not. The RTX has a separate
         // sequence number series to the main register.
         let register_ref = if is_repair {
@@ -390,6 +449,8 @@ impl StreamRx {
         is_repair: bool,
         seq_no: SeqNo,
     ) -> RegisterUpdateReceipt {
+        self.invalidate_timeout();
+
         self.last_used = now;
 
         let was_paused = self.paused;
@@ -455,6 +516,8 @@ impl StreamRx {
         seq_no: SeqNo,
         time: MediaTime,
     ) -> RtpPacket {
+        self.invalidate_timeout();
+
         trace!("Handle RTP: {:?}", header);
 
         let need_clock_rate = self.last_clock_rate.map(|(pt, _)| pt) != Some(header.payload_type);
@@ -510,6 +573,8 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) {
+        self.invalidate_timeout();
+
         let Some(kind) = self.pending_request_keyframe.take() else {
             return;
         };
@@ -540,6 +605,8 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) {
+        self.invalidate_timeout();
+
         let Some(bitrate) = self.pending_request_remb.take() else {
             return;
         };
@@ -558,7 +625,7 @@ impl StreamRx {
         x
     }
 
-    pub(crate) fn need_rr(&self, now: Instant) -> bool {
+    pub(crate) fn need_rr(&mut self, now: Instant) -> bool {
         if self.ssrc.is_probe() {
             return false;
         }
@@ -572,6 +639,8 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) {
+        self.invalidate_timeout();
+
         let mut rr = self.create_receiver_report(now);
         rr.sender_ssrc = sender_ssrc;
 
@@ -656,6 +725,8 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
+        self.invalidate_timeout();
+
         if !self.nack_enabled() {
             return None;
         }
@@ -684,6 +755,8 @@ impl StreamRx {
     }
 
     pub(crate) fn poll_paused(&mut self) -> Option<StreamPaused> {
+        self.invalidate_timeout();
+
         if self.ssrc.is_probe() {
             return None;
         }
@@ -711,6 +784,8 @@ impl StreamRx {
 
     /// Poll the most recent sender info and when it was received
     pub(crate) fn poll_sender_info(&mut self) -> Option<(SenderInfo, Instant)> {
+        self.invalidate_timeout();
+
         let i = self.sender_info.as_mut()?;
         if i.emitted {
             return None;
@@ -722,6 +797,8 @@ impl StreamRx {
     }
 
     pub(crate) fn reset_buffers(&mut self, max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>) {
+        self.invalidate_timeout();
+
         if let Some(r) = &mut self.register {
             r.clear(max_seq_lookup(self.ssrc));
         }
@@ -734,6 +811,8 @@ impl StreamRx {
 
     #[must_use]
     pub(crate) fn change_ssrc(&mut self, ssrc: Ssrc) -> bool {
+        self.invalidate_timeout();
+
         // Avoid flapping
         if ssrc == self.ssrc || Some(ssrc) == self.previous_ssrc {
             return false;
@@ -767,6 +846,8 @@ impl StreamRx {
     }
 
     pub(crate) fn maybe_reset_rtx(&mut self, rtx: Ssrc) {
+        self.invalidate_timeout();
+
         if let Some(current) = self.rtx {
             if current == rtx {
                 return;
@@ -798,6 +879,8 @@ impl StreamRx {
     /// > initial value is provided by out of band signaling such as key
     /// > management).
     pub fn reset_roc(&mut self, roc: u64) {
+        self.invalidate_timeout();
+
         self.register = None;
         self.register_rtx = None;
         self.reset_roc = Some(roc);
@@ -863,6 +946,34 @@ pub(crate) struct RegisterUpdateReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_timeout_short_circuits_until_due_or_mutated() {
+        let now = Instant::now();
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        stream.rtx = Some(8.into());
+        stream.last_receiver_report = now;
+
+        let report_at = now + rr_interval(false);
+        assert_eq!(stream.receiver_report_at(), report_at);
+        assert!(!stream.timeout_due(now, false, false));
+        assert!(stream.timeout_due(report_at, true, false));
+
+        stream.request_keyframe(KeyframeRequestKind::Pli);
+        assert!(stream.timeout_due(now, false, false));
+    }
+
+    #[test]
+    fn discovering_rtx_invalidates_audio_report_deadline() {
+        let now = Instant::now();
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        stream.last_receiver_report = now;
+
+        assert_eq!(stream.receiver_report_at(), now + rr_interval(true));
+
+        stream.maybe_reset_rtx(8.into());
+        assert_eq!(stream.receiver_report_at(), now + rr_interval(false));
+    }
 
     #[test]
     fn paused_timestamp_repair_moves_time_forward() {

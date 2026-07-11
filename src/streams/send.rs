@@ -38,6 +38,12 @@ pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
 pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
+#[derive(Debug, Clone, Copy)]
+struct TimeoutCache {
+    feedback_at: Instant,
+    send_at: Option<Instant>,
+}
+
 /// Outgoing encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
@@ -137,6 +143,10 @@ pub struct StreamTx {
 
     /// MTU warn threshold; used to cap spurious-padding RTX cache lookups.
     mtu_warn: usize,
+
+    /// Timeout state calculated while polling output. Mutable entry points
+    /// invalidate this so the next time update visits the stream.
+    timeout_cache: Option<TimeoutCache>,
 }
 
 /// RTP packet data to enqueue on a direct RTP send stream.
@@ -291,6 +301,7 @@ impl StreamTx {
             remote_acked_ssrc: false,
             remote_acked_rtx_ssrc: false,
             mtu_warn,
+            timeout_cache: None,
         }
     }
 
@@ -333,6 +344,8 @@ impl StreamTx {
         max_age: Duration,
         rtx_ratio_cap: Option<f32>,
     ) {
+        self.invalidate_timeout();
+
         // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
         self.rtx_cache = RtxCache::new(max_packets, max_age);
         if rtx_ratio_cap.is_some() {
@@ -356,6 +369,7 @@ impl StreamTx {
     ///
     /// This overrides the default behavior.
     pub fn set_unpaced(&mut self, unpaced: bool) {
+        self.invalidate_timeout();
         self.unpaced = Some(unpaced);
     }
 
@@ -363,6 +377,8 @@ impl StreamTx {
     ///
     /// The write command carries the RTP payload and optional RTP metadata.
     pub fn write_rtp(&mut self, rtp: RtpWrite) {
+        self.invalidate_timeout();
+
         let RtpWrite {
             pt,
             seq_no,
@@ -439,6 +455,8 @@ impl StreamTx {
         params: &[PayloadParams],
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
+        self.invalidate_timeout();
+
         let mid = self.midrid.mid();
         let rid = self.midrid.rid();
         let ssrc_rtx = self.rtx;
@@ -842,7 +860,7 @@ impl StreamTx {
         })
     }
 
-    pub(crate) fn sender_report_at(&self) -> Instant {
+    fn calculate_sender_report_at(&self) -> Instant {
         let Some(kind) = self.kind else {
             // First handle_timeout sets the kind. No sender report until then.
             return not_happening();
@@ -850,15 +868,56 @@ impl StreamTx {
         self.last_sender_report + rr_interval(kind.is_audio())
     }
 
+    #[inline(always)]
+    pub(crate) fn sender_report_at(&mut self) -> Instant {
+        self.poll_timeout().feedback_at
+    }
+
+    #[inline(always)]
+    pub(crate) fn send_at(&mut self) -> Option<Instant> {
+        self.poll_timeout().send_at
+    }
+
+    #[inline(always)]
+    fn poll_timeout(&mut self) -> TimeoutCache {
+        if let Some(cache) = self.timeout_cache {
+            return cache;
+        }
+
+        let cache = TimeoutCache {
+            feedback_at: self.calculate_sender_report_at(),
+            send_at: (self.kind.is_none() || self.need_timeout()).then_some(already_happened()),
+        };
+        self.timeout_cache = Some(cache);
+        cache
+    }
+
+    #[inline(always)]
+    pub(crate) fn timeout_due(&self, now: Instant, report_due: bool) -> bool {
+        report_due
+            || self
+                .timeout_cache
+                .is_none_or(|cache| cache.send_at.is_some_and(|deadline| deadline <= now))
+    }
+
+    #[inline(always)]
+    fn invalidate_timeout(&mut self) {
+        self.timeout_cache = None;
+    }
+
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
+        self.invalidate_timeout();
         self.pending_request_keyframe.take()
     }
 
     pub(crate) fn poll_remb_request(&mut self) -> Option<Bitrate> {
+        self.invalidate_timeout();
         self.pending_request_remb.take()
     }
 
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
+        self.invalidate_timeout();
+
         use RtcpFb::*;
         match fb {
             ReceptionReport(r) => {
@@ -900,6 +959,8 @@ impl StreamTx {
         entries: impl Iterator<Item = NackEntry>,
         now: Instant,
     ) -> Option<()> {
+        self.invalidate_timeout();
+
         // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
         // sequence number into the 64 bit we have in SeqNo.
         let seq_no = self.rtx_cache.last_cached_seq_no()?;
@@ -923,11 +984,13 @@ impl StreamTx {
         Some(())
     }
 
-    pub(crate) fn need_sr(&self, now: Instant) -> bool {
+    pub(crate) fn need_sr(&mut self, now: Instant) -> bool {
         now >= self.sender_report_at()
     }
 
     pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
+        self.invalidate_timeout();
+
         let sr = self.create_sender_report(now);
 
         trace!("Created feedback SR: {:?}", sr);
@@ -1001,6 +1064,7 @@ impl StreamTx {
     }
 
     pub(crate) fn next_seq_no(&mut self) -> SeqNo {
+        self.invalidate_timeout();
         self.seq_no.inc()
     }
 
@@ -1013,10 +1077,13 @@ impl StreamTx {
     }
 
     pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
+        self.invalidate_timeout();
         self.stats.fill(snapshot, self.midrid, now);
     }
 
     pub(crate) fn queue_state(&mut self, now: Instant) -> QueueState {
+        self.invalidate_timeout();
+
         // The unpaced flag is set to a default value on first handle_timeout. The
         // default is to not pace audio. We unwrap default to "true" here to not
         // apply any pacing until we know what kind of content we are sending.
@@ -1094,6 +1161,8 @@ impl StreamTx {
     }
 
     pub(crate) fn generate_padding(&mut self, padding: usize) {
+        self.invalidate_timeout();
+
         if !self.padding_enabled() {
             return;
         }
@@ -1109,6 +1178,8 @@ impl StreamTx {
         now: Instant,
         get_media: impl FnOnce() -> (&'a Media, &'a CodecConfig),
     ) {
+        self.invalidate_timeout();
+
         // If kind is None, this is the first time we ever get a handle_timeout.
         if self.kind.is_none() {
             let (media, config) = get_media();
@@ -1147,6 +1218,8 @@ impl StreamTx {
     }
 
     pub(crate) fn reset_buffers(&mut self) {
+        self.invalidate_timeout();
+
         self.send_queue.clear();
         self.rtx_cache.clear();
         self.resends.clear();
@@ -1157,6 +1230,8 @@ impl StreamTx {
     ///
     /// This updates the SSRCs and resets all relevant internal fields.
     pub(crate) fn reset_ssrc(&mut self, new_ssrc: Ssrc, new_rtx: Option<Ssrc>) {
+        self.invalidate_timeout();
+
         // Update the SSRC and RTX
         self.ssrc = new_ssrc;
         self.rtx = new_rtx;
@@ -1210,4 +1285,32 @@ struct Resend {
     seq_no: SeqNo,
     queued_at: Instant,
     payload_size: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_timeout_short_circuits_until_due() {
+        let now = Instant::now();
+        let mut stream = StreamTx::new(7.into(), None, MidRid("mid".into(), None), false, 1200);
+        stream.kind = Some(MediaKind::Video);
+        stream.last_sender_report = now;
+
+        let report_at = now + rr_interval(false);
+        assert_eq!(stream.sender_report_at(), report_at);
+        assert!(!stream.timeout_due(now, false));
+        assert!(stream.timeout_due(report_at, true));
+
+        stream.invalidate_timeout();
+        assert!(stream.timeout_due(now, false));
+    }
+
+    #[test]
+    fn uninitialized_stream_requests_immediate_timeout() {
+        let mut stream = StreamTx::new(7.into(), None, MidRid("mid".into(), None), false, 1200);
+
+        assert_eq!(stream.send_at(), Some(already_happened()));
+    }
 }

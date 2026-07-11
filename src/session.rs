@@ -1006,11 +1006,11 @@ impl Session {
         self.medias.iter().any(|m| m.mid() == mid)
     }
 
-    fn regular_feedback_at(&self) -> Option<Instant> {
+    fn regular_feedback_at(&mut self) -> Option<Instant> {
         self.streams.regular_feedback_at()
     }
 
-    fn paused_at(&self) -> Option<Instant> {
+    fn paused_at(&mut self) -> Option<Instant> {
         self.streams.paused_at()
     }
 

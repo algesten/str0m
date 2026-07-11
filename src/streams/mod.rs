@@ -405,22 +405,18 @@ impl Streams {
         None
     }
 
-    pub(crate) fn regular_feedback_at(&self) -> Option<Instant> {
-        let r = self.streams_rx.values().map(|s| s.receiver_report_at());
-        let s = self.streams_tx.values().map(|s| s.sender_report_at());
+    pub(crate) fn regular_feedback_at(&mut self) -> Option<Instant> {
+        let r = self.streams_rx.values_mut().map(|s| s.receiver_report_at());
+        let s = self.streams_tx.values_mut().map(|s| s.sender_report_at());
         r.chain(s).min()
     }
 
-    pub(crate) fn paused_at(&self) -> Option<Instant> {
-        self.streams_rx.values().find_map(|s| s.paused_at())
+    pub(crate) fn paused_at(&mut self) -> Option<Instant> {
+        self.streams_rx.values_mut().find_map(|s| s.paused_at())
     }
 
-    pub(crate) fn send_stream(&self) -> Option<Instant> {
-        if self.streams_tx.values().any(|s| s.need_timeout()) {
-            Some(already_happened())
-        } else {
-            None
-        }
+    pub(crate) fn send_stream(&mut self) -> Option<Instant> {
+        self.streams_tx.values_mut().find_map(|s| s.send_at())
     }
 
     pub(crate) fn is_receiving(&self) -> bool {
@@ -437,18 +433,23 @@ impl Streams {
         feedback: &mut VecDeque<Rtcp>,
     ) {
         self.mids_to_report.clear(); // Clear for checking StreamRx.
-        for stream in self.streams_rx.values() {
+        for stream in self.streams_rx.values_mut() {
             if stream.need_rr(now) {
                 self.mids_to_report.push(stream.mid());
             }
         }
 
         for stream in self.streams_rx.values_mut() {
+            let report_due = self.mids_to_report.contains(&stream.mid());
+            if !stream.timeout_due(now, report_due, do_nack) {
+                continue;
+            }
+
             stream.maybe_create_keyframe_request(sender_ssrc, feedback);
             stream.maybe_create_remb_request(sender_ssrc, feedback);
 
             // All StreamRx belonging to the same Mid are reported together.
-            if self.mids_to_report.contains(&stream.mid()) {
+            if report_due {
                 stream.create_rr_and_update(now, sender_ssrc, feedback);
             }
 
@@ -460,7 +461,7 @@ impl Streams {
         }
 
         self.mids_to_report.clear(); // start over for StreamTx.
-        for stream in self.streams_tx.values() {
+        for stream in self.streams_tx.values_mut() {
             if stream.need_sr(now) {
                 self.mids_to_report.push(stream.mid());
             }
@@ -468,9 +469,13 @@ impl Streams {
 
         for stream in self.streams_tx.values_mut() {
             let mid = stream.mid();
+            let report_due = self.mids_to_report.contains(&mid);
+            if !stream.timeout_due(now, report_due) {
+                continue;
+            }
 
             // All StreamTx belonging to the same Mid are reported together.
-            if self.mids_to_report.contains(&mid) {
+            if report_due {
                 stream.create_sr_and_update(now, feedback);
             }
 
