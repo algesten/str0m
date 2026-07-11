@@ -41,8 +41,13 @@ pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
 /// A recently sampled view of an outgoing stream's send queue.
+///
+/// str0m refreshes this information as part of its regular pacer and bandwidth-estimation
+/// processing. Reading it does not cause a new value to be computed.
 pub trait StreamTxQueueInfo {
     /// When this queue information was sampled.
+    ///
+    /// Compare this value between reads to determine whether str0m has computed a new sample.
     fn created_at(&self) -> Instant;
 
     /// Total number of bytes in the queue.
@@ -360,6 +365,8 @@ impl StreamTx {
     /// Information sampled during the latest pacer update for this stream's send queue.
     ///
     /// This is `None` until the pacer has observed the stream for the first time.
+    /// Calling this method does not refresh the information; use
+    /// [`StreamTxQueueInfo::created_at()`] to determine whether a new sample is available.
     pub fn queue_info(&self) -> Option<&dyn StreamTxQueueInfo> {
         self.queue_info
             .as_ref()
