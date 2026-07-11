@@ -38,12 +38,6 @@ pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
 pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
-#[derive(Debug, Clone, Copy)]
-struct TimeoutCache {
-    feedback_at: Instant,
-    send_at: Option<Instant>,
-}
-
 /// Outgoing encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
@@ -147,6 +141,12 @@ pub struct StreamTx {
     /// Timeout state calculated while polling output. Mutable entry points
     /// invalidate this so the next time update visits the stream.
     timeout_cache: Option<TimeoutCache>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TimeoutCache {
+    feedback_at: Instant,
+    send_at: Option<Instant>,
 }
 
 /// RTP packet data to enqueue on a direct RTP send stream.

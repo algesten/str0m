@@ -18,13 +18,6 @@ use super::StreamPaused;
 use super::register::ReceiverRegister;
 use super::{RtpPacket, rr_interval};
 
-#[derive(Debug, Clone, Copy)]
-struct TimeoutCache {
-    feedback_at: Instant,
-    paused_at: Option<Instant>,
-    has_pending_feedback: bool,
-}
-
 /// Incoming encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
@@ -118,6 +111,13 @@ pub struct StreamRx {
     /// Timeout state calculated while polling output. Mutable entry points
     /// invalidate this so the next time update visits the stream.
     timeout_cache: Option<TimeoutCache>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TimeoutCache {
+    feedback_at: Instant,
+    paused_at: Option<Instant>,
+    has_pending_feedback: bool,
 }
 
 /// The last sender info we recieved.
