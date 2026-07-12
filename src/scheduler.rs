@@ -153,113 +153,73 @@ impl Timer {
             Timer::RxLookupCleanup => TimerScope::Streams,
         }
     }
+
+    fn singleton_index(self) -> Option<usize> {
+        match self {
+            Timer::DTLS => Some(0),
+            Timer::Ice => Some(1),
+            Timer::Sctp => Some(2),
+            Timer::Channel => Some(3),
+            Timer::ChannelCleanup => Some(4),
+            Timer::Stats => Some(5),
+            Timer::Feedback => Some(6),
+            Timer::Nack => Some(7),
+            Timer::Twcc => Some(8),
+            Timer::Pacer => Some(9),
+            Timer::BweDelayControl => Some(10),
+            Timer::BweProbeControl => Some(11),
+            Timer::BweProbeEstimator => Some(12),
+            Timer::RxLookupCleanup => Some(13),
+            Timer::SenderReport(_)
+            | Timer::ReceiverReport(_)
+            | Timer::KeyframeRequest(_)
+            | Timer::RembRequest(_)
+            | Timer::PauseCheck(_)
+            | Timer::SendStream(_)
+            | Timer::Packetize(_) => None,
+        }
+    }
 }
 
 /// Fixed storage for timers that have exactly one identity per [`Rtc`].
 #[derive(Debug, Default)]
-struct SingletonTimers {
-    dtls: Option<Instant>,
-    ice: Option<Instant>,
-    sctp: Option<Instant>,
-    channel: Option<Instant>,
-    channel_cleanup: Option<Instant>,
-    stats: Option<Instant>,
-    feedback: Option<Instant>,
-    nack: Option<Instant>,
-    twcc: Option<Instant>,
-    pacer: Option<Instant>,
-    bwe_delay_control: Option<Instant>,
-    bwe_probe_control: Option<Instant>,
-    bwe_probe_estimator: Option<Instant>,
-    rx_lookup_cleanup: Option<Instant>,
-}
+struct SingletonTimers([Option<Instant>; SINGLETON_TIMERS.len()]);
 
 impl SingletonTimers {
-    fn slot(&self, timer: Timer) -> Option<&Option<Instant>> {
-        match timer {
-            Timer::DTLS => Some(&self.dtls),
-            Timer::Ice => Some(&self.ice),
-            Timer::Sctp => Some(&self.sctp),
-            Timer::Channel => Some(&self.channel),
-            Timer::ChannelCleanup => Some(&self.channel_cleanup),
-            Timer::Stats => Some(&self.stats),
-            Timer::Feedback => Some(&self.feedback),
-            Timer::Nack => Some(&self.nack),
-            Timer::Twcc => Some(&self.twcc),
-            Timer::Pacer => Some(&self.pacer),
-            Timer::BweDelayControl => Some(&self.bwe_delay_control),
-            Timer::BweProbeControl => Some(&self.bwe_probe_control),
-            Timer::BweProbeEstimator => Some(&self.bwe_probe_estimator),
-            Timer::RxLookupCleanup => Some(&self.rx_lookup_cleanup),
-            Timer::SenderReport(_)
-            | Timer::ReceiverReport(_)
-            | Timer::KeyframeRequest(_)
-            | Timer::RembRequest(_)
-            | Timer::PauseCheck(_)
-            | Timer::SendStream(_)
-            | Timer::Packetize(_) => None,
-        }
-    }
-
-    fn slot_mut(&mut self, timer: Timer) -> Option<&mut Option<Instant>> {
-        match timer {
-            Timer::DTLS => Some(&mut self.dtls),
-            Timer::Ice => Some(&mut self.ice),
-            Timer::Sctp => Some(&mut self.sctp),
-            Timer::Channel => Some(&mut self.channel),
-            Timer::ChannelCleanup => Some(&mut self.channel_cleanup),
-            Timer::Stats => Some(&mut self.stats),
-            Timer::Feedback => Some(&mut self.feedback),
-            Timer::Nack => Some(&mut self.nack),
-            Timer::Twcc => Some(&mut self.twcc),
-            Timer::Pacer => Some(&mut self.pacer),
-            Timer::BweDelayControl => Some(&mut self.bwe_delay_control),
-            Timer::BweProbeControl => Some(&mut self.bwe_probe_control),
-            Timer::BweProbeEstimator => Some(&mut self.bwe_probe_estimator),
-            Timer::RxLookupCleanup => Some(&mut self.rx_lookup_cleanup),
-            Timer::SenderReport(_)
-            | Timer::ReceiverReport(_)
-            | Timer::KeyframeRequest(_)
-            | Timer::RembRequest(_)
-            | Timer::PauseCheck(_)
-            | Timer::SendStream(_)
-            | Timer::Packetize(_) => None,
-        }
-    }
-
     fn arm(&mut self, timer: Timer, at: Instant) -> bool {
-        let Some(slot) = self.slot_mut(timer) else {
+        let Some(index) = timer.singleton_index() else {
             return false;
         };
-        *slot = Some(at);
+        self.0[index] = Some(at);
         true
     }
 
     fn next(&self) -> Option<(Instant, Timer)> {
         SINGLETON_TIMERS
             .iter()
-            .filter_map(|&timer| self.slot(timer).copied().flatten().map(|at| (at, timer)))
+            .filter_map(|&timer| self.deadline(timer).map(|at| (at, timer)))
             .min()
     }
 
     fn is_singleton(&self, timer: Timer) -> bool {
-        self.slot(timer).is_some()
+        timer.singleton_index().is_some()
     }
 
     fn take(&mut self, timer: Timer) -> Option<Instant> {
-        self.slot_mut(timer).and_then(Option::take)
+        let index = timer.singleton_index()?;
+        self.0[index].take()
     }
 
     #[cfg(feature = "_internal_test_exports")]
     fn entries(&self) -> impl Iterator<Item = (Timer, Instant)> + '_ {
         SINGLETON_TIMERS
             .iter()
-            .filter_map(|&timer| self.slot(timer).copied().flatten().map(|at| (timer, at)))
+            .filter_map(|&timer| self.deadline(timer).map(|at| (timer, at)))
     }
 
-    #[cfg(feature = "_internal_test_exports")]
     fn deadline(&self, timer: Timer) -> Option<Instant> {
-        self.slot(timer).copied().flatten()
+        let index = timer.singleton_index()?;
+        self.0[index]
     }
 }
 
@@ -626,7 +586,10 @@ mod tests {
         s.arm(Timer::Ice, now + Duration::from_secs(2));
 
         assert!(s.queued.is_empty());
-        assert_eq!(s.singletons.ice, Some(now + Duration::from_secs(2)));
+        assert_eq!(
+            s.singletons.deadline(Timer::Ice),
+            Some(now + Duration::from_secs(2))
+        );
         assert_eq!(s.next(), Some((now + Duration::from_secs(2), Timer::Ice)));
     }
 
@@ -669,8 +632,9 @@ mod tests {
     #[test]
     fn every_singleton_timer_has_a_slot() {
         let singletons = SingletonTimers::default();
-        for timer in SINGLETON_TIMERS {
+        for (index, timer) in SINGLETON_TIMERS.into_iter().enumerate() {
             assert!(singletons.is_singleton(timer));
+            assert_eq!(timer.singleton_index(), Some(index));
         }
     }
 
