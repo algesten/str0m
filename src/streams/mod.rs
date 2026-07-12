@@ -148,10 +148,6 @@ pub(crate) struct Streams {
     /// have any reasonable value to use.
     default_ssrc_tx: Ssrc,
 
-    /// We need to report all RR/SR for a Mid together in one RTCP. This is a dynamic
-    /// list that we don't want to allocate on every handle_timeout.
-    mids_to_report: Vec<Mid>,
-
     /// Whether nack reports are enabled. This is an optimization to avoid too frequent
     /// Session::nack_at() when we don't need to send nacks.
     any_nack_active: Option<bool>,
@@ -186,7 +182,6 @@ impl Streams {
             last_rx_lookup_cleanup: already_happened(),
             streams_tx: Default::default(),
             default_ssrc_tx: 0.into(), // this will be changed
-            mids_to_report: Vec::with_capacity(10),
             any_nack_active: None,
             enable_stats,
             mtu_warn,
@@ -351,6 +346,36 @@ impl Streams {
         self.streams_tx.remove(&ssrc).is_some()
     }
 
+    pub(crate) fn reset_stream_tx(
+        &mut self,
+        midrid: MidRid,
+        new_ssrc: Ssrc,
+        new_rtx: Option<Ssrc>,
+    ) -> Option<(Ssrc, &mut StreamTx)> {
+        let old_ssrc = self
+            .streams_tx
+            .iter()
+            .find(|(_, stream)| stream.is_midrid(midrid))
+            .map(|(ssrc, _)| *ssrc)?;
+
+        let stream = self.streams_tx.get(&old_ssrc)?;
+        if old_ssrc == new_ssrc || (stream.rtx().is_some() && stream.rtx() == new_rtx) {
+            return None;
+        }
+
+        // Keep the map key equal to StreamTx::ssrc(). Timer dispatch relies on
+        // that invariant to reach the stream directly from Timer::SenderReport.
+        if self.streams_tx.contains_key(&new_ssrc) {
+            return None;
+        }
+
+        let mut stream = self.streams_tx.remove(&old_ssrc)?;
+        stream.reset_ssrc(new_ssrc, new_rtx);
+        self.streams_tx.insert(new_ssrc, stream);
+
+        Some((old_ssrc, self.streams_tx.get_mut(&new_ssrc).unwrap()))
+    }
+
     pub(crate) fn local_sender_ssrcs(&self) -> Vec<Ssrc> {
         self.streams_tx
             .values()
@@ -365,6 +390,13 @@ impl Streams {
     }
 
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
+        self.streams_rx.get_mut(ssrc)
+    }
+
+    pub(crate) fn stream_rx_for_change(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
+        // DirectApi exposes every StreamRx setting, including suppress_nack.
+        // Recompute the aggregate cache after the caller's mutation.
+        self.any_nack_active = None;
         self.streams_rx.get_mut(ssrc)
     }
 
@@ -405,21 +437,31 @@ impl Streams {
         None
     }
 
-    pub(crate) fn regular_feedback_at(&self) -> Option<Instant> {
-        let r = self.streams_rx.values().map(|s| s.receiver_report_at());
-        let s = self.streams_tx.values().map(|s| s.sender_report_at());
-        r.chain(s).min()
+    pub(crate) fn poll_timeout(&self, s: &mut crate::scheduler::Scheduler) {
+        if !self.rx_lookup.is_empty() {
+            s.arm(crate::Timer::RxLookupCleanup, self.rx_lookup_at());
+        }
     }
 
-    pub(crate) fn paused_at(&self) -> Option<Instant> {
-        self.streams_rx.values().find_map(|s| s.paused_at())
+    pub(crate) fn poll_stream_tx_timeout(&self, ssrc: Ssrc, s: &mut crate::scheduler::Scheduler) {
+        if let Some(stream) = self.streams_tx.get(&ssrc) {
+            stream.poll_timeout(s);
+        }
     }
 
-    pub(crate) fn send_stream(&self) -> Option<Instant> {
-        if self.streams_tx.values().any(|s| s.need_timeout()) {
-            Some(already_happened())
-        } else {
-            None
+    pub(crate) fn poll_stream_rx_timeout(&self, ssrc: Ssrc, s: &mut crate::scheduler::Scheduler) {
+        if let Some(stream) = self.streams_rx.get(&ssrc) {
+            stream.poll_timeout(s);
+        }
+    }
+
+    pub(crate) fn poll_timeout_all(&self, s: &mut crate::scheduler::Scheduler) {
+        self.poll_timeout(s);
+        for stream in self.streams_tx.values() {
+            stream.poll_timeout(s);
+        }
+        for stream in self.streams_rx.values() {
+            stream.poll_timeout(s);
         }
     }
 
@@ -427,66 +469,120 @@ impl Streams {
         !self.streams_rx.is_empty()
     }
 
-    pub(crate) fn handle_timeout(
+    pub(crate) fn handle_receiver_report(
         &mut self,
         now: Instant,
+        ssrc: Ssrc,
         sender_ssrc: Ssrc,
-        do_nack: bool,
-        medias: &[Media],
-        config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
     ) {
-        self.mids_to_report.clear(); // Clear for checking StreamRx.
-        for stream in self.streams_rx.values() {
-            if stream.need_rr(now) {
-                self.mids_to_report.push(stream.mid());
-            }
+        let Some(mid) = self
+            .streams_rx
+            .get(&ssrc)
+            .filter(|stream| stream.need_rr(now))
+            .map(|stream| stream.mid())
+        else {
+            return;
+        };
+
+        // All StreamRx belonging to the same Mid are reported together.
+        for stream in self
+            .streams_rx
+            .values_mut()
+            .filter(|stream| stream.mid() == mid)
+        {
+            stream.create_rr_and_update(now, sender_ssrc, feedback);
         }
+    }
 
-        for stream in self.streams_rx.values_mut() {
+    pub(crate) fn handle_sender_report(
+        &mut self,
+        now: Instant,
+        ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        let Some(mid) = self
+            .streams_tx
+            .get(&ssrc)
+            .filter(|stream| stream.need_sr(now))
+            .map(|stream| stream.mid())
+        else {
+            return;
+        };
+
+        // All StreamTx belonging to the same Mid are reported together.
+        for stream in self
+            .streams_tx
+            .values_mut()
+            .filter(|stream| stream.mid() == mid)
+        {
+            stream.create_sr_and_update(now, feedback);
+        }
+    }
+
+    pub(crate) fn handle_keyframe_request(
+        &mut self,
+        ssrc: Ssrc,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        if let Some(stream) = self.streams_rx.get_mut(&ssrc) {
             stream.maybe_create_keyframe_request(sender_ssrc, feedback);
+        }
+    }
+
+    pub(crate) fn handle_remb_request(
+        &mut self,
+        ssrc: Ssrc,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        if let Some(stream) = self.streams_rx.get_mut(&ssrc) {
             stream.maybe_create_remb_request(sender_ssrc, feedback);
+        }
+    }
 
-            // All StreamRx belonging to the same Mid are reported together.
-            if self.mids_to_report.contains(&stream.mid()) {
-                stream.create_rr_and_update(now, sender_ssrc, feedback);
-            }
+    pub(crate) fn handle_nack(&mut self, sender_ssrc: Ssrc, feedback: &mut VecDeque<Rtcp>) {
+        for stream in self.streams_rx.values_mut() {
+            stream.maybe_create_nack(sender_ssrc, feedback);
+        }
+    }
 
-            if do_nack {
-                stream.maybe_create_nack(sender_ssrc, feedback);
-            }
-
+    pub(crate) fn handle_pause(&mut self, now: Instant, ssrc: Ssrc) {
+        if let Some(stream) = self.streams_rx.get_mut(&ssrc) {
             stream.handle_timeout(now);
         }
+    }
 
-        self.mids_to_report.clear(); // start over for StreamTx.
-        for stream in self.streams_tx.values() {
-            if stream.need_sr(now) {
-                self.mids_to_report.push(stream.mid());
-            }
+    pub(crate) fn handle_send_stream(
+        &mut self,
+        now: Instant,
+        ssrc: Ssrc,
+        medias: &[Media],
+        config: &CodecConfig,
+    ) -> bool {
+        let Some(stream) = self.streams_tx.get_mut(&ssrc) else {
+            return false;
+        };
+        if !stream.need_timeout() {
+            return false;
         }
 
-        for stream in self.streams_tx.values_mut() {
-            let mid = stream.mid();
+        let mid = stream.mid();
+        // The unwrap is okay because a StreamTx cannot exist without its corresponding Media.
+        let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
+        stream.handle_timeout(now, get_media);
+        true
+    }
 
-            // All StreamTx belonging to the same Mid are reported together.
-            if self.mids_to_report.contains(&mid) {
-                stream.create_sr_and_update(now, feedback);
-            }
-
-            // Finding the first (main) PT that also has RTX for the Media is expensive,
-            // this closure is run only when needed.
-            // The unwrap is okay because we cannot have StreamTx with a Mid without the corresponding Media.
-            let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
-
-            stream.handle_timeout(now, get_media);
+    pub(crate) fn handle_rx_lookup_cleanup(&mut self, now: Instant) {
+        if now < self.rx_lookup_at() {
+            return;
         }
 
-        if now > self.rx_lookup_at() {
-            self.rx_lookup
-                .retain(|_, l| now - l.last_used <= RX_LOOKUP_EXPIRY);
-            self.last_rx_lookup_cleanup = now;
-        }
+        self.rx_lookup
+            .retain(|_, lookup| now - lookup.last_used <= RX_LOOKUP_EXPIRY);
+        self.last_rx_lookup_cleanup = now;
     }
 
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequest> {

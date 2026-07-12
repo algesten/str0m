@@ -13,6 +13,7 @@ use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
 use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::SRTP_OVERHEAD;
+use crate::rtp_::Ssrc;
 use str0m_proto::Id;
 
 use crate::format::PayloadParams;
@@ -465,11 +466,9 @@ impl Media {
         Ok(())
     }
 
-    pub(crate) fn poll_timeout(&self) -> Option<Instant> {
+    pub(crate) fn poll_timeout(&self, s: &mut crate::scheduler::Scheduler) {
         if !self.to_payload.is_empty() {
-            Some(already_happened())
-        } else {
-            None
+            s.arm(crate::Timer::Packetize(self.mid), already_happened());
         }
     }
 
@@ -479,9 +478,9 @@ impl Media {
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
-    ) -> Result<(), RtcError> {
+    ) -> Result<Option<Ssrc>, RtcError> {
         let Some(to_payload) = self.to_payload.pop_front() else {
-            return Ok(());
+            return Ok(None);
         };
 
         let ToPayload { pt, rid, .. } = &to_payload;
@@ -495,6 +494,7 @@ impl Media {
         let Some(stream) = stream else {
             return Err(RtcError::NoSenderSource);
         };
+        let ssrc = stream.ssrc();
 
         let pt = *pt;
 
@@ -508,7 +508,7 @@ impl Media {
             .push_sample(to_payload, aligned_mtu, is_audio, stream)
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
-        Ok(())
+        Ok(Some(ssrc))
     }
 
     pub(crate) fn set_remote_pts(&mut self, pts: Vec<Pt>) {

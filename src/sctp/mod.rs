@@ -986,8 +986,10 @@ impl RtcSctp {
         None
     }
 
-    pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.assoc.as_mut().and_then(|a| a.poll_timeout())
+    pub fn poll_timeout(&mut self, s: &mut crate::scheduler::Scheduler) {
+        if let Some(at) = self.assoc.as_mut().and_then(|a| a.poll_timeout()) {
+            s.arm(crate::Timer::Sctp, at);
+        }
     }
 
     pub fn push_back_transmit(&mut self, data: VecDeque<Vec<u8>>) {

@@ -687,6 +687,10 @@ use streams::RtpPacket;
 use streams::StreamPaused;
 use util::InstantExt;
 
+mod scheduler;
+pub use scheduler::Timer;
+use scheduler::{Scheduler, TimeoutOwner};
+
 // Identity `drv::ToStatic` (`Static = Self`) for the `Copy` identity types.
 // Used instead of `#[derive(drv::Input)]` because the derive's generated
 // shadow type isn't `Eq`/`Hash`/`Borrow<Self>`, so it can't be a `HashMap`
@@ -837,7 +841,7 @@ use media::{MediaAdded, MediaChanged, MediaData};
 pub mod change;
 
 mod util;
-use util::{Soonest, not_happening};
+use util::{already_happened, not_happening};
 
 mod session;
 use session::Session;
@@ -917,7 +921,8 @@ pub struct Rtc {
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
     change_counter: usize,
-    last_timeout_reason: Reason,
+    scheduler: Scheduler,
+    last_timeout: Option<Timer>,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
     close_dtls_started: bool,
@@ -1094,87 +1099,6 @@ pub enum Output {
 
 pub use crate::pacer::PacerReason;
 
-/// The reason for the next [`Output::Timeout`].
-///
-/// This enum is not considered stable API and may change in minor revisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[non_exhaustive]
-pub enum Reason {
-    /// No timeout scheduled.
-    ///
-    /// The timeout value is in the distant future.
-    #[default]
-    NotHappening,
-
-    /// The DTLS subsystem.
-    ///
-    /// Only relevant during handshaking.
-    DTLS,
-
-    /// The ICE agent.
-    ///
-    /// Includes checking candidate pairs and various cleanups.
-    Ice,
-
-    /// The SCTP subsystem.
-    ///
-    /// Things like handling retransmissions and keep-alive checks.
-    Sctp,
-
-    /// Data channels.
-    ///
-    /// Scheduled when we need to open allocations using SCTP.
-    Channel,
-
-    /// Stats gathering (if enabled).
-    ///
-    /// Periodic gathering of statistics.
-    Stats,
-
-    /// Regular RTP feedback.
-    ///
-    /// Receiver reports (RR) and sender reports (SR).
-    Feedback,
-
-    /// Sending of RTP NACK.
-    ///
-    /// When missing packets are discovered, a NACK is scheduled.
-    Nack,
-
-    /// Reporting of TWCC (if enabled).
-    ///
-    /// All incoming RTP packets are reported using TWCC. Enabled via SDP if both
-    /// sides support it.
-    Twcc,
-
-    /// RTP streams not receiving data goes into a paused state.
-    ///
-    /// Whenever an RTP receive stream receives data, a new timeout is scheduled.
-    PauseCheck,
-
-    /// Preprocessing of RTP packets to be sent.
-    ///
-    /// Housekeeping task in RTP send streams.
-    SendStream,
-
-    /// Packetizing of media into RTP data (if used).
-    ///
-    /// Written media data needs packetizing. This is not used in RTP mode.
-    Packetize,
-
-    /// Pacer doing things.
-    Pacer(PacerReason),
-
-    /// The delay controller of the BWE subsystem.
-    BweDelayControl,
-
-    /// The probe controller of the BWE subsystem.
-    BweProbeControl,
-
-    /// The probe estimator of the BWE subsystem.
-    BweProbeEstimator,
-}
-
 impl Rtc {
     /// Creates a new instance with default settings.
     ///
@@ -1282,7 +1206,8 @@ impl Rtc {
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             change_counter: 0,
-            last_timeout_reason: Reason::NotHappening,
+            scheduler: Scheduler::new(),
+            last_timeout: None,
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
             close_dtls_started: false,
@@ -1359,7 +1284,10 @@ impl Rtc {
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_local_candidate(&mut self, c: Candidate) -> Option<&Candidate> {
-        self.ice.add_local_candidate(c)
+        let Rtc { ice, scheduler, .. } = self;
+        let candidate = ice.add_local_candidate(c)?;
+        scheduler.invalidate(TimeoutOwner::Ice);
+        Some(candidate)
     }
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
@@ -1384,6 +1312,7 @@ impl Rtc {
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_remote_candidate(&mut self, c: Candidate) {
         self.ice.add_remote_candidate(c);
+        self.scheduler.invalidate(TimeoutOwner::Ice);
     }
 
     /// Checks if we are connected.
@@ -1415,6 +1344,7 @@ impl Rtc {
     /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn sdp_api(&mut self) -> SdpApi {
+        self.scheduler.invalidate(TimeoutOwner::All);
         SdpApi::new(self)
     }
 
@@ -1466,6 +1396,7 @@ impl Rtc {
         // This does not catch potential RIDs required to send simulcast, but
         // it's a good start. An error might arise later on RID mismatch.
         self.session.media_by_mid_mut(mid)?;
+        self.scheduler.invalidate_media(mid);
 
         Some(Writer::new(&mut self.session, mid))
     }
@@ -1494,6 +1425,8 @@ impl Rtc {
             let _ = self.dtls.handle_receive(&[]);
         }
 
+        self.scheduler.invalidate(TimeoutOwner::Dtls);
+
         Ok(())
     }
 
@@ -1515,6 +1448,8 @@ impl Rtc {
             sctp_init_data,
             remote_max_message_size,
         )?;
+        self.scheduler.invalidate(TimeoutOwner::Sctp);
+        self.scheduler.invalidate(TimeoutOwner::Channel);
         Ok(())
     }
 
@@ -1574,11 +1509,12 @@ impl Rtc {
 
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if self.state == RtcState::Closed {
-            self.last_timeout_reason = Reason::NotHappening;
+            self.last_timeout = None;
             return Ok(Output::Timeout(not_happening()));
         }
 
         while let Some(e) = self.ice.poll_event() {
+            self.scheduler.invalidate(TimeoutOwner::Ice);
             match e {
                 IceAgentEvent::IceRestart(_) => {
                     //
@@ -1613,14 +1549,17 @@ impl Rtc {
             }
         }
 
-        // Handle DTLS timeout before polling output so any retransmit packets
-        // queued by dimpl and the re-armed flight timer are picked up by the
-        // poll loop below in the same iteration.
-        if let Some(timeout) = self.next_dtls_timeout {
-            if timeout <= self.last_now {
-                let _ = self.dtls.handle_timeout(self.last_now);
-                self.next_dtls_timeout = None;
-            }
+        // DTLS can schedule another step at the current instant while its
+        // output is being drained. Keep consuming that step here so a single
+        // DTLS flight does not require an artificial clock advance between
+        // every packet. The deadline itself is still tracked by Scheduler.
+        if self
+            .next_dtls_timeout
+            .is_some_and(|timeout| timeout <= self.last_now)
+        {
+            let _ = self.dtls.handle_timeout(self.last_now);
+            self.next_dtls_timeout = None;
+            self.scheduler.invalidate(TimeoutOwner::Dtls);
         }
 
         // Poll DTLS output - collect packets, handle events
@@ -1671,9 +1610,11 @@ impl Rtc {
                 }
                 DtlsOutput::ApplicationData(data) => {
                     self.sctp.handle_input(self.last_now, data);
+                    self.scheduler.invalidate(TimeoutOwner::Sctp);
                 }
                 DtlsOutput::Timeout(t) => {
                     self.next_dtls_timeout = Some(t);
+                    self.scheduler.invalidate(TimeoutOwner::Dtls);
                     break;
                 }
                 DtlsOutput::CloseNotify => {
@@ -1693,6 +1634,7 @@ impl Rtc {
         }
 
         while let Some(e) = self.sctp.poll() {
+            self.scheduler.invalidate(TimeoutOwner::Sctp);
             match e {
                 SctpEvent::Transmit { mut packets } => {
                     if let Some(v) = packets.front() {
@@ -1728,6 +1670,7 @@ impl Rtc {
                 }
                 SctpEvent::Open { id, label } => {
                     self.chan.ensure_channel_id_for(id);
+                    self.scheduler.invalidate(TimeoutOwner::Channel);
                     let id = self.chan.channel_id_by_stream_id(id).unwrap();
                     return Ok(Output::Event(Event::ChannelOpen(id, label)));
                 }
@@ -1737,6 +1680,7 @@ impl Rtc {
                         continue;
                     };
                     self.chan.remove_channel(id, self.last_now);
+                    self.scheduler.invalidate(TimeoutOwner::Channel);
                     return Ok(Output::Event(Event::ChannelClose(id)));
                 }
                 SctpEvent::AssociationLost => {
@@ -1779,14 +1723,16 @@ impl Rtc {
         }
 
         if let Some(v) = self.ice.poll_transmit() {
+            self.scheduler.invalidate(TimeoutOwner::Ice);
             return Ok(Output::Transmit(v));
         }
 
         if let Some(send) = &self.send_addr {
             // These can only be sent after we got an ICE connection.
-            let datagram = None
-                .or_else(|| self.dtls.poll_packet())
-                .or_else(|| self.session.poll_datagram(self.last_now));
+            let datagram = None.or_else(|| self.dtls.poll_packet()).or_else(|| {
+                self.session
+                    .poll_datagram(self.last_now, &mut self.scheduler)
+            });
 
             if let Some(contents) = datagram {
                 let t = net::Transmit {
@@ -1802,20 +1748,13 @@ impl Rtc {
             self.session.clear_feedback();
         }
 
-        let stats_timeout = self.stats.as_mut().and_then(|s| s.poll_timeout());
+        self.poll_timeouts();
 
-        let time_and_reason = (None, Reason::NotHappening)
-            .soonest((self.next_dtls_timeout, Reason::DTLS))
-            .soonest((self.ice.poll_timeout(), Reason::Ice))
-            .soonest(self.session.poll_timeout())
-            .soonest((self.sctp.poll_timeout(), Reason::Sctp))
-            .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
-            .soonest((stats_timeout, Reason::Stats));
-
-        // trace!("poll_output timeout reason: {}", time_and_reason.1);
-
-        let time = time_and_reason.0.unwrap_or_else(not_happening);
-        let reason = time_and_reason.1;
+        let (time, timer) = self
+            .scheduler
+            .next()
+            .map(|(at, timer)| (at, Some(timer)))
+            .unwrap_or_else(|| (not_happening(), None));
 
         // We want to guarantee time doesn't go backwards.
         let next = if time < self.last_now {
@@ -1826,29 +1765,123 @@ impl Rtc {
 
         if self.state == RtcState::Closing && self.close_drain_complete() {
             self.state = RtcState::Closed;
-            self.last_timeout_reason = Reason::NotHappening;
+            self.last_timeout = None;
             return Ok(Output::Timeout(not_happening()));
         }
 
-        self.last_timeout_reason = reason;
+        self.last_timeout = timer;
+        trace!(?timer, at = ?next, "Next timer");
         Ok(Output::Timeout(next))
     }
 
-    /// The reason for the last [`Output::Timeout`]
+    fn poll_timeouts(&mut self) {
+        while let Some(owner) = self.scheduler.pop_recompute() {
+            match owner {
+                TimeoutOwner::All => {
+                    if let Some(at) = self.next_dtls_timeout {
+                        self.scheduler.arm(Timer::DTLS, at);
+                    }
+                    self.scheduler.arm(
+                        Timer::Ice,
+                        self.ice.poll_timeout().unwrap_or_else(already_happened),
+                    );
+                    self.sctp.poll_timeout(&mut self.scheduler);
+                    self.chan.poll_timeout(&self.sctp, &mut self.scheduler);
+                    if let Some(stats) = &self.stats {
+                        stats.poll_timeout(&mut self.scheduler);
+                    }
+                    self.session.poll_timeout_all(&mut self.scheduler);
+                }
+                TimeoutOwner::Dtls => {
+                    if let Some(at) = self.next_dtls_timeout {
+                        self.scheduler.arm(Timer::DTLS, at);
+                    }
+                }
+                TimeoutOwner::Ice => {
+                    if let Some(at) = self.ice.poll_timeout() {
+                        self.scheduler.arm(Timer::Ice, at);
+                    }
+                }
+                TimeoutOwner::IceNow => {
+                    self.scheduler.arm(Timer::Ice, already_happened());
+                }
+                TimeoutOwner::Sctp => self.sctp.poll_timeout(&mut self.scheduler),
+                TimeoutOwner::Channel => self.chan.poll_timeout(&self.sctp, &mut self.scheduler),
+                TimeoutOwner::Stats => {
+                    if let Some(stats) = &self.stats {
+                        stats.poll_timeout(&mut self.scheduler);
+                    }
+                }
+                TimeoutOwner::Session | TimeoutOwner::Pacer | TimeoutOwner::Bwe => {
+                    self.session.poll_timeout(&mut self.scheduler)
+                }
+                TimeoutOwner::Streams => self.session.poll_streams_timeout(&mut self.scheduler),
+                TimeoutOwner::StreamTx(ssrc) => self
+                    .session
+                    .poll_stream_tx_timeout(ssrc, &mut self.scheduler),
+                TimeoutOwner::StreamRx(ssrc) => self
+                    .session
+                    .poll_stream_rx_timeout(ssrc, &mut self.scheduler),
+                TimeoutOwner::Media(mid) => {
+                    self.session.poll_media_timeout(mid, &mut self.scheduler)
+                }
+            }
+        }
+
+        #[cfg(feature = "_internal_test_exports")]
+        self.assert_scheduler_complete();
+    }
+
+    #[cfg(feature = "_internal_test_exports")]
+    fn assert_scheduler_complete(&mut self) {
+        assert!(
+            self.scheduler.recompute_is_empty(),
+            "timeout recomputation must be drained before Output::Timeout"
+        );
+
+        // Tests retain the old exhaustive O(N) calculation as an oracle. Extra
+        // (stale) production timers are valid, but every live timer must be
+        // present and scheduled no later than the exhaustive result.
+        let mut expected = Scheduler::new();
+        if let Some(at) = self.next_dtls_timeout {
+            expected.arm(Timer::DTLS, at);
+        }
+        if let Some(at) = self.ice.poll_timeout() {
+            expected.arm(Timer::Ice, at);
+        }
+        self.sctp.poll_timeout(&mut expected);
+        self.chan.poll_timeout(&self.sctp, &mut expected);
+        if let Some(stats) = &self.stats {
+            stats.poll_timeout(&mut expected);
+        }
+        self.session.poll_timeout_all(&mut expected);
+
+        for (timer, expected_at) in expected.entries() {
+            let Some(actual_at) = self.scheduler.deadline(timer) else {
+                panic!("missing timer: {timer:?} at {expected_at:?}");
+            };
+            assert!(
+                actual_at <= expected_at,
+                "timer {timer:?} is scheduled too late: actual={actual_at:?}, expected no later than {expected_at:?}"
+            );
+        }
+    }
+
+    /// The precise timer responsible for the last [`Output::Timeout`].
     ///
     /// This is updated when calling [`Rtc::poll_output()`] and the next output
     /// is a timeout.
     ///
     /// ```
-    /// # use str0m::{Rtc, Reason};
+    /// # use str0m::Rtc;
     /// # use std::time::Instant;
     /// let rtc = Rtc::new(Instant::now());
     ///
-    /// // Before any call to poll_output(), the reason is the default.
-    /// assert_eq!(rtc.last_timeout_reason(), Reason::NotHappening);
+    /// // Before any call to poll_output(), there is no timer.
+    /// assert_eq!(rtc.last_timeout(), None);
     /// ```
-    pub fn last_timeout_reason(&self) -> Reason {
-        self.last_timeout_reason
+    pub fn last_timeout(&self) -> Option<Timer> {
+        self.last_timeout
     }
 
     /// Check if this `Rtc` instance accepts the given input. This is used for demultiplexing
@@ -1972,6 +2005,8 @@ impl Rtc {
             self.session.close_rtp();
             self.sctp.close()?;
             self.state = RtcState::Closing;
+            self.scheduler.invalidate(TimeoutOwner::Session);
+            self.scheduler.invalidate(TimeoutOwner::Sctp);
         }
 
         self.start_dtls_close()
@@ -1981,6 +2016,7 @@ impl Rtc {
         if !self.close_dtls_started {
             self.dtls.close()?;
             self.close_dtls_started = true;
+            self.scheduler.invalidate(TimeoutOwner::Dtls);
         }
 
         Ok(())
@@ -2012,14 +2048,54 @@ impl Rtc {
         }
 
         self.last_now = now;
-        self.ice.handle_timeout(now);
-        self.sctp.handle_timeout(now);
-        self.chan.expire_closed_stream_ids(now);
-        self.chan.handle_timeout(now, &mut self.sctp);
-        self.session.handle_timeout(now)?;
+        self.poll_timeouts();
 
-        if let Some(stats) = &mut self.stats {
-            if stats.wants_timeout(now) {
+        let mut stats_due = false;
+        let (timers, mut invalidations) = self.scheduler.poll_with_invalidations(now);
+        for timer in timers {
+            invalidations.invalidate(timer.owner());
+            trace!(?timer, ?now, "Handle timer");
+            match timer {
+                Timer::DTLS => {
+                    if self.next_dtls_timeout.is_some_and(|at| now >= at) {
+                        let _ = self.dtls.handle_timeout(now);
+                        self.next_dtls_timeout = None;
+                    }
+                }
+                Timer::Ice => self.ice.handle_timeout(now),
+                Timer::Sctp => self.sctp.handle_timeout(now),
+                Timer::Channel => {
+                    self.chan.handle_timeout(now, &mut self.sctp);
+                    invalidations.invalidate(TimeoutOwner::Sctp);
+                }
+                Timer::ChannelCleanup => self.chan.expire_closed_stream_ids(now),
+                Timer::Stats => stats_due = true,
+                Timer::Feedback
+                | Timer::SenderReport(_)
+                | Timer::ReceiverReport(_)
+                | Timer::KeyframeRequest(_)
+                | Timer::RembRequest(_)
+                | Timer::Nack
+                | Timer::Twcc
+                | Timer::PauseCheck(_)
+                | Timer::SendStream(_)
+                | Timer::Packetize(_)
+                | Timer::Pacer
+                | Timer::BweDelayControl
+                | Timer::BweProbeControl
+                | Timer::BweProbeEstimator
+                | Timer::RxLookupCleanup => {
+                    self.session
+                        .handle_timeout(now, timer, &mut invalidations)?
+                }
+            }
+        }
+
+        if stats_due {
+            if let Some(stats) = &mut self.stats {
+                if !stats.wants_timeout(now) {
+                    return Ok(());
+                }
                 let mut snapshot = StatsSnapshot::new(now);
                 snapshot.peer_rx = self.peer_bytes_rx;
                 snapshot.peer_tx = self.peer_bytes_tx;
@@ -2066,10 +2142,21 @@ impl Rtc {
                     message: stun,
                 };
                 self.ice.handle_packet(recv_time, packet);
+                // ICE state can become runnable immediately after an input
+                // packet even when the agent's next periodic deadline is
+                // later. Conservatively move its one timer earlier.
+                self.scheduler.invalidate(TimeoutOwner::IceNow);
             }
-            Dtls(dtls) => self.dtls.handle_receive(dtls)?,
-            Rtp(rtp) => self.session.handle_rtp_receive(recv_time, rtp),
-            Rtcp(rtcp) => self.session.handle_rtcp_receive(recv_time, rtcp),
+            Dtls(dtls) => {
+                self.dtls.handle_receive(dtls)?;
+                self.scheduler.invalidate(TimeoutOwner::Dtls);
+            }
+            Rtp(rtp) => self
+                .session
+                .handle_rtp_receive(recv_time, rtp, &mut self.scheduler),
+            Rtcp(rtcp) => self
+                .session
+                .handle_rtcp_receive(recv_time, rtcp, &mut self.scheduler),
         }
 
         Ok(())
@@ -2102,6 +2189,7 @@ impl Rtc {
             return None;
         }
 
+        self.scheduler.invalidate(TimeoutOwner::Sctp);
         Some(Channel::new(sctp_stream_id, self))
     }
 

@@ -4,13 +4,13 @@ use std::time::{Duration, Instant};
 use super::Pacer;
 use super::PaddingRequest;
 use super::QueueState;
-use crate::Reason;
+use crate::Timer;
 use crate::bwe_::ProbeClusterConfig;
 use crate::bwe_::ProbeClusterState;
 use crate::bwe_::{log_pacer_media_debt, log_pacer_padding_debt};
 use crate::pacer::PacerReason;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
-use crate::util::Soonest;
+use crate::scheduler::Scheduler;
 
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
@@ -64,15 +64,22 @@ impl Pacer for LeakyBucketPacer {
         // bitrate will be updated on next handle_timeout().
     }
 
-    fn poll_timeout(&self) -> (Option<Instant>, Reason) {
-        let next_handle_time = self.last_handle_time.map(|lh| lh + PACING);
+    fn poll_timeout(&self, s: &mut Scheduler) {
+        if let Some(at) = self.next_timeout() {
+            // The pacer has one current deadline. PacerReason remains useful
+            // diagnostics, but is not a stable timer identity.
+            s.arm(Timer::Pacer, at);
+        }
+    }
 
-        let poll_at = self
-            .next_poll_time
-            .map(|(t, r)| (Some(t), Reason::Pacer(r)))
-            .unwrap_or((None, Reason::NotHappening));
-
-        (next_handle_time, Reason::Pacer(PacerReason::Handle)).soonest(poll_at)
+    fn next_timeout(&self) -> Option<Instant> {
+        let handle_at = self.last_handle_time.map(|at| at + PACING);
+        let poll_at = self.next_poll_time.map(|(at, _)| at);
+        match (handle_at, poll_at) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(at), None) | (None, Some(at)) => Some(at),
+            (None, None) => None,
+        }
     }
 
     fn handle_timeout(
@@ -193,9 +200,10 @@ impl LeakyBucketPacer {
     ///
     /// The pacer will pace at the probe's target bitrate and track packets sent.
     /// Probes are queued and executed sequentially.
-    pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig) {
+    pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig, now: Instant) {
         trace!(?config, "Probe start");
         self.probe_queue.push_back(ProbeClusterState::new(config));
+        self.next_poll_time = Some((now, PacerReason::Immediate));
     }
 
     /// Get the cluster ID of the active probe, if any.
@@ -317,18 +325,21 @@ impl LeakyBucketPacer {
         }
 
         let any_queue_for_padding = self.queue_states.iter().any(|q| q.use_for_padding);
-        let padding_possible = self.padding_bitrate > Bitrate::ZERO && any_queue_for_padding;
 
-        if !padding_possible {
-            return None;
-        }
-
-        // If we're actively probing, use probe timing for padding
-        if let Some(probe) = self.probe_queue.front() {
+        // Probe padding bypasses the regular padding bitrate, just like
+        // maybe_create_padding_request(). It therefore needs its own timeout
+        // whenever there is a queue capable of carrying padding.
+        if let Some(probe) = self.probe_queue.front().filter(|_| any_queue_for_padding) {
             let next_probe_time = probe.next_probe_time();
             // We explicitly don't return a queue to poll here. We need another call to
             // handle_timeout to request the padding before we can poll the selected queue.
             return Some(((next_probe_time, PacerReason::Probe2), None));
+        }
+
+        let padding_possible = self.padding_bitrate > Bitrate::ZERO && any_queue_for_padding;
+
+        if !padding_possible {
+            return None;
         }
 
         // If all queues are empty and we have a padding rate, wait until we have drained
@@ -488,6 +499,12 @@ mod test {
     use crate::rtp_::{DataSize, Mid, RtpHeader};
     use queue::{PacketKind, Queue, QueuedPacket};
     use std::time::{Duration, Instant};
+
+    fn pacer_timeout(pacer: &impl Pacer) -> Option<Instant> {
+        let mut s = Scheduler::new();
+        pacer.poll_timeout(&mut s);
+        s.next().map(|(at, _)| at)
+    }
 
     #[test]
     fn test_typical_behavior() {
@@ -943,7 +960,7 @@ mod test {
         pacer.register_send(now, DataSize::from(packet_size), qid);
         queue.register_send(qid, now);
 
-        let timeout = pacer.poll_timeout().0;
+        let timeout = pacer_timeout(pacer);
         // After gating, the pacer requests a timeout at now + 1µs to ensure time advances
         const MINIMAL_DELTA: Duration = Duration::from_micros(1);
         assert!(
@@ -985,7 +1002,7 @@ mod test {
         if let Some(padding_request) = pacer.handle_timeout(now, queue.queue_state(now)) {
             queue.generate_padding(padding_request.padding, now);
 
-            let timeout = pacer.poll_timeout().0;
+            let timeout = pacer_timeout(pacer);
             if timeout.map(|t| t <= now).unwrap_or(false) {
                 // Refresh queue state
                 pacer.handle_timeout(now, queue.queue_state(now));
@@ -1086,11 +1103,10 @@ mod test {
                     continue;
                 }
 
-                pacer.poll_timeout()
+                pacer_timeout(&pacer)
             };
 
             let sleep_until_poll = timeout
-                .0
                 .map(|t| t.duration_since(base + elapsed))
                 .unwrap_or(Duration::ZERO);
 

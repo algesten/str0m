@@ -850,6 +850,19 @@ impl StreamTx {
         self.last_sender_report + rr_interval(kind.is_audio())
     }
 
+    pub(crate) fn poll_timeout(&self, s: &mut crate::scheduler::Scheduler) {
+        if self.kind.is_some() {
+            s.arm(
+                crate::Timer::SenderReport(self.ssrc),
+                self.sender_report_at(),
+            );
+        }
+
+        if self.need_timeout() {
+            s.arm(crate::Timer::SendStream(self.ssrc), already_happened());
+        }
+    }
+
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
         self.pending_request_keyframe.take()
     }

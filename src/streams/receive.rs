@@ -244,6 +244,25 @@ impl StreamRx {
         self.last_receiver_report + rr_interval(is_audio)
     }
 
+    pub(crate) fn poll_timeout(&self, s: &mut crate::scheduler::Scheduler) {
+        s.arm(
+            crate::Timer::ReceiverReport(self.ssrc),
+            self.receiver_report_at(),
+        );
+
+        if self.pending_request_keyframe.is_some() {
+            s.arm(crate::Timer::KeyframeRequest(self.ssrc), already_happened());
+        }
+
+        if self.pending_request_remb.is_some() {
+            s.arm(crate::Timer::RembRequest(self.ssrc), already_happened());
+        }
+
+        if let Some(at) = self.check_paused_at {
+            s.arm(crate::Timer::PauseCheck(self.ssrc), at);
+        }
+    }
+
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
         use RtcpFb::*;
         match fb {
@@ -312,10 +331,6 @@ impl StreamRx {
         let ntp_time = now.to_ntp_duration();
         let rtt = calculate_rtt(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
         self.stats.rtt = rtt;
-    }
-
-    pub(crate) fn paused_at(&self) -> Option<Instant> {
-        self.check_paused_at
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {

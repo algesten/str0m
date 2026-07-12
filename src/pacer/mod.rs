@@ -1,8 +1,8 @@
 use std::time::Instant;
 
-use crate::Reason;
 use crate::bwe_::ProbeClusterConfig;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
+use crate::scheduler::Scheduler;
 
 mod control;
 pub(crate) use control::PacerControl;
@@ -31,12 +31,12 @@ impl PacerImpl {
         PacerImpl::Null(NullPacer::default())
     }
 
-    pub fn start_probe(&mut self, config: ProbeClusterConfig) {
+    pub fn start_probe(&mut self, config: ProbeClusterConfig, now: Instant) {
         match self {
             PacerImpl::Null(_) => {
                 // NullPacer doesn't support probing
             }
-            PacerImpl::LeakyBucket(v) => v.start_probe(config),
+            PacerImpl::LeakyBucket(v) => v.start_probe(config, now),
         }
     }
 
@@ -63,10 +63,17 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn poll_timeout(&self) -> (Option<Instant>, Reason) {
+    fn poll_timeout(&self, s: &mut Scheduler) {
         match self {
-            PacerImpl::Null(v) => v.poll_timeout(),
-            PacerImpl::LeakyBucket(v) => v.poll_timeout(),
+            PacerImpl::Null(v) => v.poll_timeout(s),
+            PacerImpl::LeakyBucket(v) => v.poll_timeout(s),
+        }
+    }
+
+    fn next_timeout(&self) -> Option<Instant> {
+        match self {
+            PacerImpl::Null(v) => v.next_timeout(),
+            PacerImpl::LeakyBucket(v) => v.next_timeout(),
         }
     }
 
@@ -116,7 +123,10 @@ pub trait Pacer {
     fn set_padding_rate(&mut self, padding_bitrate: Bitrate);
 
     /// Poll for a timeout.
-    fn poll_timeout(&self) -> (Option<Instant>, Reason);
+    fn poll_timeout(&self, s: &mut Scheduler);
+
+    /// The current pacer deadline.
+    fn next_timeout(&self) -> Option<Instant>;
 
     /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
     fn handle_timeout(
@@ -139,7 +149,7 @@ pub trait Pacer {
     fn has_padding_queue(&self) -> bool;
 }
 
-/// The sub-reason for the [`Reason::Pacer`][crate::Reason::Pacer].
+/// The diagnostic reason for a pacer timeout.
 ///
 /// This enum is not considered stable API and may change in minor revisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
