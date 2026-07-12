@@ -1862,7 +1862,7 @@ impl Rtc {
             };
             assert!(
                 actual_at <= expected_at,
-                "timer {timer:?} is scheduled too late: actual={actual_at:?}, expected no later than {expected_at:?}"
+                "timer {timer:?} is too late: actual={actual_at:?}, expected={expected_at:?}"
             );
         }
     }
