@@ -9,7 +9,7 @@
 //! timeout handlers already tolerate being called when there is no work. This
 //! also makes removal safe without entity generations or tombstones.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::rtp_::{Mid, Ssrc};
@@ -87,6 +87,23 @@ pub enum Timer {
     RxLookupCleanup,
 }
 
+const SINGLETON_TIMERS: [Timer; 14] = [
+    Timer::DTLS,
+    Timer::Ice,
+    Timer::Sctp,
+    Timer::Channel,
+    Timer::ChannelCleanup,
+    Timer::Stats,
+    Timer::Feedback,
+    Timer::Nack,
+    Timer::Twcc,
+    Timer::Pacer,
+    Timer::BweDelayControl,
+    Timer::BweProbeControl,
+    Timer::BweProbeEstimator,
+    Timer::RxLookupCleanup,
+];
+
 impl Timer {
     /// A short static description suitable for diagnostics and logging.
     pub fn reason(self) -> &'static str {
@@ -138,6 +155,114 @@ impl Timer {
     }
 }
 
+/// Fixed storage for timers that have exactly one identity per [`Rtc`].
+#[derive(Debug, Default)]
+struct SingletonTimers {
+    dtls: Option<Instant>,
+    ice: Option<Instant>,
+    sctp: Option<Instant>,
+    channel: Option<Instant>,
+    channel_cleanup: Option<Instant>,
+    stats: Option<Instant>,
+    feedback: Option<Instant>,
+    nack: Option<Instant>,
+    twcc: Option<Instant>,
+    pacer: Option<Instant>,
+    bwe_delay_control: Option<Instant>,
+    bwe_probe_control: Option<Instant>,
+    bwe_probe_estimator: Option<Instant>,
+    rx_lookup_cleanup: Option<Instant>,
+}
+
+impl SingletonTimers {
+    fn slot(&self, timer: Timer) -> Option<&Option<Instant>> {
+        match timer {
+            Timer::DTLS => Some(&self.dtls),
+            Timer::Ice => Some(&self.ice),
+            Timer::Sctp => Some(&self.sctp),
+            Timer::Channel => Some(&self.channel),
+            Timer::ChannelCleanup => Some(&self.channel_cleanup),
+            Timer::Stats => Some(&self.stats),
+            Timer::Feedback => Some(&self.feedback),
+            Timer::Nack => Some(&self.nack),
+            Timer::Twcc => Some(&self.twcc),
+            Timer::Pacer => Some(&self.pacer),
+            Timer::BweDelayControl => Some(&self.bwe_delay_control),
+            Timer::BweProbeControl => Some(&self.bwe_probe_control),
+            Timer::BweProbeEstimator => Some(&self.bwe_probe_estimator),
+            Timer::RxLookupCleanup => Some(&self.rx_lookup_cleanup),
+            Timer::SenderReport(_)
+            | Timer::ReceiverReport(_)
+            | Timer::KeyframeRequest(_)
+            | Timer::RembRequest(_)
+            | Timer::PauseCheck(_)
+            | Timer::SendStream(_)
+            | Timer::Packetize(_) => None,
+        }
+    }
+
+    fn slot_mut(&mut self, timer: Timer) -> Option<&mut Option<Instant>> {
+        match timer {
+            Timer::DTLS => Some(&mut self.dtls),
+            Timer::Ice => Some(&mut self.ice),
+            Timer::Sctp => Some(&mut self.sctp),
+            Timer::Channel => Some(&mut self.channel),
+            Timer::ChannelCleanup => Some(&mut self.channel_cleanup),
+            Timer::Stats => Some(&mut self.stats),
+            Timer::Feedback => Some(&mut self.feedback),
+            Timer::Nack => Some(&mut self.nack),
+            Timer::Twcc => Some(&mut self.twcc),
+            Timer::Pacer => Some(&mut self.pacer),
+            Timer::BweDelayControl => Some(&mut self.bwe_delay_control),
+            Timer::BweProbeControl => Some(&mut self.bwe_probe_control),
+            Timer::BweProbeEstimator => Some(&mut self.bwe_probe_estimator),
+            Timer::RxLookupCleanup => Some(&mut self.rx_lookup_cleanup),
+            Timer::SenderReport(_)
+            | Timer::ReceiverReport(_)
+            | Timer::KeyframeRequest(_)
+            | Timer::RembRequest(_)
+            | Timer::PauseCheck(_)
+            | Timer::SendStream(_)
+            | Timer::Packetize(_) => None,
+        }
+    }
+
+    fn arm(&mut self, timer: Timer, at: Instant) -> bool {
+        let Some(slot) = self.slot_mut(timer) else {
+            return false;
+        };
+        *slot = Some(at);
+        true
+    }
+
+    fn next(&self) -> Option<(Instant, Timer)> {
+        SINGLETON_TIMERS
+            .iter()
+            .filter_map(|&timer| self.slot(timer).copied().flatten().map(|at| (at, timer)))
+            .min()
+    }
+
+    fn is_singleton(&self, timer: Timer) -> bool {
+        self.slot(timer).is_some()
+    }
+
+    fn take(&mut self, timer: Timer) -> Option<Instant> {
+        self.slot_mut(timer).and_then(Option::take)
+    }
+
+    #[cfg(feature = "_internal_test_exports")]
+    fn entries(&self) -> impl Iterator<Item = (Timer, Instant)> + '_ {
+        SINGLETON_TIMERS
+            .iter()
+            .filter_map(|&timer| self.slot(timer).copied().flatten().map(|at| (timer, at)))
+    }
+
+    #[cfg(feature = "_internal_test_exports")]
+    fn deadline(&self, timer: Timer) -> Option<Instant> {
+        self.slot(timer).copied().flatten()
+    }
+}
+
 /// A component whose timers must be recomputed before the next timeout is returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TimerScope {
@@ -159,8 +284,10 @@ pub(crate) enum TimerScope {
 
 #[derive(Debug)]
 pub(crate) struct Scheduler {
-    by_time: BTreeSet<(Instant, Timer)>,
-    by_timer: HashMap<Timer, Instant>,
+    // Payload-free timers overwrite a fixed slot when rearmed.
+    singletons: SingletonTimers,
+    // Timers identified by SSRC or MID are sorted by (deadline, identity).
+    queued: VecDeque<(Instant, Timer)>,
     last_timeout: Option<Timer>,
     // The run loop normally leaves one entry here: the one mutation performed
     // since the previous complete drain. A Vec and linear deduplication are
@@ -171,26 +298,40 @@ pub(crate) struct Scheduler {
 impl Scheduler {
     pub(crate) fn new() -> Self {
         Self {
-            by_time: BTreeSet::new(),
-            by_timer: HashMap::new(),
+            singletons: SingletonTimers::default(),
+            queued: VecDeque::new(),
             last_timeout: None,
             invalidated: vec![TimerScope::All],
         }
     }
 
     pub(crate) fn arm(&mut self, timer: Timer, at: Instant) {
-        if let Some(previous) = self.by_timer.insert(timer, at) {
-            if previous == at {
-                return;
-            }
-            self.by_time.remove(&(previous, timer));
+        if self.singletons.arm(timer, at) {
+            return;
         }
 
-        self.by_time.insert((at, timer));
+        if let Some(index) = self
+            .queued
+            .iter()
+            .position(|&(_, queued_timer)| queued_timer == timer)
+        {
+            if self.queued[index].0 == at {
+                return;
+            }
+            self.queued.remove(index);
+        }
+
+        let entry = (at, timer);
+        let index = self
+            .queued
+            .partition_point(|queued_entry| queued_entry < &entry);
+        self.queued.insert(index, entry);
     }
 
     pub(crate) fn next(&mut self) -> Option<(Instant, Timer)> {
-        let next = self.by_time.first().copied();
+        let queued = self.queued.front().copied();
+        let singleton = self.singletons.next();
+        let next = queued.into_iter().chain(singleton).min();
         self.last_timeout = next.map(|(_, timer)| timer);
         next
     }
@@ -212,8 +353,8 @@ impl Scheduler {
         (
             PollTimers {
                 now,
-                by_time: &mut self.by_time,
-                by_timer: &mut self.by_timer,
+                singletons: &mut self.singletons,
+                queued: &mut self.queued,
             },
             Invalidations {
                 invalidated: &mut self.invalidated,
@@ -405,12 +546,20 @@ impl Scheduler {
 
     #[cfg(feature = "_internal_test_exports")]
     pub(crate) fn entries(&self) -> impl Iterator<Item = (Timer, Instant)> + '_ {
-        self.by_timer.iter().map(|(timer, at)| (*timer, *at))
+        self.singletons
+            .entries()
+            .chain(self.queued.iter().map(|&(at, timer)| (timer, at)))
     }
 
     #[cfg(feature = "_internal_test_exports")]
     pub(crate) fn deadline(&self, timer: Timer) -> Option<Instant> {
-        self.by_timer.get(&timer).copied()
+        if self.singletons.is_singleton(timer) {
+            self.singletons.deadline(timer)
+        } else {
+            self.queued
+                .iter()
+                .find_map(|&(at, queued)| (queued == timer).then_some(at))
+        }
     }
 
     #[cfg(feature = "_internal_test_exports")]
@@ -421,21 +570,28 @@ impl Scheduler {
 
 pub(crate) struct PollTimers<'a> {
     now: Instant,
-    by_time: &'a mut BTreeSet<(Instant, Timer)>,
-    by_timer: &'a mut HashMap<Timer, Instant>,
+    singletons: &'a mut SingletonTimers,
+    queued: &'a mut VecDeque<(Instant, Timer)>,
 }
 
 impl Iterator for PollTimers<'_> {
     type Item = Timer;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (at, timer) = self.by_time.first().copied()?;
+        let queued = self.queued.front().copied();
+        let singleton = self.singletons.next();
+        let (at, timer) = queued.into_iter().chain(singleton).min()?;
         if at > self.now {
             return None;
         }
 
-        self.by_time.pop_first();
-        self.by_timer.remove(&timer);
+        if self.singletons.is_singleton(timer) {
+            let removed = self.singletons.take(timer);
+            debug_assert_eq!(removed, Some(at));
+        } else {
+            let removed = self.queued.pop_front();
+            debug_assert_eq!(removed, Some((at, timer)));
+        }
         Some(timer)
     }
 }
@@ -462,31 +618,60 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn arming_the_same_timer_moves_it() {
+    fn arming_the_same_singleton_timer_moves_it() {
         let now = Instant::now();
         let mut s = Scheduler::new();
 
         s.arm(Timer::Ice, now + Duration::from_secs(1));
         s.arm(Timer::Ice, now + Duration::from_secs(2));
 
-        assert_eq!(s.by_time.len(), 1);
-        assert_eq!(s.by_timer.len(), 1);
+        assert!(s.queued.is_empty());
+        assert_eq!(s.singletons.ice, Some(now + Duration::from_secs(2)));
         assert_eq!(s.next(), Some((now + Duration::from_secs(2), Timer::Ice)));
     }
 
     #[test]
-    fn polling_borrows_and_removes_only_due_timers() {
+    fn arming_the_same_queued_timer_moves_it() {
         let now = Instant::now();
+        let timer = Timer::SenderReport(1.into());
+        let mut s = Scheduler::new();
+
+        s.arm(timer, now + Duration::from_secs(1));
+        s.arm(timer, now + Duration::from_secs(2));
+
+        assert_eq!(s.queued.len(), 1);
+        assert_eq!(
+            s.queued.front(),
+            Some(&(now + Duration::from_secs(2), timer))
+        );
+        assert_eq!(s.next(), Some((now + Duration::from_secs(2), timer)));
+    }
+
+    #[test]
+    fn polling_merges_and_removes_only_due_timers() {
+        let now = Instant::now();
+        let sender_report = Timer::SenderReport(1.into());
         let mut s = Scheduler::new();
         s.arm(Timer::Ice, now);
+        s.arm(sender_report, now);
         s.arm(Timer::DTLS, now + Duration::from_secs(1));
 
         let (mut timers, _) = s.poll_with_invalidations(now);
         assert_eq!(timers.next(), Some(Timer::Ice));
+        assert_eq!(timers.next(), Some(sender_report));
         assert_eq!(timers.next(), None);
         drop(timers);
 
+        assert!(s.queued.is_empty());
         assert_eq!(s.next(), Some((now + Duration::from_secs(1), Timer::DTLS)));
+    }
+
+    #[test]
+    fn every_singleton_timer_has_a_slot() {
+        let singletons = SingletonTimers::default();
+        for timer in SINGLETON_TIMERS {
+            assert!(singletons.is_singleton(timer));
+        }
     }
 
     #[test]
