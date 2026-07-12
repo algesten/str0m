@@ -13,6 +13,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
 use crate::rtp_::{Mid, Ssrc};
+use crate::stats::{CandidatePairStats, CandidateStats, StatsSnapshot};
+use crate::util::already_happened;
+use crate::{Rtc, RtcError};
 
 /// A precisely identified timer within an [`Rtc`][crate::Rtc].
 ///
@@ -158,6 +161,7 @@ pub(crate) enum TimerScope {
 pub(crate) struct Scheduler {
     by_time: BTreeSet<(Instant, Timer)>,
     by_timer: HashMap<Timer, Instant>,
+    last_timeout: Option<Timer>,
     // The run loop normally leaves one entry here: the one mutation performed
     // since the previous complete drain. A Vec and linear deduplication are
     // cheaper for that small common case than hashing every invalidation.
@@ -169,6 +173,7 @@ impl Scheduler {
         Self {
             by_time: BTreeSet::new(),
             by_timer: HashMap::new(),
+            last_timeout: None,
             invalidated: vec![TimerScope::All],
         }
     }
@@ -184,8 +189,18 @@ impl Scheduler {
         self.by_time.insert((at, timer));
     }
 
-    pub(crate) fn next(&self) -> Option<(Instant, Timer)> {
-        self.by_time.first().copied()
+    pub(crate) fn next(&mut self) -> Option<(Instant, Timer)> {
+        let next = self.by_time.first().copied();
+        self.last_timeout = next.map(|(_, timer)| timer);
+        next
+    }
+
+    pub(crate) fn clear_last_timeout(&mut self) {
+        self.last_timeout = None;
+    }
+
+    pub(crate) fn last_timeout(&self) -> Option<Timer> {
+        self.last_timeout
     }
 
     pub(crate) fn poll_with_invalidations(
@@ -212,6 +227,180 @@ impl Scheduler {
 
     pub(crate) fn pop_invalidated(&mut self) -> Option<TimerScope> {
         self.invalidated.pop()
+    }
+
+    pub(crate) fn poll_timeout(rtc: &mut Rtc) {
+        while let Some(scope) = rtc.scheduler.pop_invalidated() {
+            match scope {
+                TimerScope::All => {
+                    if let Some(at) = rtc.next_dtls_timeout {
+                        rtc.scheduler.arm(Timer::DTLS, at);
+                    }
+                    rtc.scheduler.arm(
+                        Timer::Ice,
+                        rtc.ice.poll_timeout().unwrap_or_else(already_happened),
+                    );
+                    rtc.sctp.poll_timeout(&mut rtc.scheduler);
+                    rtc.chan.poll_timeout(&rtc.sctp, &mut rtc.scheduler);
+                    if let Some(stats) = &rtc.stats {
+                        stats.poll_timeout(&mut rtc.scheduler);
+                    }
+                    rtc.session.poll_timeout_all(&mut rtc.scheduler);
+                }
+                TimerScope::Dtls => {
+                    if let Some(at) = rtc.next_dtls_timeout {
+                        rtc.scheduler.arm(Timer::DTLS, at);
+                    }
+                }
+                TimerScope::Ice => {
+                    if let Some(at) = rtc.ice.poll_timeout() {
+                        rtc.scheduler.arm(Timer::Ice, at);
+                    }
+                }
+                TimerScope::IceNow => {
+                    rtc.scheduler.arm(Timer::Ice, already_happened());
+                }
+                TimerScope::Sctp => rtc.sctp.poll_timeout(&mut rtc.scheduler),
+                TimerScope::Channel => rtc.chan.poll_timeout(&rtc.sctp, &mut rtc.scheduler),
+                TimerScope::Stats => {
+                    if let Some(stats) = &rtc.stats {
+                        stats.poll_timeout(&mut rtc.scheduler);
+                    }
+                }
+                TimerScope::Session => rtc.session.poll_timeout(&mut rtc.scheduler),
+                TimerScope::Pacer => rtc.session.poll_pacer_timeout(&mut rtc.scheduler),
+                TimerScope::Bwe => rtc.session.poll_bwe_timeout(&mut rtc.scheduler),
+                TimerScope::Streams => rtc.session.poll_streams_timeout(&mut rtc.scheduler),
+                TimerScope::StreamTx(ssrc) => {
+                    rtc.session.poll_stream_tx_timeout(ssrc, &mut rtc.scheduler)
+                }
+                TimerScope::StreamRx(ssrc) => {
+                    rtc.session.poll_stream_rx_timeout(ssrc, &mut rtc.scheduler)
+                }
+                TimerScope::Media(mid) => rtc.session.poll_media_timeout(mid, &mut rtc.scheduler),
+            }
+        }
+
+        #[cfg(feature = "_internal_test_exports")]
+        Self::assert_complete(rtc);
+    }
+
+    pub(crate) fn handle_timeout(rtc: &mut Rtc) -> Result<(), RtcError> {
+        Self::poll_timeout(rtc);
+
+        let now = rtc.last_now;
+        let mut stats_due = false;
+        let (timers, mut invalidations) = rtc.scheduler.poll_with_invalidations(now);
+        for timer in timers {
+            invalidations.invalidate(timer.scope());
+            trace!(?timer, ?now, "Handle timer");
+            match timer {
+                Timer::DTLS => {
+                    if rtc.next_dtls_timeout.is_some_and(|at| now >= at) {
+                        let _ = rtc.dtls.handle_timeout(now);
+                        rtc.next_dtls_timeout = None;
+                    }
+                }
+                Timer::Ice => rtc.ice.handle_timeout(now),
+                Timer::Sctp => rtc.sctp.handle_timeout(now),
+                Timer::Channel => {
+                    rtc.chan.handle_timeout(now, &mut rtc.sctp);
+                    invalidations.invalidate(TimerScope::Sctp);
+                }
+                Timer::ChannelCleanup => rtc.chan.expire_closed_stream_ids(now),
+                Timer::Stats => stats_due = true,
+                Timer::Pacer
+                | Timer::BweDelayControl
+                | Timer::BweProbeControl
+                | Timer::BweProbeEstimator => {
+                    // Process these once below, after all exact stream timers.
+                }
+                Timer::Feedback
+                | Timer::SenderReport(_)
+                | Timer::ReceiverReport(_)
+                | Timer::KeyframeRequest(_)
+                | Timer::RembRequest(_)
+                | Timer::Nack
+                | Timer::Twcc
+                | Timer::PauseCheck(_)
+                | Timer::SendStream(_)
+                | Timer::Packetize(_)
+                | Timer::RxLookupCleanup => {
+                    rtc.session.handle_timer(now, timer, &mut invalidations)?
+                }
+            }
+        }
+
+        // The pacer and BWE historically run whenever time moves forward.
+        // Their timers ensure the run loop wakes when no other work does.
+        rtc.session.handle_pacer_timeout(now, &mut invalidations);
+        rtc.session.handle_timeout_bwe(now);
+        invalidations.invalidate(TimerScope::Bwe);
+        invalidations.invalidate(TimerScope::Pacer);
+
+        if stats_due {
+            if let Some(stats) = &mut rtc.stats {
+                if !stats.wants_timeout(now) {
+                    return Ok(());
+                }
+                let mut snapshot = StatsSnapshot::new(now);
+                snapshot.peer_rx = rtc.peer_bytes_rx;
+                snapshot.peer_tx = rtc.peer_bytes_tx;
+                let current_round_trip_time = rtc.ice.nominated_pair_rtt();
+                let total_round_trip_time = rtc.ice.nominated_pair_total_rtt().unwrap_or_default();
+                let responses_received = rtc.ice.nominated_pair_responses_received().unwrap_or(0);
+                snapshot.selected_candidate_pair =
+                    rtc.send_addr.as_ref().map(|s| CandidatePairStats {
+                        protocol: s.proto,
+                        local: CandidateStats { addr: s.source },
+                        remote: CandidateStats {
+                            addr: s.destination,
+                        },
+                        current_round_trip_time,
+                        total_round_trip_time,
+                        responses_received,
+                    });
+                rtc.session.visit_stats(now, &mut snapshot);
+                stats.do_handle_timeout(&mut snapshot);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "_internal_test_exports")]
+    fn assert_complete(rtc: &mut Rtc) {
+        assert!(
+            rtc.scheduler.invalidated_is_empty(),
+            "timeout recomputation must be drained before Output::Timeout"
+        );
+
+        // Tests retain the old exhaustive O(N) calculation as an oracle. Extra
+        // (stale) production timers are valid, but every live timer must be
+        // present and scheduled no later than the exhaustive result.
+        let mut expected = Scheduler::new();
+        if let Some(at) = rtc.next_dtls_timeout {
+            expected.arm(Timer::DTLS, at);
+        }
+        if let Some(at) = rtc.ice.poll_timeout() {
+            expected.arm(Timer::Ice, at);
+        }
+        rtc.sctp.poll_timeout(&mut expected);
+        rtc.chan.poll_timeout(&rtc.sctp, &mut expected);
+        if let Some(stats) = &rtc.stats {
+            stats.poll_timeout(&mut expected);
+        }
+        rtc.session.poll_timeout_all(&mut expected);
+
+        for (timer, expected_at) in expected.entries() {
+            let Some(actual_at) = rtc.scheduler.deadline(timer) else {
+                panic!("missing timer: {timer:?} at {expected_at:?}");
+            };
+            assert!(
+                actual_at <= expected_at,
+                "timer {timer:?} is too late: actual={actual_at:?}, expected={expected_at:?}"
+            );
+        }
     }
 
     #[cfg(feature = "_internal_test_exports")]

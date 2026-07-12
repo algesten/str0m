@@ -841,15 +841,15 @@ use media::{MediaAdded, MediaChanged, MediaData};
 pub mod change;
 
 mod util;
-use util::{already_happened, not_happening};
+use util::not_happening;
 
 mod session;
 use session::Session;
 
 pub mod stats;
 
-use stats::{CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats};
-use stats::{PeerStats, Stats, StatsEvent, StatsSnapshot};
+use stats::{MediaEgressStats, MediaIngressStats};
+use stats::{PeerStats, Stats, StatsEvent};
 
 mod streams;
 
@@ -922,7 +922,6 @@ pub struct Rtc {
     peer_bytes_tx: u64,
     change_counter: usize,
     scheduler: Scheduler,
-    last_timeout: Option<Timer>,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
     close_dtls_started: bool,
@@ -1207,7 +1206,6 @@ impl Rtc {
             peer_bytes_tx: 0,
             change_counter: 0,
             scheduler: Scheduler::new(),
-            last_timeout: None,
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
             close_dtls_started: false,
@@ -1509,7 +1507,7 @@ impl Rtc {
 
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if self.state == RtcState::Closed {
-            self.last_timeout = None;
+            self.scheduler.clear_last_timeout();
             return Ok(Output::Timeout(not_happening()));
         }
 
@@ -1748,7 +1746,7 @@ impl Rtc {
             self.session.clear_feedback();
         }
 
-        self.poll_timeouts();
+        Scheduler::poll_timeout(self);
 
         let (time, timer) = self
             .scheduler
@@ -1765,104 +1763,12 @@ impl Rtc {
 
         if self.state == RtcState::Closing && self.close_drain_complete() {
             self.state = RtcState::Closed;
-            self.last_timeout = None;
+            self.scheduler.clear_last_timeout();
             return Ok(Output::Timeout(not_happening()));
         }
 
-        self.last_timeout = timer;
         trace!(?timer, at = ?next, "Next timer");
         Ok(Output::Timeout(next))
-    }
-
-    fn poll_timeouts(&mut self) {
-        while let Some(scope) = self.scheduler.pop_invalidated() {
-            match scope {
-                TimerScope::All => {
-                    if let Some(at) = self.next_dtls_timeout {
-                        self.scheduler.arm(Timer::DTLS, at);
-                    }
-                    self.scheduler.arm(
-                        Timer::Ice,
-                        self.ice.poll_timeout().unwrap_or_else(already_happened),
-                    );
-                    self.sctp.poll_timeout(&mut self.scheduler);
-                    self.chan.poll_timeout(&self.sctp, &mut self.scheduler);
-                    if let Some(stats) = &self.stats {
-                        stats.poll_timeout(&mut self.scheduler);
-                    }
-                    self.session.poll_timeout_all(&mut self.scheduler);
-                }
-                TimerScope::Dtls => {
-                    if let Some(at) = self.next_dtls_timeout {
-                        self.scheduler.arm(Timer::DTLS, at);
-                    }
-                }
-                TimerScope::Ice => {
-                    if let Some(at) = self.ice.poll_timeout() {
-                        self.scheduler.arm(Timer::Ice, at);
-                    }
-                }
-                TimerScope::IceNow => {
-                    self.scheduler.arm(Timer::Ice, already_happened());
-                }
-                TimerScope::Sctp => self.sctp.poll_timeout(&mut self.scheduler),
-                TimerScope::Channel => self.chan.poll_timeout(&self.sctp, &mut self.scheduler),
-                TimerScope::Stats => {
-                    if let Some(stats) = &self.stats {
-                        stats.poll_timeout(&mut self.scheduler);
-                    }
-                }
-                TimerScope::Session => self.session.poll_timeout(&mut self.scheduler),
-                TimerScope::Pacer => self.session.poll_pacer_timeout(&mut self.scheduler),
-                TimerScope::Bwe => self.session.poll_bwe_timeout(&mut self.scheduler),
-                TimerScope::Streams => self.session.poll_streams_timeout(&mut self.scheduler),
-                TimerScope::StreamTx(ssrc) => self
-                    .session
-                    .poll_stream_tx_timeout(ssrc, &mut self.scheduler),
-                TimerScope::StreamRx(ssrc) => self
-                    .session
-                    .poll_stream_rx_timeout(ssrc, &mut self.scheduler),
-                TimerScope::Media(mid) => self.session.poll_media_timeout(mid, &mut self.scheduler),
-            }
-        }
-
-        #[cfg(feature = "_internal_test_exports")]
-        self.assert_scheduler_complete();
-    }
-
-    #[cfg(feature = "_internal_test_exports")]
-    fn assert_scheduler_complete(&mut self) {
-        assert!(
-            self.scheduler.invalidated_is_empty(),
-            "timeout recomputation must be drained before Output::Timeout"
-        );
-
-        // Tests retain the old exhaustive O(N) calculation as an oracle. Extra
-        // (stale) production timers are valid, but every live timer must be
-        // present and scheduled no later than the exhaustive result.
-        let mut expected = Scheduler::new();
-        if let Some(at) = self.next_dtls_timeout {
-            expected.arm(Timer::DTLS, at);
-        }
-        if let Some(at) = self.ice.poll_timeout() {
-            expected.arm(Timer::Ice, at);
-        }
-        self.sctp.poll_timeout(&mut expected);
-        self.chan.poll_timeout(&self.sctp, &mut expected);
-        if let Some(stats) = &self.stats {
-            stats.poll_timeout(&mut expected);
-        }
-        self.session.poll_timeout_all(&mut expected);
-
-        for (timer, expected_at) in expected.entries() {
-            let Some(actual_at) = self.scheduler.deadline(timer) else {
-                panic!("missing timer: {timer:?} at {expected_at:?}");
-            };
-            assert!(
-                actual_at <= expected_at,
-                "timer {timer:?} is too late: actual={actual_at:?}, expected={expected_at:?}"
-            );
-        }
     }
 
     /// The precise timer responsible for the last [`Output::Timeout`].
@@ -1879,7 +1785,7 @@ impl Rtc {
     /// assert_eq!(rtc.last_timeout(), None);
     /// ```
     pub fn last_timeout(&self) -> Option<Timer> {
-        self.last_timeout
+        self.scheduler.last_timeout()
     }
 
     /// Check if this `Rtc` instance accepts the given input. This is used for demultiplexing
@@ -2046,85 +1952,7 @@ impl Rtc {
         }
 
         self.last_now = now;
-        self.poll_timeouts();
-
-        let mut stats_due = false;
-        let (timers, mut invalidations) = self.scheduler.poll_with_invalidations(now);
-        for timer in timers {
-            invalidations.invalidate(timer.scope());
-            trace!(?timer, ?now, "Handle timer");
-            match timer {
-                Timer::DTLS => {
-                    if self.next_dtls_timeout.is_some_and(|at| now >= at) {
-                        let _ = self.dtls.handle_timeout(now);
-                        self.next_dtls_timeout = None;
-                    }
-                }
-                Timer::Ice => self.ice.handle_timeout(now),
-                Timer::Sctp => self.sctp.handle_timeout(now),
-                Timer::Channel => {
-                    self.chan.handle_timeout(now, &mut self.sctp);
-                    invalidations.invalidate(TimerScope::Sctp);
-                }
-                Timer::ChannelCleanup => self.chan.expire_closed_stream_ids(now),
-                Timer::Stats => stats_due = true,
-                Timer::Pacer
-                | Timer::BweDelayControl
-                | Timer::BweProbeControl
-                | Timer::BweProbeEstimator => {
-                    // Process these once below, after all exact stream timers.
-                }
-                Timer::Feedback
-                | Timer::SenderReport(_)
-                | Timer::ReceiverReport(_)
-                | Timer::KeyframeRequest(_)
-                | Timer::RembRequest(_)
-                | Timer::Nack
-                | Timer::Twcc
-                | Timer::PauseCheck(_)
-                | Timer::SendStream(_)
-                | Timer::Packetize(_)
-                | Timer::RxLookupCleanup => {
-                    self.session.handle_timer(now, timer, &mut invalidations)?
-                }
-            }
-        }
-
-        // The pacer and BWE historically run whenever time moves forward.
-        // Their timers ensure the run loop wakes when no other work does.
-        self.session.handle_pacer_timeout(now, &mut invalidations);
-        self.session.handle_timeout_bwe(now);
-        invalidations.invalidate(TimerScope::Bwe);
-        invalidations.invalidate(TimerScope::Pacer);
-
-        if stats_due {
-            if let Some(stats) = &mut self.stats {
-                if !stats.wants_timeout(now) {
-                    return Ok(());
-                }
-                let mut snapshot = StatsSnapshot::new(now);
-                snapshot.peer_rx = self.peer_bytes_rx;
-                snapshot.peer_tx = self.peer_bytes_tx;
-                let current_round_trip_time = self.ice.nominated_pair_rtt();
-                let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
-                let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
-                snapshot.selected_candidate_pair =
-                    self.send_addr.as_ref().map(|s| CandidatePairStats {
-                        protocol: s.proto,
-                        local: CandidateStats { addr: s.source },
-                        remote: CandidateStats {
-                            addr: s.destination,
-                        },
-                        current_round_trip_time,
-                        total_round_trip_time,
-                        responses_received,
-                    });
-                self.session.visit_stats(now, &mut snapshot);
-                stats.do_handle_timeout(&mut snapshot);
-            }
-        }
-
-        Ok(())
+        Scheduler::handle_timeout(self)
     }
 
     fn do_handle_receive(&mut self, recv_time: Instant, r: net::Receive) -> Result<(), RtcError> {
