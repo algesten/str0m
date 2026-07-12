@@ -3,8 +3,8 @@
 use std::time::Duration;
 use std::{fmt, str, time::Instant};
 
+use crate::scheduler::Recompute;
 use crate::scheduler::Scheduler;
-use crate::scheduler::TimeoutOwner;
 use crate::sctp::RtcSctp;
 use crate::util::already_happened;
 use crate::{Rtc, RtcError, Timer};
@@ -67,7 +67,7 @@ impl<'a> Channel<'a> {
 
         // Try write.
         let written = self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?;
-        self.rtc.scheduler.invalidate(TimeoutOwner::Sctp);
+        self.rtc.scheduler.invalidate(Recompute::Sctp);
 
         // Invariant: if available calculation is correct, we should have accepted.
         assert_eq!(

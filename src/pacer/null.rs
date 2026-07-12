@@ -35,16 +35,14 @@ impl Pacer for NullPacer {
         // We don't care
     }
     fn poll_timeout(&self, s: &mut Scheduler) {
-        if let Some(at) = self.next_timeout() {
-            s.arm(Timer::Pacer, at);
-        }
-    }
-
-    fn next_timeout(&self) -> Option<Instant> {
-        if self.needs_timeout_before_next_poll {
+        let at = if self.needs_timeout_before_next_poll {
             self.last_sends.values().min().copied()
         } else {
             None
+        };
+
+        if let Some(at) = at {
+            s.arm(Timer::Pacer, at);
         }
     }
 

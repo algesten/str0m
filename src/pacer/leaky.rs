@@ -11,6 +11,7 @@ use crate::bwe_::{log_pacer_media_debt, log_pacer_padding_debt};
 use crate::pacer::PacerReason;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
 use crate::scheduler::Scheduler;
+use crate::util::Soonest;
 
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
@@ -65,20 +66,12 @@ impl Pacer for LeakyBucketPacer {
     }
 
     fn poll_timeout(&self, s: &mut Scheduler) {
-        if let Some(at) = self.next_timeout() {
-            // The pacer has one current deadline. PacerReason remains useful
-            // diagnostics, but is not a stable timer identity.
-            s.arm(Timer::Pacer, at);
-        }
-    }
-
-    fn next_timeout(&self) -> Option<Instant> {
         let handle_at = self.last_handle_time.map(|at| at + PACING);
         let poll_at = self.next_poll_time.map(|(at, _)| at);
-        match (handle_at, poll_at) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(at), None) | (None, Some(at)) => Some(at),
-            (None, None) => None,
+        let (at, ()) = (handle_at, ()).soonest((poll_at, ()));
+
+        if let Some(at) = at {
+            s.arm(Timer::Pacer, at);
         }
     }
 
@@ -200,10 +193,10 @@ impl LeakyBucketPacer {
     ///
     /// The pacer will pace at the probe's target bitrate and track packets sent.
     /// Probes are queued and executed sequentially.
-    pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig, now: Instant) {
+    pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig) {
         trace!(?config, "Probe start");
         self.probe_queue.push_back(ProbeClusterState::new(config));
-        self.next_poll_time = Some((now, PacerReason::Immediate));
+        self.request_immediate_timeout();
     }
 
     /// Get the cluster ID of the active probe, if any.
@@ -326,9 +319,8 @@ impl LeakyBucketPacer {
 
         let any_queue_for_padding = self.queue_states.iter().any(|q| q.use_for_padding);
 
-        // Probe padding bypasses the regular padding bitrate, just like
-        // maybe_create_padding_request(). It therefore needs its own timeout
-        // whenever there is a queue capable of carrying padding.
+        // Probe padding bypasses the regular padding bitrate in
+        // maybe_create_padding_request(), so it needs its own timeout too.
         if let Some(probe) = self.probe_queue.front().filter(|_| any_queue_for_padding) {
             let next_probe_time = probe.next_probe_time();
             // We explicitly don't return a queue to poll here. We need another call to

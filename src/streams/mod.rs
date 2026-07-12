@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::Timer;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media, SenderFeedback};
@@ -14,6 +15,7 @@ use crate::rtp_::{Bitrate, Pt};
 use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
+use crate::scheduler::Scheduler;
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
@@ -352,6 +354,7 @@ impl Streams {
         new_ssrc: Ssrc,
         new_rtx: Option<Ssrc>,
     ) -> Option<(Ssrc, &mut StreamTx)> {
+        // Find the stream by mid/rid
         let old_ssrc = self
             .streams_tx
             .iter()
@@ -359,7 +362,15 @@ impl Streams {
             .map(|(ssrc, _)| *ssrc)?;
 
         let stream = self.streams_tx.get(&old_ssrc)?;
-        if old_ssrc == new_ssrc || (stream.rtx().is_some() && stream.rtx() == new_rtx) {
+
+        // Don't change to the same SSRC
+        if old_ssrc == new_ssrc {
+            return None;
+        }
+
+        // If the stream has an RTX SSRC, New RTX must be provided and differ.
+        // But it is allowed to start or turn off RTX.
+        if stream.rtx().is_some() && stream.rtx() == new_rtx {
             return None;
         }
 
@@ -370,6 +381,8 @@ impl Streams {
         }
 
         let mut stream = self.streams_tx.remove(&old_ssrc)?;
+
+        // Reset the stream with the new SSRC and RTX
         stream.reset_ssrc(new_ssrc, new_rtx);
         self.streams_tx.insert(new_ssrc, stream);
 
@@ -390,13 +403,6 @@ impl Streams {
     }
 
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
-        self.streams_rx.get_mut(ssrc)
-    }
-
-    pub(crate) fn stream_rx_for_change(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
-        // DirectApi exposes every StreamRx setting, including suppress_nack.
-        // Recompute the aggregate cache after the caller's mutation.
-        self.any_nack_active = None;
         self.streams_rx.get_mut(ssrc)
     }
 
@@ -437,25 +443,25 @@ impl Streams {
         None
     }
 
-    pub(crate) fn poll_timeout(&self, s: &mut crate::scheduler::Scheduler) {
+    pub(crate) fn poll_timeout(&self, s: &mut Scheduler) {
         if !self.rx_lookup.is_empty() {
-            s.arm(crate::Timer::RxLookupCleanup, self.rx_lookup_at());
+            s.arm(Timer::RxLookupCleanup, self.rx_lookup_at());
         }
     }
 
-    pub(crate) fn poll_stream_tx_timeout(&self, ssrc: Ssrc, s: &mut crate::scheduler::Scheduler) {
+    pub(crate) fn poll_stream_tx_timeout(&self, ssrc: Ssrc, s: &mut Scheduler) {
         if let Some(stream) = self.streams_tx.get(&ssrc) {
             stream.poll_timeout(s);
         }
     }
 
-    pub(crate) fn poll_stream_rx_timeout(&self, ssrc: Ssrc, s: &mut crate::scheduler::Scheduler) {
+    pub(crate) fn poll_stream_rx_timeout(&self, ssrc: Ssrc, s: &mut Scheduler) {
         if let Some(stream) = self.streams_rx.get(&ssrc) {
             stream.poll_timeout(s);
         }
     }
 
-    pub(crate) fn poll_timeout_all(&self, s: &mut crate::scheduler::Scheduler) {
+    pub(crate) fn poll_timeout_all(&self, s: &mut Scheduler) {
         self.poll_timeout(s);
         for stream in self.streams_tx.values() {
             stream.poll_timeout(s);
@@ -560,19 +566,21 @@ impl Streams {
         ssrc: Ssrc,
         medias: &[Media],
         config: &CodecConfig,
-    ) -> bool {
+    ) {
         let Some(stream) = self.streams_tx.get_mut(&ssrc) else {
-            return false;
+            return;
         };
         if !stream.need_timeout() {
-            return false;
+            return;
         }
 
         let mid = stream.mid();
-        // The unwrap is okay because a StreamTx cannot exist without its corresponding Media.
+
+        // Finding the first (main) PT that also has RTX for the Media is expensive,
+        // this closure is run only when needed.
+        // The unwrap is okay because we cannot have StreamTx with a Mid without the corresponding Media.
         let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
         stream.handle_timeout(now, get_media);
-        true
     }
 
     pub(crate) fn handle_rx_lookup_cleanup(&mut self, now: Instant) {

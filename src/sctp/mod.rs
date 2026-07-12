@@ -13,6 +13,9 @@ use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig, Transp
 
 use snap::{b64_encode, webrtc_transport_config};
 
+use crate::Timer;
+use crate::scheduler::Scheduler;
+
 pub use sctp_proto::Error as ProtoError;
 use sctp_proto::ReliabilityType;
 
@@ -986,9 +989,9 @@ impl RtcSctp {
         None
     }
 
-    pub fn poll_timeout(&mut self, s: &mut crate::scheduler::Scheduler) {
+    pub fn poll_timeout(&mut self, s: &mut Scheduler) {
         if let Some(at) = self.assoc.as_mut().and_then(|a| a.poll_timeout()) {
-            s.arm(crate::Timer::Sctp, at);
+            s.arm(Timer::Sctp, at);
         }
     }
 

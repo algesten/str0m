@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::Timer;
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
@@ -10,6 +11,7 @@ use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
 use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp};
 use crate::rtp_::{RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
+use crate::scheduler::Scheduler;
 use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
 use crate::util::{InstantExt, SystemTimeExt};
 use crate::util::{already_happened, calculate_rtt};
@@ -244,22 +246,19 @@ impl StreamRx {
         self.last_receiver_report + rr_interval(is_audio)
     }
 
-    pub(crate) fn poll_timeout(&self, s: &mut crate::scheduler::Scheduler) {
-        s.arm(
-            crate::Timer::ReceiverReport(self.ssrc),
-            self.receiver_report_at(),
-        );
+    pub(crate) fn poll_timeout(&self, s: &mut Scheduler) {
+        s.arm(Timer::ReceiverReport(self.ssrc), self.receiver_report_at());
 
         if self.pending_request_keyframe.is_some() {
-            s.arm(crate::Timer::KeyframeRequest(self.ssrc), already_happened());
+            s.arm(Timer::KeyframeRequest(self.ssrc), already_happened());
         }
 
         if self.pending_request_remb.is_some() {
-            s.arm(crate::Timer::RembRequest(self.ssrc), already_happened());
+            s.arm(Timer::RembRequest(self.ssrc), already_happened());
         }
 
         if let Some(at) = self.check_paused_at {
-            s.arm(crate::Timer::PauseCheck(self.ssrc), at);
+            s.arm(Timer::PauseCheck(self.ssrc), at);
         }
     }
 

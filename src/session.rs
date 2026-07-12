@@ -29,7 +29,7 @@ use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb}
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
-use crate::scheduler::{Invalidations, Scheduler, TimeoutOwner};
+use crate::scheduler::{Invalidations, Recompute, Scheduler};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening};
@@ -245,7 +245,7 @@ impl Session {
         self.srtp_tx = Some(SrtpContext::new(crypto, srtp_profile, &mat, left));
     }
 
-    pub fn handle_timeout(
+    pub fn handle_timer(
         &mut self,
         now: Instant,
         timer: Timer,
@@ -258,7 +258,20 @@ impl Session {
         match timer {
             Timer::Feedback => {}
             Timer::Packetize(mid) => {
-                if let Some(ssrc) = self.do_payload(mid)? {
+                // Payload the next waiting frame for this Media.
+                let midrid = self
+                    .medias
+                    .iter()
+                    .find(|media| media.mid() == mid)
+                    .and_then(Media::next_payload_midrid);
+                let ssrc = midrid.and_then(|midrid| {
+                    self.streams
+                        .stream_tx_by_midrid(midrid)
+                        .map(|stream| stream.ssrc())
+                });
+
+                self.do_payload(mid)?;
+                if let Some(ssrc) = ssrc {
                     invalidations.invalidate_stream_tx(ssrc);
                 }
             }
@@ -296,27 +309,8 @@ impl Session {
             }
             Timer::PauseCheck(ssrc) => self.streams.handle_pause(now, ssrc),
             Timer::SendStream(ssrc) => {
-                if self
-                    .streams
-                    .handle_send_stream(now, ssrc, &self.medias, &self.codec_config)
-                {
-                    if let Some(ssrc) = self.update_queue_state(now) {
-                        invalidations.invalidate_stream_tx(ssrc);
-                    }
-                    invalidations.invalidate(TimeoutOwner::Pacer);
-                }
-            }
-            Timer::Pacer => {
-                if let Some(ssrc) = self.update_queue_state(now) {
-                    invalidations.invalidate_stream_tx(ssrc);
-                }
-                self.finish_probe(now);
-                invalidations.invalidate(TimeoutOwner::Bwe);
-            }
-            timer
-            @ (Timer::BweDelayControl | Timer::BweProbeControl | Timer::BweProbeEstimator) => {
-                self.handle_timeout_bwe(now, timer);
-                invalidations.invalidate(TimeoutOwner::Pacer);
+                self.streams
+                    .handle_send_stream(now, ssrc, &self.medias, &self.codec_config);
             }
             Timer::RxLookupCleanup => self.streams.handle_rx_lookup_cleanup(now),
             _ => unreachable!("non-session timer: {timer:?}"),
@@ -325,7 +319,11 @@ impl Session {
         Ok(())
     }
 
-    fn handle_timeout_bwe(&mut self, now: Instant, timer: Timer) {
+    pub(crate) fn handle_timeout_bwe(&mut self, now: Instant) {
+        if self.rtp_closing {
+            return;
+        }
+
         let Some(bwe) = self.bwe.as_mut() else {
             return;
         };
@@ -334,27 +332,21 @@ impl Session {
         // are any queues that can handle padding requests.
         let do_probe = self.packet_first_sent && self.pacer.has_padding_queue();
 
-        if let Some(probe_config) = bwe.handle_timeout(timer, now, do_probe) {
+        if let Some(probe_config) = bwe.handle_timeout(now, do_probe) {
             // Only start the probe in the pacer if the estimator accepted it.
             if bwe.start_probe(probe_config, now) {
                 #[cfg(feature = "_internal_test_exports")]
                 {
                     self.pending_probe = Some(probe_config);
                 }
-                self.pacer.start_probe(probe_config, now);
+                self.pacer.start_probe(probe_config);
             }
         }
-    }
 
-    fn finish_probe(&mut self, now: Instant) -> bool {
-        let Some(cluster_id) = self.pacer.check_probe_complete(now) else {
-            return false;
-        };
-        let Some(bwe) = self.bwe.as_mut() else {
-            return false;
-        };
-        bwe.end_probe(now, cluster_id);
-        true
+        // Check if active probe just completed
+        if let Some(cluster_id) = self.pacer.check_probe_complete(now) {
+            bwe.end_probe(now, cluster_id);
+        }
     }
 
     fn update_queue_state(&mut self, now: Instant) -> Option<Ssrc> {
@@ -369,6 +361,20 @@ impl Session {
 
         stream.generate_padding(padding_request.padding);
         Some(stream.ssrc())
+    }
+
+    pub(crate) fn handle_pacer_timeout(
+        &mut self,
+        now: Instant,
+        invalidations: &mut Invalidations<'_>,
+    ) {
+        if self.rtp_closing {
+            return;
+        }
+
+        if let Some(ssrc) = self.update_queue_state(now) {
+            invalidations.invalidate_stream_tx(ssrc);
+        }
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
@@ -529,7 +535,7 @@ impl Session {
             return;
         };
         s.invalidate_stream_rx(ssrc);
-        s.invalidate(TimeoutOwner::Session);
+        s.invalidate(Recompute::Session);
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -727,8 +733,8 @@ impl Session {
                     bwe.update(maybe_records, now);
                 }
                 need_configure_pacer = true;
-                s.invalidate(TimeoutOwner::Bwe);
-                s.invalidate(TimeoutOwner::Pacer);
+                s.invalidate(Recompute::Bwe);
+                s.invalidate(Recompute::Pacer);
 
                 // The funky thing about TWCC reports is that they are never stapled
                 // together with other RTCP packet. If they were though, we want to
@@ -996,7 +1002,7 @@ impl Session {
         }
 
         self.pacer.register_send(now, payload_size.into(), midrid);
-        s.invalidate(TimeoutOwner::Pacer);
+        s.invalidate(Recompute::Pacer);
 
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
@@ -1025,7 +1031,7 @@ impl Session {
 
         if !self.packet_first_sent {
             self.packet_first_sent = true;
-            s.invalidate(TimeoutOwner::Bwe);
+            s.invalidate(Recompute::Bwe);
         }
 
         Some(protected.into())
@@ -1048,12 +1054,20 @@ impl Session {
         if let Some(at) = self.twcc_at() {
             s.arm(Timer::Twcc, at);
         }
+    }
 
-        self.pacer.poll_timeout(s);
-        let pacer_at = self.pacer.next_timeout();
-        let do_probe = self.packet_first_sent && self.pacer.has_padding_queue();
-        if let Some(bwe) = &mut self.bwe {
-            bwe.poll_timeout(do_probe, pacer_at, s);
+    pub(crate) fn poll_pacer_timeout(&self, s: &mut Scheduler) {
+        if !self.rtp_closing {
+            self.pacer.poll_timeout(s);
+        }
+    }
+
+    pub(crate) fn poll_bwe_timeout(&self, s: &mut Scheduler) {
+        if self.rtp_closing {
+            return;
+        }
+        if let Some(bwe) = &self.bwe {
+            bwe.poll_timeout(s);
         }
     }
 
@@ -1062,6 +1076,8 @@ impl Session {
         if self.rtp_closing {
             return;
         }
+        self.poll_pacer_timeout(s);
+        self.poll_bwe_timeout(s);
         self.streams.poll_timeout_all(s);
         for media in &self.medias {
             media.poll_timeout(s);
@@ -1208,19 +1224,19 @@ impl Session {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
-    fn do_payload(&mut self, mid: Mid) -> Result<Option<Ssrc>, RtcError> {
+    fn do_payload(&mut self, mid: Mid) -> Result<(), RtcError> {
         let mtu = self.mtu();
         let Some(media) = self.medias.iter_mut().find(|media| media.mid() == mid) else {
-            return Ok(None);
+            return Ok(());
         };
-        let ssrc = media.do_payload(
+        media.do_payload(
             &mut self.streams,
             &self.codec_config,
             self.vp9_packetizer_mode,
             mtu,
         )?;
 
-        Ok(ssrc)
+        Ok(())
     }
 
     pub fn set_direction(&mut self, mid: Mid, direction: Direction) -> bool {

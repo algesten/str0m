@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::RtcError;
+use crate::Timer;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
 
@@ -13,11 +14,11 @@ use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
 use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::SRTP_OVERHEAD;
-use crate::rtp_::Ssrc;
 use str0m_proto::Id;
 
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
+use crate::scheduler::Scheduler;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
 use crate::streams::{RtpPacket, Streams};
@@ -466,10 +467,16 @@ impl Media {
         Ok(())
     }
 
-    pub(crate) fn poll_timeout(&self, s: &mut crate::scheduler::Scheduler) {
+    pub(crate) fn poll_timeout(&self, s: &mut Scheduler) {
         if !self.to_payload.is_empty() {
-            s.arm(crate::Timer::Packetize(self.mid), already_happened());
+            s.arm(Timer::Packetize(self.mid), already_happened());
         }
+    }
+
+    pub(crate) fn next_payload_midrid(&self) -> Option<MidRid> {
+        self.to_payload
+            .front()
+            .map(|to_payload| MidRid(self.mid, to_payload.rid))
     }
 
     pub(crate) fn do_payload(
@@ -478,9 +485,9 @@ impl Media {
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
-    ) -> Result<Option<Ssrc>, RtcError> {
+    ) -> Result<(), RtcError> {
         let Some(to_payload) = self.to_payload.pop_front() else {
-            return Ok(None);
+            return Ok(());
         };
 
         let ToPayload { pt, rid, .. } = &to_payload;
@@ -494,7 +501,6 @@ impl Media {
         let Some(stream) = stream else {
             return Err(RtcError::NoSenderSource);
         };
-        let ssrc = stream.ssrc();
 
         let pt = *pt;
 
@@ -508,7 +514,7 @@ impl Media {
             .push_sample(to_payload, aligned_mtu, is_audio, stream)
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
-        Ok(Some(ssrc))
+        Ok(())
     }
 
     pub(crate) fn set_remote_pts(&mut self, pts: Vec<Pt>) {

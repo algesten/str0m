@@ -20,7 +20,6 @@ use std::time::{Duration, Instant};
 use crate::Timer;
 use crate::rtp_::{Bitrate, DataSize, TwccClusterId, TwccSendRecord, TwccSeq};
 use crate::scheduler::Scheduler;
-use crate::util::already_happened;
 
 mod acked_bitrate_estimator;
 mod alr_detector;
@@ -57,7 +56,6 @@ const STARTUP_PHASE: Duration = Duration::from_secs(2);
 pub struct Bwe {
     bwe: SendSideBandwidthEstimator,
     desired_bitrate: Bitrate,
-    desired_dirty: bool,
     smoother: EstimateSmoother,
 }
 
@@ -67,21 +65,11 @@ impl Bwe {
         Bwe {
             bwe: send_side_bwe,
             desired_bitrate: Bitrate::ZERO,
-            desired_dirty: false,
             smoother: EstimateSmoother::new(),
         }
     }
 
-    pub fn handle_timeout(
-        &mut self,
-        _timer: Timer,
-        now: Instant,
-        do_probe: bool,
-    ) -> Option<ProbeClusterConfig> {
-        // The three BWE timer identities expose the precise wake source, but
-        // the existing controller process step deliberately synchronizes all
-        // three coupled controllers when any one of them fires.
-        self.desired_dirty = false;
+    pub fn handle_timeout(&mut self, now: Instant, do_probe: bool) -> Option<ProbeClusterConfig> {
         let result = self.bwe.handle_timeout(self.desired_bitrate, do_probe, now);
         if let Some(estimate) = self.bwe.last_estimate() {
             self.smoother.record(now, estimate);
@@ -113,21 +101,8 @@ impl Bwe {
         self.smoother.poll()
     }
 
-    pub fn poll_timeout(
-        &mut self,
-        do_probe: bool,
-        probe_no_later_than: Option<Instant>,
-        s: &mut Scheduler,
-    ) {
-        self.bwe.poll_timeout(do_probe, s);
-        let mut probe_at = self.bwe.probe_timeout();
-        if self.desired_dirty {
-            probe_at = already_happened();
-        }
-        if let Some(at) = probe_no_later_than {
-            probe_at = probe_at.min(at);
-        }
-        s.arm(Timer::BweProbeControl, probe_at);
+    pub fn poll_timeout(&self, s: &mut Scheduler) {
+        self.bwe.poll_timeout(s);
     }
 
     pub fn last_estimate(&self) -> Option<Bitrate> {
@@ -147,7 +122,6 @@ impl Bwe {
 
     pub fn set_desired_bitrate(&mut self, v: Bitrate) {
         self.desired_bitrate = v;
-        self.desired_dirty = true;
     }
 }
 
@@ -300,22 +274,13 @@ impl SendSideBandwidthEstimator {
         self.propagate_estimate();
     }
 
-    pub fn poll_timeout(&mut self, do_probe: bool, s: &mut Scheduler) {
-        // Whether probing is possible is session state. Synchronize it while
-        // filling timers so a transition to enabled requests an immediate
-        // probe-controller timeout without arming from the mutation path.
-        self.probe_control.enable(do_probe);
-
+    pub fn poll_timeout(&self, s: &mut Scheduler) {
         s.arm(Timer::BweDelayControl, self.delay_controller.poll_timeout());
         s.arm(Timer::BweProbeControl, self.probe_control.poll_timeout());
         s.arm(
             Timer::BweProbeEstimator,
             self.probe_estimator.poll_timeout(),
         );
-    }
-
-    pub fn probe_timeout(&self) -> Instant {
-        self.probe_control.poll_timeout()
     }
 
     /// Handle periodic timeout for BWE components.
@@ -328,8 +293,10 @@ impl SendSideBandwidthEstimator {
         self.delay_controller
             .handle_timeout(self.acked_bitrate_estimator.current_estimate(), now);
 
+        // Update probe control with desired bitrate.
         self.probe_control.set_desired_bitrate(desired_bitrate);
 
+        // Get ALR state and forward to both probe control and loss controller
         let alr_start_time = self.alr_detector.alr_start_time();
         if let Some(t) = alr_start_time {
             self.probe_control.set_alr_start_time(t);
@@ -339,18 +306,25 @@ impl SendSideBandwidthEstimator {
 
         self.loss_controller.set_alr_start_time(alr_start_time);
 
+        // Get link capacity estimate and forward to loss controller.
         let link_capacity = self.link_capacity_estimator.capacity_estimate(now);
         self.loss_controller
             .set_link_capacity_estimate(link_capacity);
 
+        // Clean up expired probe cluster state
         self.probe_estimator.handle_timeout(now);
+
+        // Feed the current estimate into subcontrollers, if it changed.
         self.propagate_estimate();
 
+        // If we can't probe, clear any pending/active probes
         if !do_probe {
             self.probe_estimator.clear_probes();
         }
 
         self.probe_control.enable(do_probe);
+
+        // Timer-driven probe logic (WebRTC `Process()` equivalent).
         self.probe_control.handle_timeout(now)
     }
 

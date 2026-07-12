@@ -31,12 +31,12 @@ impl PacerImpl {
         PacerImpl::Null(NullPacer::default())
     }
 
-    pub fn start_probe(&mut self, config: ProbeClusterConfig, now: Instant) {
+    pub fn start_probe(&mut self, config: ProbeClusterConfig) {
         match self {
             PacerImpl::Null(_) => {
                 // NullPacer doesn't support probing
             }
-            PacerImpl::LeakyBucket(v) => v.start_probe(config, now),
+            PacerImpl::LeakyBucket(v) => v.start_probe(config),
         }
     }
 
@@ -67,13 +67,6 @@ impl Pacer for PacerImpl {
         match self {
             PacerImpl::Null(v) => v.poll_timeout(s),
             PacerImpl::LeakyBucket(v) => v.poll_timeout(s),
-        }
-    }
-
-    fn next_timeout(&self) -> Option<Instant> {
-        match self {
-            PacerImpl::Null(v) => v.next_timeout(),
-            PacerImpl::LeakyBucket(v) => v.next_timeout(),
         }
     }
 
@@ -124,9 +117,6 @@ pub trait Pacer {
 
     /// Poll for a timeout.
     fn poll_timeout(&self, s: &mut Scheduler);
-
-    /// The current pacer deadline.
-    fn next_timeout(&self) -> Option<Instant>;
 
     /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
     fn handle_timeout(

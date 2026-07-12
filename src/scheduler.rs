@@ -1,8 +1,8 @@
 //! The single timer scheduler owned by [`Rtc`][crate::Rtc].
 //!
-//! Mutation paths only invalidate the smallest owner whose timers may have
+//! Mutation paths only invalidate the smallest subsystem whose timers may have
 //! changed. When `Rtc::poll_output()` reaches its timeout boundary, it drains
-//! those invalidations and asks each owner to arm its current timers. A timer
+//! those invalidations and asks each subsystem to arm its current timers. A timer
 //! identity has at most one scheduled deadline; arming it again moves it.
 //!
 //! There is deliberately no `disarm`. A stale timer may wake `Rtc` early, but
@@ -112,31 +112,32 @@ impl Timer {
         }
     }
 
-    pub(crate) fn owner(self) -> TimeoutOwner {
+    pub(crate) fn recompute(self) -> Recompute {
         match self {
-            Timer::DTLS => TimeoutOwner::Dtls,
-            Timer::Ice => TimeoutOwner::Ice,
-            Timer::Sctp => TimeoutOwner::Sctp,
-            Timer::Channel | Timer::ChannelCleanup => TimeoutOwner::Channel,
-            Timer::Stats => TimeoutOwner::Stats,
-            Timer::Feedback | Timer::Nack | Timer::Twcc => TimeoutOwner::Session,
-            Timer::SenderReport(ssrc) | Timer::SendStream(ssrc) => TimeoutOwner::StreamTx(ssrc),
+            Timer::DTLS => Recompute::Dtls,
+            Timer::Ice => Recompute::Ice,
+            Timer::Sctp => Recompute::Sctp,
+            Timer::Channel | Timer::ChannelCleanup => Recompute::Channel,
+            Timer::Stats => Recompute::Stats,
+            Timer::Feedback | Timer::Nack | Timer::Twcc => Recompute::Session,
+            Timer::SenderReport(ssrc) | Timer::SendStream(ssrc) => Recompute::StreamTx(ssrc),
             Timer::ReceiverReport(ssrc)
             | Timer::KeyframeRequest(ssrc)
             | Timer::RembRequest(ssrc)
-            | Timer::PauseCheck(ssrc) => TimeoutOwner::StreamRx(ssrc),
-            Timer::Packetize(mid) => TimeoutOwner::Media(mid),
-            Timer::Pacer => TimeoutOwner::Pacer,
+            | Timer::PauseCheck(ssrc) => Recompute::StreamRx(ssrc),
+            Timer::Packetize(mid) => Recompute::Media(mid),
+            Timer::Pacer => Recompute::Pacer,
             Timer::BweDelayControl | Timer::BweProbeControl | Timer::BweProbeEstimator => {
-                TimeoutOwner::Bwe
+                Recompute::Bwe
             }
-            Timer::RxLookupCleanup => TimeoutOwner::Streams,
+            Timer::RxLookupCleanup => Recompute::Streams,
         }
     }
 }
 
+/// A component whose timers must be recomputed before the next timeout is returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TimeoutOwner {
+pub(crate) enum Recompute {
     All,
     Dtls,
     Ice,
@@ -157,10 +158,10 @@ pub(crate) enum TimeoutOwner {
 pub(crate) struct Scheduler {
     by_time: BTreeSet<(Instant, Timer)>,
     by_timer: HashMap<Timer, Instant>,
-    // The run loop normally leaves one owner here: the one mutation performed
+    // The run loop normally leaves one entry here: the one mutation performed
     // since the previous complete drain. A Vec and linear deduplication are
     // cheaper for that small common case than hashing every invalidation.
-    recompute: Vec<TimeoutOwner>,
+    recompute: Vec<Recompute>,
 }
 
 impl Scheduler {
@@ -168,7 +169,7 @@ impl Scheduler {
         Self {
             by_time: BTreeSet::new(),
             by_timer: HashMap::new(),
-            recompute: vec![TimeoutOwner::All],
+            recompute: vec![Recompute::All],
         }
     }
 
@@ -205,23 +206,23 @@ impl Scheduler {
         )
     }
 
-    pub(crate) fn invalidate(&mut self, owner: TimeoutOwner) {
-        invalidate(&mut self.recompute, owner);
+    pub(crate) fn invalidate(&mut self, recompute: Recompute) {
+        invalidate(&mut self.recompute, recompute);
     }
 
     pub(crate) fn invalidate_stream_tx(&mut self, ssrc: Ssrc) {
-        self.invalidate(TimeoutOwner::StreamTx(ssrc));
+        self.invalidate(Recompute::StreamTx(ssrc));
     }
 
     pub(crate) fn invalidate_stream_rx(&mut self, ssrc: Ssrc) {
-        self.invalidate(TimeoutOwner::StreamRx(ssrc));
+        self.invalidate(Recompute::StreamRx(ssrc));
     }
 
     pub(crate) fn invalidate_media(&mut self, mid: Mid) {
-        self.invalidate(TimeoutOwner::Media(mid));
+        self.invalidate(Recompute::Media(mid));
     }
 
-    pub(crate) fn pop_recompute(&mut self) -> Option<TimeoutOwner> {
+    pub(crate) fn pop_recompute(&mut self) -> Option<Recompute> {
         self.recompute.pop()
     }
 
@@ -263,22 +264,22 @@ impl Iterator for PollTimers<'_> {
 }
 
 pub(crate) struct Invalidations<'a> {
-    recompute: &'a mut Vec<TimeoutOwner>,
+    recompute: &'a mut Vec<Recompute>,
 }
 
 impl Invalidations<'_> {
-    pub(crate) fn invalidate(&mut self, owner: TimeoutOwner) {
-        invalidate(self.recompute, owner);
+    pub(crate) fn invalidate(&mut self, recompute: Recompute) {
+        invalidate(self.recompute, recompute);
     }
 
     pub(crate) fn invalidate_stream_tx(&mut self, ssrc: Ssrc) {
-        self.invalidate(TimeoutOwner::StreamTx(ssrc));
+        self.invalidate(Recompute::StreamTx(ssrc));
     }
 }
 
-fn invalidate(recompute: &mut Vec<TimeoutOwner>, owner: TimeoutOwner) {
-    if !recompute.contains(&owner) {
-        recompute.push(owner);
+fn invalidate(recomputes: &mut Vec<Recompute>, recompute: Recompute) {
+    if !recomputes.contains(&recompute) {
+        recomputes.push(recompute);
     }
 }
 
@@ -318,15 +319,15 @@ mod tests {
     #[test]
     fn invalidations_are_small_deduplicated_and_lifo() {
         let mut s = Scheduler::new();
-        assert_eq!(s.pop_recompute(), Some(TimeoutOwner::All));
+        assert_eq!(s.pop_recompute(), Some(Recompute::All));
 
-        s.invalidate(TimeoutOwner::Ice);
-        s.invalidate(TimeoutOwner::Sctp);
-        s.invalidate(TimeoutOwner::Ice);
+        s.invalidate(Recompute::Ice);
+        s.invalidate(Recompute::Sctp);
+        s.invalidate(Recompute::Ice);
 
         assert_eq!(s.recompute.len(), 2);
-        assert_eq!(s.pop_recompute(), Some(TimeoutOwner::Sctp));
-        assert_eq!(s.pop_recompute(), Some(TimeoutOwner::Ice));
+        assert_eq!(s.pop_recompute(), Some(Recompute::Sctp));
+        assert_eq!(s.pop_recompute(), Some(Recompute::Ice));
         assert_eq!(s.pop_recompute(), None);
     }
 }

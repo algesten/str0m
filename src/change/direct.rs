@@ -10,7 +10,7 @@ use crate::crypto::dtls::ProtocolVersion;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
-use crate::scheduler::TimeoutOwner;
+use crate::scheduler::Recompute;
 use crate::sctp::{ChannelConfig, SctpInitData};
 use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, StreamRx, StreamTx};
 
@@ -58,7 +58,7 @@ impl<'a> DirectApi<'a> {
     /// meaning it will respond to connectivity checks sent by the controlling agent.
     pub fn set_ice_controlling(&mut self, controlling: bool) {
         self.rtc.ice.set_controlling(controlling);
-        self.rtc.scheduler.invalidate(TimeoutOwner::Ice);
+        self.rtc.scheduler.invalidate(Recompute::Ice);
     }
 
     /// Returns a reference to the local ICE credentials used by this peer connection.
@@ -72,13 +72,13 @@ impl<'a> DirectApi<'a> {
     /// Sets the local ICE credentials.
     pub fn set_local_ice_credentials(&mut self, local_ice_credentials: IceCreds) {
         self.rtc.ice.set_local_credentials(local_ice_credentials);
-        self.rtc.scheduler.invalidate(TimeoutOwner::Ice);
+        self.rtc.scheduler.invalidate(Recompute::Ice);
     }
 
     /// Sets the remote ICE credentials.
     pub fn set_remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
         self.rtc.ice.set_remote_credentials(remote_ice_credentials);
-        self.rtc.scheduler.invalidate(TimeoutOwner::Ice);
+        self.rtc.scheduler.invalidate(Recompute::Ice);
     }
 
     /// Invalidate a candidate and remove it from the connection.
@@ -93,7 +93,7 @@ impl<'a> DirectApi<'a> {
     pub fn invalidate_candidate(&mut self, c: &Candidate) -> bool {
         let invalidated = self.rtc.ice.invalidate_candidate(c);
         if invalidated {
-            self.rtc.scheduler.invalidate(TimeoutOwner::Ice);
+            self.rtc.scheduler.invalidate(Recompute::Ice);
         }
         invalidated
     }
@@ -179,27 +179,27 @@ impl<'a> DirectApi<'a> {
     pub fn create_data_channel(&mut self, config: ChannelConfig) -> ChannelId {
         let id = self.rtc.chan.new_channel(&config);
         self.rtc.chan.confirm(id, config);
-        self.rtc.scheduler.invalidate(TimeoutOwner::Channel);
+        self.rtc.scheduler.invalidate(Recompute::Channel);
         id
     }
 
     /// Close a data channel.
     pub fn close_data_channel(&mut self, channel_id: ChannelId) {
         self.rtc.chan.close_channel(channel_id, &mut self.rtc.sctp);
-        self.rtc.scheduler.invalidate(TimeoutOwner::Sctp);
-        self.rtc.scheduler.invalidate(TimeoutOwner::Channel);
+        self.rtc.scheduler.invalidate(Recompute::Sctp);
+        self.rtc.scheduler.invalidate(Recompute::Channel);
     }
 
     /// Set whether to enable ice-lite.
     pub fn set_ice_lite(&mut self, ice_lite: bool) {
         self.rtc.ice.set_ice_lite(ice_lite);
-        self.rtc.scheduler.invalidate(TimeoutOwner::Ice);
+        self.rtc.scheduler.invalidate(Recompute::Ice);
     }
 
     /// Enable twcc feedback.
     pub fn enable_twcc_feedback(&mut self) {
         self.rtc.session.enable_twcc_feedback();
-        self.rtc.scheduler.invalidate(TimeoutOwner::Session);
+        self.rtc.scheduler.invalidate(Recompute::Session);
     }
 
     /// Generate a ssrc that is not already used in session
@@ -277,7 +277,7 @@ impl<'a> DirectApi<'a> {
             .streams
             .expect_stream_rx(ssrc, rtx, midrid, suppress_nack);
         scheduler.invalidate_stream_rx(ssrc);
-        scheduler.invalidate(TimeoutOwner::Session);
+        scheduler.invalidate(Recompute::Session);
         stream
     }
 
@@ -297,9 +297,9 @@ impl<'a> DirectApi<'a> {
         let Rtc {
             scheduler, session, ..
         } = self.rtc;
-        let stream = session.streams.stream_rx_for_change(ssrc)?;
+        let stream = session.streams.stream_rx(ssrc)?;
         scheduler.invalidate_stream_rx(*ssrc);
-        scheduler.invalidate(TimeoutOwner::Session);
+        scheduler.invalidate(Recompute::Session);
         Some(stream)
     }
 
@@ -311,7 +311,7 @@ impl<'a> DirectApi<'a> {
         } = self.rtc;
         let stream = session.streams.stream_rx_by_midrid(midrid, true)?;
         scheduler.invalidate_stream_rx(stream.ssrc());
-        scheduler.invalidate(TimeoutOwner::Session);
+        scheduler.invalidate(Recompute::Session);
         Some(stream)
     }
 
