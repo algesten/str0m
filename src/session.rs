@@ -29,7 +29,7 @@ use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb}
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
-use crate::scheduler::{Invalidations, Recompute, Scheduler};
+use crate::scheduler::{Invalidations, Scheduler, TimerScope};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening};
@@ -272,7 +272,7 @@ impl Session {
 
                 self.do_payload(mid)?;
                 if let Some(ssrc) = ssrc {
-                    invalidations.invalidate_stream_tx(ssrc);
+                    invalidations.invalidate(TimerScope::StreamTx(ssrc));
                 }
             }
             Timer::ReceiverReport(ssrc) => {
@@ -373,7 +373,7 @@ impl Session {
         }
 
         if let Some(ssrc) = self.update_queue_state(now) {
-            invalidations.invalidate_stream_tx(ssrc);
+            invalidations.invalidate(TimerScope::StreamTx(ssrc));
         }
     }
 
@@ -534,8 +534,8 @@ impl Session {
             debug!("No mid/SSRC for header: {:?}", header);
             return;
         };
-        s.invalidate_stream_rx(ssrc);
-        s.invalidate(Recompute::Session);
+        s.invalidate(TimerScope::StreamRx(ssrc));
+        s.invalidate(TimerScope::Session);
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -733,8 +733,8 @@ impl Session {
                     bwe.update(maybe_records, now);
                 }
                 need_configure_pacer = true;
-                s.invalidate(Recompute::Bwe);
-                s.invalidate(Recompute::Pacer);
+                s.invalidate(TimerScope::Bwe);
+                s.invalidate(TimerScope::Pacer);
 
                 // The funky thing about TWCC reports is that they are never stapled
                 // together with other RTCP packet. If they were though, we want to
@@ -748,14 +748,14 @@ impl Session {
                     continue;
                 };
                 stream.handle_rtcp(now, fb);
-                s.invalidate_stream_rx(ssrc);
+                s.invalidate(TimerScope::StreamRx(ssrc));
             } else {
                 let ssrc = fb.ssrc();
                 let Some(stream) = self.streams.stream_tx(&ssrc) else {
                     continue;
                 };
                 stream.handle_rtcp(now, fb);
-                s.invalidate_stream_tx(ssrc);
+                s.invalidate(TimerScope::StreamTx(ssrc));
             }
         }
 
@@ -1002,7 +1002,7 @@ impl Session {
         }
 
         self.pacer.register_send(now, payload_size.into(), midrid);
-        s.invalidate(Recompute::Pacer);
+        s.invalidate(TimerScope::Pacer);
 
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
@@ -1031,7 +1031,7 @@ impl Session {
 
         if !self.packet_first_sent {
             self.packet_first_sent = true;
-            s.invalidate(Recompute::Bwe);
+            s.invalidate(TimerScope::Bwe);
         }
 
         Some(protected.into())

@@ -112,32 +112,32 @@ impl Timer {
         }
     }
 
-    pub(crate) fn recompute(self) -> Recompute {
+    pub(crate) fn scope(self) -> TimerScope {
         match self {
-            Timer::DTLS => Recompute::Dtls,
-            Timer::Ice => Recompute::Ice,
-            Timer::Sctp => Recompute::Sctp,
-            Timer::Channel | Timer::ChannelCleanup => Recompute::Channel,
-            Timer::Stats => Recompute::Stats,
-            Timer::Feedback | Timer::Nack | Timer::Twcc => Recompute::Session,
-            Timer::SenderReport(ssrc) | Timer::SendStream(ssrc) => Recompute::StreamTx(ssrc),
+            Timer::DTLS => TimerScope::Dtls,
+            Timer::Ice => TimerScope::Ice,
+            Timer::Sctp => TimerScope::Sctp,
+            Timer::Channel | Timer::ChannelCleanup => TimerScope::Channel,
+            Timer::Stats => TimerScope::Stats,
+            Timer::Feedback | Timer::Nack | Timer::Twcc => TimerScope::Session,
+            Timer::SenderReport(ssrc) | Timer::SendStream(ssrc) => TimerScope::StreamTx(ssrc),
             Timer::ReceiverReport(ssrc)
             | Timer::KeyframeRequest(ssrc)
             | Timer::RembRequest(ssrc)
-            | Timer::PauseCheck(ssrc) => Recompute::StreamRx(ssrc),
-            Timer::Packetize(mid) => Recompute::Media(mid),
-            Timer::Pacer => Recompute::Pacer,
+            | Timer::PauseCheck(ssrc) => TimerScope::StreamRx(ssrc),
+            Timer::Packetize(mid) => TimerScope::Media(mid),
+            Timer::Pacer => TimerScope::Pacer,
             Timer::BweDelayControl | Timer::BweProbeControl | Timer::BweProbeEstimator => {
-                Recompute::Bwe
+                TimerScope::Bwe
             }
-            Timer::RxLookupCleanup => Recompute::Streams,
+            Timer::RxLookupCleanup => TimerScope::Streams,
         }
     }
 }
 
 /// A component whose timers must be recomputed before the next timeout is returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Recompute {
+pub(crate) enum TimerScope {
     All,
     Dtls,
     Ice,
@@ -161,7 +161,7 @@ pub(crate) struct Scheduler {
     // The run loop normally leaves one entry here: the one mutation performed
     // since the previous complete drain. A Vec and linear deduplication are
     // cheaper for that small common case than hashing every invalidation.
-    recompute: Vec<Recompute>,
+    invalidated: Vec<TimerScope>,
 }
 
 impl Scheduler {
@@ -169,7 +169,7 @@ impl Scheduler {
         Self {
             by_time: BTreeSet::new(),
             by_timer: HashMap::new(),
-            recompute: vec![Recompute::All],
+            invalidated: vec![TimerScope::All],
         }
     }
 
@@ -201,29 +201,17 @@ impl Scheduler {
                 by_timer: &mut self.by_timer,
             },
             Invalidations {
-                recompute: &mut self.recompute,
+                invalidated: &mut self.invalidated,
             },
         )
     }
 
-    pub(crate) fn invalidate(&mut self, recompute: Recompute) {
-        invalidate(&mut self.recompute, recompute);
+    pub(crate) fn invalidate(&mut self, scope: TimerScope) {
+        invalidate(&mut self.invalidated, scope);
     }
 
-    pub(crate) fn invalidate_stream_tx(&mut self, ssrc: Ssrc) {
-        self.invalidate(Recompute::StreamTx(ssrc));
-    }
-
-    pub(crate) fn invalidate_stream_rx(&mut self, ssrc: Ssrc) {
-        self.invalidate(Recompute::StreamRx(ssrc));
-    }
-
-    pub(crate) fn invalidate_media(&mut self, mid: Mid) {
-        self.invalidate(Recompute::Media(mid));
-    }
-
-    pub(crate) fn pop_recompute(&mut self) -> Option<Recompute> {
-        self.recompute.pop()
+    pub(crate) fn pop_invalidated(&mut self) -> Option<TimerScope> {
+        self.invalidated.pop()
     }
 
     #[cfg(feature = "_internal_test_exports")]
@@ -237,8 +225,8 @@ impl Scheduler {
     }
 
     #[cfg(feature = "_internal_test_exports")]
-    pub(crate) fn recompute_is_empty(&self) -> bool {
-        self.recompute.is_empty()
+    pub(crate) fn invalidated_is_empty(&self) -> bool {
+        self.invalidated.is_empty()
     }
 }
 
@@ -264,22 +252,18 @@ impl Iterator for PollTimers<'_> {
 }
 
 pub(crate) struct Invalidations<'a> {
-    recompute: &'a mut Vec<Recompute>,
+    invalidated: &'a mut Vec<TimerScope>,
 }
 
 impl Invalidations<'_> {
-    pub(crate) fn invalidate(&mut self, recompute: Recompute) {
-        invalidate(self.recompute, recompute);
-    }
-
-    pub(crate) fn invalidate_stream_tx(&mut self, ssrc: Ssrc) {
-        self.invalidate(Recompute::StreamTx(ssrc));
+    pub(crate) fn invalidate(&mut self, scope: TimerScope) {
+        invalidate(self.invalidated, scope);
     }
 }
 
-fn invalidate(recomputes: &mut Vec<Recompute>, recompute: Recompute) {
-    if !recomputes.contains(&recompute) {
-        recomputes.push(recompute);
+fn invalidate(invalidated: &mut Vec<TimerScope>, scope: TimerScope) {
+    if !invalidated.contains(&scope) {
+        invalidated.push(scope);
     }
 }
 
@@ -319,15 +303,15 @@ mod tests {
     #[test]
     fn invalidations_are_small_deduplicated_and_lifo() {
         let mut s = Scheduler::new();
-        assert_eq!(s.pop_recompute(), Some(Recompute::All));
+        assert_eq!(s.pop_invalidated(), Some(TimerScope::All));
 
-        s.invalidate(Recompute::Ice);
-        s.invalidate(Recompute::Sctp);
-        s.invalidate(Recompute::Ice);
+        s.invalidate(TimerScope::Ice);
+        s.invalidate(TimerScope::Sctp);
+        s.invalidate(TimerScope::Ice);
 
-        assert_eq!(s.recompute.len(), 2);
-        assert_eq!(s.pop_recompute(), Some(Recompute::Sctp));
-        assert_eq!(s.pop_recompute(), Some(Recompute::Ice));
-        assert_eq!(s.pop_recompute(), None);
+        assert_eq!(s.invalidated.len(), 2);
+        assert_eq!(s.pop_invalidated(), Some(TimerScope::Sctp));
+        assert_eq!(s.pop_invalidated(), Some(TimerScope::Ice));
+        assert_eq!(s.pop_invalidated(), None);
     }
 }
