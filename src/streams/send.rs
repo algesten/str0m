@@ -40,6 +40,44 @@ pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
 pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
+/// A recently sampled view of an outgoing stream's send queue.
+///
+/// str0m refreshes this information as part of its regular pacer and bandwidth-estimation
+/// processing. Reading it does not cause a new value to be computed.
+pub trait StreamTxQueueInfo {
+    /// When this queue information was sampled.
+    ///
+    /// Compare this value between reads to determine whether str0m has computed a new sample.
+    fn created_at(&self) -> Instant;
+
+    /// Total number of bytes in the queue.
+    fn byte_size(&self) -> usize;
+
+    /// Total number of packets in the queue.
+    fn packet_count(&self) -> usize;
+
+    /// When the first packet still in the queue was enqueued.
+    fn first_unsent(&self) -> Option<Instant>;
+}
+
+impl StreamTxQueueInfo for QueueSnapshot {
+    fn created_at(&self) -> Instant {
+        self.created_at
+    }
+
+    fn byte_size(&self) -> usize {
+        self.byte_size
+    }
+
+    fn packet_count(&self) -> usize {
+        self.packet_count as usize
+    }
+
+    fn first_unsent(&self) -> Option<Instant> {
+        self.first_unsent
+    }
+}
+
 /// Outgoing encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
@@ -86,6 +124,9 @@ pub struct StreamTx {
     /// The packets here do not have correct sequence numbers, header extension values etc.
     /// They must be updated when we are about to send.
     send_queue: SendQueue,
+
+    /// The queue information sampled during the latest pacer update.
+    queue_info: Option<QueueSnapshot>,
 
     /// Whether this sender is to be unpaced in BWE situations.
     ///
@@ -278,6 +319,7 @@ impl StreamTx {
             last_used: already_happened(),
             rtp_and_wallclock: None,
             send_queue: SendQueue::new(),
+            queue_info: None,
             unpaced: None,
             resends: VecDeque::new(),
             padding: 0,
@@ -318,6 +360,17 @@ impl StreamTx {
     /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
         self.midrid.rid()
+    }
+
+    /// Information sampled during the latest pacer update for this stream's send queue.
+    ///
+    /// This is `None` until the pacer has observed the stream for the first time.
+    /// Calling this method does not refresh the information; use
+    /// [`StreamTxQueueInfo::created_at()`] to determine whether a new sample is available.
+    pub fn queue_info(&self) -> Option<&dyn StreamTxQueueInfo> {
+        self.queue_info
+            .as_ref()
+            .map(|info| info as &dyn StreamTxQueueInfo)
     }
 
     /// Configure the RTX (resend) cache.
@@ -1048,6 +1101,8 @@ impl StreamTx {
             snapshot.merge(&snapshot_padding);
         }
 
+        self.queue_info = Some(snapshot);
+
         QueueState {
             midrid: self.midrid,
             unpaced,
@@ -1067,7 +1122,7 @@ impl StreamTx {
             .iter()
             .fold(QueueSnapshot::default(), |mut snapshot, r| {
                 snapshot.total_queue_time_origin += now.duration_since(r.queued_at);
-                snapshot.size += r.payload_size;
+                snapshot.byte_size += r.payload_size;
                 snapshot.packet_count += 1;
                 snapshot.first_unsent = snapshot
                     .first_unsent
@@ -1097,7 +1152,7 @@ impl StreamTx {
 
         Some(QueueSnapshot {
             created_at: now,
-            size: self.padding,
+            byte_size: self.padding,
             packet_count: fake_packets as u32,
             total_queue_time_origin: fake_duration,
             priority: QueuePriority::Padding,
@@ -1160,6 +1215,7 @@ impl StreamTx {
 
     pub(crate) fn reset_buffers(&mut self) {
         self.send_queue.clear();
+        self.queue_info = None;
         self.rtx_cache.clear();
         self.resends.clear();
         self.padding = 0;
@@ -1222,4 +1278,34 @@ struct Resend {
     seq_no: SeqNo,
     queued_at: Instant,
     payload_size: usize,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn queue_info_is_cached_on_queue_state_update() {
+        let mut stream = StreamTx::new(42.into(), None, MidRid(Mid::from("0"), None), false, 1200);
+
+        assert!(stream.queue_info().is_none());
+
+        let now = Instant::now();
+        let first_unsent = now - Duration::from_millis(10);
+        stream.resends.push_back(Resend {
+            seq_no: 7.into(),
+            queued_at: first_unsent,
+            payload_size: 123,
+        });
+        stream.queue_state(now);
+
+        let info = stream.queue_info().expect("queue info after pacer update");
+        assert_eq!(info.created_at(), now);
+        assert_eq!(info.byte_size(), 123);
+        assert_eq!(info.packet_count(), 1);
+        assert_eq!(info.first_unsent(), Some(first_unsent));
+
+        stream.reset_buffers();
+        assert!(stream.queue_info().is_none());
+    }
 }

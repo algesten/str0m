@@ -8,7 +8,7 @@ pub struct QueueSnapshot {
     /// Time this snapshot was made
     pub created_at: Instant,
     /// The total byte size of the snapshot.
-    pub size: usize,
+    pub byte_size: usize,
     /// The total number of packets in the queue.
     /// NB: This is not a [`usize`] because it will later be used to divide a [`Duration`], for which
     /// [`usize`] isn't implement. If the queues end up with 2^32 packets something has gone very wrong
@@ -56,7 +56,7 @@ impl Default for QueueSnapshot {
     fn default() -> Self {
         Self {
             created_at: not_happening(),
-            size: Default::default(),
+            byte_size: Default::default(),
             packet_count: Default::default(),
             total_queue_time_origin: Default::default(),
             last_emitted: Default::default(),
@@ -89,7 +89,7 @@ impl QueueSnapshot {
     /// Merge other into self.
     pub fn merge(&mut self, other: &Self) {
         self.created_at = self.created_at.min(other.created_at);
-        self.size += other.size;
+        self.byte_size += other.byte_size;
         self.packet_count += other.packet_count;
         self.total_queue_time_origin += other.total_queue_time_origin;
         self.last_emitted = self.last_emitted.max(other.last_emitted);
