@@ -668,14 +668,9 @@ impl Session {
         update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
         // Register reception in nack registers.
-        let receipt_outer = stream.update_register(
-            now,
-            &header,
-            clock_rate,
-            is_repair,
-            seq_no,
-            &mut self.event_ready,
-        );
+        let ready = &mut self.event_ready;
+        let receipt_outer =
+            stream.update_register(now, &header, clock_rate, is_repair, seq_no, ready);
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
@@ -702,14 +697,8 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            let receipt = stream.update_register(
-                now,
-                &header,
-                clock_rate,
-                false,
-                seq_no,
-                &mut self.event_ready,
-            );
+            let ready = &mut self.event_ready;
+            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no, ready);
             (receipt, data)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
@@ -755,6 +744,7 @@ impl Session {
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8], s: &mut Scheduler) -> Option<()> {
+        let ready = &mut self.event_ready;
         let srtp: &mut SrtpContext = self.srtp_rx.as_mut()?;
         let unprotected = srtp.unprotect_rtcp(buf)?;
 
@@ -799,14 +789,14 @@ impl Session {
                 let Some(stream) = self.streams.stream_rx(&ssrc) else {
                     continue;
                 };
-                stream.handle_rtcp(now, fb, &mut self.event_ready);
+                stream.handle_rtcp(now, fb, ready);
                 s.invalidate(TimerScope::StreamRx(ssrc));
             } else {
                 let ssrc = fb.ssrc();
                 let Some(stream) = self.streams.stream_tx(&ssrc) else {
                     continue;
                 };
-                stream.handle_rtcp(now, fb, &mut self.event_ready);
+                stream.handle_rtcp(now, fb, ready);
                 s.invalidate(TimerScope::StreamTx(ssrc));
             }
         }
@@ -849,9 +839,11 @@ impl Session {
             return Some(Event::AppSpecificFeedback(feedback));
         }
 
+        let ready = self.event_ready.is_marked();
+
         // This must be before pending_packet.take() since we need to emit the unpaused event
         // before the first packet causing the unpause.
-        if self.event_ready.is_marked() {
+        if ready {
             if let Some(paused) = self.streams.poll_stream_paused() {
                 if paused.paused {
                     if let Some(media) = self.medias.iter_mut().find(|m| m.mid() == paused.mid) {
@@ -872,7 +864,7 @@ impl Session {
 
         // Everything below walks every stream or every media. Skip the lot unless a
         // producing path has actually queued something.
-        if !self.event_ready.is_marked() {
+        if !ready {
             return None;
         }
 
