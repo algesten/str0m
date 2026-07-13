@@ -33,8 +33,8 @@ use crate::scheduler::{Invalidations, Scheduler, TimerScope};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening};
+use crate::{Reason, Timer, net};
 use crate::{RtcConfig, RtcError};
-use crate::{Timer, net};
 
 /// Minimum time we delay between sending nacks. This should be
 /// set high enough to not cause additional problems in very bad
@@ -277,27 +277,33 @@ impl Session {
             }
             Timer::ReceiverReport(ssrc) => {
                 let sender_ssrc = self.streams.first_ssrc_local();
-                self.streams
-                    .handle_receiver_report(now, ssrc, sender_ssrc, &mut self.feedback_tx);
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_receiver_report(now, ssrc, sender_ssrc, feedback);
             }
             Timer::SenderReport(ssrc) => {
-                self.streams
-                    .handle_sender_report(now, ssrc, &mut self.feedback_tx);
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_sender_report(now, ssrc, feedback);
             }
             Timer::KeyframeRequest(ssrc) => {
                 let sender_ssrc = self.streams.first_ssrc_local();
-                self.streams
-                    .handle_keyframe_request(ssrc, sender_ssrc, &mut self.feedback_tx);
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_keyframe_request(ssrc, sender_ssrc, feedback);
             }
             Timer::RembRequest(ssrc) => {
                 let sender_ssrc = self.streams.first_ssrc_local();
-                self.streams
-                    .handle_remb_request(ssrc, sender_ssrc, &mut self.feedback_tx);
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_remb_request(ssrc, sender_ssrc, feedback);
             }
             Timer::Nack => {
                 if now >= self.nack_at().unwrap_or(not_happening()) {
                     let sender_ssrc = self.streams.first_ssrc_local();
-                    self.streams.handle_nack(sender_ssrc, &mut self.feedback_tx);
+                    let feedback = &mut self.feedback_tx;
+                    let streams = &mut self.streams;
+                    streams.handle_nack(sender_ssrc, feedback);
                     self.last_nack = now;
                 }
             }
@@ -309,8 +315,10 @@ impl Session {
             }
             Timer::PauseCheck(ssrc) => self.streams.handle_pause(now, ssrc),
             Timer::SendStream(ssrc) => {
-                self.streams
-                    .handle_send_stream(now, ssrc, &self.medias, &self.codec_config);
+                let medias = &self.medias;
+                let config = &self.codec_config;
+                let streams = &mut self.streams;
+                streams.handle_send_stream(now, ssrc, medias, config);
             }
             Timer::RxLookupCleanup => self.streams.handle_rx_lookup_cleanup(now),
             _ => unreachable!("non-session timer: {timer:?}"),
@@ -1057,9 +1065,18 @@ impl Session {
     }
 
     pub(crate) fn poll_pacer_timeout(&self, s: &mut Scheduler) {
-        if !self.rtp_closing {
-            self.pacer.poll_timeout(s);
+        if self.rtp_closing {
+            return;
         }
+
+        let (at, reason) = self.pacer.poll_timeout();
+        let Some(at) = at else {
+            return;
+        };
+        let Reason::Pacer(reason) = reason else {
+            unreachable!("pacer returned non-pacer timeout reason: {reason:?}");
+        };
+        s.arm_pacer(at, reason);
     }
 
     pub(crate) fn poll_bwe_timeout(&self, s: &mut Scheduler) {

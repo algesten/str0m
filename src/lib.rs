@@ -688,7 +688,7 @@ use streams::StreamPaused;
 use util::InstantExt;
 
 mod scheduler;
-pub use scheduler::Timer;
+pub(crate) use scheduler::Timer;
 use scheduler::{Scheduler, TimerScope};
 
 // Identity `drv::ToStatic` (`Static = Self`) for the `Copy` identity types.
@@ -921,6 +921,7 @@ pub struct Rtc {
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
     change_counter: usize,
+    last_timeout_reason: Reason,
     scheduler: Scheduler,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
@@ -1098,6 +1099,87 @@ pub enum Output {
 
 pub use crate::pacer::PacerReason;
 
+/// The reason for the next [`Output::Timeout`].
+///
+/// This enum is not considered stable API and may change in minor revisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum Reason {
+    /// No timeout scheduled.
+    ///
+    /// The timeout value is in the distant future.
+    #[default]
+    NotHappening,
+
+    /// The DTLS subsystem.
+    ///
+    /// Only relevant during handshaking.
+    DTLS,
+
+    /// The ICE agent.
+    ///
+    /// Includes checking candidate pairs and various cleanups.
+    Ice,
+
+    /// The SCTP subsystem.
+    ///
+    /// Things like handling retransmissions and keep-alive checks.
+    Sctp,
+
+    /// Data channels.
+    ///
+    /// Scheduled when we need to open allocations using SCTP.
+    Channel,
+
+    /// Stats gathering (if enabled).
+    ///
+    /// Periodic gathering of statistics.
+    Stats,
+
+    /// Regular RTP feedback.
+    ///
+    /// Receiver reports (RR) and sender reports (SR).
+    Feedback,
+
+    /// Sending of RTP NACK.
+    ///
+    /// When missing packets are discovered, a NACK is scheduled.
+    Nack,
+
+    /// Reporting of TWCC (if enabled).
+    ///
+    /// All incoming RTP packets are reported using TWCC. Enabled via SDP if both
+    /// sides support it.
+    Twcc,
+
+    /// RTP streams not receiving data goes into a paused state.
+    ///
+    /// Whenever an RTP receive stream receives data, a new timeout is scheduled.
+    PauseCheck,
+
+    /// Preprocessing of RTP packets to be sent.
+    ///
+    /// Housekeeping task in RTP send streams.
+    SendStream,
+
+    /// Packetizing of media into RTP data (if used).
+    ///
+    /// Written media data needs packetizing. This is not used in RTP mode.
+    Packetize,
+
+    /// Pacer doing things.
+    Pacer(PacerReason),
+
+    /// The delay controller of the BWE subsystem.
+    BweDelayControl,
+
+    /// The probe controller of the BWE subsystem.
+    BweProbeControl,
+
+    /// The probe estimator of the BWE subsystem.
+    BweProbeEstimator,
+}
+
 impl Rtc {
     /// Creates a new instance with default settings.
     ///
@@ -1205,6 +1287,7 @@ impl Rtc {
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             change_counter: 0,
+            last_timeout_reason: Reason::NotHappening,
             scheduler: Scheduler::new(),
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
@@ -1394,9 +1477,9 @@ impl Rtc {
         // This does not catch potential RIDs required to send simulcast, but
         // it's a good start. An error might arise later on RID mismatch.
         self.session.media_by_mid_mut(mid)?;
-        self.scheduler.invalidate(TimerScope::Media(mid));
 
-        Some(Writer::new(&mut self.session, mid))
+        let scheduler = &mut self.scheduler;
+        Some(Writer::new(&mut self.session, scheduler, mid))
     }
 
     /// Currently configured media.
@@ -1507,7 +1590,7 @@ impl Rtc {
 
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if self.state == RtcState::Closed {
-            self.scheduler.clear_last_timeout();
+            self.last_timeout_reason = Reason::NotHappening;
             return Ok(Output::Timeout(not_happening()));
         }
 
@@ -1727,10 +1810,11 @@ impl Rtc {
 
         if let Some(send) = &self.send_addr {
             // These can only be sent after we got an ICE connection.
-            let datagram = None.or_else(|| self.dtls.poll_packet()).or_else(|| {
-                self.session
-                    .poll_datagram(self.last_now, &mut self.scheduler)
-            });
+            let now = self.last_now;
+            let s = &mut self.scheduler;
+            let datagram = None
+                .or_else(|| self.dtls.poll_packet())
+                .or_else(|| self.session.poll_datagram(now, s));
 
             if let Some(contents) = datagram {
                 let t = net::Transmit {
@@ -1748,11 +1832,11 @@ impl Rtc {
 
         Scheduler::poll_timeout(self);
 
-        let (time, timer) = self
-            .scheduler
-            .next()
-            .map(|(at, timer)| (at, Some(timer)))
-            .unwrap_or_else(|| (not_happening(), None));
+        let scheduled = self.scheduler.next();
+        let (time, timer, reason) = match scheduled {
+            Some((at, timer)) => (at, Some(timer), self.scheduler.reason(timer)),
+            None => (not_happening(), None, Reason::NotHappening),
+        };
 
         // We want to guarantee time doesn't go backwards.
         let next = if time < self.last_now {
@@ -1763,29 +1847,30 @@ impl Rtc {
 
         if self.state == RtcState::Closing && self.close_drain_complete() {
             self.state = RtcState::Closed;
-            self.scheduler.clear_last_timeout();
+            self.last_timeout_reason = Reason::NotHappening;
             return Ok(Output::Timeout(not_happening()));
         }
 
+        self.last_timeout_reason = reason;
         trace!(?timer, at = ?next, "Next timer");
         Ok(Output::Timeout(next))
     }
 
-    /// The precise timer responsible for the last [`Output::Timeout`].
+    /// The reason for the last [`Output::Timeout`]
     ///
     /// This is updated when calling [`Rtc::poll_output()`] and the next output
     /// is a timeout.
     ///
     /// ```
-    /// # use str0m::Rtc;
+    /// # use str0m::{Rtc, Reason};
     /// # use std::time::Instant;
     /// let rtc = Rtc::new(Instant::now());
     ///
-    /// // Before any call to poll_output(), there is no timer.
-    /// assert_eq!(rtc.last_timeout(), None);
+    /// // Before any call to poll_output(), the reason is the default.
+    /// assert_eq!(rtc.last_timeout_reason(), Reason::NotHappening);
     /// ```
-    pub fn last_timeout(&self) -> Option<Timer> {
-        self.scheduler.last_timeout()
+    pub fn last_timeout_reason(&self) -> Reason {
+        self.last_timeout_reason
     }
 
     /// Check if this `Rtc` instance accepts the given input. This is used for demultiplexing
@@ -1967,6 +2052,7 @@ impl Rtc {
 
         self.peer_bytes_rx += bytes_rx as u64;
 
+        let s = &mut self.scheduler;
         match r.contents.inner {
             Stun(stun) => {
                 let packet = is::stun::StunPacket {
@@ -1979,18 +2065,14 @@ impl Rtc {
                 // ICE state can become runnable immediately after an input
                 // packet even when the agent's next periodic deadline is
                 // later. Conservatively move its one timer earlier.
-                self.scheduler.invalidate(TimerScope::IceNow);
+                s.invalidate(TimerScope::IceNow);
             }
             Dtls(dtls) => {
                 self.dtls.handle_receive(dtls)?;
-                self.scheduler.invalidate(TimerScope::Dtls);
+                s.invalidate(TimerScope::Dtls);
             }
-            Rtp(rtp) => self
-                .session
-                .handle_rtp_receive(recv_time, rtp, &mut self.scheduler),
-            Rtcp(rtcp) => self
-                .session
-                .handle_rtcp_receive(recv_time, rtcp, &mut self.scheduler),
+            Rtp(rtp) => self.session.handle_rtp_receive(recv_time, rtp, s),
+            Rtcp(rtcp) => self.session.handle_rtcp_receive(recv_time, rtcp, s),
         }
 
         Ok(())

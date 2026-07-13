@@ -28,7 +28,7 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use netem::{NetemConfig, Probability, RandomLoss};
-use str0m::{Candidate, Input, Output, Rtc, Timer};
+use str0m::{Candidate, Input, Output, Reason, Rtc};
 use tracing::info_span;
 
 mod common;
@@ -69,13 +69,13 @@ fn dtls_retransmit_emitted_in_same_poll_pass() {
 
     // Drive both sides until L is awaiting the DTLS flight deadline.
     let mut steps = 0;
-    while l.rtc.last_timeout() != Some(Timer::DTLS) {
+    while l.rtc.last_timeout_reason() != Reason::DTLS {
         progress(&mut l, &mut r).unwrap();
         steps += 1;
         assert!(
             steps < 200,
             "failed to reach DTLS-awaiting state (last reason: {:?})",
-            l.rtc.last_timeout()
+            l.rtc.last_timeout_reason()
         );
     }
 

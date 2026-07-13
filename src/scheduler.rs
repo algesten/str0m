@@ -12,19 +12,20 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
+use crate::pacer::PacerReason;
 use crate::rtp_::{Mid, Ssrc};
 use crate::stats::{CandidatePairStats, CandidateStats, StatsSnapshot};
 use crate::util::already_happened;
-use crate::{Rtc, RtcError};
+use crate::{Reason, Rtc, RtcError};
 
 /// A precisely identified timer within an [`Rtc`][crate::Rtc].
 ///
 /// This enum is not considered stable API and may change in minor revisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
-pub enum Timer {
+pub(crate) enum Timer {
     /// The DTLS handshake or close state.
-    DTLS,
+    Dtls,
 
     /// The ICE agent.
     Ice,
@@ -88,7 +89,7 @@ pub enum Timer {
 }
 
 const SINGLETON_TIMERS: [Timer; 14] = [
-    Timer::DTLS,
+    Timer::Dtls,
     Timer::Ice,
     Timer::Sctp,
     Timer::Channel,
@@ -105,36 +106,9 @@ const SINGLETON_TIMERS: [Timer; 14] = [
 ];
 
 impl Timer {
-    /// A short static description suitable for diagnostics and logging.
-    pub fn reason(self) -> &'static str {
-        match self {
-            Timer::DTLS => "DTLS",
-            Timer::Ice => "ICE",
-            Timer::Sctp => "SCTP",
-            Timer::Channel => "channel",
-            Timer::ChannelCleanup => "channel cleanup",
-            Timer::Stats => "stats",
-            Timer::Feedback => "RTP feedback",
-            Timer::SenderReport(_) => "sender report",
-            Timer::ReceiverReport(_) => "receiver report",
-            Timer::KeyframeRequest(_) => "keyframe request",
-            Timer::RembRequest(_) => "REMB request",
-            Timer::Nack => "NACK",
-            Timer::Twcc => "TWCC",
-            Timer::PauseCheck(_) => "pause check",
-            Timer::SendStream(_) => "send stream",
-            Timer::Packetize(_) => "packetize",
-            Timer::Pacer => "pacer",
-            Timer::BweDelayControl => "BWE delay control",
-            Timer::BweProbeControl => "BWE probe control",
-            Timer::BweProbeEstimator => "BWE probe estimator",
-            Timer::RxLookupCleanup => "RX lookup cleanup",
-        }
-    }
-
     pub(crate) fn scope(self) -> TimerScope {
         match self {
-            Timer::DTLS => TimerScope::Dtls,
+            Timer::Dtls => TimerScope::Dtls,
             Timer::Ice => TimerScope::Ice,
             Timer::Sctp => TimerScope::Sctp,
             Timer::Channel | Timer::ChannelCleanup => TimerScope::Channel,
@@ -177,7 +151,7 @@ struct SingletonTimers {
 impl SingletonTimers {
     fn slot(&self, timer: Timer) -> Option<&Option<Instant>> {
         match timer {
-            Timer::DTLS => Some(&self.dtls),
+            Timer::Dtls => Some(&self.dtls),
             Timer::Ice => Some(&self.ice),
             Timer::Sctp => Some(&self.sctp),
             Timer::Channel => Some(&self.channel),
@@ -203,7 +177,7 @@ impl SingletonTimers {
 
     fn slot_mut(&mut self, timer: Timer) -> Option<&mut Option<Instant>> {
         match timer {
-            Timer::DTLS => Some(&mut self.dtls),
+            Timer::Dtls => Some(&mut self.dtls),
             Timer::Ice => Some(&mut self.ice),
             Timer::Sctp => Some(&mut self.sctp),
             Timer::Channel => Some(&mut self.channel),
@@ -288,7 +262,8 @@ pub(crate) struct Scheduler {
     singletons: SingletonTimers,
     // Timers identified by SSRC or MID are sorted by (deadline, identity).
     queued: VecDeque<(Instant, Timer)>,
-    last_timeout: Option<Timer>,
+    // Preserve the public diagnostic sub-reason while keeping timer identities internal.
+    pacer_reason: PacerReason,
     // The run loop normally leaves one entry here: the one mutation performed
     // since the previous complete drain. A Vec and linear deduplication are
     // cheaper for that small common case than hashing every invalidation.
@@ -300,7 +275,7 @@ impl Scheduler {
         Self {
             singletons: SingletonTimers::default(),
             queued: VecDeque::new(),
-            last_timeout: None,
+            pacer_reason: PacerReason::Handle,
             invalidated: vec![TimerScope::All],
         }
     }
@@ -315,6 +290,8 @@ impl Scheduler {
             .iter()
             .position(|&(_, queued_timer)| queued_timer == timer)
         {
+            // Recomputing one invalidated scope also rearms its unchanged timers.
+            // Avoid moving those entries through the sorted queue unnecessarily.
             if self.queued[index].0 == at {
                 return;
             }
@@ -328,20 +305,40 @@ impl Scheduler {
         self.queued.insert(index, entry);
     }
 
-    pub(crate) fn next(&mut self) -> Option<(Instant, Timer)> {
+    pub(crate) fn arm_pacer(&mut self, at: Instant, reason: PacerReason) {
+        self.pacer_reason = reason;
+        self.arm(Timer::Pacer, at);
+    }
+
+    pub(crate) fn next(&self) -> Option<(Instant, Timer)> {
         let queued = self.queued.front().copied();
         let singleton = self.singletons.next();
-        let next = queued.into_iter().chain(singleton).min();
-        self.last_timeout = next.map(|(_, timer)| timer);
-        next
+        queued.into_iter().chain(singleton).min()
     }
 
-    pub(crate) fn clear_last_timeout(&mut self) {
-        self.last_timeout = None;
-    }
-
-    pub(crate) fn last_timeout(&self) -> Option<Timer> {
-        self.last_timeout
+    pub(crate) fn reason(&self, timer: Timer) -> Reason {
+        match timer {
+            Timer::Dtls => Reason::DTLS,
+            Timer::Ice => Reason::Ice,
+            Timer::Sctp => Reason::Sctp,
+            Timer::Channel | Timer::ChannelCleanup => Reason::Channel,
+            Timer::Stats => Reason::Stats,
+            Timer::Feedback
+            | Timer::SenderReport(_)
+            | Timer::ReceiverReport(_)
+            | Timer::KeyframeRequest(_)
+            | Timer::RembRequest(_)
+            | Timer::RxLookupCleanup => Reason::Feedback,
+            Timer::Nack => Reason::Nack,
+            Timer::Twcc => Reason::Twcc,
+            Timer::PauseCheck(_) => Reason::PauseCheck,
+            Timer::SendStream(_) => Reason::SendStream,
+            Timer::Packetize(_) => Reason::Packetize,
+            Timer::Pacer => Reason::Pacer(self.pacer_reason),
+            Timer::BweDelayControl => Reason::BweDelayControl,
+            Timer::BweProbeControl => Reason::BweProbeControl,
+            Timer::BweProbeEstimator => Reason::BweProbeEstimator,
+        }
     }
 
     pub(crate) fn poll_with_invalidations(
@@ -372,53 +369,48 @@ impl Scheduler {
 
     pub(crate) fn poll_timeout(rtc: &mut Rtc) {
         while let Some(scope) = rtc.scheduler.pop_invalidated() {
+            let s = &mut rtc.scheduler;
             match scope {
                 TimerScope::All => {
                     if let Some(at) = rtc.next_dtls_timeout {
-                        rtc.scheduler.arm(Timer::DTLS, at);
+                        s.arm(Timer::Dtls, at);
                     }
-                    rtc.scheduler.arm(
-                        Timer::Ice,
-                        rtc.ice.poll_timeout().unwrap_or_else(already_happened),
-                    );
-                    rtc.sctp.poll_timeout(&mut rtc.scheduler);
-                    rtc.chan.poll_timeout(&rtc.sctp, &mut rtc.scheduler);
+                    let ice_at = rtc.ice.poll_timeout().unwrap_or_else(already_happened);
+                    s.arm(Timer::Ice, ice_at);
+                    rtc.sctp.poll_timeout(s);
+                    rtc.chan.poll_timeout(&rtc.sctp, s);
                     if let Some(stats) = &rtc.stats {
-                        stats.poll_timeout(&mut rtc.scheduler);
+                        stats.poll_timeout(s);
                     }
-                    rtc.session.poll_timeout_all(&mut rtc.scheduler);
+                    rtc.session.poll_timeout_all(s);
                 }
                 TimerScope::Dtls => {
                     if let Some(at) = rtc.next_dtls_timeout {
-                        rtc.scheduler.arm(Timer::DTLS, at);
+                        s.arm(Timer::Dtls, at);
                     }
                 }
                 TimerScope::Ice => {
                     if let Some(at) = rtc.ice.poll_timeout() {
-                        rtc.scheduler.arm(Timer::Ice, at);
+                        s.arm(Timer::Ice, at);
                     }
                 }
                 TimerScope::IceNow => {
-                    rtc.scheduler.arm(Timer::Ice, already_happened());
+                    s.arm(Timer::Ice, already_happened());
                 }
-                TimerScope::Sctp => rtc.sctp.poll_timeout(&mut rtc.scheduler),
-                TimerScope::Channel => rtc.chan.poll_timeout(&rtc.sctp, &mut rtc.scheduler),
+                TimerScope::Sctp => rtc.sctp.poll_timeout(s),
+                TimerScope::Channel => rtc.chan.poll_timeout(&rtc.sctp, s),
                 TimerScope::Stats => {
                     if let Some(stats) = &rtc.stats {
-                        stats.poll_timeout(&mut rtc.scheduler);
+                        stats.poll_timeout(s);
                     }
                 }
-                TimerScope::Session => rtc.session.poll_timeout(&mut rtc.scheduler),
-                TimerScope::Pacer => rtc.session.poll_pacer_timeout(&mut rtc.scheduler),
-                TimerScope::Bwe => rtc.session.poll_bwe_timeout(&mut rtc.scheduler),
-                TimerScope::Streams => rtc.session.poll_streams_timeout(&mut rtc.scheduler),
-                TimerScope::StreamTx(ssrc) => {
-                    rtc.session.poll_stream_tx_timeout(ssrc, &mut rtc.scheduler)
-                }
-                TimerScope::StreamRx(ssrc) => {
-                    rtc.session.poll_stream_rx_timeout(ssrc, &mut rtc.scheduler)
-                }
-                TimerScope::Media(mid) => rtc.session.poll_media_timeout(mid, &mut rtc.scheduler),
+                TimerScope::Session => rtc.session.poll_timeout(s),
+                TimerScope::Pacer => rtc.session.poll_pacer_timeout(s),
+                TimerScope::Bwe => rtc.session.poll_bwe_timeout(s),
+                TimerScope::Streams => rtc.session.poll_streams_timeout(s),
+                TimerScope::StreamTx(ssrc) => rtc.session.poll_stream_tx_timeout(ssrc, s),
+                TimerScope::StreamRx(ssrc) => rtc.session.poll_stream_rx_timeout(ssrc, s),
+                TimerScope::Media(mid) => rtc.session.poll_media_timeout(mid, s),
             }
         }
 
@@ -436,7 +428,7 @@ impl Scheduler {
             invalidations.invalidate(timer.scope());
             trace!(?timer, ?now, "Handle timer");
             match timer {
-                Timer::DTLS => {
+                Timer::Dtls => {
                     if rtc.next_dtls_timeout.is_some_and(|at| now >= at) {
                         let _ = rtc.dtls.handle_timeout(now);
                         rtc.next_dtls_timeout = None;
@@ -521,7 +513,7 @@ impl Scheduler {
         // present and scheduled no later than the exhaustive result.
         let mut expected = Scheduler::new();
         if let Some(at) = rtc.next_dtls_timeout {
-            expected.arm(Timer::DTLS, at);
+            expected.arm(Timer::Dtls, at);
         }
         if let Some(at) = rtc.ice.poll_timeout() {
             expected.arm(Timer::Ice, at);
@@ -648,22 +640,46 @@ mod tests {
     }
 
     #[test]
+    fn rearming_an_unchanged_scoped_timer_is_a_noop() {
+        let now = Instant::now();
+        let timer = Timer::ReceiverReport(1.into());
+        let mut s = Scheduler::new();
+
+        s.arm(timer, now);
+        let before = s.queued.clone();
+        s.arm(timer, now);
+
+        assert_eq!(s.queued, before);
+    }
+
+    #[test]
+    fn pacer_sub_reason_is_preserved() {
+        let now = Instant::now();
+        let mut s = Scheduler::new();
+
+        s.arm_pacer(now, PacerReason::Unpaced);
+
+        assert_eq!(s.reason(Timer::Pacer), Reason::Pacer(PacerReason::Unpaced));
+    }
+
+    #[test]
     fn polling_merges_and_removes_only_due_timers() {
         let now = Instant::now();
         let sender_report = Timer::SenderReport(1.into());
         let mut s = Scheduler::new();
         s.arm(Timer::Ice, now);
         s.arm(sender_report, now);
-        s.arm(Timer::DTLS, now + Duration::from_secs(1));
+        s.arm(Timer::Dtls, now + Duration::from_secs(1));
 
-        let (mut timers, _) = s.poll_with_invalidations(now);
-        assert_eq!(timers.next(), Some(Timer::Ice));
-        assert_eq!(timers.next(), Some(sender_report));
-        assert_eq!(timers.next(), None);
-        drop(timers);
+        {
+            let (mut timers, _) = s.poll_with_invalidations(now);
+            assert_eq!(timers.next(), Some(Timer::Ice));
+            assert_eq!(timers.next(), Some(sender_report));
+            assert_eq!(timers.next(), None);
+        }
 
         assert!(s.queued.is_empty());
-        assert_eq!(s.next(), Some((now + Duration::from_secs(1), Timer::DTLS)));
+        assert_eq!(s.next(), Some((now + Duration::from_secs(1), Timer::Dtls)));
     }
 
     #[test]

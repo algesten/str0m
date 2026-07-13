@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::Pacer;
+use super::PacerReason;
 use super::PaddingRequest;
 use super::QueueState;
-use crate::Timer;
+use crate::Reason;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
-use crate::scheduler::Scheduler;
 
 /// A null pacer that doesn't pace.
 #[derive(Debug)]
@@ -34,16 +34,14 @@ impl Pacer for NullPacer {
     fn set_padding_rate(&mut self, _padding_bitrate: Bitrate) {
         // We don't care
     }
-    fn poll_timeout(&self, s: &mut Scheduler) {
-        let at = if self.needs_timeout_before_next_poll {
+    fn poll_timeout(&self) -> (Option<Instant>, Reason) {
+        let time = if self.needs_timeout_before_next_poll {
             self.last_sends.values().min().copied()
         } else {
             None
         };
 
-        if let Some(at) = at {
-            s.arm(Timer::Pacer, at);
-        }
+        (time, Reason::Pacer(PacerReason::Handle))
     }
 
     fn handle_timeout(

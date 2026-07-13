@@ -275,12 +275,12 @@ impl SendSideBandwidthEstimator {
     }
 
     pub fn poll_timeout(&self, s: &mut Scheduler) {
-        s.arm(Timer::BweDelayControl, self.delay_controller.poll_timeout());
-        s.arm(Timer::BweProbeControl, self.probe_control.poll_timeout());
-        s.arm(
-            Timer::BweProbeEstimator,
-            self.probe_estimator.poll_timeout(),
-        );
+        let delay_at = self.delay_controller.poll_timeout();
+        let probe_at = self.probe_control.poll_timeout();
+        let estimate_at = self.probe_estimator.poll_timeout();
+        s.arm(Timer::BweDelayControl, delay_at);
+        s.arm(Timer::BweProbeControl, probe_at);
+        s.arm(Timer::BweProbeEstimator, estimate_at);
     }
 
     /// Handle periodic timeout for BWE components.

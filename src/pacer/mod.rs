@@ -1,8 +1,8 @@
 use std::time::Instant;
 
+use crate::Reason;
 use crate::bwe_::ProbeClusterConfig;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
-use crate::scheduler::Scheduler;
 
 mod control;
 pub(crate) use control::PacerControl;
@@ -63,10 +63,10 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn poll_timeout(&self, s: &mut Scheduler) {
+    fn poll_timeout(&self) -> (Option<Instant>, Reason) {
         match self {
-            PacerImpl::Null(v) => v.poll_timeout(s),
-            PacerImpl::LeakyBucket(v) => v.poll_timeout(s),
+            PacerImpl::Null(v) => v.poll_timeout(),
+            PacerImpl::LeakyBucket(v) => v.poll_timeout(),
         }
     }
 
@@ -116,7 +116,7 @@ pub trait Pacer {
     fn set_padding_rate(&mut self, padding_bitrate: Bitrate);
 
     /// Poll for a timeout.
-    fn poll_timeout(&self, s: &mut Scheduler);
+    fn poll_timeout(&self) -> (Option<Instant>, Reason);
 
     /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
     fn handle_timeout(
@@ -139,7 +139,7 @@ pub trait Pacer {
     fn has_padding_queue(&self) -> bool;
 }
 
-/// The diagnostic reason for a pacer timeout.
+/// The sub-reason for the [`Reason::Pacer`][crate::Reason::Pacer].
 ///
 /// This enum is not considered stable API and may change in minor revisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
