@@ -1731,13 +1731,25 @@ impl Rtc {
                     let id = self.chan.channel_id_by_stream_id(id).unwrap();
                     return Ok(Output::Event(Event::ChannelOpen(id, label)));
                 }
-                SctpEvent::Close { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelClose event for id: {:?}", id);
+                SctpEvent::Close { id: stream_id, reset_complete, } => {
+                    let Some(channel_id) = self.chan.channel_id_by_stream_id(stream_id) else {
+                        warn!("Drop ChannelClose event for id: {:?}", stream_id);
                         continue;
                     };
-                    self.chan.remove_channel(id, self.last_now);
-                    return Ok(Output::Event(Event::ChannelClose(id)));
+                    // remove_channel pushes the hold entry, for remote-initiated
+                    // closes the reset handshake is already complete, so release
+                    // the stream id right away.
+                    self.chan.remove_channel(channel_id, self.last_now);
+                    if reset_complete {
+                        self.chan.stream_reset_complete(stream_id);
+                    }
+                    return Ok(Output::Event(Event::ChannelClose(channel_id)));
+                }
+                SctpEvent::StreamResetComplete { id } => {
+                    // Completion of a reset we initiated: the stream id can be
+                    // recycled. Internal bookkeeping only.
+                    self.chan.stream_reset_complete(id);
+                    continue;
                 }
                 SctpEvent::AssociationLost => {
                     self.start_close()?;
