@@ -44,37 +44,6 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Coarse "something might be waiting" flag for the `poll_event` walks.
-///
-/// `poll_event()` answers "does any stream have a keyframe request, a fresh sender
-/// report, a pause transition?" and "does any media have a completed sample?" by
-/// walking every stream and every media. In a 1:1 call that is invisible. In a
-/// conference each `Rtc` holds roughly one m-line per remote participant, and an SFU
-/// calls `poll_output()` thousands of times a second per connection, so the walks are
-/// paid O(N) times per connection and O(N^2) per room. The overwhelming majority of
-/// them find nothing.
-///
-/// The paths that queue an event mark this. The walks only run while it is marked, and
-/// it is cleared once a full poll has come back empty. Correctness does not depend on
-/// the mark being tight: a spurious mark costs one extra walk, never a missed event.
-#[derive(Debug, Default)]
-pub(crate) struct Readiness(bool);
-
-impl Readiness {
-    /// An event has been queued somewhere: the walks must run again.
-    pub(crate) fn mark(&mut self) {
-        self.0 = true;
-    }
-
-    fn is_marked(&self) -> bool {
-        self.0
-    }
-
-    fn clear(&mut self) {
-        self.0 = false;
-    }
-}
-
 pub(crate) struct Session {
     id: SessionId,
 
@@ -1394,6 +1363,37 @@ fn update_max_seq(map: &mut HashMap<Ssrc, SeqNo>, ssrc: Ssrc, seq_no: SeqNo) {
     let current = map.entry(ssrc).or_insert(seq_no);
     if seq_no > *current {
         *current = seq_no;
+    }
+}
+
+/// Coarse "something might be waiting" flag for the `poll_event` walks.
+///
+/// `poll_event()` answers "does any stream have a keyframe request, a fresh sender
+/// report, a pause transition?" and "does any media have a completed sample?" by
+/// walking every stream and every media. In a 1:1 call that is invisible. In a
+/// conference each `Rtc` holds roughly one m-line per remote participant, and an SFU
+/// calls `poll_output()` thousands of times a second per connection, so the walks are
+/// paid O(N) times per connection and O(N^2) per room. The overwhelming majority of
+/// them find nothing.
+///
+/// The paths that queue an event mark this. The walks only run while it is marked, and
+/// it is cleared once a full poll has come back empty. Correctness does not depend on
+/// the mark being tight: a spurious mark costs one extra walk, never a missed event.
+#[derive(Debug, Default)]
+pub(crate) struct Readiness(bool);
+
+impl Readiness {
+    /// An event has been queued somewhere: the walks must run again.
+    pub(crate) fn mark(&mut self) {
+        self.0 = true;
+    }
+
+    fn is_marked(&self) -> bool {
+        self.0
+    }
+
+    fn clear(&mut self) {
+        self.0 = false;
     }
 }
 
