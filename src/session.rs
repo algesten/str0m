@@ -249,7 +249,7 @@ impl Session {
         &mut self,
         now: Instant,
         timer: Timer,
-        invalidations: &mut Invalidations<'_>,
+        i: &mut Invalidations<'_>,
     ) -> Result<(), RtcError> {
         if self.rtp_closing {
             return Ok(());
@@ -272,7 +272,7 @@ impl Session {
 
                 self.do_payload(mid)?;
                 if let Some(ssrc) = ssrc {
-                    invalidations.invalidate(TimerScope::StreamTx(ssrc));
+                    i.invalidate(TimerScope::StreamTx(ssrc));
                 }
             }
             Timer::ReceiverReport(ssrc) => {
@@ -371,17 +371,13 @@ impl Session {
         Some(stream.ssrc())
     }
 
-    pub(crate) fn handle_pacer_timeout(
-        &mut self,
-        now: Instant,
-        invalidations: &mut Invalidations<'_>,
-    ) {
+    pub(crate) fn handle_pacer_timeout(&mut self, now: Instant, i: &mut Invalidations<'_>) {
         if self.rtp_closing {
             return;
         }
 
         if let Some(ssrc) = self.update_queue_state(now) {
-            invalidations.invalidate(TimerScope::StreamTx(ssrc));
+            i.invalidate(TimerScope::StreamTx(ssrc));
         }
     }
 

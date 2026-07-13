@@ -423,9 +423,9 @@ impl Scheduler {
 
         let now = rtc.last_now;
         let mut stats_due = false;
-        let (timers, mut invalidations) = rtc.scheduler.poll_with_invalidations(now);
+        let (timers, mut i) = rtc.scheduler.poll_with_invalidations(now);
         for timer in timers {
-            invalidations.invalidate(timer.scope());
+            i.invalidate(timer.scope());
             trace!(?timer, ?now, "Handle timer");
             match timer {
                 Timer::Dtls => {
@@ -438,7 +438,7 @@ impl Scheduler {
                 Timer::Sctp => rtc.sctp.handle_timeout(now),
                 Timer::Channel => {
                     rtc.chan.handle_timeout(now, &mut rtc.sctp);
-                    invalidations.invalidate(TimerScope::Sctp);
+                    i.invalidate(TimerScope::Sctp);
                 }
                 Timer::ChannelCleanup => rtc.chan.expire_closed_stream_ids(now),
                 Timer::Stats => stats_due = true,
@@ -458,18 +458,16 @@ impl Scheduler {
                 | Timer::PauseCheck(_)
                 | Timer::SendStream(_)
                 | Timer::Packetize(_)
-                | Timer::RxLookupCleanup => {
-                    rtc.session.handle_timer(now, timer, &mut invalidations)?
-                }
+                | Timer::RxLookupCleanup => rtc.session.handle_timer(now, timer, &mut i)?,
             }
         }
 
         // The pacer and BWE historically run whenever time moves forward.
         // Their timers ensure the run loop wakes when no other work does.
-        rtc.session.handle_pacer_timeout(now, &mut invalidations);
+        rtc.session.handle_pacer_timeout(now, &mut i);
         rtc.session.handle_timeout_bwe(now);
-        invalidations.invalidate(TimerScope::Bwe);
-        invalidations.invalidate(TimerScope::Pacer);
+        i.invalidate(TimerScope::Bwe);
+        i.invalidate(TimerScope::Pacer);
 
         if stats_due {
             if let Some(stats) = &mut rtc.stats {
