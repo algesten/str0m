@@ -850,6 +850,9 @@ pub mod change;
 mod util;
 use util::{Soonest, not_happening};
 
+mod poll;
+use crate::poll::Readiness;
+
 mod session;
 use session::Session;
 
@@ -932,6 +935,13 @@ pub struct Rtc {
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
     close_dtls_started: bool,
+    // Signals which halves of the tree may need re-polling. Written locally by
+    // the components that mutate, via the `Wake` guard handed down the tree;
+    // read (and cleared) by `poll_output`. See the `poll` module.
+    readiness: Readiness,
+    // Last timeout returned by `poll_output`, reused while the readiness says
+    // the timeout is still valid.
+    cached_timeout: Instant,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1303,6 +1313,8 @@ impl Rtc {
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
             close_dtls_started: false,
+            readiness: Readiness::armed(),
+            cached_timeout: start,
         })
     }
 
@@ -1376,6 +1388,9 @@ impl Rtc {
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_local_candidate(&mut self, c: Candidate) -> Option<&Candidate> {
+        // ICE is an external crate and can't take a `Wake`; adding a candidate
+        // can start connectivity checks (transmits) and arm timers.
+        self.wake_all();
         self.ice.add_local_candidate(c)
     }
 
@@ -1400,6 +1415,8 @@ impl Rtc {
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_remote_candidate(&mut self, c: Candidate) {
+        // ICE is an external crate and can't take a `Wake`; see above.
+        self.wake_all();
         self.ice.add_remote_candidate(c);
     }
 
@@ -1432,6 +1449,10 @@ impl Rtc {
     /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn sdp_api(&mut self) -> SdpApi {
+        // SDP negotiation can change media, streams, ICE and channels at once.
+        // Still armed at the accessor pending threading `Wake` through the
+        // individual SdpApi mutations.
+        self.wake_all();
         SdpApi::new(self)
     }
 
@@ -1439,6 +1460,9 @@ impl Rtc {
     ///
     /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
     pub fn direct_api(&mut self) -> DirectApi {
+        // Low-level API touching media/streams/ICE/channels. Still armed at the
+        // accessor pending threading `Wake` through the individual mutations.
+        self.wake_all();
         DirectApi::new(self)
     }
 
@@ -1480,11 +1504,17 @@ impl Rtc {
             return None;
         }
 
+        // Disjoint borrows: the writer mutates `session`, and carries an armed
+        // `Wake` into which its methods narrow their own re-poll decision.
+        let Rtc {
+            session, readiness, ..
+        } = self;
+
         // This does not catch potential RIDs required to send simulcast, but
         // it's a good start. An error might arise later on RID mismatch.
-        self.session.media_by_mid_mut(mid)?;
+        session.media_by_mid_mut(mid)?;
 
-        Some(Writer::new(&mut self.session, mid))
+        Some(Writer::new(session, readiness.wake(), mid))
     }
 
     /// Currently configured media.
@@ -1595,6 +1625,11 @@ impl Rtc {
         Ok(o)
     }
 
+    /// Conservatively re-poll the whole tree.
+    fn wake_all(&mut self) {
+        drop(self.readiness.wake());
+    }
+
     // Returns None when polling must restart after handling an SCTP packet.
     fn do_poll_output(&mut self) -> Result<Option<Output>, RtcError> {
         if self.state == RtcState::Closed {
@@ -1602,285 +1637,283 @@ impl Rtc {
             return Ok(Some(Output::Timeout(not_happening())));
         }
 
-        while let Some(e) = self.ice.poll_event() {
-            match e {
-                IceAgentEvent::IceRestart(_) => {
-                    //
-                }
-                IceAgentEvent::IceConnectionStateChange(v) => {
-                    return Ok(Some(Output::Event(Event::IceConnectionStateChange(v))));
-                }
-                IceAgentEvent::DiscoveredRecv { proto, source } => {
-                    debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
-                    self.remote_addrs.push(source);
-                    while self.remote_addrs.len() > 20 {
-                        self.remote_addrs.remove(0);
+        if self.readiness.wants_events() {
+            while let Some(e) = self.ice.poll_event() {
+                match e {
+                    IceAgentEvent::IceRestart(_) => {
+                        //
                     }
-                }
-                IceAgentEvent::NominatedSend {
-                    proto,
-                    source,
-                    destination,
-                } => {
-                    debug!(
-                        "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
-                        Pii(source),
-                        Pii(destination),
-                        proto,
-                    );
-                    self.send_addr = Some(SendAddr {
+                    IceAgentEvent::IceConnectionStateChange(v) => {
+                        return Ok(Some(Output::Event(Event::IceConnectionStateChange(v))));
+                    }
+                    IceAgentEvent::DiscoveredRecv { proto, source } => {
+                        debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
+                        self.remote_addrs.push(source);
+                        while self.remote_addrs.len() > 20 {
+                            self.remote_addrs.remove(0);
+                        }
+                    }
+                    IceAgentEvent::NominatedSend {
                         proto,
                         source,
                         destination,
-                    });
-                }
-            }
-        }
-
-        // Handle DTLS timeout before polling output so any retransmit packets
-        // queued by dimpl and the re-armed flight timer are picked up by the
-        // poll loop below in the same iteration.
-        if let Some(timeout) = self.next_dtls_timeout {
-            if timeout <= self.last_now {
-                self.next_dtls_timeout = None;
-
-                if let Err(error) = self.dtls.handle_timeout(self.last_now) {
-                    // A failed timer transition leaves DTLS unrecoverable. Close the
-                    // RTC so continued polling cannot expose the same due timeout again.
-                    self.disconnect();
-                    return Err(error.into());
-                }
-            }
-        }
-
-        // Poll DTLS output - collect packets, handle events
-        let mut just_connected = false;
-        loop {
-            match self.dtls.poll_output(&mut self.dtls_buf) {
-                DtlsOutput::Packet(_) => {
-                    unreachable!("We don't expect DTLS packets here since we use poll_packet");
-                }
-                DtlsOutput::Connected => {
-                    if !self.dtls_connected {
-                        debug!("DTLS connected");
-                        self.dtls_connected = true;
-                        just_connected = true;
+                    } => {
+                        debug!(
+                            "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
+                            Pii(source),
+                            Pii(destination),
+                            proto,
+                        );
+                        self.send_addr = Some(SendAddr {
+                            proto,
+                            source,
+                            destination,
+                        });
                     }
                 }
-                DtlsOutput::KeyingMaterial(km, profile) => {
-                    use config::KeyingMaterial;
-                    let km_bytes = km.as_ref().to_vec();
-                    debug!("DTLS set SRTP keying material and profile: {}", profile);
-                    let active = self.dtls.is_active().expect("DTLS must be inited by now");
-                    self.session.set_keying_material(
-                        KeyingMaterial::new(&km_bytes),
-                        &self.crypto_provider,
-                        profile,
-                        active,
-                    );
-                }
-                DtlsOutput::PeerCert(der) => {
-                    debug!("DTLS verify remote fingerprint");
-                    // Compute the fingerprint of the peer's DER certificate with the hash
-                    // function of the expected one (RFC 8122 §5): sha-256, or sha-1 as some
-                    // endpoints still announce. sha-256 when there is none to compare with.
-                    let provider = &self.crypto_provider;
-                    let matching = self.remote_fingerprint.as_ref().and_then(|expected| {
-                        crate::crypto::Fingerprint::of_certificate(
-                            der,
-                            &expected.hash_func,
-                            provider,
-                        )
-                    });
-                    let fingerprint = matching.clone().unwrap_or_else(|| {
-                        crate::crypto::Fingerprint::of_certificate(der, "sha-256", provider)
-                            .expect("sha-256 is supported")
-                    });
-                    self.dtls.set_remote_fingerprint(fingerprint.clone());
-                    if let Some(expected) = &self.remote_fingerprint {
-                        if !self.fingerprint_verification {
-                            debug!("DTLS fingerprint verification disabled");
-                        } else if matching.is_none() {
-                            let message = format!(
-                                "unsupported fingerprint hash function: {}",
-                                expected.hash_func
-                            );
-                            self.disconnect();
-                            return Err(RtcError::RemoteSdp(message));
-                        } else if fingerprint != *expected {
-                            self.disconnect();
-                            return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
-                        }
-                    } else {
+            }
+
+            // Handle DTLS timeout before polling output so any retransmit packets
+            // queued by dimpl and the re-armed flight timer are picked up by the
+            // poll loop below in the same iteration.
+            if let Some(timeout) = self.next_dtls_timeout {
+                if timeout <= self.last_now {
+                    self.next_dtls_timeout = None;
+
+                    if let Err(error) = self.dtls.handle_timeout(self.last_now) {
+                        // A failed timer transition leaves DTLS unrecoverable. Close the
+                        // RTC so continued polling cannot expose the same due timeout again.
                         self.disconnect();
-                        return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
+                        return Err(error.into());
                     }
                 }
-                DtlsOutput::ApplicationData(data) => {
-                    self.sctp.handle_input(self.last_now, data);
-                }
-                DtlsOutput::Timeout(t) => {
-                    self.next_dtls_timeout = Some(t);
-                    break;
-                }
-                DtlsOutput::CloseNotify => {
-                    self.start_close()?;
-                    return Ok(Some(Output::Event(Event::Closed)));
-                }
-                other => {
-                    return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
-                        format!("Unexpected DTLS output: {other:?}"),
-                    ))));
-                }
             }
-        }
 
-        if just_connected {
-            return Ok(Some(Output::Event(Event::Connected)));
-        }
-
-        while let Some(e) = self.sctp.poll() {
-            match e {
-                SctpEvent::Transmit { mut packets } => {
-                    if let Some(v) = packets.front() {
-                        if let Err(e) = self.dtls.handle_input(v) {
-                            if is_would_block(&e) {
-                                self.sctp.push_back_transmit(packets);
-                                break;
-                            } else if self.state == RtcState::Closing {
-                                debug!(
-                                    "Dropping SCTP transmit while closing after DTLS error: {e}"
+            // Poll DTLS output - collect packets, handle events
+            let mut just_connected = false;
+            loop {
+                match self.dtls.poll_output(&mut self.dtls_buf) {
+                    DtlsOutput::Packet(_) => {
+                        unreachable!("We don't expect DTLS packets here since we use poll_packet");
+                    }
+                    DtlsOutput::Connected => {
+                        if !self.dtls_connected {
+                            debug!("DTLS connected");
+                            self.dtls_connected = true;
+                            just_connected = true;
+                        }
+                    }
+                    DtlsOutput::KeyingMaterial(km, profile) => {
+                        use config::KeyingMaterial;
+                        let km_bytes = km.as_ref().to_vec();
+                        debug!("DTLS set SRTP keying material and profile: {}", profile);
+                        let active = self.dtls.is_active().expect("DTLS must be inited by now");
+                        self.session.set_keying_material(
+                            KeyingMaterial::new(&km_bytes),
+                            &self.crypto_provider,
+                            profile,
+                            active,
+                        );
+                    }
+                    DtlsOutput::PeerCert(der) => {
+                        debug!("DTLS verify remote fingerprint");
+                        // Compute the fingerprint of the peer's DER certificate with the hash
+                        // function of the expected one (RFC 8122 §5): sha-256, or sha-1 as some
+                        // endpoints still announce. sha-256 when there is none to compare with.
+                        let provider = &self.crypto_provider;
+                        let matching = self.remote_fingerprint.as_ref().and_then(|expected| {
+                            crate::crypto::Fingerprint::of_certificate(
+                                der,
+                                &expected.hash_func,
+                                provider,
+                            )
+                        });
+                        let fingerprint = matching.clone().unwrap_or_else(|| {
+                            crate::crypto::Fingerprint::of_certificate(der, "sha-256", provider)
+                                .expect("sha-256 is supported")
+                        });
+                        self.dtls.set_remote_fingerprint(fingerprint.clone());
+                        if let Some(expected) = &self.remote_fingerprint {
+                            if !self.fingerprint_verification {
+                                debug!("DTLS fingerprint verification disabled");
+                            } else if matching.is_none() {
+                                let message = format!(
+                                    "unsupported fingerprint hash function: {}",
+                                    expected.hash_func
                                 );
-                                packets.pop_front();
-                                if !packets.is_empty() {
-                                    self.sctp.push_back_transmit(packets);
-                                }
-                                return Ok(None);
-                            } else {
-                                return Err(e.into());
+                                self.disconnect();
+                                return Err(RtcError::RemoteSdp(message));
+                            } else if fingerprint != *expected {
+                                self.disconnect();
+                                return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
                             }
+                        } else {
+                            self.disconnect();
+                            return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                         }
-
-                        packets.pop_front();
-                        // If there are still packets, they are sent on next
-                        // poll_output()
-                        if !packets.is_empty() {
-                            self.sctp.push_back_transmit(packets);
-                        }
-
-                        // Run again since this would feed the DTLS subsystem
-                        // to produce a packet now.
-                        return Ok(None);
+                    }
+                    DtlsOutput::ApplicationData(data) => {
+                        self.sctp.handle_input(self.last_now, data);
+                    }
+                    DtlsOutput::Timeout(t) => {
+                        self.next_dtls_timeout = Some(t);
+                        break;
+                    }
+                    DtlsOutput::CloseNotify => {
+                        self.start_close()?;
+                        return Ok(Some(Output::Event(Event::Closed)));
+                    }
+                    other => {
+                        return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
+                            format!("Unexpected DTLS output: {other:?}"),
+                        ))));
                     }
                 }
-                SctpEvent::Open { id, label } => {
-                    self.chan.ensure_channel_id_for(id);
-                    let id = self.chan.channel_id_by_stream_id(id).unwrap();
-                    return Ok(Some(Output::Event(Event::ChannelOpen(id, label))));
-                }
-                SctpEvent::Close {
-                    id: stream_id,
-                    reset_pending,
-                } => {
-                    let Some(channel_id) = self.chan.channel_id_by_stream_id(stream_id) else {
-                        warn!("Drop ChannelClose event for id: {:?}", stream_id);
+            }
+
+            if just_connected {
+                return Ok(Some(Output::Event(Event::Connected)));
+            }
+
+            while let Some(e) = self.sctp.poll() {
+                match e {
+                    SctpEvent::Transmit { mut packets } => {
+                        if let Some(v) = packets.front() {
+                            if let Err(e) = self.dtls.handle_input(v) {
+                                if is_would_block(&e) {
+                                    self.sctp.push_back_transmit(packets);
+                                    break;
+                                } else if self.state == RtcState::Closing {
+                                    debug!(
+                                        "Dropping SCTP transmit while closing after DTLS error: {e}"
+                                    );
+                                    packets.pop_front();
+                                    if !packets.is_empty() {
+                                        self.sctp.push_back_transmit(packets);
+                                    }
+                                    return Ok(None);
+                                } else {
+                                    return Err(e.into());
+                                }
+                            }
+
+                            packets.pop_front();
+                            // If there are still packets, they are sent on next
+                            // poll_output()
+                            if !packets.is_empty() {
+                                self.sctp.push_back_transmit(packets);
+                            }
+
+                            // Run again since this would feed the DTLS subsystem
+                            // to produce a packet now.
+                            return Ok(None);
+                        }
+                    }
+                    SctpEvent::Open { id, label } => {
+                        self.chan.ensure_channel_id_for(id);
+                        let id = self.chan.channel_id_by_stream_id(id).unwrap();
+                        return Ok(Some(Output::Event(Event::ChannelOpen(id, label))));
+                    }
+                    SctpEvent::Close {
+                        id: stream_id,
+                        reset_pending,
+                    } => {
+                        let Some(channel_id) = self.chan.channel_id_by_stream_id(stream_id) else {
+                            warn!("Drop ChannelClose event for id: {:?}", stream_id);
+                            continue;
+                        };
+                        // When a reset is outstanding, remove_channel holds the stream id
+                        // back from reallocation until the handshake completes.
+                        self.chan.remove_channel(channel_id, reset_pending);
+                        return Ok(Some(Output::Event(Event::ChannelClose(channel_id))));
+                    }
+                    SctpEvent::StreamResetComplete { id } => {
+                        // The reset handshake completed, the stream id can be used again.
+                        self.chan.stream_reset_complete(id);
                         continue;
-                    };
-                    // When a reset is outstanding, remove_channel holds the stream id
-                    // back from reallocation until the handshake completes.
-                    self.chan.remove_channel(channel_id, reset_pending);
-                    return Ok(Some(Output::Event(Event::ChannelClose(channel_id))));
-                }
-                SctpEvent::StreamResetComplete { id } => {
-                    // The reset handshake completed, the stream id can be used again.
-                    self.chan.stream_reset_complete(id);
-                    continue;
-                }
-                SctpEvent::AssociationLost => {
-                    self.chan.association_lost();
-                    self.start_close()?;
-                    return Ok(Some(Output::Event(Event::Closed)));
-                }
-                SctpEvent::Data { id, binary, data } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelData event for id: {:?}", id);
-                        continue;
-                    };
-                    let cd = ChannelData { id, binary, data };
-                    return Ok(Some(Output::Event(Event::ChannelData(cd))));
-                }
-                SctpEvent::BufferedAmountLow { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop BufferedAmountLow for id: {:?}", id);
-                        continue;
-                    };
-                    return Ok(Some(Output::Event(Event::ChannelBufferedAmountLow(id))));
+                    }
+                    SctpEvent::AssociationLost => {
+                        self.chan.association_lost();
+                        self.start_close()?;
+                        return Ok(Some(Output::Event(Event::Closed)));
+                    }
+                    SctpEvent::Data { id, binary, data } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop ChannelData event for id: {:?}", id);
+                            continue;
+                        };
+                        let cd = ChannelData { id, binary, data };
+                        return Ok(Some(Output::Event(Event::ChannelData(cd))));
+                    }
+                    SctpEvent::BufferedAmountLow { id } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop BufferedAmountLow for id: {:?}", id);
+                            continue;
+                        };
+                        return Ok(Some(Output::Event(Event::ChannelBufferedAmountLow(id))));
+                    }
                 }
             }
-        }
 
-        if let Some(ev) = self.session.poll_event() {
-            return Ok(Some(Output::Event(ev)));
-        }
-
-        // Some polling needs to bubble up errors.
-        if let Some(ev) = self.session.poll_event_fallible(self.last_now)? {
-            return Ok(Some(Output::Event(ev)));
-        }
-
-        if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
-            return Ok(Some(match e {
-                StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
-                StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
-                StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
-            }));
-        }
-
-        if let Some(v) = self.ice.poll_transmit() {
-            return Ok(Some(Output::Transmit(v)));
-        }
-
-        if let Some(send) = &self.send_addr {
-            // These can only be sent after we got an ICE connection.
-            let datagram = None
-                .or_else(|| self.dtls.poll_packet())
-                .or_else(|| self.session.poll_datagram(self.last_now));
-
-            if let Some(contents) = datagram {
-                let t = net::Transmit {
-                    proto: send.proto,
-                    source: send.source,
-                    destination: send.destination,
-                    contents,
-                };
-                return Ok(Some(Output::Transmit(t)));
+            if let Some(ev) = self.session.poll_event() {
+                return Ok(Some(Output::Event(ev)));
             }
-        } else {
-            // Don't allow accumulated feedback to build up indefinitely
-            self.session.clear_feedback();
+
+            // Some polling needs to bubble up errors.
+            if let Some(ev) = self.session.poll_event_fallible(self.last_now)? {
+                return Ok(Some(Output::Event(ev)));
+            }
+
+            if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
+                return Ok(Some(match e {
+                    StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
+                    StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
+                    StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
+                }));
+            }
+
+            if let Some(v) = self.ice.poll_transmit() {
+                return Ok(Some(Output::Transmit(v)));
+            }
+
+            if let Some(send) = &self.send_addr {
+                // These can only be sent after we got an ICE connection.
+                let datagram = None
+                    .or_else(|| self.dtls.poll_packet())
+                    .or_else(|| self.session.poll_datagram(self.last_now));
+
+                if let Some(contents) = datagram {
+                    let t = net::Transmit {
+                        proto: send.proto,
+                        source: send.source,
+                        destination: send.destination,
+                        contents,
+                    };
+                    return Ok(Some(Output::Transmit(t)));
+                }
+            } else {
+                // Don't allow accumulated feedback to build up indefinitely
+                self.session.clear_feedback();
+            }
+
+            self.readiness.clear_events();
         }
 
-        let stats_timeout = self.stats.as_mut().and_then(|s| s.poll_timeout());
+        if self.readiness.wants_timeout() {
+            let stats_timeout = self.stats.as_mut().and_then(|s| s.poll_timeout());
+            let time_and_reason = (None, Reason::NotHappening)
+                .soonest((self.next_dtls_timeout, Reason::DTLS))
+                .soonest((self.ice.poll_timeout(), Reason::Ice))
+                .soonest(self.session.poll_timeout())
+                .soonest((self.sctp.poll_timeout(), Reason::Sctp))
+                .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
+                .soonest((stats_timeout, Reason::Stats));
 
-        let time_and_reason = (None, Reason::NotHappening)
-            .soonest((self.next_dtls_timeout, Reason::DTLS))
-            .soonest((self.ice.poll_timeout(), Reason::Ice))
-            .soonest(self.session.poll_timeout())
-            .soonest((self.sctp.poll_timeout(), Reason::Sctp))
-            .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
-            .soonest((stats_timeout, Reason::Stats));
-
-        // trace!("poll_output timeout reason: {}", time_and_reason.1);
-
-        let time = time_and_reason.0.unwrap_or_else(not_happening);
-        let reason = time_and_reason.1;
-
-        // We want to guarantee time doesn't go backwards.
-        let next = if time < self.last_now {
-            self.last_now
-        } else {
-            time
-        };
+            let time = time_and_reason.0.unwrap_or_else(not_happening);
+            self.cached_timeout = time.max(self.last_now);
+            self.last_timeout_reason = time_and_reason.1;
+            self.readiness.clear_timeout();
+        }
 
         if self.state == RtcState::Closing && self.close_drain_complete() {
             self.state = RtcState::Closed;
@@ -1888,8 +1921,7 @@ impl Rtc {
             return Ok(Some(Output::Timeout(not_happening())));
         }
 
-        self.last_timeout_reason = reason;
-        Ok(Some(Output::Timeout(next)))
+        Ok(Some(Output::Timeout(self.cached_timeout)))
     }
 
     /// The reason for the last [`Output::Timeout`]
@@ -2000,6 +2032,7 @@ impl Rtc {
             return Ok(());
         }
 
+        // The handlers below each arm their own `Wake`; nothing to do here.
         match input {
             Input::Timeout(now) => self.do_handle_timeout(now)?,
             Input::Receive(recv_time, r) => {
@@ -2025,6 +2058,10 @@ impl Rtc {
         if self.state == RtcState::Closed {
             return Ok(());
         }
+
+        // Closing queues RTCP BYE and a DTLS close_notify that must be drained
+        // from the pipeline, so re-poll the whole tree.
+        self.wake_all();
 
         if self.state != RtcState::Closing {
             self.session.close_rtp();
@@ -2070,31 +2107,55 @@ impl Rtc {
         }
 
         self.last_now = now;
-        self.ice.handle_timeout(now);
-        self.sctp.handle_timeout(now);
-        self.chan.handle_timeout(now, &mut self.sctp);
-        self.session.handle_timeout(now)?;
 
-        if let Some(stats) = &mut self.stats {
+        // Disjoint borrows so each subsystem gets its own armed `Wake` and
+        // makes its own re-poll decision; the guards fold into `readiness`
+        // independently as each statement ends.
+        let Rtc {
+            ice,
+            sctp,
+            chan,
+            session,
+            stats,
+            send_addr,
+            peer_bytes_rx,
+            peer_bytes_tx,
+            readiness,
+            ..
+        } = self;
+
+        // ICE is an external crate and can't be handed a `Wake`. Driving it can
+        // transmit and re-arm timers, so arm both on its behalf at the boundary.
+        ice.handle_timeout(now);
+        drop(readiness.wake());
+
+        sctp.handle_timeout(now, &mut readiness.wake());
+        chan.handle_timeout(now, sctp, &mut readiness.wake());
+        session.handle_timeout(now, &mut readiness.wake())?;
+
+        if let Some(stats) = stats {
             if stats.wants_timeout(now) {
                 let mut snapshot = StatsSnapshot::new(now);
-                snapshot.peer_rx = self.peer_bytes_rx;
-                snapshot.peer_tx = self.peer_bytes_tx;
-                let current_round_trip_time = self.ice.nominated_pair_rtt();
-                let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
-                let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
-                snapshot.selected_candidate_pair =
-                    self.send_addr.as_ref().map(|s| CandidatePairStats {
-                        protocol: s.proto,
-                        local: CandidateStats { addr: s.source },
-                        remote: CandidateStats {
-                            addr: s.destination,
-                        },
-                        current_round_trip_time,
-                        total_round_trip_time,
-                        responses_received,
-                    });
-                self.session.visit_stats(now, &mut snapshot);
+                snapshot.peer_rx = *peer_bytes_rx;
+                snapshot.peer_tx = *peer_bytes_tx;
+                let current_round_trip_time = ice.nominated_pair_rtt();
+                let total_round_trip_time = ice.nominated_pair_total_rtt().unwrap_or_default();
+                let responses_received = ice.nominated_pair_responses_received().unwrap_or(0);
+                snapshot.selected_candidate_pair = send_addr.as_ref().map(|s| CandidatePairStats {
+                    protocol: s.proto,
+                    local: CandidateStats { addr: s.source },
+                    remote: CandidateStats {
+                        addr: s.destination,
+                    },
+                    current_round_trip_time,
+                    total_round_trip_time,
+                    responses_received,
+                });
+                session.visit_stats(now, &mut snapshot);
+
+                // A stats snapshot surfaces as an event and re-arms the stats
+                // timer.
+                drop(readiness.wake());
                 stats.do_handle_timeout(&mut snapshot);
             }
         }
@@ -2114,6 +2175,15 @@ impl Rtc {
 
         self.peer_bytes_rx += bytes_rx as u64;
 
+        // Disjoint borrows so each subsystem gets its own armed `Wake`.
+        let Rtc {
+            ice,
+            dtls,
+            session,
+            readiness,
+            ..
+        } = self;
+
         match r.contents.inner {
             Stun(stun) => {
                 let packet = is::stun::StunPacket {
@@ -2122,11 +2192,17 @@ impl Rtc {
                     destination: r.destination,
                     message: stun,
                 };
-                self.ice.handle_packet(recv_time, packet);
+                // ICE is an external crate; arm both on its behalf.
+                ice.handle_packet(recv_time, packet);
+                drop(readiness.wake());
             }
-            Dtls(dtls) => self.dtls.handle_receive(dtls)?,
-            Rtp(rtp) => self.session.handle_rtp_receive(recv_time, rtp),
-            Rtcp(rtcp) => self.session.handle_rtcp_receive(recv_time, rtcp),
+            Dtls(dtls_packet) => {
+                dtls.handle_receive(dtls_packet)?;
+                // DTLS is an external crate; arm both on its behalf.
+                drop(readiness.wake());
+            }
+            Rtp(rtp) => session.handle_rtp_receive(recv_time, rtp, &mut readiness.wake()),
+            Rtcp(rtcp) => session.handle_rtcp_receive(recv_time, rtcp, &mut readiness.wake()),
         }
 
         Ok(())

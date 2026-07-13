@@ -78,6 +78,10 @@ impl<'a> Bwe<'a> {
     /// ```
     pub fn set_bitrate(&mut self, minimum: Bitrate, desired: Bitrate) {
         self.0.session.set_bwe_bitrate(minimum, desired);
+        // Local decision: this only reconfigures the estimator and pacer timers.
+        // Any probing padding is produced later from the timeout path, so no
+        // event is queued now.
+        self.0.readiness.wake().no_events();
     }
 
     /// Reset the BWE with a new init_bitrate
@@ -89,5 +93,7 @@ impl<'a> Bwe<'a> {
     /// the estimator attempts to discover.
     pub fn reset(&mut self, init_bitrate: Bitrate) {
         self.0.session.reset_bwe(init_bitrate);
+        // Local decision: resetting the estimator moves no output, only timers.
+        self.0.readiness.wake().no_events();
     }
 }

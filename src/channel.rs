@@ -2,6 +2,7 @@
 
 use std::{fmt, str, time::Instant};
 
+use crate::poll::Wake;
 use crate::sctp::RtcSctp;
 use crate::util::already_happened;
 use crate::{Rtc, RtcError};
@@ -72,6 +73,10 @@ impl<'a> Channel<'a> {
             "Data channel write() less than entire buffer"
         );
 
+        // Local decision: a write drives SCTP, which both transmits and re-arms
+        // its timers.
+        drop(self.rtc.readiness.wake());
+
         Ok(true)
     }
 
@@ -96,6 +101,9 @@ impl<'a> Channel<'a> {
         self.rtc
             .sctp
             .set_buffered_amount_low_threshold(self.sctp_stream_id, threshold);
+        // Local decision: lowering the threshold can make SCTP emit a
+        // ChannelBufferedAmountLow event; it moves no timer.
+        self.rtc.readiness.wake().no_timeout();
     }
 
     /// Get the channel config.
@@ -253,7 +261,7 @@ impl ChannelHandler {
             .and_then(|a| a.sctp_stream_id)
     }
 
-    pub(crate) fn handle_timeout(&mut self, _now: Instant, sctp: &mut RtcSctp) {
+    pub(crate) fn handle_timeout(&mut self, _now: Instant, sctp: &mut RtcSctp, _wake: &mut Wake) {
         if !sctp.is_inited() {
             return;
         }
@@ -263,6 +271,9 @@ impl ChannelHandler {
 
         // After do_allocations so we get a channel for any confirmed.
         self.open_channels(sctp);
+
+        // Opening channels drives SCTP, which can both emit events and re-arm
+        // its timers, so `_wake` is left armed.
     }
 
     /// Allocate next available `ChannelId`.
