@@ -4,7 +4,6 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::Timer;
-use crate::session::Readiness;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
@@ -24,6 +23,7 @@ use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
 use crate::rtp_::{SRTP_BLOCK_SIZE, SeqNo};
 use crate::scheduler::Scheduler;
 use crate::session::PacketReceipt;
+use crate::session::Readiness;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
 use crate::util::{InstantExt, already_happened, not_happening};
