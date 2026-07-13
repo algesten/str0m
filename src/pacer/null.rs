@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use super::Pacer;
+use super::PacerReason;
 use super::PaddingRequest;
 use super::QueueState;
 use crate::Reason;
-use crate::pacer::PacerReason;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
 
 /// A null pacer that doesn't pace.

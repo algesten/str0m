@@ -13,6 +13,9 @@ use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig, Transp
 
 use snap::{b64_encode, webrtc_transport_config};
 
+use crate::Timer;
+use crate::scheduler::Scheduler;
+
 pub use sctp_proto::Error as ProtoError;
 use sctp_proto::ReliabilityType;
 
@@ -986,8 +989,10 @@ impl RtcSctp {
         None
     }
 
-    pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.assoc.as_mut().and_then(|a| a.poll_timeout())
+    pub fn poll_timeout(&mut self, s: &mut Scheduler) {
+        if let Some(at) = self.assoc.as_mut().and_then(|a| a.poll_timeout()) {
+            s.arm(Timer::Sctp, at);
+        }
     }
 
     pub fn push_back_transmit(&mut self, data: VecDeque<Vec<u8>>) {

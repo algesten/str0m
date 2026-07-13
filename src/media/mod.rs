@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::RtcError;
+use crate::Timer;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
 
@@ -17,6 +18,7 @@ use str0m_proto::Id;
 
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
+use crate::scheduler::Scheduler;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
 use crate::streams::{RtpPacket, Streams};
@@ -465,12 +467,16 @@ impl Media {
         Ok(())
     }
 
-    pub(crate) fn poll_timeout(&self) -> Option<Instant> {
+    pub(crate) fn poll_timeout(&self, s: &mut Scheduler) {
         if !self.to_payload.is_empty() {
-            Some(already_happened())
-        } else {
-            None
+            s.arm(Timer::Packetize(self.mid), already_happened());
         }
+    }
+
+    pub(crate) fn next_payload_midrid(&self) -> Option<MidRid> {
+        self.to_payload
+            .front()
+            .map(|to_payload| MidRid(self.mid, to_payload.rid))
     }
 
     pub(crate) fn do_payload(

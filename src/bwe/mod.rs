@@ -17,9 +17,9 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::Reason;
+use crate::Timer;
 use crate::rtp_::{Bitrate, DataSize, TwccClusterId, TwccSendRecord, TwccSeq};
-use crate::util::Soonest;
+use crate::scheduler::Scheduler;
 
 mod acked_bitrate_estimator;
 mod alr_detector;
@@ -101,8 +101,8 @@ impl Bwe {
         self.smoother.poll()
     }
 
-    pub fn poll_timeout(&self) -> (Option<Instant>, Reason) {
-        self.bwe.poll_timeout()
+    pub fn poll_timeout(&self, s: &mut Scheduler) {
+        self.bwe.poll_timeout(s);
     }
 
     pub fn last_estimate(&self) -> Option<Bitrate> {
@@ -274,13 +274,13 @@ impl SendSideBandwidthEstimator {
         self.propagate_estimate();
     }
 
-    pub fn poll_timeout(&self) -> (Option<Instant>, Reason) {
-        let delay_timeout = Some(self.delay_controller.poll_timeout());
-        let probe_timeout = Some(self.probe_control.poll_timeout());
-        let probe_estimator_timeout = Some(self.probe_estimator.poll_timeout());
-        (delay_timeout, Reason::BweDelayControl)
-            .soonest((probe_timeout, Reason::BweProbeControl))
-            .soonest((probe_estimator_timeout, Reason::BweProbeEstimator))
+    pub fn poll_timeout(&self, s: &mut Scheduler) {
+        let delay_at = self.delay_controller.poll_timeout();
+        let probe_at = self.probe_control.poll_timeout();
+        let estimate_at = self.probe_estimator.poll_timeout();
+        s.arm(Timer::BweDelayControl, delay_at);
+        s.arm(Timer::BweProbeControl, probe_at);
+        s.arm(Timer::BweProbeEstimator, estimate_at);
     }
 
     /// Handle periodic timeout for BWE components.

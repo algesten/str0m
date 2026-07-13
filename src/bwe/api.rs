@@ -1,5 +1,6 @@
 //! Bandwidth estimation.
 
+use crate::scheduler::TimerScope;
 use crate::{Rtc, rtp_::Mid};
 
 pub use crate::rtp_::Bitrate;
@@ -38,6 +39,8 @@ impl<'a> Bwe<'a> {
     /// [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate] with this estimate.
     pub fn set_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         self.0.session.set_bwe_desired_bitrate(desired_bitrate);
+        self.0.scheduler.invalidate(TimerScope::Bwe);
+        self.0.scheduler.invalidate(TimerScope::Pacer);
     }
 
     /// Reset the BWE with a new init_bitrate
@@ -53,5 +56,6 @@ impl<'a> Bwe<'a> {
     ///
     pub fn reset(&mut self, init_bitrate: Bitrate) {
         self.0.session.reset_bwe(init_bitrate);
+        self.0.scheduler.invalidate(TimerScope::Bwe);
     }
 }

@@ -5,8 +5,10 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use crate::Bitrate;
+use crate::Timer;
 use crate::rtp::SeqNo;
 use crate::rtp_::{Mid, Rid};
+use crate::scheduler::Scheduler;
 use crate::{io::Protocol, rtp_::MidRid};
 
 pub(crate) struct Stats {
@@ -324,10 +326,12 @@ impl Stats {
 
     /// Poll for the next time to call [`Stats::wants_timeout`] and [`Stats::do_handle_timeout`].
     ///
-    /// NOTE: we only need Option<_> to conform to .soonest() (see caller)
-    pub fn poll_timeout(&self) -> Option<Instant> {
-        let last_now = self.last_now?;
-        Some(last_now + self.interval)
+    pub fn poll_timeout(&self, s: &mut Scheduler) {
+        let at = self
+            .last_now
+            .map(|last_now| last_now + self.interval)
+            .unwrap_or_else(crate::util::already_happened);
+        s.arm(Timer::Stats, at);
     }
 
     /// Return any events ready for delivery

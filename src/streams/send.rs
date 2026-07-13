@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::Timer;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
@@ -20,6 +21,7 @@ use crate::rtp_::{MAX_BLANK_PADDING_PAYLOAD_SIZE, Sdes, SdesType};
 use crate::rtp_::{MediaTime, Mid, NackEntry, ReportList, Rtcp, RtpHeader};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
 use crate::rtp_::{SRTP_BLOCK_SIZE, SeqNo};
+use crate::scheduler::Scheduler;
 use crate::session::PacketReceipt;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
@@ -848,6 +850,16 @@ impl StreamTx {
             return not_happening();
         };
         self.last_sender_report + rr_interval(kind.is_audio())
+    }
+
+    pub(crate) fn poll_timeout(&self, s: &mut Scheduler) {
+        if self.kind.is_some() {
+            s.arm(Timer::SenderReport(self.ssrc), self.sender_report_at());
+        }
+
+        if self.need_timeout() {
+            s.arm(Timer::SendStream(self.ssrc), already_happened());
+        }
     }
 
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {

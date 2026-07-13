@@ -29,10 +29,11 @@ use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb}
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
+use crate::scheduler::{Invalidations, Scheduler, TimerScope};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
-use crate::util::{Soonest, already_happened, not_happening};
-use crate::{Reason, net};
+use crate::util::{already_happened, not_happening};
+use crate::{Reason, Timer, net};
 use crate::{RtcConfig, RtcError};
 
 /// Minimum time we delay between sending nacks. This should be
@@ -244,45 +245,93 @@ impl Session {
         self.srtp_tx = Some(SrtpContext::new(crypto, srtp_profile, &mat, left));
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+    pub fn handle_timer(
+        &mut self,
+        now: Instant,
+        timer: Timer,
+        i: &mut Invalidations<'_>,
+    ) -> Result<(), RtcError> {
         if self.rtp_closing {
             return Ok(());
         }
 
-        // Payload any waiting frames
-        self.do_payload()?;
+        match timer {
+            Timer::Feedback => {}
+            Timer::Packetize(mid) => {
+                // Payload the next waiting frame for this Media.
+                let midrid = self
+                    .medias
+                    .iter()
+                    .find(|media| media.mid() == mid)
+                    .and_then(Media::next_payload_midrid);
+                let ssrc = midrid.and_then(|midrid| {
+                    self.streams
+                        .stream_tx_by_midrid(midrid)
+                        .map(|stream| stream.ssrc())
+                });
 
-        let sender_ssrc = self.streams.first_ssrc_local();
-
-        let do_nack = now >= self.nack_at().unwrap_or(not_happening());
-
-        self.streams.handle_timeout(
-            now,
-            sender_ssrc,
-            do_nack,
-            &self.medias,
-            &self.codec_config,
-            &mut self.feedback_tx,
-        );
-
-        if do_nack {
-            self.last_nack = now;
-        }
-
-        self.update_queue_state(now);
-
-        if let Some(twcc_at) = self.twcc_at() {
-            if now >= twcc_at {
-                self.create_twcc_feedback(sender_ssrc, now);
+                self.do_payload(mid)?;
+                if let Some(ssrc) = ssrc {
+                    i.invalidate(TimerScope::StreamTx(ssrc));
+                }
             }
+            Timer::ReceiverReport(ssrc) => {
+                let sender_ssrc = self.streams.first_ssrc_local();
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_receiver_report(now, ssrc, sender_ssrc, feedback);
+            }
+            Timer::SenderReport(ssrc) => {
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_sender_report(now, ssrc, feedback);
+            }
+            Timer::KeyframeRequest(ssrc) => {
+                let sender_ssrc = self.streams.first_ssrc_local();
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_keyframe_request(ssrc, sender_ssrc, feedback);
+            }
+            Timer::RembRequest(ssrc) => {
+                let sender_ssrc = self.streams.first_ssrc_local();
+                let feedback = &mut self.feedback_tx;
+                let streams = &mut self.streams;
+                streams.handle_remb_request(ssrc, sender_ssrc, feedback);
+            }
+            Timer::Nack => {
+                if now >= self.nack_at().unwrap_or(not_happening()) {
+                    let sender_ssrc = self.streams.first_ssrc_local();
+                    let feedback = &mut self.feedback_tx;
+                    let streams = &mut self.streams;
+                    streams.handle_nack(sender_ssrc, feedback);
+                    self.last_nack = now;
+                }
+            }
+            Timer::Twcc => {
+                if self.twcc_at().is_some_and(|at| now >= at) {
+                    let sender_ssrc = self.streams.first_ssrc_local();
+                    self.create_twcc_feedback(sender_ssrc, now);
+                }
+            }
+            Timer::PauseCheck(ssrc) => self.streams.handle_pause(now, ssrc),
+            Timer::SendStream(ssrc) => {
+                let medias = &self.medias;
+                let config = &self.codec_config;
+                let streams = &mut self.streams;
+                streams.handle_send_stream(now, ssrc, medias, config);
+            }
+            Timer::RxLookupCleanup => self.streams.handle_rx_lookup_cleanup(now),
+            _ => unreachable!("non-session timer: {timer:?}"),
         }
-
-        self.handle_timeout_bwe(now);
 
         Ok(())
     }
 
-    fn handle_timeout_bwe(&mut self, now: Instant) {
+    pub(crate) fn handle_timeout_bwe(&mut self, now: Instant) {
+        if self.rtp_closing {
+            return;
+        }
+
         let Some(bwe) = self.bwe.as_mut() else {
             return;
         };
@@ -308,12 +357,10 @@ impl Session {
         }
     }
 
-    fn update_queue_state(&mut self, now: Instant) {
+    fn update_queue_state(&mut self, now: Instant) -> Option<Ssrc> {
         let iter = self.streams.streams_tx().map(|m| m.queue_state(now));
 
-        let Some(padding_request) = self.pacer.handle_timeout(now, iter) else {
-            return;
-        };
+        let padding_request = self.pacer.handle_timeout(now, iter)?;
 
         let stream = self
             .streams
@@ -321,6 +368,17 @@ impl Session {
             .expect("pacer to use an existing stream");
 
         stream.generate_padding(padding_request.padding);
+        Some(stream.ssrc())
+    }
+
+    pub(crate) fn handle_pacer_timeout(&mut self, now: Instant, i: &mut Invalidations<'_>) {
+        if self.rtp_closing {
+            return;
+        }
+
+        if let Some(ssrc) = self.update_queue_state(now) {
+            i.invalidate(TimerScope::StreamTx(ssrc));
+        }
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
@@ -355,20 +413,20 @@ impl Session {
             .push_back(Rtcp::AppSpecificFeedback(feedback));
     }
 
-    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
+    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8], s: &mut Scheduler) {
         let Some(header) = RtpHeader::parse(message, &self.exts) else {
             trace!("Failed to parse RTP header");
             return;
         };
 
-        self.handle_rtp(now, header, message);
+        self.handle_rtp(now, header, message, s);
     }
 
-    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8]) {
+    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8], s: &mut Scheduler) {
         // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
         // even if it's irrelevant and empty.
         // In practice I'm not sure that is happening, because libWebRTC hates empty packets.
-        self.handle_rtcp(now, message);
+        self.handle_rtcp(now, message, s);
     }
 
     fn mid_and_ssrc_for_header(&mut self, now: Instant, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
@@ -463,7 +521,13 @@ impl Session {
         }
     }
 
-    pub(crate) fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
+    pub(crate) fn handle_rtp(
+        &mut self,
+        now: Instant,
+        mut header: RtpHeader,
+        buf: &[u8],
+        s: &mut Scheduler,
+    ) {
         // Rewrite absolute-send-time (if present) to be relative to now.
         header.ext_vals.update_absolute_send_time(now);
 
@@ -474,6 +538,8 @@ impl Session {
             debug!("No mid/SSRC for header: {:?}", header);
             return;
         };
+        s.invalidate(TimerScope::StreamRx(ssrc));
+        s.invalidate(TimerScope::Session);
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -640,7 +706,7 @@ impl Session {
         }
     }
 
-    fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
+    fn handle_rtcp(&mut self, now: Instant, buf: &[u8], s: &mut Scheduler) -> Option<()> {
         let srtp: &mut SrtpContext = self.srtp_rx.as_mut()?;
         let unprotected = srtp.unprotect_rtcp(buf)?;
 
@@ -671,6 +737,8 @@ impl Session {
                     bwe.update(maybe_records, now);
                 }
                 need_configure_pacer = true;
+                s.invalidate(TimerScope::Bwe);
+                s.invalidate(TimerScope::Pacer);
 
                 // The funky thing about TWCC reports is that they are never stapled
                 // together with other RTCP packet. If they were though, we want to
@@ -679,15 +747,19 @@ impl Session {
             }
 
             if fb.is_for_rx() {
-                let Some(stream) = self.streams.stream_rx(&fb.ssrc()) else {
+                let ssrc = fb.ssrc();
+                let Some(stream) = self.streams.stream_rx(&ssrc) else {
                     continue;
                 };
                 stream.handle_rtcp(now, fb);
+                s.invalidate(TimerScope::StreamRx(ssrc));
             } else {
-                let Some(stream) = self.streams.stream_tx(&fb.ssrc()) else {
+                let ssrc = fb.ssrc();
+                let Some(stream) = self.streams.stream_tx(&ssrc) else {
                     continue;
                 };
                 stream.handle_rtcp(now, fb);
+                s.invalidate(TimerScope::StreamTx(ssrc));
             }
         }
 
@@ -803,7 +875,7 @@ impl Session {
         self.srtp_rx.is_some() && self.srtp_tx.is_some()
     }
 
-    pub fn poll_datagram(&mut self, now: Instant) -> Option<net::DatagramSend> {
+    pub fn poll_datagram(&mut self, now: Instant, s: &mut Scheduler) -> Option<net::DatagramSend> {
         // Time must have progressed forward from start value.
         if now == already_happened() {
             return None;
@@ -813,7 +885,7 @@ impl Session {
             self.poll_feedback()
         } else {
             None.or_else(|| self.poll_feedback())
-                .or_else(|| self.poll_packet(now))
+                .or_else(|| self.poll_packet(now, s))
         };
 
         if let Some(x) = &x {
@@ -891,7 +963,7 @@ impl Session {
         Some(protected.into())
     }
 
-    fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
+    fn poll_packet(&mut self, now: Instant, s: &mut Scheduler) -> Option<DatagramSend> {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
@@ -934,6 +1006,7 @@ impl Session {
         }
 
         self.pacer.register_send(now, payload_size.into(), midrid);
+        s.invalidate(TimerScope::Pacer);
 
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
@@ -962,56 +1035,97 @@ impl Session {
 
         if !self.packet_first_sent {
             self.packet_first_sent = true;
+            s.invalidate(TimerScope::Bwe);
         }
 
         Some(protected.into())
     }
 
-    pub fn poll_timeout(&mut self) -> (Option<Instant>, Reason) {
+    pub fn poll_timeout(&mut self, s: &mut Scheduler) {
         if self.rtp_closing {
-            return if self.feedback_tx.is_empty() {
-                (None, Reason::NotHappening)
-            } else {
-                (Some(already_happened()), Reason::Feedback)
-            };
+            if !self.feedback_tx.is_empty() {
+                s.arm(Timer::Feedback, already_happened());
+            }
+            return;
         }
 
-        let feedback_at = self.regular_feedback_at();
-        let nack_at = self.nack_at();
-        let twcc_at = self.twcc_at();
-        let pacing_at = self.pacer.poll_timeout();
-        let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
-        let paused_at = self.paused_at();
-        let send_stream_at = self.streams.send_stream();
+        self.streams.poll_timeout(s);
 
-        // Gives us built-in reason
-        let bwe_at = self
-            .bwe
-            .as_ref()
-            .map(|bwe| bwe.poll_timeout())
-            // We should never see this reason.
-            .unwrap_or((None, Reason::BweDelayControl));
+        if let Some(at) = self.nack_at() {
+            s.arm(Timer::Nack, at);
+        }
 
-        (feedback_at, Reason::Feedback)
-            .soonest((nack_at, Reason::Nack))
-            .soonest((twcc_at, Reason::Twcc))
-            .soonest(pacing_at)
-            .soonest((packetize_at, Reason::Packetize))
-            .soonest((paused_at, Reason::PauseCheck))
-            .soonest((send_stream_at, Reason::SendStream))
-            .soonest(bwe_at)
+        if let Some(at) = self.twcc_at() {
+            s.arm(Timer::Twcc, at);
+        }
+    }
+
+    pub(crate) fn poll_pacer_timeout(&self, s: &mut Scheduler) {
+        if self.rtp_closing {
+            return;
+        }
+
+        let (at, reason) = self.pacer.poll_timeout();
+        let Some(at) = at else {
+            return;
+        };
+        let Reason::Pacer(reason) = reason else {
+            unreachable!("pacer returned non-pacer timeout reason: {reason:?}");
+        };
+        s.arm_pacer(at, reason);
+    }
+
+    pub(crate) fn poll_bwe_timeout(&self, s: &mut Scheduler) {
+        if self.rtp_closing {
+            return;
+        }
+        if let Some(bwe) = &self.bwe {
+            bwe.poll_timeout(s);
+        }
+    }
+
+    pub(crate) fn poll_timeout_all(&mut self, s: &mut Scheduler) {
+        self.poll_timeout(s);
+        if self.rtp_closing {
+            return;
+        }
+        self.poll_pacer_timeout(s);
+        self.poll_bwe_timeout(s);
+        self.streams.poll_timeout_all(s);
+        for media in &self.medias {
+            media.poll_timeout(s);
+        }
+    }
+
+    pub(crate) fn poll_streams_timeout(&self, s: &mut Scheduler) {
+        if !self.rtp_closing {
+            self.streams.poll_timeout(s);
+        }
+    }
+
+    pub(crate) fn poll_stream_tx_timeout(&self, ssrc: Ssrc, s: &mut Scheduler) {
+        if !self.rtp_closing {
+            self.streams.poll_stream_tx_timeout(ssrc, s);
+        }
+    }
+
+    pub(crate) fn poll_stream_rx_timeout(&self, ssrc: Ssrc, s: &mut Scheduler) {
+        if !self.rtp_closing {
+            self.streams.poll_stream_rx_timeout(ssrc, s);
+        }
+    }
+
+    pub(crate) fn poll_media_timeout(&self, mid: Mid, s: &mut Scheduler) {
+        if self.rtp_closing {
+            return;
+        }
+        if let Some(media) = self.medias.iter().find(|media| media.mid() == mid) {
+            media.poll_timeout(s);
+        }
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
         self.medias.iter().any(|m| m.mid() == mid)
-    }
-
-    fn regular_feedback_at(&self) -> Option<Instant> {
-        self.streams.regular_feedback_at()
-    }
-
-    fn paused_at(&self) -> Option<Instant> {
-        self.streams.paused_at()
     }
 
     fn nack_at(&mut self) -> Option<Instant> {
@@ -1123,16 +1237,17 @@ impl Session {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
-    fn do_payload(&mut self) -> Result<(), RtcError> {
+    fn do_payload(&mut self, mid: Mid) -> Result<(), RtcError> {
         let mtu = self.mtu();
-        for m in &mut self.medias {
-            m.do_payload(
-                &mut self.streams,
-                &self.codec_config,
-                self.vp9_packetizer_mode,
-                mtu,
-            )?;
-        }
+        let Some(media) = self.medias.iter_mut().find(|media| media.mid() == mid) else {
+            return Ok(());
+        };
+        media.do_payload(
+            &mut self.streams,
+            &self.codec_config,
+            self.vp9_packetizer_mode,
+            mtu,
+        )?;
 
         Ok(())
     }
