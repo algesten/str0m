@@ -1,6 +1,7 @@
 # Unreleased
 
   * Replace `Reason` with precise `Timer` identities and a global timeout scheduler (breaking) #1008
+  * Skip the per-stream and per-media walks in `poll_event` when no event is queued #1009
   * Fix VP9 non-flexible SS advertising a bogus R=0 GOF for single-layer streams #999
   * Support G722 audio codec (16 kHz codec with 8 kHz RTP clock per RFC 3551) #992
   * Apply reliability parameters to a DCEP-receiving in-band channel #1004
