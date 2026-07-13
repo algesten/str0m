@@ -13,6 +13,8 @@ use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig, Transp
 
 use snap::{b64_encode, webrtc_transport_config};
 
+use crate::poll::Wake;
+
 pub use sctp_proto::Error as ProtoError;
 use sctp_proto::ReliabilityType;
 
@@ -666,7 +668,9 @@ impl RtcSctp {
         }
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) {
+    // `_wake` arms both: driving the association can produce transmits and
+    // channel events while also re-arming SCTP's own timers.
+    pub fn handle_timeout(&mut self, now: Instant, _wake: &mut Wake) {
         if self.state == RtcSctpState::Uninited {
             // Need to call `init()` before any timeouts are accepted.
             return;
