@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::Timer;
 use crate::media::KeyframeRequestKind;
+use crate::session::Readiness;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
 use crate::rtp_::{Fir, FirEntry, Frequency, MediaTime, Remb};
@@ -262,11 +263,12 @@ impl StreamRx {
         }
     }
 
-    pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
+    pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb, ready: &mut Readiness) {
         use RtcpFb::*;
         match fb {
             SenderInfo(v) => {
                 self.set_sender_info(now, v);
+                ready.mark();
             }
             SourceDescription(v) => {
                 for (sdes, st) in v.values {
@@ -332,7 +334,7 @@ impl StreamRx {
         self.stats.rtt = rtt;
     }
 
-    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+    pub(crate) fn handle_timeout(&mut self, now: Instant, ready: &mut Readiness) {
         // No scheduled paused check?
         if self.check_paused_at.is_none() {
             return;
@@ -349,6 +351,7 @@ impl StreamRx {
 
         self.paused = true;
         self.need_paused_event = true;
+        ready.mark();
     }
 
     pub(crate) fn extend_seq(
@@ -403,6 +406,7 @@ impl StreamRx {
         clock_rate: Frequency,
         is_repair: bool,
         seq_no: SeqNo,
+        ready: &mut Readiness,
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
@@ -410,6 +414,7 @@ impl StreamRx {
         if was_paused {
             self.paused = false;
             self.need_paused_event = true;
+            ready.mark();
         }
         self.check_paused_at = Some(now + self.pause_threshold);
 
@@ -895,7 +900,14 @@ mod tests {
         };
 
         let seq_no = stream.extend_seq(&header, false, |_| None);
-        let receipt = stream.update_register(now, &header, Frequency::NINETY_KHZ, false, seq_no);
+        let receipt = stream.update_register(
+            now,
+            &header,
+            Frequency::NINETY_KHZ,
+            false,
+            seq_no,
+            &mut Readiness::default(),
+        );
 
         assert!(
             receipt.time.numer() > previous_time,

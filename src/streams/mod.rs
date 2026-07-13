@@ -16,6 +16,7 @@ use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
 use crate::scheduler::Scheduler;
+use crate::session::Readiness;
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
@@ -554,9 +555,9 @@ impl Streams {
         }
     }
 
-    pub(crate) fn handle_pause(&mut self, now: Instant, ssrc: Ssrc) {
+    pub(crate) fn handle_pause(&mut self, now: Instant, ssrc: Ssrc, ready: &mut Readiness) {
         if let Some(stream) = self.streams_rx.get_mut(&ssrc) {
-            stream.handle_timeout(now);
+            stream.handle_timeout(now, ready);
         }
     }
 

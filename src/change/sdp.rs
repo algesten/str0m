@@ -1185,6 +1185,9 @@ fn add_new_lines(
                 .unwrap_or(false);
             let is_rejected = m.disabled && !is_in_bundle;
             media.need_open_event = is_offer && !is_rejected;
+            if media.need_open_event {
+                session.mark_event_ready();
+            }
 
             // Match/remap remote params.
             session

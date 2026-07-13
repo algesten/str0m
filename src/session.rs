@@ -44,6 +44,37 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Coarse "something might be waiting" flag for the `poll_event` walks.
+///
+/// `poll_event()` answers "does any stream have a keyframe request, a fresh sender
+/// report, a pause transition?" and "does any media have a completed sample?" by
+/// walking every stream and every media. In a 1:1 call that is invisible. In a
+/// conference each `Rtc` holds roughly one m-line per remote participant, and an SFU
+/// calls `poll_output()` thousands of times a second per connection, so the walks are
+/// paid O(N) times per connection and O(N^2) per room. The overwhelming majority of
+/// them find nothing.
+///
+/// The paths that queue an event mark this. The walks only run while it is marked, and
+/// it is cleared once a full poll has come back empty. Correctness does not depend on
+/// the mark being tight: a spurious mark costs one extra walk, never a missed event.
+#[derive(Debug, Default)]
+pub(crate) struct Readiness(bool);
+
+impl Readiness {
+    /// An event has been queued somewhere: the walks must run again.
+    pub(crate) fn mark(&mut self) {
+        self.0 = true;
+    }
+
+    fn is_marked(&self) -> bool {
+        self.0
+    }
+
+    fn clear(&mut self) {
+        self.0 = false;
+    }
+}
+
 pub(crate) struct Session {
     id: SessionId,
 
@@ -54,6 +85,9 @@ pub(crate) struct Session {
 
     // The actual RTP encoded streams.
     pub streams: Streams,
+
+    /// Whether any of the `poll_event` walks can currently find something.
+    event_ready: Readiness,
 
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
@@ -152,6 +186,7 @@ impl Session {
             id,
             medias: vec![],
             streams: Streams::new(enable_stats, *config.mtu.end()),
+            event_ready: Readiness::default(),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
@@ -307,7 +342,7 @@ impl Session {
                     self.create_twcc_feedback(sender_ssrc, now);
                 }
             }
-            Timer::PauseCheck(ssrc) => self.streams.handle_pause(now, ssrc),
+            Timer::PauseCheck(ssrc) => self.streams.handle_pause(now, ssrc, &mut self.event_ready),
             Timer::SendStream(ssrc) => {
                 self.streams
                     .handle_send_stream(now, ssrc, &self.medias, &self.codec_config);
@@ -633,7 +668,14 @@ impl Session {
         update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
         // Register reception in nack registers.
-        let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
+        let receipt_outer = stream.update_register(
+            now,
+            &header,
+            clock_rate,
+            is_repair,
+            seq_no,
+            &mut self.event_ready,
+        );
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
@@ -660,7 +702,14 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no);
+            let receipt = stream.update_register(
+                now,
+                &header,
+                clock_rate,
+                false,
+                seq_no,
+                &mut self.event_ready,
+            );
             (receipt, data)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
@@ -699,6 +748,9 @@ impl Session {
                 self.reordering_size_video,
                 &self.codec_config,
             );
+            // The depayloader may have completed a sample, so poll_event_fallible()
+            // has something to find.
+            self.event_ready.mark();
         }
     }
 
@@ -747,14 +799,14 @@ impl Session {
                 let Some(stream) = self.streams.stream_rx(&ssrc) else {
                     continue;
                 };
-                stream.handle_rtcp(now, fb);
+                stream.handle_rtcp(now, fb, &mut self.event_ready);
                 s.invalidate(TimerScope::StreamRx(ssrc));
             } else {
                 let ssrc = fb.ssrc();
                 let Some(stream) = self.streams.stream_tx(&ssrc) else {
                     continue;
                 };
-                stream.handle_rtcp(now, fb);
+                stream.handle_rtcp(now, fb, &mut self.event_ready);
                 s.invalidate(TimerScope::StreamTx(ssrc));
             }
         }
@@ -799,21 +851,29 @@ impl Session {
 
         // This must be before pending_packet.take() since we need to emit the unpaused event
         // before the first packet causing the unpause.
-        if let Some(paused) = self.streams.poll_stream_paused() {
-            if paused.paused {
-                if let Some(media) = self.medias.iter_mut().find(|m| m.mid() == paused.mid) {
-                    // Drop held partial depacketizer state so pre-pause fragments can't
-                    // complete into stale MediaData after the stream resumes.
-                    media.reset_depayloaders_for_rid(paused.rid);
+        if self.event_ready.is_marked() {
+            if let Some(paused) = self.streams.poll_stream_paused() {
+                if paused.paused {
+                    if let Some(media) = self.medias.iter_mut().find(|m| m.mid() == paused.mid) {
+                        // Drop held partial depacketizer state so pre-pause fragments can't
+                        // complete into stale MediaData after the stream resumes.
+                        media.reset_depayloaders_for_rid(paused.rid);
+                    }
                 }
+                return Some(Event::StreamPaused(paused));
             }
-            return Some(Event::StreamPaused(paused));
         }
 
         if self.rtp_mode {
             if let Some(packet) = self.pending_packet.take() {
                 return Some(Event::RtpPacket(packet));
             }
+        }
+
+        // Everything below walks every stream or every media. Skip the lot unless a
+        // producing path has actually queued something.
+        if !self.event_ready.is_marked() {
+            return None;
         }
 
         if let Some(req) = self.streams.poll_keyframe_request() {
@@ -848,6 +908,11 @@ impl Session {
                 }));
             }
         }
+
+        // Every walk above came back empty, so the mark is spent. It is only reached
+        // once SRTP is ready, which matters: before that poll_event() bails out early
+        // and MediaAdded/MediaChanged are still queued from negotiation.
+        self.event_ready.clear();
 
         None
     }
@@ -1175,7 +1240,14 @@ impl Session {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
+    /// A path outside `Session` queued an event (see `Readiness`).
+    pub(crate) fn mark_event_ready(&mut self) {
+        self.event_ready.mark();
+    }
+
     pub fn add_media(&mut self, media: Media) {
+        // Media::new() sets need_open_event, so poll_event has a MediaAdded to surface.
+        self.event_ready.mark();
         self.medias.push(media);
     }
 
@@ -1249,6 +1321,8 @@ impl Session {
         }
 
         media.set_direction(direction);
+        // May have set need_changed_event, so poll_event has a MediaChanged to surface.
+        self.event_ready.mark();
 
         if old_dir.is_sending() && !direction.is_sending() {
             self.streams.reset_buffers_tx(mid);

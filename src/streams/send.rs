@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::Timer;
+use crate::session::Readiness;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
@@ -870,7 +871,7 @@ impl StreamTx {
         self.pending_request_remb.take()
     }
 
-    pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
+    pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb, ready: &mut Readiness) {
         use RtcpFb::*;
         match fb {
             ReceptionReport(r) => {
@@ -894,13 +895,16 @@ impl StreamTx {
             Pli(_) => {
                 self.stats.increase_plis();
                 self.pending_request_keyframe = Some(KeyframeRequestKind::Pli);
+                ready.mark();
             }
             Fir(_) => {
                 self.stats.increase_firs();
                 self.pending_request_keyframe = Some(KeyframeRequestKind::Fir);
+                ready.mark();
             }
             Remb(r) => {
                 self.pending_request_remb = Some(Bitrate::from(r.bitrate as f64));
+                ready.mark();
             }
             Twcc(_) => unreachable!("TWCC should be handled on session level"),
             _ => {}
