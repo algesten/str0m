@@ -909,10 +909,12 @@ impl Session {
             }
         }
 
-        // Every walk above came back empty, so the mark is spent. It is only reached
-        // once SRTP is ready, which matters: before that poll_event() bails out early
-        // and MediaAdded/MediaChanged are still queued from negotiation.
-        self.event_ready.clear();
+        // Every walk above came back empty. In rtp_mode nothing else walks, so the mark
+        // is spent here. In media mode poll_event_fallible() still has the sample walk,
+        // and clears it when that also comes back empty.
+        if self.rtp_mode {
+            self.event_ready.clear();
+        }
 
         None
     }
@@ -923,10 +925,22 @@ impl Session {
             return Ok(None);
         }
 
+        if !self.event_ready.is_marked() {
+            return Ok(None);
+        }
+
         for media in &mut self.medias {
             if let Some(e) = media.poll_sample(&self.codec_config)? {
                 return Ok(Some(Event::MediaData(e)));
             }
+        }
+
+        // poll_event() runs its walks before this one, so both have now come back empty
+        // and the mark is spent. Only clear once those walks have actually had their
+        // chance though: until SRTP is ready poll_event() bails out early, and
+        // MediaAdded/MediaChanged are queued during negotiation, before that point.
+        if self.ready_for_srtp() {
+            self.event_ready.clear();
         }
 
         Ok(None)
