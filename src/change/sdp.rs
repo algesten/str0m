@@ -946,6 +946,11 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     offer.assert_consistency()?;
 
+    // Applying an SDP can queue MediaAdded and MediaChanged, via several paths.
+    // Mark once here rather than at each of them: negotiation is rare, and a
+    // spurious mark costs one extra walk, never a missed event.
+    session.mark_event_ready();
+
     update_session(session, &offer);
 
     let bundle_mids = offer.bundle_mids();
@@ -964,6 +969,9 @@ fn apply_answer(
     answer: SdpAnswer,
 ) -> Result<(), RtcError> {
     answer.assert_consistency()?;
+
+    // See apply_offer: the same events can be queued when applying an answer.
+    session.mark_event_ready();
 
     update_session(session, &answer);
 
@@ -1185,9 +1193,6 @@ fn add_new_lines(
                 .unwrap_or(false);
             let is_rejected = m.disabled && !is_in_bundle;
             media.need_open_event = is_offer && !is_rejected;
-            if media.need_open_event {
-                session.mark_event_ready();
-            }
 
             // Match/remap remote params.
             session
