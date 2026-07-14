@@ -1546,7 +1546,11 @@ impl Rtc {
     ///
     /// See [`Rtc`] instance documentation for how this is expected to be used in a loop.
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
-        let o = self.do_poll_output()?;
+        let o = loop {
+            if let Some(o) = self.do_poll_output()? {
+                break o;
+            }
+        };
 
         match &o {
             Output::Event(e) => match e {
@@ -1574,10 +1578,10 @@ impl Rtc {
         Ok(o)
     }
 
-    fn do_poll_output(&mut self) -> Result<Output, RtcError> {
+    fn do_poll_output(&mut self) -> Result<Option<Output>, RtcError> {
         if self.state == RtcState::Closed {
             self.last_timeout_reason = Reason::NotHappening;
-            return Ok(Output::Timeout(not_happening()));
+            return Ok(Some(Output::Timeout(not_happening())));
         }
 
         while let Some(e) = self.ice.poll_event() {
@@ -1586,7 +1590,7 @@ impl Rtc {
                     //
                 }
                 IceAgentEvent::IceConnectionStateChange(v) => {
-                    return Ok(Output::Event(Event::IceConnectionStateChange(v)));
+                    return Ok(Some(Output::Event(Event::IceConnectionStateChange(v))));
                 }
                 IceAgentEvent::DiscoveredRecv { proto, source } => {
                     debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
@@ -1680,7 +1684,7 @@ impl Rtc {
                 }
                 DtlsOutput::CloseNotify => {
                     self.start_close()?;
-                    return Ok(Output::Event(Event::Closed));
+                    return Ok(Some(Output::Event(Event::Closed)));
                 }
                 other => {
                     return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
@@ -1691,7 +1695,7 @@ impl Rtc {
         }
 
         if just_connected {
-            return Ok(Output::Event(Event::Connected));
+            return Ok(Some(Output::Event(Event::Connected)));
         }
 
         while let Some(e) = self.sctp.poll() {
@@ -1725,13 +1729,13 @@ impl Rtc {
 
                         // Run again since this would feed the DTLS subsystem
                         // to produce a packet now.
-                        return self.do_poll_output();
+                        return Ok(None);
                     }
                 }
                 SctpEvent::Open { id, label } => {
                     self.chan.ensure_channel_id_for(id);
                     let id = self.chan.channel_id_by_stream_id(id).unwrap();
-                    return Ok(Output::Event(Event::ChannelOpen(id, label)));
+                    return Ok(Some(Output::Event(Event::ChannelOpen(id, label))));
                 }
                 SctpEvent::Close { id } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
@@ -1739,11 +1743,11 @@ impl Rtc {
                         continue;
                     };
                     self.chan.remove_channel(id, self.last_now);
-                    return Ok(Output::Event(Event::ChannelClose(id)));
+                    return Ok(Some(Output::Event(Event::ChannelClose(id))));
                 }
                 SctpEvent::AssociationLost => {
                     self.start_close()?;
-                    return Ok(Output::Event(Event::Closed));
+                    return Ok(Some(Output::Event(Event::Closed)));
                 }
                 SctpEvent::Data { id, binary, data } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
@@ -1751,37 +1755,37 @@ impl Rtc {
                         continue;
                     };
                     let cd = ChannelData { id, binary, data };
-                    return Ok(Output::Event(Event::ChannelData(cd)));
+                    return Ok(Some(Output::Event(Event::ChannelData(cd))));
                 }
                 SctpEvent::BufferedAmountLow { id } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
                         warn!("Drop BufferedAmountLow for id: {:?}", id);
                         continue;
                     };
-                    return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+                    return Ok(Some(Output::Event(Event::ChannelBufferedAmountLow(id))));
                 }
             }
         }
 
         if let Some(ev) = self.session.poll_event() {
-            return Ok(Output::Event(ev));
+            return Ok(Some(Output::Event(ev)));
         }
 
         // Some polling needs to bubble up errors.
         if let Some(ev) = self.session.poll_event_fallible()? {
-            return Ok(Output::Event(ev));
+            return Ok(Some(Output::Event(ev)));
         }
 
         if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
-            return Ok(match e {
+            return Ok(Some(match e {
                 StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
                 StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
                 StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
-            });
+            }));
         }
 
         if let Some(v) = self.ice.poll_transmit() {
-            return Ok(Output::Transmit(v));
+            return Ok(Some(Output::Transmit(v)));
         }
 
         if let Some(send) = &self.send_addr {
@@ -1797,7 +1801,7 @@ impl Rtc {
                     destination: send.destination,
                     contents,
                 };
-                return Ok(Output::Transmit(t));
+                return Ok(Some(Output::Transmit(t)));
             }
         } else {
             // Don't allow accumulated feedback to build up indefinitely
@@ -1829,11 +1833,11 @@ impl Rtc {
         if self.state == RtcState::Closing && self.close_drain_complete() {
             self.state = RtcState::Closed;
             self.last_timeout_reason = Reason::NotHappening;
-            return Ok(Output::Timeout(not_happening()));
+            return Ok(Some(Output::Timeout(not_happening())));
         }
 
         self.last_timeout_reason = reason;
-        Ok(Output::Timeout(next))
+        Ok(Some(Output::Timeout(next)))
     }
 
     /// The reason for the last [`Output::Timeout`]
