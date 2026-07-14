@@ -3,7 +3,7 @@
 use std::time::Duration;
 use std::{fmt, str, time::Instant};
 
-use crate::poll::Wake;
+use crate::poll::{RtcMut, Wake};
 use crate::sctp::RtcSctp;
 use crate::util::already_happened;
 use crate::{Rtc, RtcError};
@@ -42,13 +42,14 @@ pub struct ChannelData {
 /// Get this handle from [`Rtc::channel()`][crate::Rtc::channel()].
 pub struct Channel<'a> {
     sctp_stream_id: u16,
-    rtc: &'a mut Rtc,
+    // `RtcMut` arms the readiness on mutable deref only; see [`crate::poll`].
+    rtc: RtcMut<'a>,
 }
 
 impl<'a> Channel<'a> {
     pub(crate) fn new(sctp_stream_id: u16, rtc: &'a mut Rtc) -> Self {
         Channel {
-            rtc,
+            rtc: RtcMut::new(rtc),
             sctp_stream_id,
         }
     }
@@ -74,10 +75,6 @@ impl<'a> Channel<'a> {
             "Data channel write() less than entire buffer"
         );
 
-        // Local decision: a write drives SCTP, which both transmits and re-arms
-        // its timers.
-        drop(self.rtc.readiness.wake());
-
         Ok(true)
     }
 
@@ -102,9 +99,6 @@ impl<'a> Channel<'a> {
         self.rtc
             .sctp
             .set_buffered_amount_low_threshold(self.sctp_stream_id, threshold);
-        // Local decision: lowering the threshold can make SCTP emit a
-        // ChannelBufferedAmountLow event; it moves no timer.
-        self.rtc.readiness.wake().no_timeout();
     }
 
     /// Get the channel config.

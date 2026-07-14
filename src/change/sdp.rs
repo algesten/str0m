@@ -12,6 +12,7 @@ use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{Media, Rids, Simulcast};
 use crate::packet::MediaKind;
+use crate::poll::RtcMut;
 use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
@@ -28,14 +29,15 @@ use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, Streams}
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
 pub struct SdpApi<'a> {
-    rtc: &'a mut Rtc,
+    // `RtcMut` arms the readiness on mutable deref only; see [`crate::poll`].
+    rtc: RtcMut<'a>,
     changes: Changes,
 }
 
 impl<'a> SdpApi<'a> {
     pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
         SdpApi {
-            rtc,
+            rtc: RtcMut::new(rtc),
             changes: Changes::default(),
         }
     }
@@ -65,11 +67,8 @@ impl<'a> SdpApi<'a> {
     /// // send json_answer to remote peer.
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
     /// ```
-    pub fn accept_offer(self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
+    pub fn accept_offer(mut self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
         debug!("Accept offer");
-
-        // Applying an offer reshapes media, streams, ICE, DTLS and SCTP.
-        self.rtc.readiness.wake();
 
         // Invalidate any outstanding PendingOffer.
         self.rtc.next_change_id();
@@ -84,7 +83,7 @@ impl<'a> SdpApi<'a> {
             ));
         }
 
-        add_ice_details(self.rtc, &offer, None)?;
+        add_ice_details(&mut *self.rtc, &offer, None)?;
 
         if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
@@ -102,7 +101,7 @@ impl<'a> SdpApi<'a> {
         }
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(self.rtc, &offer)?;
+        init_dtls(&mut *self.rtc, &offer)?;
 
         let remote_max_message_size = extract_max_message_size(offer.media_lines.iter());
 
@@ -129,7 +128,7 @@ impl<'a> SdpApi<'a> {
                 .try_init_sctp(client, init_data, remote_max_message_size)?;
         }
 
-        let params = AsSdpParams::new(self.rtc, None);
+        let params = AsSdpParams::new(&*self.rtc, None);
         let sdp = as_sdp(&self.rtc.session, params);
 
         debug!("Create answer");
@@ -159,14 +158,11 @@ impl<'a> SdpApi<'a> {
     /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn accept_answer(
-        self,
+        mut self,
         mut pending: SdpPendingOffer,
         answer: SdpAnswer,
     ) -> Result<(), RtcError> {
         debug!("Accept answer");
-
-        // Applying an answer reshapes media, streams, ICE, DTLS and SCTP.
-        self.rtc.readiness.wake();
 
         // Ensure we don't use the wrong changes below. We must use that of pending.
         drop(self.changes);
@@ -181,10 +177,10 @@ impl<'a> SdpApi<'a> {
             ));
         }
 
-        add_ice_details(self.rtc, &answer, Some(&pending))?;
+        add_ice_details(&mut *self.rtc, &answer, Some(&pending))?;
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(self.rtc, &answer)?;
+        init_dtls(&mut *self.rtc, &answer)?;
 
         if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = answer.fingerprint() {
@@ -361,7 +357,6 @@ impl<'a> SdpApi<'a> {
     /// If the direction is set for media that doesn't exist, or if the direction is
     /// the same that's already set [`SdpApi::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        self.rtc.readiness.wake();
         let changed = self.rtc.session.set_direction(mid, dir);
 
         if changed {
@@ -384,7 +379,6 @@ impl<'a> SdpApi<'a> {
     ///
     /// [RFC 8843]: https://datatracker.ietf.org/doc/html/rfc8843#section-7.5.3
     pub fn stop_media(&mut self, mid: Mid) {
-        self.rtc.readiness.wake();
         let changed = self.rtc.session.stop_media(mid);
 
         if changed {
@@ -447,7 +441,6 @@ impl<'a> SdpApi<'a> {
     /// # }
     /// ```
     pub fn add_channel_with_config(&mut self, config: ChannelConfig) -> ChannelId {
-        self.rtc.readiness.wake();
         let has_media = self.rtc.session.app().is_some();
         let changes_contains_add_app = self.changes.contains_add_app();
 
@@ -508,21 +501,17 @@ impl<'a> SdpApi<'a> {
     /// assert!(changes.apply().is_none());
     /// # }
     /// ```
-    pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer)> {
+    pub fn apply(mut self) -> Option<(SdpOffer, SdpPendingOffer)> {
         if self.changes.is_empty() {
             return None;
         }
-
-        // Either enacts changes directly (no-negotiation channels) or bumps the
-        // change id for the pending offer; re-poll the tree either way.
-        self.rtc.readiness.wake();
 
         let change_id = self.rtc.next_change_id();
 
         let requires_negotiation = self.changes.0.iter().any(requires_negotiation);
 
         if requires_negotiation {
-            let offer = create_offer(self.rtc, &self.changes);
+            let offer = create_offer(&mut *self.rtc, &self.changes);
             let pending = SdpPendingOffer {
                 change_id,
                 changes: self.changes,
@@ -531,7 +520,7 @@ impl<'a> SdpApi<'a> {
             Some((offer, pending))
         } else {
             debug!("Apply direct changes");
-            apply_direct_changes(self.rtc, self.changes);
+            apply_direct_changes(&mut *self.rtc, self.changes);
             None
         }
     }
@@ -562,7 +551,7 @@ impl<'a> SdpApi<'a> {
     /// let (_offer, pending) = changes.apply().unwrap();
     /// ```
     pub fn merge(&mut self, mut pending_offer: SdpPendingOffer) {
-        pending_offer.retain_relevant(self.rtc);
+        pending_offer.retain_relevant(&*self.rtc);
 
         // Prepend the original pending changes before the current SdpApi's own changes.
         //

@@ -2200,7 +2200,7 @@ impl Rtc {
     ///
     /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
     pub fn bwe(&mut self) -> Bwe {
-        Bwe(self)
+        Bwe::new(self)
     }
 
     fn is_correct_change_id(&self, change_id: usize) -> bool {

@@ -1,5 +1,6 @@
 //! Bandwidth estimation.
 
+use crate::poll::RtcMut;
 use crate::{Rtc, rtp_::Mid};
 
 pub use crate::rtp_::Bitrate;
@@ -15,9 +16,16 @@ pub enum BweKind {
 }
 
 /// Access to the Bandwidth Estimate subsystem.
-pub struct Bwe<'a>(pub(crate) &'a mut Rtc);
+///
+/// The inner `RtcMut` arms the readiness on mutable deref only; see
+/// [`crate::poll`].
+pub struct Bwe<'a>(pub(crate) RtcMut<'a>);
 
 impl<'a> Bwe<'a> {
+    pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
+        Bwe(RtcMut::new(rtc))
+    }
+
     /// Configure the desired bitrate.
     ///
     /// Configure the bandwidth estimation system with the desired bitrate.
@@ -37,11 +45,11 @@ impl<'a> Bwe<'a> {
     /// link can sustain 4.5Mbit/s there will eventually be an
     /// [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate] with this estimate.
     pub fn set_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        self.0.session.set_bwe_desired_bitrate(desired_bitrate);
-        // Local decision: this only reconfigures the estimator and pacer timers.
-        // Any probing padding is produced later from the timeout path, so no
-        // event is queued now.
-        self.0.readiness.wake().no_events();
+        let mut m = self.0.mutate();
+        m.session.set_bwe_desired_bitrate(desired_bitrate);
+        // Reconfiguring BWE only re-arms the estimator/pacer timers; any probing
+        // padding is produced later from the timeout path, so no event is queued.
+        m.no_events();
     }
 
     /// Reset the BWE with a new init_bitrate
@@ -56,8 +64,9 @@ impl<'a> Bwe<'a> {
     /// provided init_bitrate.
     ///
     pub fn reset(&mut self, init_bitrate: Bitrate) {
-        self.0.session.reset_bwe(init_bitrate);
-        // Local decision: resetting the estimator moves no output, only timers.
-        self.0.readiness.wake().no_events();
+        let mut m = self.0.mutate();
+        m.session.reset_bwe(init_bitrate);
+        // Resetting the estimator moves no output, only timers.
+        m.no_events();
     }
 }
