@@ -6,7 +6,6 @@ use crate::format::PayloadParams;
 use crate::rtp_::AbsCaptureTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
-use crate::scheduler::{Scheduler, TimerScope};
 use crate::session::Session;
 
 use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
@@ -19,7 +18,6 @@ use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid
 /// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
 pub struct Writer<'a> {
     session: &'a mut Session,
-    scheduler: &'a mut Scheduler,
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
@@ -30,10 +28,9 @@ impl<'a> Writer<'a> {
     /// Create a new writer object.
     ///
     /// The `mid` parameter is required to have a corresponding media in `self.session`.
-    pub(crate) fn new(session: &'a mut Session, scheduler: &'a mut Scheduler, mid: Mid) -> Self {
+    pub(crate) fn new(session: &'a mut Session, mid: Mid) -> Self {
         Writer {
             session,
-            scheduler,
             mid,
             rid: None,
             start_of_talkspurt: None,
@@ -179,7 +176,6 @@ impl<'a> Writer<'a> {
         };
 
         media.set_to_payload(to_payload)?;
-        self.scheduler.invalidate(TimerScope::Media(self.mid));
 
         Ok(())
     }
@@ -239,9 +235,7 @@ impl<'a> Writer<'a> {
             .stream_rx_by_midrid(midrid, false)
             .ok_or(RtcError::NoReceiverSource(rid))?;
 
-        let ssrc = stream.ssrc();
         stream.request_keyframe(kind);
-        self.scheduler.invalidate(TimerScope::StreamRx(ssrc));
 
         Ok(())
     }

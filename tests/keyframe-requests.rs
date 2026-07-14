@@ -3,7 +3,7 @@
 use std::net::Ipv4Addr;
 
 use str0m::media::{Direction, KeyframeRequestKind, MediaKind};
-use str0m::{Event, Output, Reason, RtcError};
+use str0m::{Event, RtcError};
 
 mod common;
 use common::{Peer, TestRtc, init_crypto_default, init_log, negotiate, progress};
@@ -55,12 +55,6 @@ fn keyframe_request_pli() -> Result<(), RtcError> {
             writer.request_keyframe(None, KeyframeRequestKind::Pli)?;
         }
     }
-
-    let Output::Timeout(timeout) = r.poll_output()? else {
-        panic!("keyframe request should schedule a timeout");
-    };
-    assert_eq!(r.last_timeout_reason(), Reason::Feedback);
-    r.last = timeout;
 
     // Progress until L receives the keyframe request
     let mut found_keyframe_request = false;

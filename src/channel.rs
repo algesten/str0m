@@ -3,11 +3,9 @@
 use std::time::Duration;
 use std::{fmt, str, time::Instant};
 
-use crate::scheduler::Scheduler;
-use crate::scheduler::TimerScope;
 use crate::sctp::RtcSctp;
 use crate::util::already_happened;
-use crate::{Rtc, RtcError, Timer};
+use crate::{Rtc, RtcError};
 
 pub use crate::sctp::ChannelConfig;
 pub use crate::sctp::Reliability;
@@ -67,7 +65,6 @@ impl<'a> Channel<'a> {
 
         // Try write.
         let written = self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?;
-        self.rtc.scheduler.invalidate(TimerScope::Sctp);
 
         // Invariant: if available calculation is correct, we should have accepted.
         assert_eq!(
@@ -331,18 +328,11 @@ impl ChannelHandler {
         }
     }
 
-    pub fn poll_timeout(&self, sctp: &RtcSctp, s: &mut Scheduler) {
+    pub fn poll_timeout(&self, sctp: &RtcSctp) -> Option<Instant> {
         if sctp.is_inited() && (self.need_allocation() || self.need_open()) {
-            s.arm(Timer::Channel, already_happened());
-        }
-
-        if let Some(at) = self
-            .closed_stream_ids
-            .iter()
-            .map(|(_, closed_at)| *closed_at + STREAM_ID_COOLDOWN)
-            .min()
-        {
-            s.arm(Timer::ChannelCleanup, at);
+            Some(already_happened())
+        } else {
+            None
         }
     }
 
