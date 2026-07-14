@@ -68,6 +68,9 @@ impl<'a> SdpApi<'a> {
     pub fn accept_offer(self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
         debug!("Accept offer");
 
+        // Applying an offer reshapes media, streams, ICE, DTLS and SCTP.
+        self.rtc.readiness.wake();
+
         // Invalidate any outstanding PendingOffer.
         self.rtc.next_change_id();
 
@@ -161,6 +164,9 @@ impl<'a> SdpApi<'a> {
         answer: SdpAnswer,
     ) -> Result<(), RtcError> {
         debug!("Accept answer");
+
+        // Applying an answer reshapes media, streams, ICE, DTLS and SCTP.
+        self.rtc.readiness.wake();
 
         // Ensure we don't use the wrong changes below. We must use that of pending.
         drop(self.changes);
@@ -355,6 +361,7 @@ impl<'a> SdpApi<'a> {
     /// If the direction is set for media that doesn't exist, or if the direction is
     /// the same that's already set [`SdpApi::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
+        self.rtc.readiness.wake();
         let changed = self.rtc.session.set_direction(mid, dir);
 
         if changed {
@@ -377,6 +384,7 @@ impl<'a> SdpApi<'a> {
     ///
     /// [RFC 8843]: https://datatracker.ietf.org/doc/html/rfc8843#section-7.5.3
     pub fn stop_media(&mut self, mid: Mid) {
+        self.rtc.readiness.wake();
         let changed = self.rtc.session.stop_media(mid);
 
         if changed {
@@ -439,6 +447,7 @@ impl<'a> SdpApi<'a> {
     /// # }
     /// ```
     pub fn add_channel_with_config(&mut self, config: ChannelConfig) -> ChannelId {
+        self.rtc.readiness.wake();
         let has_media = self.rtc.session.app().is_some();
         let changes_contains_add_app = self.changes.contains_add_app();
 
@@ -503,6 +512,10 @@ impl<'a> SdpApi<'a> {
         if self.changes.is_empty() {
             return None;
         }
+
+        // Either enacts changes directly (no-negotiation channels) or bumps the
+        // change id for the pending offer; re-poll the tree either way.
+        self.rtc.readiness.wake();
 
         let change_id = self.rtc.next_change_id();
 

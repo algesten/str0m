@@ -67,8 +67,9 @@ impl Readiness {
 ///
 /// Narrowed locally by the component and folded into [`Readiness`] on drop.
 /// See the [module docs][self].
-#[must_use = "a Wake only re-polls the tree when it is dropped or narrowed; \
-              dropping it immediately is the conservative (re-poll all) default"]
+///
+/// Dropping it immediately (e.g. `self.rtc.readiness.wake();`) is the
+/// conservative default: it re-polls everything. Narrow first to do less.
 pub(crate) struct Wake<'a> {
     readiness: &'a mut Readiness,
     events: bool,

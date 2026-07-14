@@ -56,6 +56,7 @@ impl<'a> DirectApi<'a> {
     /// If `controlling` is `false`, this peer connection is set as the ICE controlled agent,
     /// meaning it will respond to connectivity checks sent by the controlling agent.
     pub fn set_ice_controlling(&mut self, controlling: bool) {
+        self.rtc.readiness.wake();
         self.rtc.ice.set_controlling(controlling);
     }
 
@@ -69,11 +70,13 @@ impl<'a> DirectApi<'a> {
 
     /// Sets the local ICE credentials.
     pub fn set_local_ice_credentials(&mut self, local_ice_credentials: IceCreds) {
+        self.rtc.readiness.wake();
         self.rtc.ice.set_local_credentials(local_ice_credentials);
     }
 
     /// Sets the remote ICE credentials.
     pub fn set_remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
+        self.rtc.readiness.wake();
         self.rtc.ice.set_remote_credentials(remote_ice_credentials);
     }
 
@@ -87,6 +90,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// Returns `true` if the candidate was found and invalidated.
     pub fn invalidate_candidate(&mut self, c: &Candidate) -> bool {
+        self.rtc.readiness.wake();
         self.rtc.ice.invalidate_candidate(c)
     }
 
@@ -114,11 +118,13 @@ impl<'a> DirectApi<'a> {
 
     /// Sets the remote DTLS fingerprint.
     pub fn set_remote_fingerprint(&mut self, dtls_fingerprint: Fingerprint) {
+        self.rtc.readiness.wake();
         self.rtc.remote_fingerprint = Some(dtls_fingerprint);
     }
 
     /// Start the DTLS subsystem.
     pub fn start_dtls(&mut self, active: bool) -> Result<(), RtcError> {
+        self.rtc.readiness.wake();
         self.rtc.init_dtls(active)
     }
 
@@ -127,6 +133,7 @@ impl<'a> DirectApi<'a> {
     /// When `client` is `true`, this side initiates the SCTP association as the
     /// connecting party.
     pub fn start_sctp(&mut self, client: bool) {
+        self.rtc.readiness.wake();
         self.rtc
             .try_init_sctp(client, None, None)
             .expect("starting SCTP should be infallible")
@@ -164,11 +171,13 @@ impl<'a> DirectApi<'a> {
         client: bool,
         sctp_init_data: SctpInitData,
     ) -> Result<(), RtcError> {
+        self.rtc.readiness.wake();
         self.rtc.try_init_sctp(client, Some(sctp_init_data), None)
     }
 
     /// Create a new data channel.
     pub fn create_data_channel(&mut self, config: ChannelConfig) -> ChannelId {
+        self.rtc.readiness.wake();
         let id = self.rtc.chan.new_channel(&config);
         self.rtc.chan.confirm(id, config);
         id
@@ -176,16 +185,19 @@ impl<'a> DirectApi<'a> {
 
     /// Close a data channel.
     pub fn close_data_channel(&mut self, channel_id: ChannelId) {
+        self.rtc.readiness.wake();
         self.rtc.chan.close_channel(channel_id, &mut self.rtc.sctp);
     }
 
     /// Set whether to enable ice-lite.
     pub fn set_ice_lite(&mut self, ice_lite: bool) {
+        self.rtc.readiness.wake();
         self.rtc.ice.set_ice_lite(ice_lite);
     }
 
     /// Enable twcc feedback.
     pub fn enable_twcc_feedback(&mut self) {
+        self.rtc.readiness.wake();
         self.rtc.session.enable_twcc_feedback()
     }
 
@@ -215,6 +227,7 @@ impl<'a> DirectApi<'a> {
     /// All streams belong to a media identified by a `mid`. This creates the media without
     /// doing any SDP dance.
     pub fn declare_media(&mut self, mid: Mid, kind: MediaKind) -> &mut Media {
+        self.rtc.readiness.wake();
         let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
 
         let next_index = if let Some(max_index) = max_index {
@@ -234,6 +247,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// Removes media and all streams belong to a media identified by a `mid`.
     pub fn remove_media(&mut self, mid: Mid) {
+        self.rtc.readiness.wake();
         self.rtc.session.remove_media(mid);
     }
 
@@ -247,6 +261,8 @@ impl<'a> DirectApi<'a> {
         mid: Mid,
         rid: Option<Rid>,
     ) -> &mut StreamRx {
+        self.rtc.readiness.wake();
+
         let Some(_media) = self.rtc.session.media_by_mid(mid) else {
             panic!("No media declared for mid: {}", mid);
         };
@@ -266,6 +282,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// Returns true if stream existed and was removed.
     pub fn remove_stream_rx(&mut self, ssrc: Ssrc) -> bool {
+        self.rtc.readiness.wake();
         self.rtc.session.streams.remove_stream_rx(ssrc)
     }
 
@@ -275,11 +292,14 @@ impl<'a> DirectApi<'a> {
     ///
     /// The stream must first be declared using [`DirectApi::expect_stream_rx`].
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
+        // Hands out a mutable stream; arm conservatively for what the caller does.
+        self.rtc.readiness.wake();
         self.rtc.session.streams.stream_rx(ssrc)
     }
 
     /// Obtain a recv stream by looking it up via mid/rid.
     pub fn stream_rx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamRx> {
+        self.rtc.readiness.wake();
         let midrid = MidRid(mid, rid);
         self.rtc.session.streams.stream_rx_by_midrid(midrid, true)
     }
@@ -298,6 +318,8 @@ impl<'a> DirectApi<'a> {
         mid: Mid,
         rid: Option<Rid>,
     ) -> &mut StreamTx {
+        self.rtc.readiness.wake();
+
         let Some(media) = self.rtc.session.media_by_mid_mut(mid) else {
             panic!("No media declared for mid: {}", mid);
         };
@@ -332,6 +354,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// Returns true if stream existed and was removed.
     pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {
+        self.rtc.readiness.wake();
         self.rtc.session.streams.remove_stream_tx(ssrc)
     }
 
@@ -339,11 +362,14 @@ impl<'a> DirectApi<'a> {
     ///
     /// The stream must first be declared using [`DirectApi::declare_stream_tx`].
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
+        // Hands out a mutable stream (RTP writes); arm conservatively.
+        self.rtc.readiness.wake();
         self.rtc.session.streams.stream_tx(ssrc)
     }
 
     /// Obtain a send stream by looking it up via mid/rid.
     pub fn stream_tx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamTx> {
+        self.rtc.readiness.wake();
         let midrid = MidRid(mid, rid);
         self.rtc.session.streams.stream_tx_by_midrid(midrid)
     }
@@ -367,6 +393,8 @@ impl<'a> DirectApi<'a> {
         new_ssrc: Ssrc,
         new_rtx: Option<Ssrc>,
     ) -> Option<&mut StreamTx> {
+        self.rtc.readiness.wake();
+
         let midrid = MidRid(mid, rid);
 
         // Find the stream by mid/rid
@@ -407,5 +435,8 @@ impl<'a> DirectApi<'a> {
         self.rtc
             .session
             .send_app_specific_feedback(sender_ssrc, media_ssrc, payload);
+        // Local decision: this only queues RTCP feedback, drained from the
+        // transmit path; it moves no timer.
+        self.rtc.readiness.wake().no_timeout();
     }
 }

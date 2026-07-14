@@ -1432,10 +1432,6 @@ impl Rtc {
     /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn sdp_api(&mut self) -> SdpApi {
-        // SDP negotiation can change media, streams, ICE and channels at once.
-        // Still armed at the accessor pending threading `Wake` through the
-        // individual SdpApi mutations.
-        self.wake_all();
         SdpApi::new(self)
     }
 
@@ -1443,9 +1439,6 @@ impl Rtc {
     ///
     /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
     pub fn direct_api(&mut self) -> DirectApi {
-        // Low-level API touching media/streams/ICE/channels. Still armed at the
-        // accessor pending threading `Wake` through the individual mutations.
-        self.wake_all();
         DirectApi::new(self)
     }
 
