@@ -84,9 +84,6 @@ struct StreamEntry {
     id: u16,
     /// If we are to close this entry.
     do_close: bool,
-    /// Whether the reset handshake for this stream has completed.
-    /// Set when the remote initiates the close
-    reset_complete: bool,
     /// Deadline for retrying `open_stream` when it fails.
     open_deadline: Option<Instant>,
     /// If the queued outgoing data drops below this threshold, Rtc is to emit an
@@ -133,12 +130,9 @@ pub(crate) enum SctpEvent {
     },
     Close {
         id: u16,
-        /// Whether the reset handshake already completed for this stream.
-        reset_complete: bool,
     },
-    /// The reset handshake for a locally initiated close completed, the remote's
-    /// reciprocal reset arrived and sctp-proto unregistered the stream. The
-    /// stream id is now safe to recycle.
+    /// The reset handshake for a closed stream completed and sctp-proto emitted
+    /// StreamEvent::ResetComplete. The stream id is now safe to be used again.
     StreamResetComplete {
         id: u16,
     },
@@ -549,7 +543,7 @@ impl RtcSctp {
         if let Some(entry) = self.entries.iter_mut().find(|v| v.id == id) {
             entry.do_close = true;
 
-            // Close esplicitally sctp stream to allow re-use of the same id.
+            // Explicitly close the sctp stream to allow re-use of the same id.
             if let Some(Ok(mut stream)) = self.assoc.as_mut().map(|assoc| assoc.stream(id)) {
                 let _ = stream.close();
             }
@@ -779,30 +773,28 @@ impl RtcSctp {
                         );
                     }
                     StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. } => {
-                        match self.entries.iter_mut().find(|e| e.id == id) {
-                            // If the event arrives on a live stream, it's a remote-initiated close.
-                            // sctp-proto has already unregistered the stream and auto-queued the
-                            // reciprocal reset.
-                            Some(entry)
-                                if entry.state != StreamEntryState::Closed
-                                    && entry.state != StreamEntryState::AwaitOpen =>
+                        // sctp-proto unregistered it when a reset  arrived.
+                        // Id reuse is signalled separately by StreamEvent::ResetComplete.
+                        //
+                        // Only a live entry has anything to drop. Closed entries and
+                        // missing ones already went through Close, and an AwaitOpen
+                        // entry is a new incarnation waiting on the same id, it must
+                        // not be killed by the old pending teardown.
+                        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+                            if entry.state != StreamEntryState::Closed
+                                && entry.state != StreamEntryState::AwaitOpen
                             {
-                                debug!("Stream {} closed by remote", id);
+                                debug!("Stream {} finished", id);
                                 entry.do_close = true;
-                                entry.reset_complete = true;
-                            }
-                            // No entry, or entry in Closed or AwaitOpen: this Finished completes
-                            // a reset WE initiated earlier, the remote's reciprocal reset has
-                            // arrived. Signal the allocator that the id is reusable.
-                            // 
-                            // AwaitOpen is included because a new incarnation may already be
-                            // waiting on the same id: this completion must unblock
-                            // its retry, not close it.
-                            _ => {
-                                debug!("Stream {} reset complete", id);
-                                return Some(SctpEvent::StreamResetComplete { id });
                             }
                         }
+                    }
+                    StreamEvent::ResetComplete { id } => {
+                        // The reset handshake for this id has fully completed,
+                        // open_stream() stops failing for it. Signal the allocator
+                        // that the id is reusable.
+                        debug!("Stream {} reset complete", id);
+                        return Some(SctpEvent::StreamResetComplete { id });
                     }
                     StreamEvent::BufferedAmountLow { id } => {
                         return Some(SctpEvent::BufferedAmountLow { id });
@@ -829,12 +821,8 @@ impl RtcSctp {
                         if !entry.configure_reliability(&mut s) {
                             entry.set_state(StreamEntryState::Closed);
                             let stream_id = entry.id;
-                            let reset_complete = entry.reset_complete;
                             self.sctp_propagate_close(stream_id);
-                            return Some(SctpEvent::Close {
-                                id: stream_id,
-                                reset_complete,
-                            });
+                            return Some(SctpEvent::Close { id: stream_id });
                         }
 
                         let config = entry.config.as_ref().expect("config if AwaitOpen");
@@ -863,12 +851,8 @@ impl RtcSctp {
                                     entry.do_close = true;
                                     entry.set_state(StreamEntryState::Closed);
                                     let stream_id = entry.id;
-                                    let reset_complete = entry.reset_complete;
                                     self.sctp_propagate_close(stream_id);
-                                    return Some(SctpEvent::Close {
-                                        id: stream_id,
-                                        reset_complete,
-                                    });
+                                    return Some(SctpEvent::Close { id: stream_id });
                                 }
                             }
                         }
@@ -902,12 +886,8 @@ impl RtcSctp {
                             entry.do_close = true;
                             entry.set_state(StreamEntryState::Closed);
                             let stream_id = entry.id;
-                            let reset_complete = entry.reset_complete;
                             self.sctp_propagate_close(stream_id);
-                            return Some(SctpEvent::Close {
-                                id: stream_id,
-                                reset_complete,
-                            });
+                            return Some(SctpEvent::Close { id: stream_id });
                         }
 
                         // Continuing means we are opening the stream out-of-band. The error can happen
@@ -918,12 +898,8 @@ impl RtcSctp {
                         entry.do_close = true;
                         entry.set_state(StreamEntryState::Closed);
                         let stream_id = entry.id;
-                        let reset_complete = entry.reset_complete;
                         self.sctp_propagate_close(stream_id);
-                        return Some(SctpEvent::Close {
-                            id: stream_id,
-                            reset_complete,
-                        });
+                        return Some(SctpEvent::Close { id: stream_id });
                     }
                 }
 
@@ -944,12 +920,8 @@ impl RtcSctp {
             if entry.do_close && entry.state != StreamEntryState::Closed {
                 entry.set_state(StreamEntryState::Closed);
                 let stream_id = entry.id;
-                let reset_complete = entry.reset_complete;
                 self.sctp_propagate_close(stream_id);
-                return Some(SctpEvent::Close {
-                    id: stream_id,
-                    reset_complete,
-                });
+                return Some(SctpEvent::Close { id: stream_id });
             }
 
             let mut stream = match assoc.stream(entry.id) {
@@ -1040,12 +1012,8 @@ impl RtcSctp {
                                     entry.do_close = true;
                                     entry.set_state(StreamEntryState::Closed);
                                     let stream_id = entry.id;
-                                    let reset_complete = entry.reset_complete;
                                     self.sctp_propagate_close(stream_id);
-                                    return Some(SctpEvent::Close {
-                                        id: stream_id,
-                                        reset_complete,
-                                    });
+                                    return Some(SctpEvent::Close { id: stream_id });
                                 }
                             }
                         }
@@ -1133,7 +1101,7 @@ impl RtcSctp {
     }
 
     fn sctp_propagate_close(&mut self, stream_id: u16) {
-        // Close esplicitally sctp stream to allow re-use of the same id.
+        // Explicitly close the sctp stream to allow re-use of the same id.
         if let Some(Ok(mut stream)) = self.assoc.as_mut().map(|assoc| assoc.stream(stream_id)) {
             let _ = stream.close();
         }
@@ -1176,7 +1144,6 @@ fn stream_entry<'a>(
             state: initial_state,
             id,
             do_close: false,
-            reset_complete: false,
             open_deadline: None,
             buffered_threshold: BufferedThresholdConfig::Unconfigured,
         };
@@ -1234,11 +1201,7 @@ impl fmt::Debug for SctpEvent {
                 .field("id", id)
                 .field("label", label)
                 .finish(),
-            Self::Close { id, reset_complete } => f
-                .debug_struct("Close")
-                .field("id", id)
-                .field("reset_complete", reset_complete)
-                .finish(),
+            Self::Close { id } => f.debug_struct("Close").field("id", id).finish(),
             Self::StreamResetComplete { id } => f
                 .debug_struct("StreamResetComplete")
                 .field("id", id)
@@ -1431,7 +1394,6 @@ mod tests {
             state: StreamEntryState::AwaitOpen,
             id: stream_id,
             do_close: false,
-            reset_complete: false,
             open_deadline: None,
             buffered_threshold: BufferedThresholdConfig::Unconfigured,
         });
@@ -1449,7 +1411,7 @@ mod tests {
         let event = client.do_poll();
 
         assert!(
-            matches!(&event, Some(SctpEvent::Close { id, .. }) if *id == stream_id),
+            matches!(&event, Some(SctpEvent::Close { id }) if *id == stream_id),
             "expected SctpEvent::Close for stream {stream_id}, got {event:?}"
         );
 
