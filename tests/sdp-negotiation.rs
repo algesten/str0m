@@ -109,6 +109,40 @@ pub fn g722_offer_accepts_explicit_mono_channel() {
 }
 
 #[test]
+pub fn comfort_noise_negotiates_all_supported_clock_rates() {
+    init_log();
+    init_crypto_default();
+
+    let params = [
+        comfort_noise(13, 8_000),
+        comfort_noise(96, 16_000),
+        comfort_noise(97, 24_000),
+        comfort_noise(98, 32_000),
+        comfort_noise(99, 48_000),
+    ];
+    let (l, r) = with_params(info_span!("L"), &params, info_span!("R"), &params);
+
+    for rtc in [&l, &r] {
+        let negotiated: Vec<_> = rtc
+            .codec_config()
+            .iter()
+            .filter(|p| p.spec().codec == Codec::ComfortNoise)
+            .map(|p| (*p.pt(), p.spec().clock_rate.get()))
+            .collect();
+        assert_eq!(
+            negotiated,
+            vec![
+                (13, 8_000),
+                (96, 16_000),
+                (97, 24_000),
+                (98, 32_000),
+                (99, 48_000),
+            ]
+        );
+    }
+}
+
+#[test]
 pub fn answer_change_order() {
     init_log();
     init_crypto_default();
@@ -1408,6 +1442,19 @@ fn g722(pt: u8) -> PayloadParams {
             channels: None,
             // G722 is a 16 kHz codec, even though its RTP clock rate is 8000 Hz.
             clock_rate: Frequency::SIXTEEN_KHZ,
+            format: FormatParams::default(),
+        },
+    )
+}
+
+fn comfort_noise(pt: u8, clock_rate: u32) -> PayloadParams {
+    PayloadParams::new(
+        pt.into(),
+        None,
+        CodecSpec {
+            codec: Codec::ComfortNoise,
+            channels: None,
+            clock_rate: Frequency::new(clock_rate).unwrap(),
             format: FormatParams::default(),
         },
     )

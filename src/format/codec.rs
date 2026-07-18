@@ -53,6 +53,8 @@ pub enum Codec {
     PCMU,
     PCMA,
     G722,
+    /// Comfort Noise payload, per RFC 3389.
+    ComfortNoise,
     H264,
     // TODO show this when we support h265.
     #[doc(hidden)]
@@ -82,7 +84,7 @@ impl Codec {
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {
         use Codec::*;
-        matches!(self, Opus | PCMU | PCMA | G722)
+        matches!(self, Opus | PCMU | PCMA | G722 | ComfortNoise)
     }
 
     /// Tells if codec is video.
@@ -109,6 +111,7 @@ impl<'a> From<&'a str> for Codec {
             "pcmu" => Codec::PCMU,
             "pcma" => Codec::PCMA,
             "g722" => Codec::G722,
+            "cn" => Codec::ComfortNoise,
             "h264" => Codec::H264,
             "h265" => Codec::H265,
             "h266" => Codec::H266,
@@ -128,6 +131,7 @@ impl fmt::Display for Codec {
             Codec::PCMU => write!(f, "PCMU"),
             Codec::PCMA => write!(f, "PCMA"),
             Codec::G722 => write!(f, "G722"),
+            Codec::ComfortNoise => write!(f, "CN"),
             Codec::H264 => write!(f, "H264"),
             Codec::H265 => write!(f, "H265"),
             Codec::H266 => write!(f, "H266"),
@@ -163,6 +167,15 @@ mod test {
         assert_eq!(Codec::from("G722"), Codec::G722);
         assert_eq!(Codec::from("g722"), Codec::G722);
         assert_eq!(Codec::G722.to_string(), "G722");
+    }
+
+    #[test]
+    fn comfort_noise_is_audio_and_parses() {
+        assert!(Codec::ComfortNoise.is_audio());
+        assert!(!Codec::ComfortNoise.is_video());
+        assert_eq!(Codec::from("CN"), Codec::ComfortNoise);
+        assert_eq!(Codec::from("cn"), Codec::ComfortNoise);
+        assert_eq!(Codec::ComfortNoise.to_string(), "CN");
     }
 
     #[test]

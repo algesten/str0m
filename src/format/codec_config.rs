@@ -19,6 +19,9 @@ pub(crate) const PT_PCMA: Pt = Pt::new_with_value(8);
 /// Default payload type for G722.
 pub(crate) const PT_G722: Pt = Pt::new_with_value(9);
 
+/// Static payload type for Comfort Noise at 8000 Hz (RFC 3389).
+pub(crate) const PT_COMFORT_NOISE: Pt = Pt::new_with_value(13);
+
 /// Default payload type for VP8.
 pub(crate) const PT_VP8: Pt = Pt::new_with_value(96);
 
@@ -231,6 +234,25 @@ impl CodecConfig {
             None,
             Codec::G722,
             Frequency::SIXTEEN_KHZ,
+            None,
+            Default::default(),
+        );
+    }
+
+    /// Add the static Comfort Noise payload type at 8000 Hz.
+    ///
+    /// Higher clock rates require dynamic payload types and can be configured
+    /// with [`CodecConfig::add_config`].
+    pub fn enable_comfort_noise(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::ComfortNoise);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            PT_COMFORT_NOISE,
+            None,
+            Codec::ComfortNoise,
+            Frequency::EIGHT_KHZ,
             None,
             Default::default(),
         );
@@ -561,6 +583,7 @@ impl Codec {
             Opus => Some(PT_OPUS),
             PCMU => Some(PT_PCMU),
             PCMA => Some(PT_PCMA),
+            ComfortNoise => Some(PT_COMFORT_NOISE),
             Vp8 => Some(PT_VP8),
             Vp9 => Some(PT_VP9),
             H265 => Some(PT_H265),
@@ -577,6 +600,34 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    #[test]
+    fn enable_comfort_noise_uses_static_8khz_payload_type() {
+        let mut config = CodecConfig::empty();
+
+        config.enable_comfort_noise(true);
+
+        let params = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::ComfortNoise)
+            .expect("Comfort Noise should be enabled");
+        assert_eq!(params.pt(), Pt::new_with_value(13));
+        assert_eq!(params.spec().clock_rate, Frequency::EIGHT_KHZ);
+        assert_eq!(params.spec().channels, None);
+        assert_eq!(
+            Codec::ComfortNoise.default_pt(),
+            Some(Pt::new_with_value(13))
+        );
+
+        config.enable_comfort_noise(false);
+        assert!(
+            config
+                .params()
+                .iter()
+                .all(|p| p.spec().codec != Codec::ComfortNoise)
+        );
+    }
 
     #[test]
     fn test_pt_conflict_different_directions() {
