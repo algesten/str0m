@@ -630,6 +630,32 @@ mod test {
     }
 
     #[test]
+    fn comfort_noise_supports_dynamic_payload_types_at_higher_clock_rates() {
+        let mut config = CodecConfig::empty();
+
+        for (pt, clock_rate) in [(96, 16_000), (97, 24_000), (98, 32_000), (99, 48_000)] {
+            config.add_config(
+                pt.into(),
+                None,
+                Codec::ComfortNoise,
+                Frequency::new(clock_rate).unwrap(),
+                None,
+                FormatParams::default(),
+            );
+        }
+
+        let configured: Vec<_> = config
+            .params()
+            .iter()
+            .map(|p| (*p.pt(), p.spec().clock_rate.get()))
+            .collect();
+        assert_eq!(
+            configured,
+            vec![(96, 16_000), (97, 24_000), (98, 32_000), (99, 48_000)]
+        );
+    }
+
+    #[test]
     fn test_pt_conflict_different_directions() {
         // Simulates:
         // 1. str0m OFFER sendonly H264 PT 108, RTX PT 109

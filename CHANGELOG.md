@@ -3,7 +3,7 @@
   * Expose the latest send queue information on `StreamTx` #1005
   * Fix VP9 non-flexible SS advertising a bogus R=0 GOF for single-layer streams #999
   * Support G722 audio codec (16 kHz codec with 8 kHz RTP clock per RFC 3551) #992
-  * Support RFC 3389 Comfort Noise payloads #993
+  * Support RFC 3389 Comfort Noise payloads #1013
   * Apply reliability parameters to a DCEP-receiving in-band channel #1004
 
 # 0.21.0
