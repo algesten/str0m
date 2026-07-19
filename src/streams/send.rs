@@ -647,15 +647,12 @@ impl StreamTx {
                     body_out[..body_len].copy_from_slice(pkt.payload.as_ref());
                 }
 
-                // pad for SRTP
-                let pad_len = RtpHeader::pad_packet(
-                    &mut buf[..],
-                    header_len,
-                    body_len + original_seq_len,
-                    SRTP_BLOCK_SIZE,
-                );
-
-                body_len + original_seq_len + pad_len
+                // media packets are sent unpadded: the SRTP ciphers handle
+                // arbitrary body lengths (the CTR scratch alignment is internal
+                // to protect_rtp), and RTP-level padding breaks SFUs that
+                // re-marshal forwarded packets without it while keeping the P
+                // bit (observed with LiveKit -> Chrome, str0m issue #1014)
+                body_len + original_seq_len
             }
             NextPacketKind::Blank(len) => {
                 let len = RtpHeader::create_padding_packet(

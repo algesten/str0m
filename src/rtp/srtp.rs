@@ -240,13 +240,9 @@ impl SrtpContext {
 
         match &mut self.rtp {
             Derived::Aes128CmSha1_80 { key, salt, enc, .. } => {
-                assert!(
-                    input.len() % SRTP_BLOCK_SIZE == 0,
-                    "RTP body should be padded to 16 byte block size, {header:?} with \
-                    body length {} was not",
-                    input.len()
-                );
-
+                // arbitrary body lengths are fine: the output buffer below is
+                // allocated with the CTR scratch the ciphers need and truncated
+                // after encryption, so no 16-byte alignment is required.
                 let iv = Aes128CmSha1_80::rtp_iv(*salt, *header.ssrc, srtp_index);
 
                 // Allocate buffer with CTR padding (aws-lc-rs requirement)

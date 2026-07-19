@@ -91,6 +91,7 @@ impl RtpHeader {
         buf[from + pad - 1] = pad as u8;
     }
 
+    #[allow(dead_code)] // unused since media packets are sent unpadded
     pub(crate) fn pad_packet(
         buf: &mut [u8],
         header_len: usize,
