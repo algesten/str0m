@@ -39,3 +39,39 @@ impl Depacketizer for ComfortNoiseDepacketizer {
         true
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn packetizer_rejects_payload_larger_than_mtu() {
+        let mut packetizer = ComfortNoisePacketizer;
+
+        let result = packetizer.packetize(8, &[0; 9]);
+
+        assert!(
+            result.is_err(),
+            "a CN payload cannot be fragmented and must not exceed the MTU"
+        );
+    }
+
+    #[test]
+    fn packetizer_does_not_emit_empty_cn_payload() {
+        let mut packetizer = ComfortNoisePacketizer;
+
+        let packets = packetizer.packetize(1200, &[]).unwrap();
+
+        assert!(packets.is_empty(), "an empty input is not a CN payload");
+    }
+
+    #[test]
+    fn depacketizer_rejects_empty_cn_payload() {
+        let mut depacketizer = ComfortNoiseDepacketizer;
+        let mut output = Vec::new();
+
+        let result = depacketizer.depacketize(&[], &mut output, &mut CodecExtra::None);
+
+        assert_eq!(result, Err(PacketError::ErrShortPacket));
+    }
+}

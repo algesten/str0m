@@ -602,6 +602,51 @@ mod test {
     use crate::format::{CodecSpec, FormatParams};
 
     #[test]
+    fn dynamic_comfort_noise_collision_does_not_use_static_pt_13() {
+        let mut claimed = PayloadParams::new(
+            96.into(),
+            None,
+            CodecSpec {
+                codec: Codec::Opus,
+                clock_rate: Frequency::FORTY_EIGHT_KHZ,
+                channels: Some(2),
+                format: FormatParams::default(),
+            },
+        );
+        claimed.locked = true;
+
+        let local_cn = PayloadParams::new(
+            97.into(),
+            None,
+            CodecSpec {
+                codec: Codec::ComfortNoise,
+                clock_rate: Frequency::SIXTEEN_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+        let remote_cn = PayloadParams::new(
+            96.into(),
+            None,
+            CodecSpec {
+                codec: Codec::ComfortNoise,
+                clock_rate: Frequency::SIXTEEN_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+
+        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_cn]);
+        config.update_params(&[remote_cn], Direction::SendOnly);
+
+        let cn = config
+            .iter()
+            .find(|p| p.spec().codec == Codec::ComfortNoise)
+            .expect("configured CN payload");
+        assert_ne!(*cn.pt(), 13, "PT 13 is reserved for CN at 8 kHz");
+    }
+
+    #[test]
     fn enable_comfort_noise_uses_static_8khz_payload_type() {
         let mut config = CodecConfig::empty();
 

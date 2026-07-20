@@ -871,6 +871,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::format::Codec;
     use crate::io::Protocol;
 
     #[test]
@@ -1343,6 +1344,32 @@ mod test {
 
         let parsed = sdp_parser().parse(sdp);
         assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn bare_static_comfort_noise_pt_is_resolved() {
+        let sdp = "v=0\r\n\
+        o=- 1 1 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        m=audio 9 UDP/TLS/RTP/SAVPF 0 13\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=setup:actpass\r\n\
+        a=sendrecv\r\n\
+        a=mid:0\r\n\
+        a=rtpmap:0 PCMU/8000\r\n\
+        ";
+
+        let (sdp, _) = sdp_parser()
+            .parse(sdp)
+            .expect("static PT 13 must not require an a=rtpmap line");
+        let params = sdp.media_lines[0].rtp_params();
+
+        assert!(params.iter().any(|p| {
+            p.pt() == 13.into()
+                && p.spec().codec == Codec::ComfortNoise
+                && p.spec().clock_rate == Frequency::EIGHT_KHZ
+        }));
     }
 
     #[test]

@@ -78,6 +78,83 @@ fn frame_mode_round_trips_all_supported_clock_rates() -> Result<(), RtcError> {
 }
 
 #[test]
+fn frame_mode_switching_through_cn_does_not_stall_primary_audio() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let params = [pcmu(), comfort_noise(13, 8_000)];
+    let (mut l, mut r, mid) = connected_with_default_audio_reordering(&params);
+
+    for (pt, timestamp, payload) in [(0_u8, 0_u64, 1_u8), (13, 160, 42), (0, 320, 2)] {
+        let wallclock = l.start + l.duration();
+        l.writer(mid).unwrap().write(
+            pt.into(),
+            wallclock,
+            MediaTime::new(timestamp, Frequency::EIGHT_KHZ),
+            [payload],
+        )?;
+        progress(&mut l, &mut r)?;
+    }
+
+    let deadline = l.duration() + Duration::from_secs(2);
+    while l.duration() < deadline {
+        progress(&mut l, &mut r)?;
+    }
+
+    let received: Vec<_> = r
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::MediaData(data) => Some((data.params.spec().codec, data.data.as_ref().to_vec())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        received,
+        vec![
+            (Codec::PCMU, vec![1]),
+            (Codec::ComfortNoise, vec![42]),
+            (Codec::PCMU, vec![2]),
+        ],
+        "the CN sequence number must not look like a lost PCMU packet"
+    );
+    Ok(())
+}
+
+#[test]
+fn frame_mode_cn_never_sets_marker_bit() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let params = [comfort_noise(13, 8_000)];
+    let (mut l, mut r, mid) = connected_with_params(&params, false);
+    let wallclock = l.start + l.duration();
+    l.writer(mid).unwrap().start_of_talkspurt(true).write(
+        params[0].pt(),
+        wallclock,
+        MediaTime::new(8_000, Frequency::EIGHT_KHZ),
+        [42],
+    )?;
+
+    let deadline = l.duration() + Duration::from_secs(2);
+    while l.duration() < deadline {
+        progress(&mut l, &mut r)?;
+        if let Some(data) = r.events.iter().find_map(|(_, event)| match event {
+            Event::MediaData(data) if data.params.spec().codec == Codec::ComfortNoise => Some(data),
+            _ => None,
+        }) {
+            assert!(
+                !data.audio_start_of_talk_spurt,
+                "an RFC 3389 CN packet must not carry the RTP marker bit"
+            );
+            return Ok(());
+        }
+    }
+
+    panic!("timed out waiting for Comfort Noise payload");
+}
+
+#[test]
 fn rtp_mode_round_trips_all_supported_clock_rates() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
@@ -138,8 +215,20 @@ fn with_params(
 }
 
 fn connected_with_params(params: &[PayloadParams], rtp_mode: bool) -> (TestRtc, TestRtc, Mid) {
-    let mut l = build_params_with_mode(info_span!("L"), params, rtp_mode);
-    let mut r = build_params_with_mode(info_span!("R"), params, rtp_mode);
+    connected_with_reordering(params, rtp_mode, Some(0))
+}
+
+fn connected_with_default_audio_reordering(params: &[PayloadParams]) -> (TestRtc, TestRtc, Mid) {
+    connected_with_reordering(params, false, None)
+}
+
+fn connected_with_reordering(
+    params: &[PayloadParams],
+    rtp_mode: bool,
+    reordering_size_audio: Option<usize>,
+) -> (TestRtc, TestRtc, Mid) {
+    let mut l = build_params(info_span!("L"), params, rtp_mode, reordering_size_audio);
+    let mut r = build_params(info_span!("R"), params, rtp_mode, reordering_size_audio);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -160,10 +249,19 @@ fn connected_with_params(params: &[PayloadParams], rtp_mode: bool) -> (TestRtc, 
 }
 
 fn build_params_with_mode(span: Span, params: &[PayloadParams], rtp_mode: bool) -> TestRtc {
-    let mut builder = Rtc::builder()
-        .clear_codecs()
-        .set_rtp_mode(rtp_mode)
-        .set_reordering_size_audio(0);
+    build_params(span, params, rtp_mode, Some(0))
+}
+
+fn build_params(
+    span: Span,
+    params: &[PayloadParams],
+    rtp_mode: bool,
+    reordering_size_audio: Option<usize>,
+) -> TestRtc {
+    let mut builder = Rtc::builder().clear_codecs().set_rtp_mode(rtp_mode);
+    if let Some(size) = reordering_size_audio {
+        builder = builder.set_reordering_size_audio(size);
+    }
     let config = builder.codec_config();
     for param in params {
         config.add_config(
@@ -217,6 +315,19 @@ fn comfort_noise(pt: u8, clock_rate: u32) -> PayloadParams {
             codec: Codec::ComfortNoise,
             channels: None,
             clock_rate: Frequency::new(clock_rate).unwrap(),
+            format: FormatParams::default(),
+        },
+    )
+}
+
+fn pcmu() -> PayloadParams {
+    PayloadParams::new(
+        0.into(),
+        None,
+        CodecSpec {
+            codec: Codec::PCMU,
+            channels: None,
+            clock_rate: Frequency::EIGHT_KHZ,
             format: FormatParams::default(),
         },
     )
