@@ -1257,6 +1257,10 @@ impl Rtc {
             sctp.enable_snap();
         }
 
+        if let Some(bufsize) = config.sctp_max_buffered {
+            sctp.max_buffered_across_streams(bufsize);
+        }
+
         Ok(Rtc {
             state: RtcState::Alive,
             ice,
