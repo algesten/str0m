@@ -1,5 +1,5 @@
-use crate::format::CodecSpec;
 use crate::format::Vp9PacketizerMode;
+use crate::format::{Codec, CodecSpec};
 use crate::media::ToPayload;
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::Frequency;
@@ -12,6 +12,7 @@ use super::{CodecPacketizer, Packetizer};
 pub struct Payloader {
     pack: CodecPacketizer,
     clock_rate: Frequency,
+    allow_talkspurt_marker: bool,
 }
 
 impl Payloader {
@@ -35,6 +36,7 @@ impl Payloader {
         Payloader {
             pack,
             clock_rate: spec.rtp_clock_rate(),
+            allow_talkspurt_marker: spec.codec != Codec::ComfortNoise,
         }
     }
 
@@ -64,7 +66,7 @@ impl Payloader {
 
             let previous_data = stream.last_packet();
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last)
-                || (is_audio && start_of_talk_spurt);
+                || (is_audio && self.allow_talkspurt_marker && start_of_talk_spurt);
 
             let seq_no = stream.next_seq_no();
 

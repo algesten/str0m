@@ -7,7 +7,15 @@ pub struct ComfortNoisePacketizer;
 pub struct ComfortNoiseDepacketizer;
 
 impl Packetizer for ComfortNoisePacketizer {
-    fn packetize(&mut self, _mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+        if payload.is_empty() {
+            return Ok(vec![]);
+        }
+
+        if payload.len() > mtu {
+            return Err(PacketError::ErrPayloadTooLarge);
+        }
+
         Ok(vec![payload.to_vec()])
     }
 
@@ -27,6 +35,10 @@ impl Depacketizer for ComfortNoiseDepacketizer {
         out: &mut Vec<u8>,
         _codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
+        if packet.is_empty() {
+            return Err(PacketError::ErrShortPacket);
+        }
+
         out.extend_from_slice(packet);
         Ok(())
     }

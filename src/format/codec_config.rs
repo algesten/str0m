@@ -592,6 +592,14 @@ impl Codec {
     }
 }
 
+impl CodecSpec {
+    pub(crate) fn default_pt(&self) -> Option<Pt> {
+        self.codec.default_pt().filter(|_| {
+            self.codec != Codec::ComfortNoise || self.clock_rate == Frequency::EIGHT_KHZ
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::packet::MediaKind;

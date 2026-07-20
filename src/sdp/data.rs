@@ -315,7 +315,7 @@ impl MediaLine {
     }
 
     pub fn rtp_params(&self) -> Vec<PayloadParams> {
-        let rtp_maps: Vec<_> = self
+        let mut rtp_maps: Vec<_> = self
             .attrs
             .iter()
             .filter_map(|a| {
@@ -326,6 +326,14 @@ impl MediaLine {
                 }
             })
             .collect();
+
+        for pt in &self.pts {
+            if !rtp_maps.iter().any(|(mapped, _)| mapped == pt) {
+                if let Some(value) = static_rtp_map(*pt) {
+                    rtp_maps.push((*pt, value));
+                }
+            }
+        }
 
         let fmtps: Vec<_> = self
             .attrs
@@ -465,7 +473,7 @@ impl MediaLine {
                     }
                 })
                 .count();
-            if rtp_count == 0 {
+            if rtp_count == 0 && static_rtp_map(*m).is_none() {
                 return Some(format!("Missing a=rtp_map:{} for mid: {}", m, self.mid()));
             }
             if rtp_count > 1 {
@@ -673,6 +681,18 @@ impl MediaLine {
             }
         })
     }
+}
+
+fn static_rtp_map(pt: Pt) -> Option<RtpMap> {
+    if *pt != 13 {
+        return None;
+    }
+
+    Some(RtpMap {
+        codec: Codec::ComfortNoise,
+        clock_rate: Frequency::EIGHT_KHZ,
+        channels: None,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

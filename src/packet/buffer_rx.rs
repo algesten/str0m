@@ -158,6 +158,14 @@ impl DepacketizingBuffer {
     }
 
     pub fn push(&mut self, meta: RtpMeta, data: impl Into<Arc<[u8]>>) {
+        self.push_entry(meta, data.into(), None);
+    }
+
+    pub(crate) fn push_padding(&mut self, meta: RtpMeta) {
+        self.push_entry(meta, Arc::from([]), Some((false, false)));
+    }
+
+    fn push_entry(&mut self, meta: RtpMeta, data: Arc<[u8]>, partition: Option<(bool, bool)>) {
         // We're not emitting frames in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         //
@@ -186,11 +194,13 @@ impl DepacketizingBuffer {
                 trace!("Drop exactly same packet: {}", meta.seq_no);
             }
             Err(i) => {
-                let data = data.into();
-                let head = self.depack.is_partition_head(data.as_ref());
-                let tail = self
-                    .depack
-                    .is_partition_tail(meta.header.marker, data.as_ref());
+                let (head, tail) = partition.unwrap_or_else(|| {
+                    (
+                        self.depack.is_partition_head(data.as_ref()),
+                        self.depack
+                            .is_partition_tail(meta.header.marker, data.as_ref()),
+                    )
+                });
 
                 // i is insertion point to maintain order
                 let entry = Entry {
