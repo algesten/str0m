@@ -217,13 +217,18 @@ impl DepacketizingBuffer {
     pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
+        if self.segments.is_empty() {
+            self.discard_old_padding();
+            return None;
+        }
+
         // println!(
         //     "{:?} {:?}",
         //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
         //     self.segments
         // );
 
-        let (start, stop) = *self.segments.first()?;
+        let (start, stop) = *self.segments.first().expect("segment exists");
 
         let seq = {
             let last = self.queue.get(stop).expect("entry for stop index");
@@ -277,6 +282,31 @@ impl DepacketizingBuffer {
         self.last_emitted = Some((last, dep.codec_extra));
 
         Some(Ok(dep))
+    }
+
+    fn discard_old_padding(&mut self) {
+        let Some((mut last, extra)) = self.last_emitted else {
+            return;
+        };
+        let original_len = self.queue.len();
+
+        while self.queue.len() > self.hold_back {
+            let entry = self.queue.front().expect("queue exceeds hold back");
+            let is_padding = entry.data.is_empty() && !entry.head && !entry.tail;
+            if !is_padding {
+                break;
+            }
+
+            if last.is_next(entry.meta.seq_no) {
+                last = entry.meta.seq_no;
+            }
+            self.queue.pop_front();
+        }
+
+        if self.queue.len() != original_len {
+            self.depack_cache = None;
+        }
+        self.last_emitted = Some((last, extra));
     }
 
     fn depacketize(
@@ -648,6 +678,48 @@ mod test {
             "padding-only queue retained {} entries after a 1,000-packet run",
             buf.queue.len()
         );
+
+        // Returning to this PT after compaction must still be contiguous with the last packet.
+        buf.push(meta(1_002), vec![1, 9]);
+        let dep = buf.pop().expect("packet emitted").expect("valid packet");
+        assert!(dep.contiguous);
+    }
+
+    #[test]
+    fn padding_only_run_with_loss_stays_bounded_and_reports_discontinuity() {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        buf.push(meta(1), vec![1, 9]);
+        assert!(buf.pop().is_some());
+
+        // Sequence 2 is lost while another PT remains active.
+        for seq in 3..=1_002 {
+            buf.push_padding(meta(seq));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(buf.queue.len() <= buf.hold_back);
+
+        // A discontinuity waits for the normal hold-back before it is emitted.
+        buf.push(meta(1_003), vec![1, 9]);
+        assert!(buf.pop().is_none());
+        buf.push(meta(1_004), vec![1, 9]);
+        assert!(buf.pop().is_none());
+        buf.push(meta(1_005), vec![1, 9]);
+        let dep = buf.pop().expect("packet emitted").expect("valid packet");
+        assert!(!dep.contiguous);
     }
 
     fn test(
