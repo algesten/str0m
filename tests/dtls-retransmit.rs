@@ -28,6 +28,8 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use netem::{NetemConfig, Probability, RandomLoss};
+use str0m::RtcError;
+use str0m::config::DtlsVersion;
 use str0m::{Candidate, Input, Output, Reason, Rtc};
 use tracing::info_span;
 
@@ -102,6 +104,135 @@ fn dtls_retransmit_emitted_in_same_poll_pass() {
         got_transmit,
         "poll_output should emit the DTLS retransmit in the same pass that runs handle_timeout"
     );
+}
+
+/// A terminal dimpl handshake timeout must be returned and must leave the
+/// `Rtc` inert rather than continually returning the expired DTLS deadline.
+///
+/// This runs for every dimpl-backed crypto provider. It drives the scheduler
+/// with the exact timeout returned by `Rtc`, which is the behavior that
+/// previously caused an immediate-wake loop after dimpl had exhausted its
+/// retry budget.
+#[test]
+fn terminal_dtls_timeout_does_not_rearm_expired_deadline() {
+    init_crypto_default();
+
+    let now = Instant::now();
+    let left_rtc = Rtc::builder()
+        .set_dtls_version(DtlsVersion::Dtls12)
+        .build(now);
+    let right_rtc = Rtc::builder()
+        .set_dtls_version(DtlsVersion::Dtls12)
+        .build(now);
+    let mut left = TestRtc::new_with_rtc(info_span!("L"), left_rtc);
+    let mut right = TestRtc::new_with_rtc(info_span!("R"), right_rtc);
+
+    // Responses from the passive peer are discarded after it receives the
+    // client's first flight, so the active peer retries until dimpl times out.
+    left.set_netem(
+        NetemConfig::new()
+            .loss(RandomLoss::new(Probability::new(1.0)))
+            .seed(1),
+    );
+
+    let host_left = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
+    let host_right = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
+    left.add_local_candidate(host_left.clone());
+    left.add_remote_candidate(host_right.clone());
+    right.add_local_candidate(host_right);
+    right.add_remote_candidate(host_left);
+
+    let fingerprint_left = left.direct_api().local_dtls_fingerprint().clone();
+    let fingerprint_right = right.direct_api().local_dtls_fingerprint().clone();
+    left.direct_api().set_remote_fingerprint(fingerprint_right);
+    right.direct_api().set_remote_fingerprint(fingerprint_left);
+
+    let credentials_left = left.direct_api().local_ice_credentials();
+    let credentials_right = right.direct_api().local_ice_credentials();
+    left.direct_api()
+        .set_remote_ice_credentials(credentials_right);
+    right
+        .direct_api()
+        .set_remote_ice_credentials(credentials_left);
+
+    left.direct_api().set_ice_controlling(true);
+    right.direct_api().set_ice_controlling(false);
+    left.direct_api().start_dtls(true).unwrap();
+    right.direct_api().start_dtls(false).unwrap();
+
+    // Let the first flight reach the passive peer and its response be dropped.
+    let mut setup_steps = 0;
+    while left.rtc.last_timeout_reason() != Reason::DTLS {
+        progress(&mut left, &mut right).unwrap();
+        setup_steps += 1;
+        assert!(
+            setup_steps < 200,
+            "failed to reach a DTLS flight deadline (last reason: {:?})",
+            left.rtc.last_timeout_reason()
+        );
+    }
+
+    // Unlike TestRtc::progress, preserve an immediate timeout exactly. This
+    // models a scheduler that runs work scheduled for now without adding a
+    // retry delay of its own.
+    let mut last_now = left.last;
+    let mut terminal_error = None;
+    for _ in 0..1_000 {
+        left.rtc.handle_input(Input::Timeout(last_now)).unwrap();
+
+        loop {
+            match left.rtc.poll_output() {
+                Err(RtcError::Dtls(error)) => {
+                    terminal_error = Some(error);
+                    break;
+                }
+                Err(error) => panic!("unexpected RTC error: {error}"),
+                Ok(Output::Timeout(timeout)) => {
+                    last_now = timeout;
+                    break;
+                }
+                Ok(Output::Transmit(_)) => {
+                    // Drop each retransmitted DTLS flight.
+                }
+                Ok(Output::Event(_)) => {
+                    // ICE may report its disconnected state before DTLS gives up.
+                }
+            }
+        }
+
+        if terminal_error.is_some() {
+            break;
+        }
+    }
+
+    assert!(
+        terminal_error.is_some(),
+        "terminal dimpl timeout was not returned within the bounded scheduler run"
+    );
+    assert!(
+        !left.rtc.is_alive(),
+        "terminal DTLS error must close the RTC"
+    );
+
+    // After the error, callers that continue polling and feeding timeout input
+    // must not receive another due timeout, packet, or event.
+    let terminal_last_now = last_now;
+    for _ in 0..16 {
+        left.rtc
+            .handle_input(Input::Timeout(terminal_last_now))
+            .unwrap();
+
+        match left.rtc.poll_output().unwrap() {
+            Output::Timeout(timeout) => {
+                assert!(
+                    timeout > terminal_last_now,
+                    "closed RTC returned a timeout at or before its last input"
+                );
+            }
+            Output::Transmit(_) => panic!("closed RTC produced a DTLS transmission"),
+            Output::Event(event) => panic!("closed RTC produced an event: {event:?}"),
+        }
+    }
 }
 
 /// End-to-end: a DTLS handshake between two peers must complete even
