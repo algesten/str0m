@@ -1069,6 +1069,13 @@ impl Session {
         }
     }
 
+    pub fn bwe_is_overusing(&self) -> bool {
+        self.bwe
+            .as_ref()
+            .map(|bwe| bwe.is_overusing())
+            .unwrap_or(false)
+    }
+
     #[allow(dead_code)]
     pub fn line_count(&self) -> usize {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }

@@ -54,4 +54,15 @@ impl<'a> Bwe<'a> {
     pub fn reset(&mut self, init_bitrate: Bitrate) {
         self.0.session.reset_bwe(init_bitrate);
     }
+
+    /// Whether the delay-based controller currently signals overuse.
+    ///
+    /// This is `true` while the congestion detector observes a rising delay trend, i.e. the
+    /// link is genuinely congested rather than merely application-limited. It lets a bitrate
+    /// allocator tell apart an estimate that fell because the link shrank (must react) from
+    /// one that fell only because less was being sent (safe to hold), since both look
+    /// identical from the estimate alone.
+    pub fn is_overusing(&self) -> bool {
+        self.0.session.bwe_is_overusing()
+    }
 }
