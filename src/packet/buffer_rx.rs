@@ -618,6 +618,38 @@ mod test {
         ])
     }
 
+    #[test]
+    fn padding_only_run_does_not_grow_the_queue_without_bound() {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        // Emit one packet for this PT, then model a long run on another PT.
+        buf.push(meta(1), vec![1, 9]);
+        assert!(buf.pop().is_some());
+
+        for seq in 2..=1_001 {
+            buf.push_padding(meta(seq));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(
+            buf.queue.len() <= buf.hold_back,
+            "padding-only queue retained {} entries after a 1,000-packet run",
+            buf.queue.len()
+        );
+    }
+
     fn test(
         v: &[(
             u64,   // seq
