@@ -269,7 +269,7 @@ impl PayloadParams {
         let c0 = self.spec;
         let c1 = o.spec;
 
-        if c0 == c1 {
+        if c0 == c1 && c0.codec != Codec::AmrWb {
             // Exact match
             return Some(Self::EXACT_MATCH_SCORE);
         }
@@ -285,7 +285,7 @@ impl PayloadParams {
             return None;
         }
 
-        if c0.channels != c1.channels {
+        if !Self::channels_match(c0, c1) {
             // Channels must match
             return None;
         }
@@ -312,6 +312,10 @@ impl PayloadParams {
 
         if c0.codec == Codec::Av1 {
             return Self::match_av1_score(c0, c1);
+        }
+
+        if c0.codec == Codec::AmrWb {
+            return Self::match_amr_wb_score(c0, c1);
         }
 
         // TODO: Fuzzy matching for any other audio codecs
@@ -363,6 +367,18 @@ impl PayloadParams {
         score
     }
 
+    fn channels_match(c0: CodecSpec, c1: CodecSpec) -> bool {
+        if c0.channels == c1.channels {
+            return true;
+        }
+
+        if c0.codec == Codec::AmrWb && c1.codec == Codec::AmrWb {
+            return c0.channels.unwrap_or(1) == 1 && c1.channels.unwrap_or(1) == 1;
+        }
+
+        false
+    }
+
     fn match_vp9_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
         // Default profile_id is 0. https://datatracker.ietf.org/doc/html/draft-ietf-payload-vp9-16#section-6
         let c0_profile_id = c0.format.profile_id.unwrap_or(0);
@@ -403,6 +419,60 @@ impl PayloadParams {
             return None;
         }
 
+        Some(Self::EXACT_MATCH_SCORE)
+    }
+
+    fn match_amr_wb_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        if c0.format.invalid_amr_wb || c1.format.invalid_amr_wb {
+            return None;
+        }
+
+        if c0.channels.unwrap_or(1) != 1 || c1.channels.unwrap_or(1) != 1 {
+            return None;
+        }
+
+        // The octet-align mode selects the on-the-wire framing (RFC 4867 §4.3);
+        // octet-aligned and bandwidth-efficient payloads are not interchangeable,
+        // so the two sides must agree. The default (absent) is bandwidth-efficient.
+        let c0_octet_align = c0.format.octet_align.unwrap_or(false);
+        let c1_octet_align = c1.format.octet_align.unwrap_or(false);
+        if c0_octet_align != c1_octet_align {
+            return None;
+        }
+
+        // str0m can neither generate nor decode the per-frame payload CRC that
+        // crc=1 adds (RFC 4867 §4.3). Rather than agree to it and then mis-decode
+        // the stream, decline any peer that requires it. The default is no CRC.
+        if c0.format.crc.unwrap_or(false) || c1.format.crc.unwrap_or(false) {
+            return None;
+        }
+
+        // Presence of interleaving adds RTP payload fields that str0m does not
+        // implement, regardless of the advertised maximum group size.
+        if c0.format.interleaving.is_some() || c1.format.interleaving.is_some() {
+            return None;
+        }
+        if c0.format.robust_sorting.unwrap_or(false) || c1.format.robust_sorting.unwrap_or(false) {
+            return None;
+        }
+
+        // These parameters constrain an encoder's mode choices. str0m receives
+        // already encoded IF frames from the application and cannot guarantee
+        // compliance, so reject restrictive configurations.
+        if c0.format.mode_set.is_some() || c1.format.mode_set.is_some() {
+            return None;
+        }
+        if c0.format.mode_change_period == Some(2) || c1.format.mode_change_period == Some(2) {
+            return None;
+        }
+        if c0.format.mode_change_neighbor == Some(true)
+            || c1.format.mode_change_neighbor == Some(true)
+        {
+            return None;
+        }
+
+        // mode-change-capability and max-red are capability hints that do not
+        // affect interoperability, so they don't influence the match.
         Some(Self::EXACT_MATCH_SCORE)
     }
 
@@ -665,6 +735,17 @@ impl PayloadParams {
             if first.spec.format.sprop_max_don_diff.is_some() {
                 self.spec.format.sprop_max_don_diff = first.spec.format.sprop_max_don_diff;
             }
+        }
+
+        // RFC 4867 requires transport-format parameters and channels to be
+        // returned unmodified in an answer. Preserve both explicit zero values
+        // and omission so the generated answer has the same wire layout shape.
+        if self.spec.codec == Codec::AmrWb && first.spec.codec == Codec::AmrWb {
+            self.spec.channels = first.spec.channels;
+            self.spec.format.octet_align = first.spec.format.octet_align;
+            self.spec.format.crc = first.spec.format.crc;
+            self.spec.format.interleaving = first.spec.format.interleaving;
+            self.spec.format.robust_sorting = first.spec.format.robust_sorting;
         }
 
         let mut remote_pt = first.pt;
@@ -1843,6 +1924,230 @@ mod test {
                 nalu.len(),
                 "No DONL field when sprop-max-don-diff=0"
             );
+        }
+    }
+
+    mod amr_wb {
+        use super::*;
+
+        fn amr_wb_codec_spec(
+            octet_align: Option<bool>,
+            crc: Option<bool>,
+            mode_change_capability: Option<u8>,
+            max_red: Option<u16>,
+        ) -> CodecSpec {
+            amr_wb_codec_spec_with_channels(
+                Some(1),
+                octet_align,
+                crc,
+                mode_change_capability,
+                max_red,
+                None,
+                None,
+            )
+        }
+
+        fn amr_wb_codec_spec_with_channels(
+            channels: Option<u8>,
+            octet_align: Option<bool>,
+            crc: Option<bool>,
+            mode_change_capability: Option<u8>,
+            max_red: Option<u16>,
+            interleaving: Option<u16>,
+            robust_sorting: Option<bool>,
+        ) -> CodecSpec {
+            CodecSpec {
+                codec: Codec::AmrWb,
+                clock_rate: Frequency::SIXTEEN_KHZ,
+                channels,
+                format: FormatParams {
+                    octet_align,
+                    crc,
+                    mode_change_capability,
+                    max_red,
+                    interleaving,
+                    robust_sorting,
+                    ..Default::default()
+                },
+            }
+        }
+
+        #[test]
+        fn test_amr_wb_matching() {
+            struct Case {
+                c0: CodecSpec,
+                c1: CodecSpec,
+                must_match: bool,
+                msg: &'static str,
+            }
+
+            let cases = [
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    must_match: true,
+                    msg: "identical octet-aligned configs should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec_with_channels(
+                        None,
+                        Some(true),
+                        None,
+                        Some(2),
+                        Some(0),
+                        None,
+                        None,
+                    ),
+                    must_match: true,
+                    msg: "AMR-WB /16000 and /16000/1 are both mono and should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(None, None, None, None),
+                    c1: amr_wb_codec_spec(None, None, None, None),
+                    must_match: true,
+                    msg: "both bandwidth-efficient (the RFC defaults) should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), None, Some(1), Some(220)),
+                    must_match: true,
+                    msg: "mode-change-capability and max-red are hints; should still match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), None),
+                    c1: amr_wb_codec_spec(None, None, Some(2), None),
+                    must_match: false,
+                    msg: "octet-aligned vs bandwidth-efficient framings must not match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(false), Some(2), Some(0)),
+                    must_match: true,
+                    msg: "an explicit crc=0 means no CRC and must match our (absent) default",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), Some(false), Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(false), Some(2), Some(0)),
+                    must_match: true,
+                    msg: "crc=0 on both sides means no CRC and should match",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(true), Some(2), Some(0)),
+                    must_match: false,
+                    msg: "a peer requiring crc=1 must be declined; str0m cannot decode CRC",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), Some(true), Some(2), Some(0)),
+                    c1: amr_wb_codec_spec(Some(true), Some(true), Some(2), Some(0)),
+                    must_match: false,
+                    msg: "crc=1 is never agreed to, even if both sides signal it",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec_with_channels(
+                        Some(1),
+                        Some(true),
+                        None,
+                        Some(2),
+                        Some(0),
+                        Some(30),
+                        None,
+                    ),
+                    must_match: false,
+                    msg: "interleaving=30 must be declined because it changes the RTP payload layout",
+                },
+                Case {
+                    c0: amr_wb_codec_spec(Some(true), None, Some(2), Some(0)),
+                    c1: amr_wb_codec_spec_with_channels(
+                        Some(1),
+                        Some(true),
+                        None,
+                        Some(2),
+                        Some(0),
+                        None,
+                        Some(true),
+                    ),
+                    must_match: false,
+                    msg: "robust-sorting=1 must be declined because it changes the RTP payload layout",
+                },
+            ];
+
+            for Case {
+                c0,
+                c1,
+                must_match,
+                msg,
+            } in cases.into_iter()
+            {
+                let matched = PayloadParams::match_amr_wb_score(c0, c1).is_some();
+                assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+            }
+        }
+
+        #[test]
+        fn unsupported_amr_wb_restrictions_do_not_match() {
+            let supported = amr_wb_codec_spec(Some(true), None, Some(2), Some(0));
+
+            let mut restricted = supported;
+            restricted.format.mode_set = Some(1 << 2);
+            assert!(PayloadParams::match_amr_wb_score(supported, restricted).is_none());
+
+            restricted = supported;
+            restricted.format.mode_change_period = Some(2);
+            assert!(PayloadParams::match_amr_wb_score(supported, restricted).is_none());
+
+            restricted = supported;
+            restricted.format.mode_change_neighbor = Some(true);
+            assert!(PayloadParams::match_amr_wb_score(supported, restricted).is_none());
+
+            restricted = supported;
+            restricted.format.invalid_amr_wb = true;
+            assert!(PayloadParams::match_amr_wb_score(supported, restricted).is_none());
+
+            let multi_channel = amr_wb_codec_spec_with_channels(
+                Some(2),
+                Some(true),
+                None,
+                Some(2),
+                Some(0),
+                None,
+                None,
+            );
+            assert!(PayloadParams::match_amr_wb_score(multi_channel, multi_channel).is_none());
+        }
+
+        #[test]
+        fn exact_unsupported_amr_wb_configs_do_not_bypass_validation() {
+            let unsupported = amr_wb_codec_spec(Some(true), Some(true), Some(2), Some(0));
+            let params = PayloadParams::new(122.into(), None, unsupported);
+            assert_eq!(params.match_score(&params), None);
+        }
+
+        #[test]
+        fn update_param_mirrors_amr_wb_transport_shape() {
+            let local_spec = amr_wb_codec_spec(None, None, Some(2), Some(0));
+            let remote_spec = amr_wb_codec_spec_with_channels(
+                None,
+                Some(false),
+                Some(false),
+                Some(1),
+                Some(220),
+                None,
+                Some(false),
+            );
+            let mut local = PayloadParams::new(122.into(), None, local_spec);
+            let remote = PayloadParams::new(122.into(), None, remote_spec);
+            let mut claimed = [false; 128];
+            let mut unlocked = HashSet::new();
+
+            local.update_param(&[remote], &mut claimed, false, &mut unlocked);
+
+            assert_eq!(local.spec.channels, None);
+            assert_eq!(local.spec.format.octet_align, Some(false));
+            assert_eq!(local.spec.format.crc, Some(false));
+            assert_eq!(local.spec.format.robust_sorting, Some(false));
         }
     }
 }

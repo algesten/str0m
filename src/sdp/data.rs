@@ -974,11 +974,59 @@ pub enum FormatParam {
     /// out-of-order NAL unit decoding. Valid range: 0–32767.
     SpropMaxDonDiff(u16),
 
+    /// AMR-WB octet alignment (RFC 4867). `octet-align=1` selects the
+    /// octet-aligned layout; absence/`0` is bandwidth-efficient.
+    OctetAlign(bool),
+
+    /// AMR-WB active codec modes as a bitmask (RFC 4867).
+    ModeSet(u16),
+
+    /// AMR-WB required interval between codec mode changes (RFC 4867).
+    ModeChangePeriod(u8),
+
+    /// AMR-WB mode-change capability (RFC 4867). `mode-change-capability=2`
+    /// is the most common value.
+    ModeChangeCapability(u8),
+
+    /// AMR-WB preference for changes only between neighboring modes (RFC 4867).
+    ModeChangeNeighbor(bool),
+
+    /// AMR-WB maximum frame redundancy in milliseconds (RFC 4867). `max-red=0`
+    /// disables redundancy.
+    MaxRed(u16),
+
+    /// AMR-WB payload CRC (RFC 4867). `crc=1` enables per-frame CRC.
+    Crc(bool),
+
+    /// AMR-WB maximum interleaving-group size (RFC 4867). Unsupported.
+    Interleaving(u16),
+
+    /// AMR-WB robust sorting (RFC 4867). Unsupported when enabled.
+    RobustSorting(bool),
+
+    /// A recognized AMR-WB parameter with an invalid value.
+    InvalidAmrWb,
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
     /// Unrecognized fmtp.
     Unknown,
+}
+
+fn parse_binary(value: &str) -> Option<bool> {
+    match value {
+        "0" => Some(false),
+        "1" => Some(true),
+        _ => None,
+    }
+}
+
+fn parse_amr_wb_mode_set(value: &str) -> Option<u16> {
+    value.split(',').try_fold(0u16, |mask, value| {
+        let mode: u8 = value.parse().ok()?;
+        (mode <= 8).then_some(mask | (1 << mode))
+    })
 }
 
 impl FormatParam {
@@ -1005,6 +1053,27 @@ impl FormatParam {
                 .ok()
                 .filter(|&v| v <= 32767)
                 .map(SpropMaxDonDiff),
+            "octet-align" => parse_binary(v).map(OctetAlign).or(Some(InvalidAmrWb)),
+            "mode-set" => parse_amr_wb_mode_set(v).map(ModeSet).or(Some(InvalidAmrWb)),
+            "mode-change-period" => v
+                .parse()
+                .ok()
+                .filter(|v| matches!(v, 1 | 2))
+                .map(ModeChangePeriod)
+                .or(Some(InvalidAmrWb)),
+            "mode-change-capability" => v
+                .parse()
+                .ok()
+                .filter(|v| matches!(v, 1 | 2))
+                .map(ModeChangeCapability)
+                .or(Some(InvalidAmrWb)),
+            "mode-change-neighbor" => parse_binary(v)
+                .map(ModeChangeNeighbor)
+                .or(Some(InvalidAmrWb)),
+            "max-red" => v.parse().map(MaxRed).ok().or(Some(InvalidAmrWb)),
+            "crc" => parse_binary(v).map(Crc).or(Some(InvalidAmrWb)),
+            "interleaving" => v.parse().map(Interleaving).ok().or(Some(InvalidAmrWb)),
+            "robust-sorting" => parse_binary(v).map(RobustSorting).or(Some(InvalidAmrWb)),
             "apt" => v.parse::<u8>().map(|v| Apt(Pt::from(v))).ok(),
             _ => None,
         }
@@ -1092,6 +1161,30 @@ impl fmt::Display for FormatParam {
                 )
             }
             SpropMaxDonDiff(v) => write!(f, "sprop-max-don-diff={}", *v),
+            OctetAlign(v) => write!(f, "octet-align={}", i32::from(*v)),
+            ModeSet(mask) => {
+                write!(f, "mode-set=")?;
+                let mut first = true;
+                for mode in 0..=8 {
+                    if mask & (1 << mode) == 0 {
+                        continue;
+                    }
+                    if !first {
+                        write!(f, ",")?;
+                    }
+                    write!(f, "{mode}")?;
+                    first = false;
+                }
+                Ok(())
+            }
+            ModeChangePeriod(v) => write!(f, "mode-change-period={}", *v),
+            ModeChangeCapability(v) => write!(f, "mode-change-capability={}", *v),
+            ModeChangeNeighbor(v) => write!(f, "mode-change-neighbor={}", i32::from(*v)),
+            MaxRed(v) => write!(f, "max-red={}", *v),
+            Crc(v) => write!(f, "crc={}", i32::from(*v)),
+            Interleaving(v) => write!(f, "interleaving={}", *v),
+            RobustSorting(v) => write!(f, "robust-sorting={}", i32::from(*v)),
+            InvalidAmrWb => Ok(()),
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }

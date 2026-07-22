@@ -133,6 +133,10 @@ impl<'a> Writer<'a> {
     ///
     /// If you write media before `IceConnectionState` is `Connected` it will be dropped.
     ///
+    /// AMR-WB data must contain exactly one 3GPP IF frame per call. Concatenated
+    /// frames are rejected during packetization because each frame represents a
+    /// separate 20 ms RTP timestamp interval.
+    ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
     pub fn write(
         self,

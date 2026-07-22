@@ -2227,7 +2227,9 @@ mod test {
     #[test]
     fn event_is_reasonably_sized() {
         let n = std::mem::size_of::<Event>();
-        assert!(n < 490); // Increased to accommodate abs-capture-time fields in ExtensionValues
+        // Bumped to 512 to accommodate the AMR-WB fmtp fields in FormatParams.
+        // Previously 490 for the abs-capture-time fields in ExtensionValues.
+        assert!(n < 512, "Event size is {n}");
     }
 }
 
