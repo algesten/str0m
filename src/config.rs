@@ -257,6 +257,15 @@ impl RtcConfig {
         self
     }
 
+    /// Enable the RFC 3389 Comfort Noise payload at 8000 Hz.
+    ///
+    /// Disabled by default. Higher clock rates require a dynamic payload type
+    /// and can be added through [`RtcConfig::codec_config`].
+    pub fn enable_comfort_noise(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_comfort_noise(enabled);
+        self
+    }
+
     /// Enable VP8 video codec.
     ///
     /// Enabled by default.
@@ -721,6 +730,18 @@ impl Default for RtcConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enable_comfort_noise_updates_codec_config() {
+        let mut cfg = RtcConfig::default().enable_comfort_noise(true);
+
+        assert!(
+            cfg.codec_config()
+                .params()
+                .iter()
+                .any(|p| p.spec().codec == crate::format::Codec::ComfortNoise)
+        );
+    }
 
     #[test]
     fn default_mtu_is_datagram_mtu_target() {

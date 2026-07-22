@@ -7,6 +7,7 @@ use std::fmt;
 #[allow(missing_docs)]
 pub enum PacketError {
     ErrShortPacket,
+    ErrPayloadTooLarge,
     ErrTooManySpatialLayers,
     ErrTooManyPDiff,
     ErrH265CorruptedPacket,
@@ -24,6 +25,7 @@ impl fmt::Display for PacketError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             PacketError::ErrShortPacket => write!(f, "Packet is too short"),
+            PacketError::ErrPayloadTooLarge => write!(f, "Payload exceeds the MTU"),
             PacketError::ErrTooManySpatialLayers => write!(f, "Too many spatial layers"),
             PacketError::ErrTooManyPDiff => write!(f, "Too many P-Diff"),
             PacketError::ErrH265CorruptedPacket => write!(f, "H265 corrupted packet"),

@@ -64,6 +64,9 @@ use vp9::{Vp9Depacketizer, Vp9Packetizer};
 mod null;
 use null::{NullDepacketizer, NullPacketizer};
 
+mod comfort_noise;
+use comfort_noise::{ComfortNoiseDepacketizer, ComfortNoisePacketizer};
+
 mod buffer_rx;
 pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
 
@@ -283,6 +286,7 @@ pub(crate) enum CodecPacketizer {
     H265(H265Packetizer),
     H266(H266Packetizer),
     Opus(OpusPacketizer),
+    ComfortNoise(ComfortNoisePacketizer),
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
     Av1(Av1Packetizer),
@@ -298,6 +302,7 @@ pub(crate) enum CodecDepacketizer {
     H265(H265Depacketizer),
     H266(H266Depacketizer),
     Opus(OpusDepacketizer),
+    ComfortNoise(ComfortNoiseDepacketizer),
     Vp8(Vp8Depacketizer),
     Vp9(Vp9Depacketizer),
     Av1(Av1Depacketizer),
@@ -313,6 +318,7 @@ impl CodecPacketizer {
             Codec::PCMU => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::PCMA => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::G722 => CodecPacketizer::G722(G722Packetizer::default()),
+            Codec::ComfortNoise => CodecPacketizer::ComfortNoise(ComfortNoisePacketizer),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => CodecPacketizer::H265(H265Packetizer::default()),
             Codec::H266 => CodecPacketizer::H266(H266Packetizer::default()),
@@ -339,6 +345,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::PCMU => CodecDepacketizer::G711(G711Depacketizer),
             Codec::PCMA => CodecDepacketizer::G711(G711Depacketizer),
             Codec::G722 => CodecDepacketizer::G711(G711Depacketizer),
+            Codec::ComfortNoise => CodecDepacketizer::ComfortNoise(ComfortNoiseDepacketizer),
             Codec::H264 => CodecDepacketizer::H264(H264Depacketizer::default()),
             Codec::H265 => CodecDepacketizer::H265(H265Depacketizer::default()),
             Codec::H266 => CodecDepacketizer::H266(H266Depacketizer::default()),
@@ -362,6 +369,7 @@ impl Packetizer for CodecPacketizer {
             H265(v) => v.packetize(mtu, b),
             H266(v) => v.packetize(mtu, b),
             Opus(v) => v.packetize(mtu, b),
+            ComfortNoise(v) => v.packetize(mtu, b),
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
             Av1(v) => v.packetize(mtu, b),
@@ -375,6 +383,7 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::G711(v) => v.is_marker(data, previous, last),
             CodecPacketizer::G722(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Opus(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::ComfortNoise(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H264(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H265(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H266(v) => v.is_marker(data, previous, last),
@@ -395,6 +404,7 @@ impl Depacketizer for CodecDepacketizer {
             H265(v) => v.out_size_hint(packets_size),
             H266(v) => v.out_size_hint(packets_size),
             Opus(v) => v.out_size_hint(packets_size),
+            ComfortNoise(v) => v.out_size_hint(packets_size),
             G711(v) => v.out_size_hint(packets_size),
             Vp8(v) => v.out_size_hint(packets_size),
             Vp9(v) => v.out_size_hint(packets_size),
@@ -416,6 +426,7 @@ impl Depacketizer for CodecDepacketizer {
             H265(v) => v.depacketize(packet, out, extra),
             H266(v) => v.depacketize(packet, out, extra),
             Opus(v) => v.depacketize(packet, out, extra),
+            ComfortNoise(v) => v.depacketize(packet, out, extra),
             G711(v) => v.depacketize(packet, out, extra),
             Vp8(v) => v.depacketize(packet, out, extra),
             Vp9(v) => v.depacketize(packet, out, extra),
@@ -432,6 +443,7 @@ impl Depacketizer for CodecDepacketizer {
             H265(v) => v.is_partition_head(packet),
             H266(v) => v.is_partition_head(packet),
             Opus(v) => v.is_partition_head(packet),
+            ComfortNoise(v) => v.is_partition_head(packet),
             G711(v) => v.is_partition_head(packet),
             Vp8(v) => v.is_partition_head(packet),
             Vp9(v) => v.is_partition_head(packet),
@@ -448,6 +460,7 @@ impl Depacketizer for CodecDepacketizer {
             H265(v) => v.is_partition_tail(marker, packet),
             H266(v) => v.is_partition_tail(marker, packet),
             Opus(v) => v.is_partition_tail(marker, packet),
+            ComfortNoise(v) => v.is_partition_tail(marker, packet),
             G711(v) => v.is_partition_tail(marker, packet),
             Vp8(v) => v.is_partition_tail(marker, packet),
             Vp9(v) => v.is_partition_tail(marker, packet),
@@ -474,5 +487,31 @@ impl fmt::Display for MediaKind {
             MediaKind::Audio => write!(f, "audio"),
             MediaKind::Video => write!(f, "video"),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn comfort_noise_packetizer_preserves_payload_and_clears_marker() {
+        let payload = [42, 128, 64];
+        let mut packetizer = CodecPacketizer::from(Codec::ComfortNoise);
+
+        assert_eq!(
+            packetizer.packetize(1200, &payload).unwrap(),
+            vec![payload.to_vec()]
+        );
+        assert!(!packetizer.is_marker(&payload, None, true));
+
+        let mut depacketizer = CodecDepacketizer::from(Codec::ComfortNoise);
+        let mut output = Vec::new();
+        depacketizer
+            .depacketize(&payload, &mut output, &mut CodecExtra::None)
+            .unwrap();
+        assert_eq!(output, payload);
+        assert!(depacketizer.is_partition_head(&payload));
+        assert!(depacketizer.is_partition_tail(false, &payload));
     }
 }

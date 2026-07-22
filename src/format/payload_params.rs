@@ -696,7 +696,6 @@ impl PayloadParams {
                 // Try to use the codec's default PT first, fall back to any free PT
                 let new_pt = self
                     .spec
-                    .codec
                     .default_pt()
                     .filter(|pt| !claimed.is_claimed(*pt))
                     .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));

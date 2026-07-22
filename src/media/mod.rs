@@ -409,9 +409,6 @@ impl Media {
             self.depayloaders.insert((pt, rid), buffer);
         }
 
-        // The entry will be there by now.
-        let buffer = self.depayloaders.get_mut(&key).unwrap();
-
         let meta = RtpMeta {
             received: packet.timestamp,
             time: packet.time,
@@ -419,6 +416,15 @@ impl Media {
             header: packet.header.clone(),
             last_sender_info: packet.last_sender_info,
         };
+
+        for ((other_pt, other_rid), buffer) in &mut self.depayloaders {
+            if *other_pt != pt && *other_rid == rid {
+                buffer.push_padding(meta.clone());
+            }
+        }
+
+        // The entry will be there by now.
+        let buffer = self.depayloaders.get_mut(&key).unwrap();
 
         buffer.push(meta, packet.payload);
     }
