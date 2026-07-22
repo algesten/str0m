@@ -156,6 +156,10 @@ impl FormatParams {
             H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
             H266ProfileTierLevel(v) => self.h266_profile_tier_level = Some(*v),
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
+            // The telephone-event range is emitted from the codec config when
+            // serializing SDP; it is not stored per-FormatParams to keep the
+            // struct (and thus MediaData/Event) small.
+            TelephoneEvents(_) => {}
             Apt(_) => {}
             Unknown => {}
         }

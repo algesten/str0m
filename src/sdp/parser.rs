@@ -609,10 +609,15 @@ where
         .map(|(pt, _, values)| MediaAttribute::Fmtp { pt, values });
 
     // a=fmtp:101 0-15
-    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, _value)| {
+    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, value)| {
+        // The telephone-event (RFC 4733) fmtp is a bare event-code list rather
+        // than key=value pairs, e.g. `0-15` or `0-15,66,70`.
+        let param = crate::format::TelephoneEvents::parse(&value)
+            .map(FormatParam::TelephoneEvents)
+            .unwrap_or(FormatParam::Unknown);
         MediaAttribute::Fmtp {
             pt,
-            values: vec![FormatParam::Unknown],
+            values: vec![param],
         }
     });
 

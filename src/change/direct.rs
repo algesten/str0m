@@ -224,7 +224,15 @@ impl<'a> DirectApi<'a> {
         };
 
         let exts = self.rtc.session.exts.cloned_with_type(kind.is_audio());
-        let m = Media::from_direct_api(mid, next_index, kind, exts);
+        let remote_telephone_events = self
+            .rtc
+            .session
+            .codec_config
+            .all_for_kind(kind)
+            .filter(|params| params.spec().codec.is_telephone_event())
+            .map(|params| (params.pt(), crate::format::TelephoneEvents::dtmf()))
+            .collect();
+        let m = Media::from_direct_api(mid, next_index, kind, exts, remote_telephone_events);
 
         self.rtc.session.medias.push(m);
         self.rtc.session.medias.last_mut().unwrap()

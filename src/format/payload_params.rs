@@ -285,6 +285,13 @@ impl PayloadParams {
             return None;
         }
 
+        // telephone-event (RFC 4733) is negotiated purely on clock rate. The
+        // supported event-code range and any channel count are informational
+        // and don't affect payload compatibility.
+        if c0.codec == Codec::TelephoneEvent {
+            return Some(Self::EXACT_MATCH_SCORE);
+        }
+
         if c0.channels != c1.channels {
             // Channels must match
             return None;

@@ -25,6 +25,10 @@ use crate::util::already_happened;
 mod event;
 pub use event::*;
 
+mod dtmf;
+pub use dtmf::{Dtmf, DtmfEvent, TelephoneEventPayload};
+pub(crate) use dtmf::{DtmfReceiver, DtmfSender, DtmfTone};
+
 mod writer;
 pub use writer::Writer;
 
@@ -103,6 +107,9 @@ pub struct Media {
     /// If this is empty, the m-line is disabled/rejected (port=0 in SDP).
     remote_pts: Vec<Pt>,
 
+    /// Telephone events the remote peer accepts, keyed by negotiated PT.
+    remote_telephone_events: HashMap<Pt, crate::format::TelephoneEvents>,
+
     /// Set when this m-line has been stopped via
     /// [`SdpApi::stop_media`](crate::change::SdpApi::stop_media) or
     /// rejected by the remote peer. Independent of `remote_pts` so that
@@ -120,6 +127,9 @@ pub struct Media {
     /// [`true`] if this media was created by the remote peer, [`false`] if it was created by us.
     remote_created: bool,
 
+    /// Whether this media was declared through the Direct API.
+    direct_api: bool,
+
     /// Simulcast configuration, if set.
     ///
     /// SDP property.
@@ -136,6 +146,12 @@ pub struct Media {
 
     /// Frames to payload. Should typically only be 0 or 1.
     to_payload: VecDeque<ToPayload>,
+
+    /// Generator for outgoing DTMF (telephone-event) tones.
+    dtmf_sender: DtmfSender,
+
+    /// Aggregator for incoming DTMF (telephone-event) tones.
+    dtmf_receiver: DtmfReceiver,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -382,7 +398,13 @@ impl Media {
             let codec = params.spec.codec;
 
             // How many packets to hold back in the jitter buffer.
-            let hold_back = if codec.is_audio() {
+            let hold_back = if codec.is_telephone_event() {
+                // Telephone events are self-describing (RFC 4733) and resent for
+                // robustness. They also share the stream's sequence numbers with
+                // the audio codec, so their own sequence has gaps. Deliver them
+                // immediately rather than waiting to fill those gaps.
+                0
+            } else if codec.is_audio() {
                 reordering_size_audio
             } else {
                 reordering_size_video
@@ -465,21 +487,49 @@ impl Media {
         Ok(())
     }
 
+    /// Queue a DTMF (telephone-event) tone for sending.
+    pub(crate) fn queue_dtmf(&mut self, tone: DtmfTone) {
+        self.dtmf_sender.push(tone);
+    }
+
+    /// Feed a depacketized telephone-event sample into the receive aggregator.
+    pub(crate) fn feed_dtmf(&mut self, data: &MediaData) {
+        let Some(payloads) = TelephoneEventPayload::parse_all(&data.data) else {
+            return;
+        };
+
+        let mut time = data.time;
+        for payload in payloads {
+            self.dtmf_receiver.feed(self.mid, time, payload);
+            time += MediaTime::new(payload.duration as u64, time.frequency());
+        }
+    }
+
+    /// Pop the next completed incoming DTMF event, if any.
+    pub(crate) fn poll_dtmf(&mut self) -> Option<DtmfEvent> {
+        self.dtmf_receiver.poll()
+    }
+
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
         if !self.to_payload.is_empty() {
-            Some(already_happened())
-        } else {
-            None
+            return Some(already_happened());
         }
+        self.dtmf_sender.poll_timeout()
     }
 
     pub(crate) fn do_payload(
         &mut self,
+        now: Instant,
         streams: &mut Streams,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
     ) -> Result<(), RtcError> {
+        // Generate any due DTMF (telephone-event) packet before payloading.
+        if let Some(tp) = self.dtmf_sender.poll(now) {
+            self.to_payload.push_back(tp);
+        }
+
         let Some(to_payload) = self.to_payload.pop_front() else {
             return Ok(());
         };
@@ -523,6 +573,19 @@ impl Media {
         self.remote_pts = pts;
     }
 
+    pub(crate) fn set_remote_telephone_events(
+        &mut self,
+        events: HashMap<Pt, crate::format::TelephoneEvents>,
+    ) {
+        self.remote_telephone_events = events;
+    }
+
+    pub(crate) fn supports_telephone_event(&self, pt: Pt, event: u8) -> bool {
+        self.remote_telephone_events
+            .get(&pt)
+            .is_some_and(|events| events.contains(event))
+    }
+
     pub(crate) fn set_remote_extmap(&mut self, exts: ExtensionMap) {
         self.remote_exts = exts;
     }
@@ -535,6 +598,10 @@ impl Media {
     /// and in a different order.
     pub fn remote_pts(&self) -> &[Pt] {
         &self.remote_pts
+    }
+
+    pub(crate) fn is_direct_api(&self) -> bool {
+        self.direct_api
     }
 
     /// The remote, agreed on, extension map, configured for this Media.
@@ -593,9 +660,11 @@ impl Default for Media {
             msid: Msid::random(),
             kind: MediaKind::Video,
             remote_pts: vec![],
+            remote_telephone_events: HashMap::new(),
             stopped: false,
             remote_exts: ExtensionMap::empty(),
             remote_created: false,
+            direct_api: false,
             dir: Direction::SendRecv,
             simulcast: None,
             rids_rx: Rids::Any,
@@ -603,6 +672,8 @@ impl Default for Media {
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: VecDeque::default(),
+            dtmf_sender: DtmfSender::default(),
+            dtmf_receiver: DtmfReceiver::default(),
             need_open_event: true,
             need_changed_event: false,
         }
@@ -667,13 +738,16 @@ impl Media {
         index: usize,
         kind: MediaKind,
         exts: ExtensionMap,
+        remote_telephone_events: HashMap<Pt, crate::format::TelephoneEvents>,
     ) -> Media {
         Media {
             mid,
             index,
             kind,
             dir: Direction::SendRecv,
+            remote_telephone_events,
             remote_exts: exts,
+            direct_api: true,
             ..Default::default()
         }
     }
