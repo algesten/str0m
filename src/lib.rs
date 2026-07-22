@@ -1620,8 +1620,14 @@ impl Rtc {
         // poll loop below in the same iteration.
         if let Some(timeout) = self.next_dtls_timeout {
             if timeout <= self.last_now {
-                let _ = self.dtls.handle_timeout(self.last_now);
                 self.next_dtls_timeout = None;
+
+                if let Err(error) = self.dtls.handle_timeout(self.last_now) {
+                    // A failed timer transition leaves DTLS unrecoverable. Close the
+                    // RTC so continued polling cannot expose the same due timeout again.
+                    self.disconnect();
+                    return Err(error.into());
+                }
             }
         }
 
