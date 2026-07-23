@@ -155,10 +155,9 @@ pub fn data_channel_close_reopen() -> Result<(), RtcError> {
     loop {
         progress(&mut l, &mut r)?;
 
-        let l_open = l
-            .events
-            .iter()
-            .any(|(_, e)| matches!(e, Event::ChannelOpen(id, label) if *id == cid2 && label == "churn2"));
+        let l_open = l.events.iter().any(
+            |(_, e)| matches!(e, Event::ChannelOpen(id, label) if *id == cid2 && label == "churn2"),
+        );
         let r_open = r
             .events
             .iter()
@@ -189,10 +188,9 @@ pub fn data_channel_close_reopen() -> Result<(), RtcError> {
 
         progress(&mut l, &mut r)?;
 
-        let got_data = r
-            .events
-            .iter()
-            .any(|(_, e)| matches!(e, Event::ChannelData(d) if d.data.as_slice() == b"hello again"));
+        let got_data = r.events.iter().any(
+            |(_, e)| matches!(e, Event::ChannelData(d) if d.data.as_slice() == b"hello again"),
+        );
         if got_data {
             break;
         }

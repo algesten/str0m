@@ -873,7 +873,7 @@ impl RtcSctp {
                         if in_band || matches!(e, ProtoError::ErrStreamResetPending) {
                             // RFC 6525 reset handshake for a previous
                             // incarnation of this stream id hasn't finished yet
-                            // 
+                            //
                             // - AlreadyExist clears when the remote's reciprocal reset arrives
                             // - ResetPending when the RECONFIG-RESPONSE arrives (silently)
                             //
