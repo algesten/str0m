@@ -426,22 +426,23 @@ impl PayloadParams {
             .map(|l| l.try_into().ok())
             .unwrap_or(Some(H264ProfileLevel::FALLBACK))?;
 
-        // RFC 6184 Section 8.2.2: Profiles must match exactly, but we can decode
-        // bitstreams at our configured level or any lower level.
+        // RFC 6184 Section 8.2.2: Profiles must match exactly.
         if c0_profile_level.profile() != c1_profile_level.profile() {
             return None;
         }
 
-        // Reject if the offered level exceeds our configured capability
-        if c1_profile_level.level() > c0_profile_level.level() {
-            return None;
-        }
-
-        // Decrement score based on level difference
+        // RFC 6184 Section 8.2.2: the level is a negotiable (downgradable)
+        // parameter, so a level mismatch in either direction is allowed and
+        // only penalizes the match score rather than rejecting the payload.
+        //
+        // NOTE: this only affects *matching*. Unlike H.265/H.266, `update_param`
+        // does not narrow the answered H.264 level to `min(local, remote)`, so
+        // when `level-asymmetry-allowed` is absent we may answer with a level
+        // higher than the offer. See the note in `update_param`.
         let level_difference: usize = c0_profile_level
             .level()
             .ordinal()
-            .saturating_sub(c1_profile_level.level().ordinal());
+            .abs_diff(c1_profile_level.level().ordinal());
 
         Some(Self::EXACT_MATCH_SCORE.saturating_sub(level_difference))
     }
@@ -453,9 +454,9 @@ impl PayloadParams {
     /// - **Profiles** must match exactly (no cross-profile compatibility)
     /// - **Tiers** must match exactly (Main vs High tier are distinct)
     /// - **Levels** penalize score by `|c0_level - c1_level|` but never reject.
-    ///   Unlike H.264 (which rejects when `c1_level > c0_level`), H.265
-    ///   tolerates level mismatches in either direction because `update_param`
-    ///   narrows the negotiated level to `min(local, remote)` afterward.
+    ///   Both H.264 and H.265 tolerate level mismatches in either direction at
+    ///   match time. For H.265, `update_param` additionally narrows the
+    ///   negotiated level to `min(local, remote)` afterward; H.264 does not.
     ///
     /// # Matching Rules — Profile-only (at least one side lacks tier+level)
     ///
@@ -667,6 +668,13 @@ impl PayloadParams {
             }
         }
 
+        // KNOWN LIMITATION: H.264 has no equivalent level-narrowing pass here.
+        // `match_h264_score` treats the level as negotiable, but we keep our
+        // locally configured `profile-level-id` in the answer instead of
+        // narrowing it to `min(local, remote)`. Per RFC 6184 §8.2.2, when
+        // `level-asymmetry-allowed` is not set the answer should use the lower
+        // level.
+
         let mut remote_pt = first.pt;
         let mut remote_rtx = first.resend;
 
@@ -840,12 +848,13 @@ mod test {
                     expected: Some(PayloadParams::EXACT_MATCH_SCORE - 2),
                     msg: "Same profile (CB), offered level 3.1 < configured 4.0 should match per RFC 6184",
                 },
-                // Test 3: Same profile, offered level higher -> should NOT match
+                // Test 3: Same profile, offered level higher -> should match (RFC 6184)
                 Case {
                     c0: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (configured)
                     c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (offered)
-                    expected: None,
-                    msg: "Same profile (CB), offered level 4.0 > configured 3.1 should NOT match",
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 2),
+                    msg: "Same profile (CB), offered level 4.0 > configured 3.1 should match, \
+                    the level is negotiable per RFC 6184",
                 },
                 // Test 4: Different profiles -> should NOT match
                 Case {
@@ -882,12 +891,35 @@ mod test {
                     expected: Some(PayloadParams::EXACT_MATCH_SCORE - 1),
                     msg: "Same profile (Baseline), offered level 1 < configured 1B should match",
                 },
-                // Test 9: Baseline (not CB) offered higher level -> should not match (special Level1B case)
+                // Test 9: Baseline (not CB) offered higher level -> should match (special Level1B case)
                 Case {
                     c0: h264_codec_spec(None, None, Some(0x42000a)), // Baseline L1
                     c1: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 1),
+                    msg: "Same profile (Baseline), offered level 1B > configured 1 should match",
+                },
+                // Test 10: Offered Constrained Baseline level 5.2 is higher than
+                // the default configured 3.1. Must match.
+                Case {
+                    c0: h264_codec_spec(Some(true), Some(1), Some(0x42e01f)), // CB L3.1 (configured)
+                    c1: h264_codec_spec(Some(true), Some(1), Some(0x42e034)), // CB L5.2 (offered)
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 7),
+                    msg: "Same profile (CB), offered level 5.2 > configured 3.1 should match",
+                },
+                // Test 11: Constrained High (profile-iop 0x0C) must be recognized
+                // and match a configured Constrained High.
+                Case {
+                    c0: h264_codec_spec(Some(true), Some(1), Some(0x640c1f)), // CH L3.1 (configured)
+                    c1: h264_codec_spec(Some(true), Some(1), Some(0x640c34)), // CH L5.2 (offered)
+                    expected: Some(PayloadParams::EXACT_MATCH_SCORE - 7),
+                    msg: "Same profile (Constrained High), offered level 5.2 should match",
+                },
+                // Test 12: Constrained High is not the same profile as High.
+                Case {
+                    c0: h264_codec_spec(None, None, Some(0x64001f)), // High L3.1
+                    c1: h264_codec_spec(None, None, Some(0x640c1f)), // Constrained High L3.1
                     expected: None,
-                    msg: "Same profile (Baseline), offered level 1B > configured 1 should not match",
+                    msg: "Different profiles (High vs Constrained High) should NOT match",
                 },
             ];
 
