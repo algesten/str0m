@@ -53,8 +53,7 @@ _str0m_test = { path = "crates/_str0m_test" }
 # Core dependencies
 tracing = "0.1.37"
 fastrand = "2.0.1"
-# sctp-proto = "0.10.1"
-sctp-proto = { path = "../sctp-proto" }
+sctp-proto = "0.10.2"
 combine = "4.6.6"
 subtle = "2.0.0"
 arrayvec = "0.7.6"
