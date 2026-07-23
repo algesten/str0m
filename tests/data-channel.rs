@@ -56,6 +56,155 @@ pub fn data_channel() -> Result<(), RtcError> {
     Ok(())
 }
 
+/// Closing a data channel must propagate to the remote peer (via the SCTP
+/// stream reset handshake), and once the handshake completes the freed stream
+/// id must be reusable by a new in-band channel.
+#[test]
+pub fn data_channel_close_reopen() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
+
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+    let mut change = l.sdp_api();
+    let cid = change.add_channel("churn".into());
+    let (offer, pending) = change.apply().unwrap();
+
+    let answer = r.rtc.sdp_api().accept_offer(offer)?;
+    l.rtc.sdp_api().accept_answer(pending, answer)?;
+
+    loop {
+        if l.is_connected() || r.is_connected() {
+            break;
+        }
+        progress(&mut l, &mut r)?;
+    }
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    // Wait until both sides see the channel open.
+    loop {
+        progress(&mut l, &mut r)?;
+
+        let l_open = l
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelOpen(id, _) if *id == cid));
+        let r_open = r
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelOpen(_, _)));
+
+        if l_open && r_open {
+            break;
+        }
+        assert!(
+            l.duration() < Duration::from_secs(10),
+            "first channel should open on both sides"
+        );
+    }
+
+    let stream_id = l
+        .direct_api()
+        .sctp_stream_id_by_channel_id(cid)
+        .expect("stream id for open channel");
+
+    // Close locally. The reset handshake must inform the remote, which
+    // previously never received ChannelClose.
+    l.direct_api().close_data_channel(cid);
+
+    loop {
+        progress(&mut l, &mut r)?;
+
+        let l_closed = l
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelClose(id) if *id == cid));
+        let r_closed = r
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelClose(_)));
+
+        if l_closed && r_closed {
+            break;
+        }
+        assert!(
+            l.duration() < Duration::from_secs(20),
+            "both sides should see ChannelClose"
+        );
+    }
+
+    // The reset handshake finishes with round-trips (reciprocal reset and
+    // RECONFIG-RESPONSEs) that carry no public events, so there is nothing to
+    // wait on here. Creating the next channel immediately is fine: its stream
+    // id allocation happens on a later timeout, by which time the handshake
+    // rounds have been ferried through. The stream id assertion below fails
+    // loudly if the allocator did not release the id in time.
+    let cid2 = l.direct_api().create_data_channel(ChannelConfig {
+        label: "churn2".into(),
+        ..Default::default()
+    });
+    assert_ne!(cid, cid2);
+
+    loop {
+        progress(&mut l, &mut r)?;
+
+        let l_open = l
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelOpen(id, label) if *id == cid2 && label == "churn2"));
+        let r_open = r
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelOpen(_, label) if label == "churn2"));
+
+        if l_open && r_open {
+            break;
+        }
+        assert!(
+            l.duration() < Duration::from_secs(30),
+            "reopened channel should open on both sides"
+        );
+    }
+
+    // The freed stream id must have been reused, proving the allocator
+    // released it when the reset handshake completed.
+    assert_eq!(
+        l.direct_api().sctp_stream_id_by_channel_id(cid2),
+        Some(stream_id),
+        "reopened channel should reuse the freed stream id"
+    );
+
+    // Data flows on the reopened channel.
+    loop {
+        if let Some(mut chan) = l.channel(cid2) {
+            chan.write(false, b"hello again").expect("write to succeed");
+        }
+
+        progress(&mut l, &mut r)?;
+
+        let got_data = r
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelData(d) if d.data.as_slice() == b"hello again"));
+        if got_data {
+            break;
+        }
+        assert!(
+            l.duration() < Duration::from_secs(40),
+            "data should flow on the reopened channel"
+        );
+    }
+
+    Ok(())
+}
+
 #[test]
 pub fn data_channel_flood() -> Result<(), RtcError> {
     init_log();

@@ -730,6 +730,11 @@ impl RtcSctp {
             return None;
         }
 
+        // Remove closed entries. handle_timeout() also does this, but the
+        // remote can reuse a stream id (its reset handshake completed) before
+        // our next timeout.
+        self.entries.retain(|e| e.state != StreamEntryState::Closed);
+
         if let Some(t) = self.pushed_back_transmit.take() {
             return Some(SctpEvent::Transmit { packets: t });
         }
@@ -882,7 +887,7 @@ impl RtcSctp {
                                 continue;
                             }
 
-                            warn!("Opening stream {} failed after retries: {:?}", entry.id, e);
+                            debug!("Opening stream {} failed after retries: {:?}", entry.id, e);
                             entry.do_close = true;
                             entry.set_state(StreamEntryState::Closed);
                             let stream_id = entry.id;
