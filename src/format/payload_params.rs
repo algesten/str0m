@@ -432,8 +432,13 @@ impl PayloadParams {
         }
 
         // RFC 6184 Section 8.2.2: the level is a negotiable (downgradable)
-        // parameter, so any level combination is allowed and the level
-        // difference only penalizes the score.
+        // parameter, so a level mismatch in either direction is allowed and
+        // only penalizes the match score rather than rejecting the payload.
+        //
+        // NOTE: this only affects *matching*. Unlike H.265/H.266, `update_param`
+        // does not narrow the answered H.264 level to `min(local, remote)`, so
+        // when `level-asymmetry-allowed` is absent we may answer with a level
+        // higher than the offer. See the note in `update_param`.
         let level_difference: usize = c0_profile_level
             .level()
             .ordinal()
@@ -449,9 +454,9 @@ impl PayloadParams {
     /// - **Profiles** must match exactly (no cross-profile compatibility)
     /// - **Tiers** must match exactly (Main vs High tier are distinct)
     /// - **Levels** penalize score by `|c0_level - c1_level|` but never reject.
-    ///   Both H.264 and H.265 tolerate level mismatches in either direction;
-    ///   for H.265, `update_param` narrows the negotiated level to
-    ///   `min(local, remote)` afterward.
+    ///   Both H.264 and H.265 tolerate level mismatches in either direction at
+    ///   match time. For H.265, `update_param` additionally narrows the
+    ///   negotiated level to `min(local, remote)` afterward; H.264 does not.
     ///
     /// # Matching Rules — Profile-only (at least one side lacks tier+level)
     ///
@@ -662,6 +667,13 @@ impl PayloadParams {
                 self.spec.format.sprop_max_don_diff = first.spec.format.sprop_max_don_diff;
             }
         }
+
+        // KNOWN LIMITATION: H.264 has no equivalent level-narrowing pass here.
+        // `match_h264_score` treats the level as negotiable, but we keep our
+        // locally configured `profile-level-id` in the answer instead of
+        // narrowing it to `min(local, remote)`. Per RFC 6184 §8.2.2, when
+        // `level-asymmetry-allowed` is not set the answer should use the lower
+        // level.
 
         let mut remote_pt = first.pt;
         let mut remote_rtx = first.resend;
