@@ -173,9 +173,18 @@ impl fmt::Debug for ChannelData {
 pub(crate) struct ChannelHandler {
     allocations: Vec<ChannelAllocation>,
     next_channel_id: usize,
-    /// Stream IDs recently closed, with the time they were closed.
-    /// Excluded from allocation until the cooldown expires.
-    closed_stream_ids: Vec<(u16, Instant)>,
+    /// Stream IDs of closed channels, excluded from allocation until the
+    /// reset handshake completes or the max-hold expires.
+    closed_stream_ids: Vec<ClosedStreamId>,
+}
+
+/// A stream ID held back from reallocation after its channel closed.
+#[derive(Debug)]
+struct ClosedStreamId {
+    stream_id: u16,
+    /// When the hold started. Only used for the max-hold fallback,
+    /// normal release is the reset-completion signal from SCTP.
+    held_since: Instant,
 }
 
 #[derive(Debug)]
@@ -190,7 +199,12 @@ struct ChannelAllocation {
     config: Option<ChannelConfig>,
 }
 
-const STREAM_ID_COOLDOWN: Duration = Duration::from_secs(2);
+/// Upper bound on how long a stream ID is held when the reset handshake never
+/// completes. Prevents leaking IDs forever.
+///
+/// The normal release path is the completion signal itself, the SCTP layer
+/// retries transient open errors.
+const STREAM_ID_MAX_HOLD: Duration = Duration::from_secs(30);
 
 impl ChannelHandler {
     pub fn new_channel(&mut self, config: &ChannelConfig) -> ChannelId {
@@ -292,7 +306,7 @@ impl ChannelHandler {
             .allocations
             .iter()
             .filter_map(|a| a.sctp_stream_id)
-            .chain(self.closed_stream_ids.iter().map(|(id, _)| *id))
+            .chain(self.closed_stream_ids.iter().map(|c| c.stream_id))
             .collect();
 
         for a in &mut self.allocations {
@@ -365,10 +379,18 @@ impl ChannelHandler {
         }
     }
 
-    /// Remove stream IDs from the cooldown list that have expired.
+    /// Release held stream IDs whose max-hold fallback expired.
+    /// The normal release path is `stream_reset_complete`,
+    /// this only reclaims IDs whose reset handshake never completes (broken/dead peer).
     pub fn expire_closed_stream_ids(&mut self, now: Instant) {
         self.closed_stream_ids
-            .retain(|(_, closed_at)| now.duration_since(*closed_at) < STREAM_ID_COOLDOWN);
+            .retain(|c| now.duration_since(c.held_since) < STREAM_ID_MAX_HOLD);
+    }
+
+    /// The reset handshake for a held stream ID completed, release it for
+    /// reallocation immediately.
+    pub fn stream_reset_complete(&mut self, stream_id: u16) {
+        self.closed_stream_ids.retain(|c| c.stream_id != stream_id);
     }
 
     pub fn remove_channel(&mut self, id: ChannelId, now: Instant) {
@@ -378,7 +400,10 @@ impl ChannelHandler {
             .find(|a| a.id == id)
             .and_then(|a| a.sctp_stream_id)
         {
-            self.closed_stream_ids.push((stream_id, now));
+            self.closed_stream_ids.push(ClosedStreamId {
+                stream_id,
+                held_since: now,
+            });
         }
         self.allocations.retain(|a| a.id != id)
     }
@@ -407,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_id_not_reused_during_cooldown() {
+    fn stream_id_held_until_reset_complete() {
         let now = Instant::now();
         let mut handler = ChannelHandler::default();
 
@@ -419,39 +444,62 @@ mod tests {
         handler.allocations[0].sctp_stream_id = Some(0);
         handler.allocations[1].sctp_stream_id = Some(2);
 
-        // Close channel 0 (stream ID 0). It should enter cooldown.
+        // Close channel 0 (stream ID 0). It should be held.
         handler.remove_channel(id0, now);
         assert_eq!(handler.closed_stream_ids.len(), 1);
-        assert_eq!(handler.closed_stream_ids[0].0, 0);
+        assert_eq!(handler.closed_stream_ids[0].stream_id, 0);
 
-        // Allocate a new channel and manually assign a stream ID the way
-        // do_allocations would — stream 0 should be skipped (in cooldown).
+        // Build the taken list as do_allocations does — stream 0 is held.
         let _id2 = handler.new_channel(&Default::default());
-        // Build the taken list as do_allocations does.
         let taken: Vec<u16> = handler
             .allocations
             .iter()
             .filter_map(|a| a.sctp_stream_id)
-            .chain(handler.closed_stream_ids.iter().map(|(id, _)| *id))
+            .chain(handler.closed_stream_ids.iter().map(|c| c.stream_id))
             .collect();
-        // Stream 0 is in cooldown, stream 2 is active, so next available is 4.
-        assert!(taken.contains(&0), "stream 0 should be in cooldown");
+        assert!(taken.contains(&0), "stream 0 should be held");
         assert!(taken.contains(&2), "stream 2 should be active");
 
-        // After cooldown expires, stream 0 should be available again.
-        let after_cooldown = now + STREAM_ID_COOLDOWN;
-        handler.expire_closed_stream_ids(after_cooldown);
+        // Elapsed time alone does not release the ID (short of max-hold):
+        // the release condition is the reset handshake completing.
+        handler.expire_closed_stream_ids(now + Duration::from_secs(10));
+        assert_eq!(
+            handler.closed_stream_ids.len(),
+            1,
+            "stream 0 should stay held until reset completes"
+        );
+
+        // The completion signal releases it immediately.
+        handler.stream_reset_complete(0);
         assert!(handler.closed_stream_ids.is_empty());
 
         let taken_after: Vec<u16> = handler
             .allocations
             .iter()
             .filter_map(|a| a.sctp_stream_id)
-            .chain(handler.closed_stream_ids.iter().map(|(id, _)| *id))
+            .chain(handler.closed_stream_ids.iter().map(|c| c.stream_id))
             .collect();
         assert!(
             !taken_after.contains(&0),
-            "stream 0 should be available after cooldown"
+            "stream 0 should be available after reset completion"
         );
+    }
+
+    #[test]
+    fn stream_id_released_by_max_hold_fallback() {
+        let now = Instant::now();
+        let mut handler = ChannelHandler::default();
+
+        let id0 = handler.new_channel(&Default::default());
+        handler.allocations[0].sctp_stream_id = Some(0);
+        handler.remove_channel(id0, now);
+
+        // Reset never completes. Just before max-hold: still held.
+        handler.expire_closed_stream_ids(now + STREAM_ID_MAX_HOLD - Duration::from_millis(1));
+        assert_eq!(handler.closed_stream_ids.len(), 1);
+
+        // At max-hold: released even without reset completion.
+        handler.expire_closed_stream_ids(now + STREAM_ID_MAX_HOLD);
+        assert!(handler.closed_stream_ids.is_empty());
     }
 }
