@@ -289,11 +289,11 @@ impl DepacketizingBuffer {
             return;
         };
         let original_len = self.queue.len();
+        let is_padding = |entry: &Entry| entry.data.is_empty() && !entry.head && !entry.tail;
 
         while self.queue.len() > self.hold_back {
             let entry = self.queue.front().expect("queue exceeds hold back");
-            let is_padding = entry.data.is_empty() && !entry.head && !entry.tail;
-            if !is_padding {
+            if !is_padding(entry) {
                 break;
             }
 
@@ -302,6 +302,25 @@ impl DepacketizingBuffer {
             }
             self.queue.pop_front();
         }
+
+        // An incomplete frame can remain at the front while another payload type
+        // contributes synthetic padding indefinitely. Keep the frame, but retain
+        // only the newest padding needed for the reordering window. Padding removed
+        // from behind media cannot advance last_emitted across that media.
+        let mut excess_padding = self
+            .queue
+            .iter()
+            .filter(|entry| is_padding(entry))
+            .count()
+            .saturating_sub(self.hold_back);
+        self.queue.retain(|entry| {
+            if excess_padding > 0 && is_padding(entry) {
+                excess_padding -= 1;
+                false
+            } else {
+                true
+            }
+        });
 
         if self.queue.len() != original_len {
             self.depack_cache = None;
