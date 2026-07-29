@@ -638,7 +638,7 @@ mod test {
     }
 
     #[test]
-    fn dynamic_comfort_noise_collision_does_not_use_static_pt_13() {
+    fn dynamic_comfort_noise_collision_preserves_configured_pt() {
         let mut claimed = PayloadParams::new(
             96.into(),
             None,
@@ -679,7 +679,44 @@ mod test {
             .iter()
             .find(|p| p.spec().codec == Codec::ComfortNoise)
             .expect("configured CN payload");
-        assert_ne!(*cn.pt(), 13, "PT 13 is reserved for CN at 8 kHz");
+        assert_eq!(
+            *cn.pt(),
+            97,
+            "dynamic CN must retain its configured payload type"
+        );
+    }
+
+    #[test]
+    fn collision_preserves_configured_primary_and_rtx_pts() {
+        let mut claimed = PayloadParams::new(
+            96.into(),
+            Some(97.into()),
+            CodecSpec {
+                codec: Codec::H264,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+        claimed.locked = true;
+
+        let vp8 = CodecSpec {
+            codec: Codec::Vp8,
+            clock_rate: Frequency::NINETY_KHZ,
+            channels: None,
+            format: FormatParams::default(),
+        };
+        let local_vp8 = PayloadParams::new(110.into(), Some(111.into()), vp8);
+        let remote_vp8 = PayloadParams::new(96.into(), Some(97.into()), vp8);
+
+        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_vp8]);
+        config.update_params(&[remote_vp8], Direction::SendOnly);
+
+        let vp8 = config
+            .iter()
+            .find(|p| p.spec().codec == Codec::Vp8)
+            .expect("configured VP8 payload");
+        assert_eq!((*vp8.pt(), vp8.resend().map(|pt| *pt)), (110, Some(111)));
     }
 
     #[test]
