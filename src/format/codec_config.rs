@@ -136,6 +136,18 @@ impl CodecConfig {
         self.params.push(p);
     }
 
+    fn add_static_config(&mut self, pt: Pt) {
+        let spec = CodecSpec::from_static_pt(pt).expect("known static payload type");
+        self.add_config(
+            pt,
+            None,
+            spec.codec,
+            spec.clock_rate,
+            spec.channels,
+            spec.format,
+        );
+    }
+
     /// Convenience for adding a h264 payload type.
     pub fn add_h264(
         &mut self,
@@ -192,14 +204,7 @@ impl CodecConfig {
         if !enabled {
             return;
         }
-        self.add_config(
-            PT_PCMU,
-            None,
-            Codec::PCMU,
-            Frequency::EIGHT_KHZ,
-            None,
-            Default::default(),
-        );
+        self.add_static_config(PT_PCMU);
     }
 
     /// Convenience for adding a PCM a-law payload type.
@@ -208,14 +213,7 @@ impl CodecConfig {
         if !enabled {
             return;
         }
-        self.add_config(
-            PT_PCMA,
-            None,
-            Codec::PCMA,
-            Frequency::EIGHT_KHZ,
-            None,
-            Default::default(),
-        );
+        self.add_static_config(PT_PCMA);
     }
 
     /// Convenience for adding a G722 payload type.
@@ -229,14 +227,7 @@ impl CodecConfig {
         if !enabled {
             return;
         }
-        self.add_config(
-            PT_G722,
-            None,
-            Codec::G722,
-            Frequency::SIXTEEN_KHZ,
-            None,
-            Default::default(),
-        );
+        self.add_static_config(PT_G722);
     }
 
     /// Add the static Comfort Noise payload type at 8000 Hz.
@@ -248,14 +239,7 @@ impl CodecConfig {
         if !enabled {
             return;
         }
-        self.add_config(
-            PT_COMFORT_NOISE,
-            None,
-            Codec::ComfortNoise,
-            Frequency::EIGHT_KHZ,
-            None,
-            Default::default(),
-        );
+        self.add_static_config(PT_COMFORT_NOISE);
     }
 
     /// Add a default OPUS payload type.
@@ -593,6 +577,30 @@ impl Codec {
 }
 
 impl CodecSpec {
+    /// Get the standardized codec definition for a static RTP payload type.
+    pub(crate) fn from_static_pt(pt: Pt) -> Option<Self> {
+        let (codec, clock_rate) = if pt == PT_PCMU {
+            (Codec::PCMU, Frequency::EIGHT_KHZ)
+        } else if pt == PT_PCMA {
+            (Codec::PCMA, Frequency::EIGHT_KHZ)
+        } else if pt == PT_G722 {
+            // G722 is represented as 16 kHz internally. CodecSpec::rtp_clock_rate()
+            // maps it to the standardized 8 kHz RTP clock rate on the wire.
+            (Codec::G722, Frequency::SIXTEEN_KHZ)
+        } else if pt == PT_COMFORT_NOISE {
+            (Codec::ComfortNoise, Frequency::EIGHT_KHZ)
+        } else {
+            return None;
+        };
+
+        Some(CodecSpec {
+            codec,
+            clock_rate,
+            channels: None,
+            format: FormatParams::default(),
+        })
+    }
+
     pub(crate) fn default_pt(&self) -> Option<Pt> {
         self.codec.default_pt().filter(|_| {
             self.codec != Codec::ComfortNoise || self.clock_rate == Frequency::EIGHT_KHZ
@@ -608,6 +616,26 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    #[test]
+    fn static_payload_types_have_canonical_codec_definitions() {
+        let definitions = [
+            (PT_PCMU, Codec::PCMU, Frequency::EIGHT_KHZ),
+            (PT_PCMA, Codec::PCMA, Frequency::EIGHT_KHZ),
+            (PT_G722, Codec::G722, Frequency::SIXTEEN_KHZ),
+            (PT_COMFORT_NOISE, Codec::ComfortNoise, Frequency::EIGHT_KHZ),
+        ];
+
+        for (pt, codec, clock_rate) in definitions {
+            let spec = CodecSpec::from_static_pt(pt).expect("static payload definition");
+            assert_eq!(spec.codec, codec);
+            assert_eq!(spec.clock_rate, clock_rate);
+            assert_eq!(spec.channels, None);
+            assert_eq!(spec.format, FormatParams::default());
+        }
+
+        assert!(CodecSpec::from_static_pt(PT_OPUS).is_none());
+    }
 
     #[test]
     fn dynamic_comfort_noise_collision_does_not_use_static_pt_13() {
