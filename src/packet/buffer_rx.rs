@@ -779,6 +779,84 @@ mod test {
         );
     }
 
+    #[test]
+    fn padding_after_waiting_vp8_frame_does_not_grow_without_bound() {
+        let depack = CodecDepacketizer::Vp8(Default::default());
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64, marker: bool| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                marker,
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        buf.push(meta(1, true), [0x10, 0x00]);
+        assert!(buf.pop().is_some());
+
+        // Lose a frame head, then switch away long enough to compact its padding.
+        buf.push(meta(2, false), [0x00]);
+        assert!(buf.pop().is_none());
+        for seq in 3..=1_002 {
+            buf.push_padding(meta(seq, false));
+            assert!(buf.pop().is_none());
+        }
+
+        // One complete frame returns, but waits behind the orphan for hold-back.
+        buf.push(meta(1_003, true), [0x10, 0x00]);
+        assert!(buf.pop().is_none());
+
+        // Switching away again must remain bounded while that frame waits.
+        for seq in 1_004..=2_003 {
+            buf.push_padding(meta(seq, false));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(
+            buf.queue.len() <= buf.hold_back + 2,
+            "waiting VP8 frame retained {} entries after a second 1,000-packet PT switch",
+            buf.queue.len()
+        );
+    }
+
+    #[test]
+    fn padding_after_initial_incomplete_vp8_frame_does_not_grow_without_bound() {
+        let depack = CodecDepacketizer::Vp8(Default::default());
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        // Start observing this PT after the head of a VP8 frame was lost.
+        buf.push(meta(1), [0x00]);
+        assert!(buf.pop().is_none());
+
+        // The sender switches PT before this depayloader has emitted anything.
+        for seq in 2..=1_001 {
+            buf.push_padding(meta(seq));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(
+            buf.queue.len() <= buf.hold_back + 1,
+            "initial incomplete VP8 frame retained {} entries after a 1,000-packet PT switch",
+            buf.queue.len()
+        );
+    }
+
     fn test(
         v: &[(
             u64,   // seq
