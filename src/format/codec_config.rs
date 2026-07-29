@@ -559,23 +559,6 @@ impl DerefMut for CodecConfig {
     }
 }
 
-impl Codec {
-    /// Get the default PT for this codec, if one exists.
-    pub(crate) fn default_pt(&self) -> Option<Pt> {
-        use Codec::*;
-        match self {
-            Opus => Some(PT_OPUS),
-            PCMU => Some(PT_PCMU),
-            PCMA => Some(PT_PCMA),
-            ComfortNoise => Some(PT_COMFORT_NOISE),
-            Vp8 => Some(PT_VP8),
-            Vp9 => Some(PT_VP9),
-            H265 => Some(PT_H265),
-            _ => None,
-        }
-    }
-}
-
 impl CodecSpec {
     /// Get the standardized codec definition for a static RTP payload type.
     pub(crate) fn from_static_pt(pt: Pt) -> Option<Self> {
@@ -598,12 +581,6 @@ impl CodecSpec {
             clock_rate,
             channels: None,
             format: FormatParams::default(),
-        })
-    }
-
-    pub(crate) fn default_pt(&self) -> Option<Pt> {
-        self.codec.default_pt().filter(|_| {
-            self.codec != Codec::ComfortNoise || self.clock_rate == Frequency::EIGHT_KHZ
         })
     }
 }
@@ -733,10 +710,6 @@ mod test {
         assert_eq!(params.pt(), Pt::new_with_value(13));
         assert_eq!(params.spec().clock_rate, Frequency::EIGHT_KHZ);
         assert_eq!(params.spec().channels, None);
-        assert_eq!(
-            Codec::ComfortNoise.default_pt(),
-            Some(Pt::new_with_value(13))
-        );
 
         config.enable_comfort_noise(false);
         assert!(
