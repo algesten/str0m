@@ -140,6 +140,7 @@ impl DepacketizingBuffer {
             | CodecDepacketizer::Av1(_)
             | CodecDepacketizer::Boxed(_)
             | CodecDepacketizer::Opus(_)
+            | CodecDepacketizer::ComfortNoise(_)
             | CodecDepacketizer::G711(_)
             | CodecDepacketizer::Null(_) => Contiguity::None,
         };
@@ -157,6 +158,14 @@ impl DepacketizingBuffer {
     }
 
     pub fn push(&mut self, meta: RtpMeta, data: impl Into<Arc<[u8]>>) {
+        self.push_entry(meta, data.into(), None);
+    }
+
+    pub(crate) fn push_padding(&mut self, meta: RtpMeta) {
+        self.push_entry(meta, Arc::from([]), Some((false, false)));
+    }
+
+    fn push_entry(&mut self, meta: RtpMeta, data: Arc<[u8]>, partition: Option<(bool, bool)>) {
         // We're not emitting frames in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         //
@@ -185,11 +194,13 @@ impl DepacketizingBuffer {
                 trace!("Drop exactly same packet: {}", meta.seq_no);
             }
             Err(i) => {
-                let data = data.into();
-                let head = self.depack.is_partition_head(data.as_ref());
-                let tail = self
-                    .depack
-                    .is_partition_tail(meta.header.marker, data.as_ref());
+                let (head, tail) = partition.unwrap_or_else(|| {
+                    (
+                        self.depack.is_partition_head(data.as_ref()),
+                        self.depack
+                            .is_partition_tail(meta.header.marker, data.as_ref()),
+                    )
+                });
 
                 // i is insertion point to maintain order
                 let entry = Entry {
@@ -206,13 +217,18 @@ impl DepacketizingBuffer {
     pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
+        if self.segments.is_empty() {
+            self.discard_old_padding();
+            return None;
+        }
+
         // println!(
         //     "{:?} {:?}",
         //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
         //     self.segments
         // );
 
-        let (start, stop) = *self.segments.first()?;
+        let (start, stop) = *self.segments.first().expect("segment exists");
 
         let seq = {
             let last = self.queue.get(stop).expect("entry for stop index");
@@ -242,6 +258,7 @@ impl DepacketizingBuffer {
         if wait_for_contiguity {
             // if we are not sending, cache the depacked
             self.depack_cache = Some((start..stop, dep));
+            self.discard_old_padding();
             return None;
         }
 
@@ -266,6 +283,50 @@ impl DepacketizingBuffer {
         self.last_emitted = Some((last, dep.codec_extra));
 
         Some(Ok(dep))
+    }
+
+    fn discard_old_padding(&mut self) {
+        let original_len = self.queue.len();
+        let is_padding = |entry: &Entry| entry.data.is_empty() && !entry.head && !entry.tail;
+
+        if let Some((mut last, extra)) = self.last_emitted {
+            while self.queue.len() > self.hold_back {
+                let entry = self.queue.front().expect("queue exceeds hold back");
+                if !is_padding(entry) {
+                    break;
+                }
+
+                if last.is_next(entry.meta.seq_no) {
+                    last = entry.meta.seq_no;
+                }
+                self.queue.pop_front();
+            }
+
+            self.last_emitted = Some((last, extra));
+        }
+
+        // An incomplete frame can remain at the front while another payload type
+        // contributes synthetic padding indefinitely. Keep the frame, but retain
+        // only the newest padding needed for the reordering window. Padding removed
+        // from behind media cannot advance last_emitted across that media.
+        let mut excess_padding = self
+            .queue
+            .iter()
+            .filter(|entry| is_padding(entry))
+            .count()
+            .saturating_sub(self.hold_back);
+        self.queue.retain(|entry| {
+            if excess_padding > 0 && is_padding(entry) {
+                excess_padding -= 1;
+                false
+            } else {
+                true
+            }
+        });
+
+        if self.queue.len() != original_len {
+            self.depack_cache = None;
+        }
     }
 
     fn depacketize(
@@ -605,6 +666,196 @@ mod test {
             (5, 4, &[1, 9], &[(4, &[1, 9])]),
             (2, 5, &[1, 9], &[(5, &[1, 9])]),
         ])
+    }
+
+    #[test]
+    fn padding_only_run_does_not_grow_the_queue_without_bound() {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        // Emit one packet for this PT, then model a long run on another PT.
+        buf.push(meta(1), vec![1, 9]);
+        assert!(buf.pop().is_some());
+
+        for seq in 2..=1_001 {
+            buf.push_padding(meta(seq));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(
+            buf.queue.len() <= buf.hold_back,
+            "padding-only queue retained {} entries after a 1,000-packet run",
+            buf.queue.len()
+        );
+
+        // Returning to this PT after compaction must still be contiguous with the last packet.
+        buf.push(meta(1_002), vec![1, 9]);
+        let dep = buf.pop().expect("packet emitted").expect("valid packet");
+        assert!(dep.contiguous);
+    }
+
+    #[test]
+    fn padding_only_run_with_loss_stays_bounded_and_reports_discontinuity() {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        buf.push(meta(1), vec![1, 9]);
+        assert!(buf.pop().is_some());
+
+        // Sequence 2 is lost while another PT remains active.
+        for seq in 3..=1_002 {
+            buf.push_padding(meta(seq));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(buf.queue.len() <= buf.hold_back);
+
+        // A discontinuity waits for the normal hold-back before it is emitted.
+        buf.push(meta(1_003), vec![1, 9]);
+        assert!(buf.pop().is_none());
+        buf.push(meta(1_004), vec![1, 9]);
+        assert!(buf.pop().is_none());
+        buf.push(meta(1_005), vec![1, 9]);
+        let dep = buf.pop().expect("packet emitted").expect("valid packet");
+        assert!(!dep.contiguous);
+    }
+
+    #[test]
+    fn padding_after_incomplete_vp8_frame_does_not_grow_without_bound() {
+        let depack = CodecDepacketizer::Vp8(Default::default());
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64, marker: bool| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                marker,
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        // Emit one complete VP8 frame for this PT.
+        buf.push(meta(1, true), [0x10, 0x00]);
+        assert!(buf.pop().is_some());
+
+        // The next frame's head is lost, leaving an S=0 fragment at the front.
+        buf.push(meta(2, false), [0x00]);
+        assert!(buf.pop().is_none());
+
+        // The sender switches PT. Every packet becomes synthetic padding here.
+        for seq in 3..=1_002 {
+            buf.push_padding(meta(seq, false));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(
+            buf.queue.len() <= buf.hold_back + 1,
+            "incomplete VP8 frame retained {} entries after a 1,000-packet PT switch",
+            buf.queue.len()
+        );
+    }
+
+    #[test]
+    fn padding_after_waiting_vp8_frame_does_not_grow_without_bound() {
+        let depack = CodecDepacketizer::Vp8(Default::default());
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64, marker: bool| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                marker,
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        buf.push(meta(1, true), [0x10, 0x00]);
+        assert!(buf.pop().is_some());
+
+        // Lose a frame head, then switch away long enough to compact its padding.
+        buf.push(meta(2, false), [0x00]);
+        assert!(buf.pop().is_none());
+        for seq in 3..=1_002 {
+            buf.push_padding(meta(seq, false));
+            assert!(buf.pop().is_none());
+        }
+
+        // One complete frame returns, but waits behind the orphan for hold-back.
+        buf.push(meta(1_003, true), [0x10, 0x00]);
+        assert!(buf.pop().is_none());
+
+        // Switching away again must remain bounded while that frame waits.
+        for seq in 1_004..=2_003 {
+            buf.push_padding(meta(seq, false));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(
+            buf.queue.len() <= buf.hold_back + 2,
+            "waiting VP8 frame retained {} entries after a second 1,000-packet PT switch",
+            buf.queue.len()
+        );
+    }
+
+    #[test]
+    fn padding_after_initial_incomplete_vp8_frame_does_not_grow_without_bound() {
+        let depack = CodecDepacketizer::Vp8(Default::default());
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let meta = |seq: u64| RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader {
+                sequence_number: seq as u16,
+                timestamp: seq as u32,
+                ..Default::default()
+            },
+        };
+
+        // Start observing this PT after the head of a VP8 frame was lost.
+        buf.push(meta(1), [0x00]);
+        assert!(buf.pop().is_none());
+
+        // The sender switches PT before this depayloader has emitted anything.
+        for seq in 2..=1_001 {
+            buf.push_padding(meta(seq));
+            assert!(buf.pop().is_none());
+        }
+
+        assert!(
+            buf.queue.len() <= buf.hold_back + 1,
+            "initial incomplete VP8 frame retained {} entries after a 1,000-packet PT switch",
+            buf.queue.len()
+        );
     }
 
     fn test(

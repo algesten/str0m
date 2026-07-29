@@ -19,6 +19,9 @@ pub(crate) const PT_PCMA: Pt = Pt::new_with_value(8);
 /// Default payload type for G722.
 pub(crate) const PT_G722: Pt = Pt::new_with_value(9);
 
+/// Static payload type for Comfort Noise at 8000 Hz (RFC 3389).
+pub(crate) const PT_COMFORT_NOISE: Pt = Pt::new_with_value(13);
+
 /// Default payload type for VP8.
 pub(crate) const PT_VP8: Pt = Pt::new_with_value(96);
 
@@ -133,6 +136,18 @@ impl CodecConfig {
         self.params.push(p);
     }
 
+    fn add_static_config(&mut self, pt: Pt) {
+        let spec = CodecSpec::from_static_pt(pt).expect("known static payload type");
+        self.add_config(
+            pt,
+            None,
+            spec.codec,
+            spec.clock_rate,
+            spec.channels,
+            spec.format,
+        );
+    }
+
     /// Convenience for adding a h264 payload type.
     pub fn add_h264(
         &mut self,
@@ -189,14 +204,7 @@ impl CodecConfig {
         if !enabled {
             return;
         }
-        self.add_config(
-            PT_PCMU,
-            None,
-            Codec::PCMU,
-            Frequency::EIGHT_KHZ,
-            None,
-            Default::default(),
-        );
+        self.add_static_config(PT_PCMU);
     }
 
     /// Convenience for adding a PCM a-law payload type.
@@ -205,14 +213,7 @@ impl CodecConfig {
         if !enabled {
             return;
         }
-        self.add_config(
-            PT_PCMA,
-            None,
-            Codec::PCMA,
-            Frequency::EIGHT_KHZ,
-            None,
-            Default::default(),
-        );
+        self.add_static_config(PT_PCMA);
     }
 
     /// Convenience for adding a G722 payload type.
@@ -226,14 +227,19 @@ impl CodecConfig {
         if !enabled {
             return;
         }
-        self.add_config(
-            PT_G722,
-            None,
-            Codec::G722,
-            Frequency::SIXTEEN_KHZ,
-            None,
-            Default::default(),
-        );
+        self.add_static_config(PT_G722);
+    }
+
+    /// Add the static Comfort Noise payload type at 8000 Hz.
+    ///
+    /// Higher clock rates require dynamic payload types and can be configured
+    /// with [`CodecConfig::add_config`].
+    pub fn enable_comfort_noise(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::CN);
+        if !enabled {
+            return;
+        }
+        self.add_static_config(PT_COMFORT_NOISE);
     }
 
     /// Add a default OPUS payload type.
@@ -553,19 +559,29 @@ impl DerefMut for CodecConfig {
     }
 }
 
-impl Codec {
-    /// Get the default PT for this codec, if one exists.
-    pub(crate) fn default_pt(&self) -> Option<Pt> {
-        use Codec::*;
-        match self {
-            Opus => Some(PT_OPUS),
-            PCMU => Some(PT_PCMU),
-            PCMA => Some(PT_PCMA),
-            Vp8 => Some(PT_VP8),
-            Vp9 => Some(PT_VP9),
-            H265 => Some(PT_H265),
-            _ => None,
-        }
+impl CodecSpec {
+    /// Get the standardized codec definition for a static RTP payload type.
+    pub(crate) fn from_static_pt(pt: Pt) -> Option<Self> {
+        let (codec, clock_rate) = if pt == PT_PCMU {
+            (Codec::PCMU, Frequency::EIGHT_KHZ)
+        } else if pt == PT_PCMA {
+            (Codec::PCMA, Frequency::EIGHT_KHZ)
+        } else if pt == PT_G722 {
+            // G722 is represented as 16 kHz internally. CodecSpec::rtp_clock_rate()
+            // maps it to the standardized 8 kHz RTP clock rate on the wire.
+            (Codec::G722, Frequency::SIXTEEN_KHZ)
+        } else if pt == PT_COMFORT_NOISE {
+            (Codec::CN, Frequency::EIGHT_KHZ)
+        } else {
+            return None;
+        };
+
+        Some(CodecSpec {
+            codec,
+            clock_rate,
+            channels: None,
+            format: FormatParams::default(),
+        })
     }
 }
 
@@ -577,6 +593,153 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    #[test]
+    fn static_payload_types_have_canonical_codec_definitions() {
+        let definitions = [
+            (PT_PCMU, Codec::PCMU, Frequency::EIGHT_KHZ),
+            (PT_PCMA, Codec::PCMA, Frequency::EIGHT_KHZ),
+            (PT_G722, Codec::G722, Frequency::SIXTEEN_KHZ),
+            (PT_COMFORT_NOISE, Codec::CN, Frequency::EIGHT_KHZ),
+        ];
+
+        for (pt, codec, clock_rate) in definitions {
+            let spec = CodecSpec::from_static_pt(pt).expect("static payload definition");
+            assert_eq!(spec.codec, codec);
+            assert_eq!(spec.clock_rate, clock_rate);
+            assert_eq!(spec.channels, None);
+            assert_eq!(spec.format, FormatParams::default());
+        }
+
+        assert!(CodecSpec::from_static_pt(PT_OPUS).is_none());
+    }
+
+    #[test]
+    fn dynamic_comfort_noise_collision_preserves_configured_pt() {
+        let mut claimed = PayloadParams::new(
+            96.into(),
+            None,
+            CodecSpec {
+                codec: Codec::Opus,
+                clock_rate: Frequency::FORTY_EIGHT_KHZ,
+                channels: Some(2),
+                format: FormatParams::default(),
+            },
+        );
+        claimed.locked = true;
+
+        let local_cn = PayloadParams::new(
+            97.into(),
+            None,
+            CodecSpec {
+                codec: Codec::CN,
+                clock_rate: Frequency::SIXTEEN_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+        let remote_cn = PayloadParams::new(
+            96.into(),
+            None,
+            CodecSpec {
+                codec: Codec::CN,
+                clock_rate: Frequency::SIXTEEN_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+
+        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_cn]);
+        config.update_params(&[remote_cn], Direction::SendOnly);
+
+        let cn = config
+            .iter()
+            .find(|p| p.spec().codec == Codec::CN)
+            .expect("configured CN payload");
+        assert_eq!(
+            *cn.pt(),
+            97,
+            "dynamic CN must retain its configured payload type"
+        );
+    }
+
+    #[test]
+    fn collision_preserves_configured_primary_and_rtx_pts() {
+        let mut claimed = PayloadParams::new(
+            96.into(),
+            Some(97.into()),
+            CodecSpec {
+                codec: Codec::H264,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+        claimed.locked = true;
+
+        let vp8 = CodecSpec {
+            codec: Codec::Vp8,
+            clock_rate: Frequency::NINETY_KHZ,
+            channels: None,
+            format: FormatParams::default(),
+        };
+        let local_vp8 = PayloadParams::new(110.into(), Some(111.into()), vp8);
+        let remote_vp8 = PayloadParams::new(96.into(), Some(97.into()), vp8);
+
+        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_vp8]);
+        config.update_params(&[remote_vp8], Direction::SendOnly);
+
+        let vp8 = config
+            .iter()
+            .find(|p| p.spec().codec == Codec::Vp8)
+            .expect("configured VP8 payload");
+        assert_eq!((*vp8.pt(), vp8.resend().map(|pt| *pt)), (110, Some(111)));
+    }
+
+    #[test]
+    fn enable_comfort_noise_uses_static_8khz_payload_type() {
+        let mut config = CodecConfig::empty();
+
+        config.enable_comfort_noise(true);
+
+        let params = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::CN)
+            .expect("Comfort Noise should be enabled");
+        assert_eq!(params.pt(), Pt::new_with_value(13));
+        assert_eq!(params.spec().clock_rate, Frequency::EIGHT_KHZ);
+        assert_eq!(params.spec().channels, None);
+
+        config.enable_comfort_noise(false);
+        assert!(config.params().iter().all(|p| p.spec().codec != Codec::CN));
+    }
+
+    #[test]
+    fn comfort_noise_supports_dynamic_payload_types_at_higher_clock_rates() {
+        let mut config = CodecConfig::empty();
+
+        for (pt, clock_rate) in [(96, 16_000), (97, 24_000), (98, 32_000), (99, 48_000)] {
+            config.add_config(
+                pt.into(),
+                None,
+                Codec::CN,
+                Frequency::new(clock_rate).unwrap(),
+                None,
+                FormatParams::default(),
+            );
+        }
+
+        let configured: Vec<_> = config
+            .params()
+            .iter()
+            .map(|p| (*p.pt(), p.spec().clock_rate.get()))
+            .collect();
+        assert_eq!(
+            configured,
+            vec![(96, 16_000), (97, 24_000), (98, 32_000), (99, 48_000)]
+        );
+    }
 
     #[test]
     fn test_pt_conflict_different_directions() {

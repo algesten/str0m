@@ -701,12 +701,9 @@ impl PayloadParams {
             // If we're receiving, we control what PTs to use,
             // so we can remap the conflicting PT.
             if local_is_controlling && claimed.is_claimed(remote_pt) {
-                // Try to use the codec's default PT first, fall back to any free PT
-                let new_pt = self
-                    .spec
-                    .codec
-                    .default_pt()
-                    .filter(|pt| !claimed.is_claimed(*pt))
+                // Prefer our configured PT, then fall back to any free PT.
+                let new_pt = (!claimed.is_claimed(self.pt))
+                    .then_some(self.pt)
                     .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
 
                 if let Some(new_pt) = new_pt {
@@ -729,7 +726,12 @@ impl PayloadParams {
             if local_is_controlling {
                 if let Some(rtx) = remote_rtx {
                     if claimed.is_claimed(rtx) {
-                        if let Some(new_rtx) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
+                        let new_rtx = self
+                            .resend
+                            .filter(|pt| !claimed.is_claimed(*pt))
+                            .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+
+                        if let Some(new_rtx) = new_rtx {
                             debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
                             remote_rtx = Some(new_rtx);
                             unlocked.remove(&new_rtx);
