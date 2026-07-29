@@ -215,10 +215,10 @@ impl DepacketizingBuffer {
     }
 
     pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
-        self.discard_old_padding();
         self.update_segments();
 
         if self.segments.is_empty() {
+            self.discard_old_padding();
             return None;
         }
 
@@ -258,6 +258,7 @@ impl DepacketizingBuffer {
         if wait_for_contiguity {
             // if we are not sending, cache the depacked
             self.depack_cache = Some((start..stop, dep));
+            self.discard_old_padding();
             return None;
         }
 
