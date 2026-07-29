@@ -235,7 +235,7 @@ impl CodecConfig {
     /// Higher clock rates require dynamic payload types and can be configured
     /// with [`CodecConfig::add_config`].
     pub fn enable_comfort_noise(&mut self, enabled: bool) {
-        self.params.retain(|c| c.spec.codec != Codec::ComfortNoise);
+        self.params.retain(|c| c.spec.codec != Codec::CN);
         if !enabled {
             return;
         }
@@ -571,7 +571,7 @@ impl CodecSpec {
             // maps it to the standardized 8 kHz RTP clock rate on the wire.
             (Codec::G722, Frequency::SIXTEEN_KHZ)
         } else if pt == PT_COMFORT_NOISE {
-            (Codec::ComfortNoise, Frequency::EIGHT_KHZ)
+            (Codec::CN, Frequency::EIGHT_KHZ)
         } else {
             return None;
         };
@@ -600,7 +600,7 @@ mod test {
             (PT_PCMU, Codec::PCMU, Frequency::EIGHT_KHZ),
             (PT_PCMA, Codec::PCMA, Frequency::EIGHT_KHZ),
             (PT_G722, Codec::G722, Frequency::SIXTEEN_KHZ),
-            (PT_COMFORT_NOISE, Codec::ComfortNoise, Frequency::EIGHT_KHZ),
+            (PT_COMFORT_NOISE, Codec::CN, Frequency::EIGHT_KHZ),
         ];
 
         for (pt, codec, clock_rate) in definitions {
@@ -632,7 +632,7 @@ mod test {
             97.into(),
             None,
             CodecSpec {
-                codec: Codec::ComfortNoise,
+                codec: Codec::CN,
                 clock_rate: Frequency::SIXTEEN_KHZ,
                 channels: None,
                 format: FormatParams::default(),
@@ -642,7 +642,7 @@ mod test {
             96.into(),
             None,
             CodecSpec {
-                codec: Codec::ComfortNoise,
+                codec: Codec::CN,
                 clock_rate: Frequency::SIXTEEN_KHZ,
                 channels: None,
                 format: FormatParams::default(),
@@ -654,7 +654,7 @@ mod test {
 
         let cn = config
             .iter()
-            .find(|p| p.spec().codec == Codec::ComfortNoise)
+            .find(|p| p.spec().codec == Codec::CN)
             .expect("configured CN payload");
         assert_eq!(
             *cn.pt(),
@@ -705,19 +705,14 @@ mod test {
         let params = config
             .params()
             .iter()
-            .find(|p| p.spec().codec == Codec::ComfortNoise)
+            .find(|p| p.spec().codec == Codec::CN)
             .expect("Comfort Noise should be enabled");
         assert_eq!(params.pt(), Pt::new_with_value(13));
         assert_eq!(params.spec().clock_rate, Frequency::EIGHT_KHZ);
         assert_eq!(params.spec().channels, None);
 
         config.enable_comfort_noise(false);
-        assert!(
-            config
-                .params()
-                .iter()
-                .all(|p| p.spec().codec != Codec::ComfortNoise)
-        );
+        assert!(config.params().iter().all(|p| p.spec().codec != Codec::CN));
     }
 
     #[test]
@@ -728,7 +723,7 @@ mod test {
             config.add_config(
                 pt.into(),
                 None,
-                Codec::ComfortNoise,
+                Codec::CN,
                 Frequency::new(clock_rate).unwrap(),
                 None,
                 FormatParams::default(),

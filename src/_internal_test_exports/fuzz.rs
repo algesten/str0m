@@ -90,7 +90,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
         7 => Codec::PCMU,
         8 => Codec::PCMA,
         9 => Codec::G722,
-        10 => Codec::ComfortNoise,
+        10 => Codec::CN,
         _ => unreachable!(),
     };
 
@@ -221,7 +221,7 @@ pub fn depack_direct(data: &[u8]) -> Option<()> {
         7 => Codec::PCMU,
         8 => Codec::PCMA,
         9 => Codec::G722,
-        10 => Codec::ComfortNoise,
+        10 => Codec::CN,
         _ => unreachable!(),
     };
 

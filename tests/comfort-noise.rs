@@ -22,7 +22,7 @@ fn negotiates_all_supported_clock_rates() {
         let negotiated: Vec<_> = rtc
             .codec_config()
             .iter()
-            .filter(|p| p.spec().codec == Codec::ComfortNoise)
+            .filter(|p| p.spec().codec == Codec::CN)
             .map(|p| (*p.pt(), p.spec().clock_rate.get()))
             .collect();
         assert_eq!(
@@ -64,7 +64,7 @@ fn frame_mode_round_trips_all_supported_clock_rates() -> Result<(), RtcError> {
         .events
         .iter()
         .filter_map(|(_, event)| match event {
-            Event::MediaData(data) if data.params.spec().codec == Codec::ComfortNoise => Some((
+            Event::MediaData(data) if data.params.spec().codec == Codec::CN => Some((
                 *data.pt,
                 data.params.spec().clock_rate.get(),
                 data.data.as_ref().to_vec(),
@@ -113,7 +113,7 @@ fn frame_mode_switching_through_cn_does_not_stall_primary_audio() -> Result<(), 
         received,
         vec![
             (Codec::PCMU, vec![1]),
-            (Codec::ComfortNoise, vec![42]),
+            (Codec::CN, vec![42]),
             (Codec::PCMU, vec![2]),
         ],
         "the CN sequence number must not look like a lost PCMU packet"
@@ -140,7 +140,7 @@ fn frame_mode_cn_never_sets_marker_bit() -> Result<(), RtcError> {
     while l.duration() < deadline {
         progress(&mut l, &mut r)?;
         if let Some(data) = r.events.iter().find_map(|(_, event)| match event {
-            Event::MediaData(data) if data.params.spec().codec == Codec::ComfortNoise => Some(data),
+            Event::MediaData(data) if data.params.spec().codec == Codec::CN => Some(data),
             _ => None,
         }) {
             assert!(
@@ -293,7 +293,7 @@ fn progress_until_cn_events(
                     matches!(
                         event,
                         Event::MediaData(data)
-                            if data.params.spec().codec == Codec::ComfortNoise
+                            if data.params.spec().codec == Codec::CN
                     )
                 }
             })
@@ -312,7 +312,7 @@ fn comfort_noise(pt: u8, clock_rate: u32) -> PayloadParams {
         pt.into(),
         None,
         CodecSpec {
-            codec: Codec::ComfortNoise,
+            codec: Codec::CN,
             channels: None,
             clock_rate: Frequency::new(clock_rate).unwrap(),
             format: FormatParams::default(),

@@ -318,7 +318,7 @@ impl CodecPacketizer {
             Codec::PCMU => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::PCMA => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::G722 => CodecPacketizer::G722(G722Packetizer::default()),
-            Codec::ComfortNoise => CodecPacketizer::ComfortNoise(ComfortNoisePacketizer),
+            Codec::CN => CodecPacketizer::ComfortNoise(ComfortNoisePacketizer),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => CodecPacketizer::H265(H265Packetizer::default()),
             Codec::H266 => CodecPacketizer::H266(H266Packetizer::default()),
@@ -345,7 +345,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::PCMU => CodecDepacketizer::G711(G711Depacketizer),
             Codec::PCMA => CodecDepacketizer::G711(G711Depacketizer),
             Codec::G722 => CodecDepacketizer::G711(G711Depacketizer),
-            Codec::ComfortNoise => CodecDepacketizer::ComfortNoise(ComfortNoiseDepacketizer),
+            Codec::CN => CodecDepacketizer::ComfortNoise(ComfortNoiseDepacketizer),
             Codec::H264 => CodecDepacketizer::H264(H264Depacketizer::default()),
             Codec::H265 => CodecDepacketizer::H265(H265Depacketizer::default()),
             Codec::H266 => CodecDepacketizer::H266(H266Depacketizer::default()),
@@ -497,7 +497,7 @@ mod test {
     #[test]
     fn comfort_noise_packetizer_preserves_payload_and_clears_marker() {
         let payload = [42, 128, 64];
-        let mut packetizer = CodecPacketizer::from(Codec::ComfortNoise);
+        let mut packetizer = CodecPacketizer::from(Codec::CN);
 
         assert_eq!(
             packetizer.packetize(1200, &payload).unwrap(),
@@ -505,7 +505,7 @@ mod test {
         );
         assert!(!packetizer.is_marker(&payload, None, true));
 
-        let mut depacketizer = CodecDepacketizer::from(Codec::ComfortNoise);
+        let mut depacketizer = CodecDepacketizer::from(Codec::CN);
         let mut output = Vec::new();
         depacketizer
             .depacketize(&payload, &mut output, &mut CodecExtra::None)

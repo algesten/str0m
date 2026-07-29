@@ -1377,7 +1377,7 @@ mod test {
                 (0, Codec::PCMU, Frequency::EIGHT_KHZ),
                 (8, Codec::PCMA, Frequency::EIGHT_KHZ),
                 (9, Codec::G722, Frequency::SIXTEEN_KHZ),
-                (13, Codec::ComfortNoise, Frequency::EIGHT_KHZ),
+                (13, Codec::CN, Frequency::EIGHT_KHZ),
             ]
         );
     }

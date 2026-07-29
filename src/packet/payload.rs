@@ -36,7 +36,7 @@ impl Payloader {
         Payloader {
             pack,
             clock_rate: spec.rtp_clock_rate(),
-            allow_talkspurt_marker: spec.codec != Codec::ComfortNoise,
+            allow_talkspurt_marker: spec.codec != Codec::CN,
         }
     }
 

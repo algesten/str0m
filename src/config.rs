@@ -739,7 +739,7 @@ mod tests {
             cfg.codec_config()
                 .params()
                 .iter()
-                .any(|p| p.spec().codec == crate::format::Codec::ComfortNoise)
+                .any(|p| p.spec().codec == crate::format::Codec::CN)
         );
     }
 
