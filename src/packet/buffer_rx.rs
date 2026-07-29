@@ -215,10 +215,10 @@ impl DepacketizingBuffer {
     }
 
     pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
+        self.discard_old_padding();
         self.update_segments();
 
         if self.segments.is_empty() {
-            self.discard_old_padding();
             return None;
         }
 
@@ -285,22 +285,23 @@ impl DepacketizingBuffer {
     }
 
     fn discard_old_padding(&mut self) {
-        let Some((mut last, extra)) = self.last_emitted else {
-            return;
-        };
         let original_len = self.queue.len();
         let is_padding = |entry: &Entry| entry.data.is_empty() && !entry.head && !entry.tail;
 
-        while self.queue.len() > self.hold_back {
-            let entry = self.queue.front().expect("queue exceeds hold back");
-            if !is_padding(entry) {
-                break;
+        if let Some((mut last, extra)) = self.last_emitted {
+            while self.queue.len() > self.hold_back {
+                let entry = self.queue.front().expect("queue exceeds hold back");
+                if !is_padding(entry) {
+                    break;
+                }
+
+                if last.is_next(entry.meta.seq_no) {
+                    last = entry.meta.seq_no;
+                }
+                self.queue.pop_front();
             }
 
-            if last.is_next(entry.meta.seq_no) {
-                last = entry.meta.seq_no;
-            }
-            self.queue.pop_front();
+            self.last_emitted = Some((last, extra));
         }
 
         // An incomplete frame can remain at the front while another payload type
@@ -325,7 +326,6 @@ impl DepacketizingBuffer {
         if self.queue.len() != original_len {
             self.depack_cache = None;
         }
-        self.last_emitted = Some((last, extra));
     }
 
     fn depacketize(
