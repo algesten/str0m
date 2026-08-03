@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use crate::RtcError;
 use crate::format::PayloadParams;
+use crate::poll::Wake;
 use crate::rtp_::AbsCaptureTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
@@ -18,6 +19,7 @@ use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid
 /// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
 pub struct Writer<'a> {
     session: &'a mut Session,
+    wake: Wake<'a>,
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
@@ -28,9 +30,13 @@ impl<'a> Writer<'a> {
     /// Create a new writer object.
     ///
     /// The `mid` parameter is required to have a corresponding media in `self.session`.
-    pub(crate) fn new(session: &'a mut Session, mid: Mid) -> Self {
+    ///
+    /// `wake` is armed: unless a method below narrows it, dropping this writer
+    /// re-polls the whole tree.
+    pub(crate) fn new(session: &'a mut Session, wake: Wake<'a>, mid: Mid) -> Self {
         Writer {
             session,
+            wake,
             mid,
             rid: None,
             start_of_talkspurt: None,
@@ -236,6 +242,11 @@ impl<'a> Writer<'a> {
             .ok_or(RtcError::NoReceiverSource(rid))?;
 
         stream.request_keyframe(kind);
+
+        // Local decision: a keyframe request only queues RTCP feedback, drained
+        // from the transmit path on the next poll. It moves no timer, so the
+        // timeout need not be recomputed on its behalf.
+        self.wake.no_timeout();
 
         Ok(())
     }

@@ -19,6 +19,7 @@ use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
 use crate::pacer::PacerControl;
 use crate::pacer::{Pacer, PacerImpl};
+use crate::poll::Wake;
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
 use crate::rtp_::MidRid;
@@ -244,7 +245,10 @@ impl Session {
         self.srtp_tx = Some(SrtpContext::new(crypto, srtp_profile, &mat, left));
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+    // `_wake` arms both signals: driving the session both emits events (media,
+    // feedback, RTP) and re-arms its timers. Threaded here as the point where
+    // future per-stream narrowing would live.
+    pub fn handle_timeout(&mut self, now: Instant, _wake: &mut Wake) -> Result<(), RtcError> {
         if self.rtp_closing {
             return Ok(());
         }
@@ -355,7 +359,9 @@ impl Session {
             .push_back(Rtcp::AppSpecificFeedback(feedback));
     }
 
-    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
+    // `_wake` arms both: incoming RTP can surface as a media/RTP event and
+    // re-arms receive-side timers (NACK, receiver reports).
+    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8], _wake: &mut Wake) {
         let Some(header) = RtpHeader::parse(message, &self.exts) else {
             trace!("Failed to parse RTP header");
             return;
@@ -364,7 +370,9 @@ impl Session {
         self.handle_rtp(now, header, message);
     }
 
-    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8]) {
+    // `_wake` arms both: incoming RTCP can surface remote keyframe requests or
+    // sender feedback as events and updates report timers.
+    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8], _wake: &mut Wake) {
         // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
         // even if it's irrelevant and empty.
         // In practice I'm not sure that is happening, because libWebRTC hates empty packets.

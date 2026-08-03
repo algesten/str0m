@@ -3,6 +3,7 @@
 use std::time::Duration;
 use std::{fmt, str, time::Instant};
 
+use crate::poll::{RtcMut, Wake};
 use crate::sctp::RtcSctp;
 use crate::util::already_happened;
 use crate::{Rtc, RtcError};
@@ -41,13 +42,14 @@ pub struct ChannelData {
 /// Get this handle from [`Rtc::channel()`][crate::Rtc::channel()].
 pub struct Channel<'a> {
     sctp_stream_id: u16,
-    rtc: &'a mut Rtc,
+    // `RtcMut` arms the readiness on mutable deref only; see [`crate::poll`].
+    rtc: RtcMut<'a>,
 }
 
 impl<'a> Channel<'a> {
     pub(crate) fn new(sctp_stream_id: u16, rtc: &'a mut Rtc) -> Self {
         Channel {
-            rtc,
+            rtc: RtcMut::new(rtc),
             sctp_stream_id,
         }
     }
@@ -248,7 +250,7 @@ impl ChannelHandler {
             .and_then(|a| a.sctp_stream_id)
     }
 
-    pub(crate) fn handle_timeout(&mut self, _now: Instant, sctp: &mut RtcSctp) {
+    pub(crate) fn handle_timeout(&mut self, _now: Instant, sctp: &mut RtcSctp, _wake: &mut Wake) {
         if !sctp.is_inited() {
             return;
         }
@@ -258,6 +260,9 @@ impl ChannelHandler {
 
         // After do_allocations so we get a channel for any confirmed.
         self.open_channels(sctp);
+
+        // Opening channels drives SCTP, which can both emit events and re-arm
+        // its timers, so `_wake` is left armed.
     }
 
     /// Allocate next available `ChannelId`.
@@ -366,9 +371,13 @@ impl ChannelHandler {
     }
 
     /// Remove stream IDs from the cooldown list that have expired.
-    pub fn expire_closed_stream_ids(&mut self, now: Instant) {
+    pub fn expire_closed_stream_ids(&mut self, now: Instant, wake: &mut Wake) {
         self.closed_stream_ids
             .retain(|(_, closed_at)| now.duration_since(*closed_at) < STREAM_ID_COOLDOWN);
+
+        // Local decision: dropping expired stream-id reservations only moves the
+        // cleanup timer; it queues no event.
+        wake.no_events();
     }
 
     pub fn remove_channel(&mut self, id: ChannelId, now: Instant) {
@@ -440,7 +449,8 @@ mod tests {
 
         // After cooldown expires, stream 0 should be available again.
         let after_cooldown = now + STREAM_ID_COOLDOWN;
-        handler.expire_closed_stream_ids(after_cooldown);
+        let mut readiness = crate::poll::Readiness::armed();
+        handler.expire_closed_stream_ids(after_cooldown, &mut readiness.wake());
         assert!(handler.closed_stream_ids.is_empty());
 
         let taken_after: Vec<u16> = handler

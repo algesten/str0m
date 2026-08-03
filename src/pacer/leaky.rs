@@ -196,6 +196,7 @@ impl LeakyBucketPacer {
     pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig) {
         trace!(?config, "Probe start");
         self.probe_queue.push_back(ProbeClusterState::new(config));
+        self.request_immediate_timeout();
     }
 
     /// Get the cluster ID of the active probe, if any.
@@ -317,18 +318,23 @@ impl LeakyBucketPacer {
         }
 
         let any_queue_for_padding = self.queue_states.iter().any(|q| q.use_for_padding);
-        let padding_possible = self.padding_bitrate > Bitrate::ZERO && any_queue_for_padding;
 
-        if !padding_possible {
-            return None;
-        }
-
-        // If we're actively probing, use probe timing for padding
-        if let Some(probe) = self.probe_queue.front() {
+        // Probe padding bypasses the regular padding bitrate in
+        // maybe_create_padding_request(), so it needs its own timeout too —
+        // otherwise (when there is no regular padding rate) an active probe is
+        // never scheduled through the pacer, never completes, and keeps
+        // generating padding.
+        if let Some(probe) = self.probe_queue.front().filter(|_| any_queue_for_padding) {
             let next_probe_time = probe.next_probe_time();
             // We explicitly don't return a queue to poll here. We need another call to
             // handle_timeout to request the padding before we can poll the selected queue.
             return Some(((next_probe_time, PacerReason::Probe2), None));
+        }
+
+        let padding_possible = self.padding_bitrate > Bitrate::ZERO && any_queue_for_padding;
+
+        if !padding_possible {
+            return None;
         }
 
         // If all queues are empty and we have a padding rate, wait until we have drained
