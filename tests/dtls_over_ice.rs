@@ -11,6 +11,13 @@ use str0m::{Event, RtcError};
 mod common;
 use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
+/// How much slower than not using the extension at all a fallback may be.
+///
+/// Zero in principle: the fallback should cost nothing. A small allowance
+/// absorbs the harness stepping time in 5ms batches, and stays far below any
+/// DTLS retransmission timeout, which is what this guards against.
+const FALLBACK_TOLERANCE: Duration = Duration::from_millis(10);
+
 /// Runs a connection to completion, returning how long each side took to reach
 /// [`Event::Connected`].
 fn connect(left_over_ice: bool, right_over_ice: bool) -> Result<(Duration, Duration), RtcError> {
@@ -75,8 +82,27 @@ pub fn dtls_over_ice_falls_back_when_peer_does_not_support_it() -> Result<(), Rt
 
     // A peer that does not implement the extension echoes neither attribute,
     // which must leave an ordinary handshake working in both directions.
-    connect(true, false)?;
-    connect(false, true)?;
+    let (base_l, base_r) = connect(false, false)?;
+    let (left_l, left_r) = connect(true, false)?;
+    let (right_l, right_r) = connect(false, true)?;
+
+    let baseline = base_l.max(base_r);
+    let left_only = left_l.max(left_r);
+    let right_only = right_l.max(right_r);
+
+    // Falling back must not cost anything. A handshake packet we already took
+    // out of the DTLS engine to ride along in connectivity checks has to reach
+    // the peer some other way once we discover the peer ignores it. Waiting for
+    // DTLS to retransmit a replacement shows up here as a delay, and on the
+    // backends that never retransmit it would not connect at all.
+    assert!(
+        left_only <= baseline + FALLBACK_TOLERANCE,
+        "falling back was slower than never trying: {left_only:?} vs {baseline:?}"
+    );
+    assert!(
+        right_only <= baseline + FALLBACK_TOLERANCE,
+        "falling back was slower than never trying: {right_only:?} vs {baseline:?}"
+    );
 
     Ok(())
 }

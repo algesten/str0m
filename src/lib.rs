@@ -1483,20 +1483,39 @@ impl Rtc {
         self.session.media_by_mid(mid)
     }
 
-    /// Hands outgoing DTLS handshake records to the ICE agent, so they can ride
+    /// Hands outgoing DTLS handshake packets to the ICE agent, so they can ride
     /// along in connectivity checks instead of waiting for ICE to finish.
     ///
-    /// Only done before a pair is nominated: after that the records can be sent
+    /// Only done before a pair is nominated: after that the packets can be sent
     /// as ordinary datagrams, which is both simpler and not size limited.
-    /// Records already stashed keep being resent on checks until acknowledged.
+    /// Packets already stashed keep being resent on checks until acknowledged.
+    ///
+    /// Once the ICE agent can no longer deliver them — a pair was nominated, or
+    /// the peer turned out not to implement the extension — whatever it still
+    /// holds goes back on the DTLS send queue. Those packets were taken out of
+    /// that queue, so dropping them would stall the handshake until DTLS
+    /// retransmitted, and not every DTLS backend does that.
     fn maybe_poll_and_send_dtls_over_ice(&mut self) {
-        if self.send_addr.is_some() {
-            return;
-        }
-
         let Some(dtls_over_ice) = self.ice.dtls_over_ice() else {
             return;
         };
+
+        // The extension can no longer deliver what it holds: the peer turned
+        // out not to implement it, or the handshake is over. Hand the packets
+        // back so they go out as ordinary datagrams. They were taken out of the
+        // DTLS send queue, so dropping them would stall the handshake until
+        // DTLS retransmitted.
+        if !dtls_over_ice.state().is_active() {
+            let unacked_dtls_packets = dtls_over_ice.take_unacked_packets();
+            self.dtls.requeue_packets(unacked_dtls_packets);
+            return;
+        }
+
+        // Once we can send regular DTLS packets, don't bother with
+        // DTLS-over-ICE.
+        if self.send_addr.is_some() {
+            return;
+        }
 
         // The iterator is lazy, and pulling from it removes the packets from
         // the DTLS send queue. `poll_and_send` only pulls while the extension

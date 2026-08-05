@@ -119,6 +119,25 @@ impl DtlsOverIce {
         self.state
     }
 
+    /// Takes back the packets that have not been acknowledged.
+    ///
+    /// These were removed from the DTLS send queue to ride along in
+    /// connectivity checks, so nothing else will send them. Whenever this
+    /// controller can no longer deliver them — the peer turned out not to
+    /// support the extension, or ICE now has a path to send datagrams on — the
+    /// owner must take them back and send them the ordinary way. Dropping them
+    /// instead would stall the handshake until DTLS retransmitted, which not
+    /// every DTLS implementation does.
+    ///
+    /// In the order they are currently queued, and only once: afterwards this
+    /// controller holds nothing.
+    pub fn take_unacked_packets(&mut self) -> Vec<Vec<u8>> {
+        self.unacked_packets
+            .drain(..)
+            .map(|unacked| unacked.packet)
+            .collect()
+    }
+
     /// Takes over a flight the DTLS engine wanted to send, holding it for the
     /// coming connectivity checks.
     ///
@@ -232,8 +251,13 @@ impl DtlsOverIce {
                 // this. Fall back to an ordinary handshake. Note this is not
                 // reported as a DTLS failure: DTLS is about to proceed
                 // normally, just over plain datagrams.
+                //
+                // The unacknowledged packets are deliberately kept, not
+                // dropped. They were taken out of the DTLS send queue, so the
+                // owner has to reclaim them with
+                // [`DtlsOverIce::take_unacked_packets`] and send them as
+                // ordinary datagrams.
                 self.state = DtlsOverIceState::Disabled;
-                self.unacked_packets.clear();
                 self.acks_to_send.clear();
                 return None;
             }
@@ -452,6 +476,36 @@ mod test {
 
         pb.handle_ice_check_received(None, None);
         assert_eq!(pb.state(), DtlsOverIceState::Disabled);
+    }
+
+    #[test]
+    fn falling_back_hands_back_what_it_took() {
+        // The packets were taken out of the DTLS send queue, so nothing else
+        // will send them. Dropping them here would stall the handshake until
+        // DTLS retransmitted, which not every DTLS implementation does.
+        let mut pb = DtlsOverIce::new();
+        send_flight(&mut pb, &[packet(1), packet(2)]);
+
+        pb.handle_ice_check_received(None, None);
+        assert_eq!(pb.state(), DtlsOverIceState::Disabled);
+
+        assert_eq!(pb.take_unacked_packets(), vec![packet(1), packet(2)]);
+        // Handed back once. The DTLS send queue owns them now.
+        assert!(pb.take_unacked_packets().is_empty());
+    }
+
+    #[test]
+    fn acknowledged_packets_are_not_handed_back() {
+        // The peer already has these, so re-sending them as datagrams would be
+        // pointless traffic.
+        let mut pb = DtlsOverIce::new();
+        send_flight(&mut pb, &[packet(1), packet(2)]);
+        pb.handle_ice_check_received(
+            None,
+            Some(&encode_acks(&[DtlsAckHash::of_packet(&packet(1))])),
+        );
+
+        assert_eq!(pb.take_unacked_packets(), vec![packet(2)]);
     }
 
     #[test]
