@@ -105,6 +105,8 @@ pub use candidate::{Candidate, CandidateBuilder, CandidateKind};
 
 mod pair;
 
+pub mod dtls_over_ice;
+
 mod preference;
 pub use preference::default_local_preference;
 
@@ -180,6 +182,100 @@ pub(crate) mod test {
                 discovered_recv_count: 0,
                 nomination_send_count: 0,
             }
+        );
+    }
+
+    #[test]
+    pub fn dtls_over_ice_packets_travel_in_connectivity_checks() {
+        fn dtls_packet(tag: u8) -> Vec<u8> {
+            let mut bytes = vec![0u8; 40];
+            bytes[0] = 22; // handshake
+            bytes[5] = tag;
+            bytes[13] = 1;
+            bytes
+        }
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        a1.enable_dtls_over_ice();
+        a2.enable_dtls_over_ice();
+
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
+        a2.add_remote_candidate(c1);
+
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // Both sides have a flight ready before ICE has settled on anything.
+        // This is the whole point: the packets travel while ICE is still
+        // probing, rather than waiting for it to finish.
+        let flight1 = dtls_packet(1);
+        let flight2 = dtls_packet(2);
+        for (agent, packet) in [(&mut a1, &flight1), (&mut a2, &flight2)] {
+            let dtls_over_ice = agent.dtls_over_ice().expect("dtls_over_ice enabled");
+            dtls_over_ice.poll_and_send([packet.clone()]);
+        }
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        let received = |agent: &TestAgent, expect: &[u8]| {
+            agent
+                .events
+                .iter()
+                .any(|(_, e)| matches!(e, IceAgentEvent::DtlsPacketReceived(d) if d == expect))
+        };
+
+        assert!(received(&a2, &flight1), "L's packet did not reach R");
+        assert!(received(&a1, &flight2), "R's packet did not reach L");
+
+        assert_eq!(
+            a1.dtls_over_ice().unwrap().state(),
+            dtls_over_ice::DtlsOverIceState::RemoteSupportConfirmed
+        );
+        assert_eq!(
+            a2.dtls_over_ice().unwrap().state(),
+            dtls_over_ice::DtlsOverIceState::RemoteSupportConfirmed
+        );
+    }
+
+    #[test]
+    pub fn dtls_over_ice_turns_off_against_a_peer_without_it() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        // Only one side implements the extension.
+        a1.enable_dtls_over_ice();
+
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
+        a2.add_remote_candidate(c1);
+
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // The peer echoed neither attribute, so we fall back to an ordinary
+        // handshake. ICE itself is unaffected.
+        assert_eq!(
+            a1.dtls_over_ice().unwrap().state(),
+            dtls_over_ice::DtlsOverIceState::Disabled
         );
     }
 

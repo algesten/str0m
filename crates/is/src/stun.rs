@@ -340,15 +340,27 @@ impl<'a> StunMessage<'a> {
         self.attrs.network_cost
     }
 
+    /// Returns the value of the DTLS_PACKET attribute, if present.
+    pub fn dtls_packet(&self) -> Option<&'a [u8]> {
+        self.attrs.dtls_packet
+    }
+
+    /// Returns the value of the DTLS_ACKS attribute, if present.
+    pub fn dtls_acks(&self) -> Option<&'a [u8]> {
+        self.attrs.dtls_acks
+    }
+
     /// Constructs a new BINDING request using the provided data.
+    ///
+    /// Returns a builder, so more attributes can be added before calling
+    /// [`StunMessageBuilder::build`].
     pub fn binding_request(
         username: &'a str,
-        trans_id: TransId,
         controlling: bool,
         control_tie_breaker: u64,
         prio: u32,
         use_candidate: bool,
-    ) -> Self {
+    ) -> StunMessageBuilder<'a, HasClass> {
         let mut builder = StunMessageBuilder::new()
             .binding()
             .request()
@@ -365,16 +377,18 @@ impl<'a> StunMessage<'a> {
             builder = builder.ice_controlled(control_tie_breaker);
         }
 
-        builder.build(trans_id)
+        builder
     }
 
-    /// Constructs a new STUN BINDING success reply using the builder.
-    pub fn binding_reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
+    /// Constructs a new STUN BINDING success reply.
+    ///
+    /// Returns a builder, so more attributes can be added before calling
+    /// [`StunMessageBuilder::build`].
+    pub fn binding_reply(mapped_address: SocketAddr) -> StunMessageBuilder<'a, HasClass> {
         StunMessageBuilder::new()
             .binding()
             .success()
             .xor_mapped_address(mapped_address)
-            .build(trans_id)
     }
 
     /// Constructs a STUN BINDING error reply with a 487 Role Conflict
@@ -489,6 +503,24 @@ impl<'a> StunMessage<'a> {
 
 const MAGIC: &[u8; 4] = &[0x21, 0x12, 0xA4, 0x42];
 
+/// The number of bytes [`StunMessage::to_bytes`] will write for `attrs`.
+///
+/// `with_integrity` must match whether a password is passed to `to_bytes`.
+fn message_byte_len(attrs: &Attributes<'_>, with_integrity: bool) -> usize {
+    const MSG_HEADER_LEN: usize = 20;
+    const MSG_INTEGRITY_LEN: usize = 20;
+    const FPRINT_LEN: usize = 4;
+    const ATTR_TLV_LENGTH: usize = 4;
+
+    let integrity = if with_integrity {
+        MSG_INTEGRITY_LEN + ATTR_TLV_LENGTH
+    } else {
+        0
+    };
+
+    MSG_HEADER_LEN + attrs.padded_len() + integrity + FPRINT_LEN + ATTR_TLV_LENGTH
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Class {
     Request,
@@ -588,6 +620,10 @@ pub struct Attributes<'a> {
     ice_controlling: Option<u64>,            // 0x802a
     // 0xc057 https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
     network_cost: Option<(u16, u16)>,
+    // 0xc070 One DTLS packet, carried inside a connectivity check
+    dtls_packet: Option<&'a [u8]>,
+    // 0xc071 Acks of DTLS packets (as big endian u32 hashes)
+    dtls_acks: Option<&'a [u8]>,
 }
 
 impl<'a> fmt::Debug for Attributes<'a> {
@@ -648,6 +684,12 @@ impl<'a> fmt::Debug for Attributes<'a> {
         if let Some(value) = self.network_cost {
             debug_struct.field("network_cost", &value);
         }
+        if let Some(value) = self.dtls_packet {
+            debug_struct.field("dtls_packet", &value.len());
+        }
+        if let Some(value) = self.dtls_acks {
+            debug_struct.field("dtls_acks", &DebugHex(value));
+        }
 
         debug_struct.finish()
     }
@@ -702,6 +744,9 @@ impl<'a> Attributes<'a> {
     const USE_CANDIDATE: u16 = 0x0025;
 
     const NETWORK_COST: u16 = 0xc057;
+
+    const DTLS_PACKET: u16 = 0xc070;
+    const DTLS_ACKS: u16 = 0xc071;
 
     fn padded_len(&self) -> usize {
         const ATTR_TLV_LENGTH: usize = 4;
@@ -763,6 +808,14 @@ impl<'a> Attributes<'a> {
             .error_code
             .map(|(_, reason)| ATTR_TLV_LENGTH + 4 + reason.len() + calculate_pad(reason.len()))
             .unwrap_or_default();
+        let dtls_packet = self
+            .dtls_packet
+            .map(|d| ATTR_TLV_LENGTH + d.len() + calculate_pad(d.len()))
+            .unwrap_or_default();
+        let dtls_acks = self
+            .dtls_acks
+            .map(|a| ATTR_TLV_LENGTH + a.len() + calculate_pad(a.len()))
+            .unwrap_or_default();
 
         username
             + ice_controlled
@@ -778,6 +831,8 @@ impl<'a> Attributes<'a> {
             + realm
             + nonce
             + error_code
+            + dtls_packet
+            + dtls_acks
     }
 
     fn to_bytes(self, out: &mut dyn Write, trans_id: &TransId) -> io::Result<()> {
@@ -882,6 +937,20 @@ impl<'a> Attributes<'a> {
             // Need to ensure padding is correct only with respect to reason since the
             // prior length was 4 byte aligned.
             let pad = calculate_pad(reason.len());
+            out.write_all(&PAD[0..pad])?;
+        }
+        if let Some(dtls_packet) = self.dtls_packet {
+            out.write_all(&Self::DTLS_PACKET.to_be_bytes())?;
+            out.write_all(&(dtls_packet.len() as u16).to_be_bytes())?;
+            out.write_all(dtls_packet)?;
+            let pad = calculate_pad(dtls_packet.len());
+            out.write_all(&PAD[0..pad])?;
+        }
+        if let Some(dtls_acks) = self.dtls_acks {
+            out.write_all(&Self::DTLS_ACKS.to_be_bytes())?;
+            out.write_all(&(dtls_acks.len() as u16).to_be_bytes())?;
+            out.write_all(dtls_acks)?;
+            let pad = calculate_pad(dtls_acks.len());
             out.write_all(&PAD[0..pad])?;
         }
 
@@ -1070,6 +1139,12 @@ impl<'a> Attributes<'a> {
                             attributes.network_cost = Some((net_id, cost));
                         }
                     }
+                    Self::DTLS_PACKET => {
+                        attributes.dtls_packet = Some(&buf[4..len + 4]);
+                    }
+                    Self::DTLS_ACKS => {
+                        attributes.dtls_acks = Some(&buf[4..len + 4]);
+                    }
                     _ => {}
                 }
             }
@@ -1192,7 +1267,7 @@ impl<'a> fmt::Debug for StunMessage<'a> {
     }
 }
 
-pub use builder::Builder as StunMessageBuilder;
+pub use builder::{Builder as StunMessageBuilder, HasClass};
 
 mod builder {
     use super::{Attributes, Class, Method, StunMessage, TransId};
@@ -1419,6 +1494,27 @@ mod builder {
             self
         }
 
+        /// Sets the DTLS_PACKET attribute (DTLS over ICE).
+        pub fn dtls_packet(mut self, data: &'a [u8]) -> Self {
+            self.attrs.dtls_packet = Some(data);
+            self
+        }
+
+        /// Sets the DTLS_ACKS attribute (DTLS over ICE).
+        pub fn dtls_acks(mut self, acks: &'a [u8]) -> Self {
+            self.attrs.dtls_acks = Some(acks);
+            self
+        }
+
+        /// The number of bytes [`StunMessage::to_bytes`] will write for the
+        /// message built from this builder.
+        ///
+        /// `with_integrity` must match whether a password is passed to
+        /// `to_bytes`.
+        pub fn byte_len(&self, with_integrity: bool) -> usize {
+            super::message_byte_len(&self.attrs, with_integrity)
+        }
+
         /// Builds the final [`StunMessage`].
         ///
         /// This method consumes the builder and requires a transaction ID.
@@ -1531,6 +1627,8 @@ mod test {
             ice_controlled: Some(10),
             ice_controlling: Some(100),
             network_cost: Some((10, 10)),
+            dtls_packet: Some(&[22, 0xFE, 0xFD]),
+            dtls_acks: Some(&[0xAB, 0xCD]),
         };
 
         let dbg_print = format!("{attrs:?}");
@@ -1556,7 +1654,9 @@ priority: 1, \
 use_candidate: true, \
 ice_controlled: 10, \
 ice_controlling: 100, \
-network_cost: (10, 10) \
+network_cost: (10, 10), \
+dtls_packet: 3, \
+dtls_acks: abcd \
 }"
         );
     }

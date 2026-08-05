@@ -53,6 +53,7 @@ pub struct RtcConfig {
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
     pub(crate) mtu: RangeInclusive<usize>,
+    pub(crate) dtls_over_ice: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -608,6 +609,41 @@ impl RtcConfig {
         self.dtls_version
     }
 
+    /// Carry the DTLS handshake inside ICE checks.
+    ///
+    /// Normally the DTLS handshake cannot start until ICE has found a working
+    /// path, so connection setup pays for ICE and then DTLS in series. With
+    /// this enabled the two overlap: DTLS packets ride along in the
+    /// connectivity checks ICE is already sending, which can save a round trip
+    /// (or more) of setup latency.
+    ///
+    /// This is a Google extension with no IETF specification, using STUN
+    /// attributes in the comprehension-optional range. A peer that does not
+    /// implement it ignores the attributes, which is how support is detected:
+    /// if the peer echoes nothing back, str0m falls back to an ordinary
+    /// handshake with no loss beyond the packets that must be retransmitted.
+    ///
+    /// The packets travelling this way are only read out of connectivity checks
+    /// whose `MESSAGE-INTEGRITY` has been verified. The certificate fingerprint
+    /// check is unaffected.
+    ///
+    /// Defaults to `false`.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder().enable_dtls_over_ice(true);
+    /// assert!(config.dtls_over_ice());
+    /// ```
+    pub fn enable_dtls_over_ice(mut self, enabled: bool) -> Self {
+        self.dtls_over_ice = enabled;
+        self
+    }
+
+    /// Whether the DTLS handshake is carried inside ICE checks.
+    pub fn dtls_over_ice(&self) -> bool {
+        self.dtls_over_ice
+    }
+
     /// Set the MTU as a `target..=warn` inclusive range.
     ///
     /// * `*range.start()` is the **target** MTU: the size str0m aims for when
@@ -714,6 +750,7 @@ impl Default for RtcConfig {
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
             mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
+            dtls_over_ice: false,
         }
     }
 }

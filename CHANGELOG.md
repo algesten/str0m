@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Run the DTLS handshake over ICE, inside connectivity checks, opt in via `RtcConfig::enable_dtls_over_ice()`
   * Expose the latest send queue information on `StreamTx` #1005
   * Fix VP9 non-flexible SS advertising a bogus R=0 GOF for single-layer streams #999
   * Support G722 audio codec (16 kHz codec with 8 kHz RTP clock per RFC 3551) #992

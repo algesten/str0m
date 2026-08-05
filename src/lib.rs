@@ -1243,6 +1243,10 @@ impl Rtc {
 
         ice.set_mtu(mtu.clone());
 
+        if config.dtls_over_ice {
+            ice.enable_dtls_over_ice();
+        }
+
         let dtls_cert = config
             .dtls_cert
             .or_else(|| crypto_provider.dtls_provider.generate_certificate())
@@ -1479,6 +1483,32 @@ impl Rtc {
         self.session.media_by_mid(mid)
     }
 
+    /// Hands outgoing DTLS handshake records to the ICE agent, so they can ride
+    /// along in connectivity checks instead of waiting for ICE to finish.
+    ///
+    /// Only done before a pair is nominated: after that the records can be sent
+    /// as ordinary datagrams, which is both simpler and not size limited.
+    /// Records already stashed keep being resent on checks until acknowledged.
+    fn maybe_poll_and_send_dtls_over_ice(&mut self) {
+        if self.send_addr.is_some() {
+            return;
+        }
+
+        let Some(dtls_over_ice) = self.ice.dtls_over_ice() else {
+            return;
+        };
+
+        // The iterator is lazy, and pulling from it removes the packets from
+        // the DTLS send queue. `poll_and_send` only pulls while the extension
+        // is active, so nothing is taken once we have fallen back to ordinary
+        // datagrams.
+        //
+        // `dtls` is bound separately so the closure borrows only that field,
+        // leaving the ICE agent borrowed by `dtls_over_ice`.
+        let dtls = &mut self.dtls;
+        dtls_over_ice.poll_and_send(std::iter::from_fn(|| dtls.poll_packet().map(Vec::from)));
+    }
+
     fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {
         if self.dtls.is_inited() {
             return Ok(());
@@ -1612,6 +1642,9 @@ impl Rtc {
                         destination,
                     });
                 }
+                IceAgentEvent::DtlsPacketReceived(dtls_packet) => {
+                    self.dtls.handle_receive(&dtls_packet)?;
+                }
             }
         }
 
@@ -1643,6 +1676,9 @@ impl Rtc {
                         debug!("DTLS connected");
                         self.dtls_connected = true;
                         just_connected = true;
+                        if let Some(dtls_over_ice) = self.ice.dtls_over_ice() {
+                            dtls_over_ice.handle_handshake_completed();
+                        }
                     }
                 }
                 DtlsOutput::KeyingMaterial(km, profile) => {
@@ -1695,6 +1731,8 @@ impl Rtc {
                 }
             }
         }
+
+        self.maybe_poll_and_send_dtls_over_ice();
 
         if just_connected {
             return Ok(Output::Event(Event::Connected));
@@ -2075,8 +2113,21 @@ impl Rtc {
                 };
                 self.ice.handle_packet(recv_time, packet);
             }
-            Dtls(dtls) => self.dtls.handle_receive(dtls)?,
-            Rtp(rtp) => self.session.handle_rtp_receive(recv_time, rtp),
+            Dtls(dtls) => {
+                if let Some(dtls_over_ice) = self.ice.dtls_over_ice() {
+                    // The peer deserves an acknowledgement whether the record
+                    // came inside a connectivity check or as an ordinary datagram.
+                    dtls_over_ice.handle_dtls_packet_received(dtls);
+                }
+                self.dtls.handle_receive(dtls)?
+            }
+            Rtp(rtp) => {
+                if let Some(dtls_over_ice) = self.ice.dtls_over_ice() {
+                    // Media from the peer means it considers the handshake done.
+                    dtls_over_ice.handle_received_after_handshake_completed();
+                }
+                self.session.handle_rtp_receive(recv_time, rtp)
+            }
             Rtcp(rtcp) => self.session.handle_rtcp_receive(recv_time, rtcp),
         }
 
