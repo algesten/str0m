@@ -69,6 +69,12 @@ impl H264ProfileLevel {
             H264ProfileIdc::X64,
             BitPattern::new(*b"00000000"),
         ),
+        // Constrained High
+        (
+            H264Profile::ConstrainedHigh,
+            H264ProfileIdc::X64,
+            BitPattern::new(*b"00001100"),
+        ),
         (
             H264Profile::High10,
             H264ProfileIdc::X6E,
@@ -180,6 +186,7 @@ pub(crate) enum H264Profile {
     Main,
     Extended,
     High,
+    ConstrainedHigh,
     High10,
     High422,
     High444Predictive,
@@ -314,6 +321,54 @@ impl TryFrom<u8> for H264LevelIdc {
             x if (Level5_1 as u8) == x => Ok(Level5_1),
             x if (Level5_2 as u8) == x => Ok(Level5_2),
             _ => Err(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_profile_level_parsing() {
+        struct Case {
+            profile_level_id: u32,
+            expected: Option<(H264Profile, H264LevelIdc)>,
+            msg: &'static str,
+        }
+
+        let cases = [
+            // Test 1: High profile (no constraint flags) -> should parse
+            Case {
+                profile_level_id: 0x64001f,
+                expected: Some((H264Profile::High, H264LevelIdc::Level3_1)),
+                msg: "0x64001f should parse as High level 3.1",
+            },
+            // Test 2: Constrained High (constraint_set4_flag and
+            // constraint_set5_flag set) -> should parse
+            Case {
+                profile_level_id: 0x640c34,
+                expected: Some((H264Profile::ConstrainedHigh, H264LevelIdc::Level5_2)),
+                msg: "0x640c34 should parse as Constrained High level 5.2",
+            },
+            // Test 3: Undefined profile-iop combination -> should NOT parse
+            Case {
+                profile_level_id: 0x64101f,
+                expected: None,
+                msg: "0x64101f should not parse, profile-iop 0x10 is not defined for profile-idc 0x64",
+            },
+        ];
+
+        for Case {
+            profile_level_id,
+            expected,
+            msg,
+        } in cases.into_iter()
+        {
+            let parsed = H264ProfileLevel::try_from(profile_level_id)
+                .ok()
+                .map(|pl| (pl.profile(), pl.level()));
+            assert_eq!(parsed, expected, "{msg}");
         }
     }
 }

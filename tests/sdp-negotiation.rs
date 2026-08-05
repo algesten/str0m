@@ -689,6 +689,96 @@ fn offer_with_out_of_range_pt_is_rejected() {
     );
 }
 
+/// Regression test for issue #1015: an H.264 offer whose level exceeds the
+/// locally configured level must still negotiate. RFC 6184 §8.2.2 makes the
+/// level a negotiable (downgradable) parameter, so a remote `42e034`
+/// (Constrained Baseline, level 5.2) must match local `42e01f` (level 3.1)
+/// rather than reject the whole m-line; the Constrained High profile
+/// (`640c34`) must also parse instead of dropping the payload.
+#[test]
+fn h264_offer_with_higher_level_negotiates() {
+    init_log();
+    init_crypto_default();
+
+    // Only H.264 is enabled, so the video m-line survives *only* if an H.264
+    // payload negotiates. str0m's default H.264 config is at level 3.1.
+    let mut r = TestRtc::new_with_rtc(
+        info_span!("R"),
+        Rtc::builder()
+            .clear_codecs()
+            .enable_h264(true)
+            .build(Instant::now()),
+    );
+
+    // A remote offer (taken verbatim from Safari/WebKit) advertising
+    // Constrained High (640c34) and Constrained Baseline (42e034), both at
+    // level 5.2, in packetization modes 1 and 0.
+    let remote_offer = "\
+        v=0\r\n\
+        o=- 123456789 2 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=group:BUNDLE 0\r\n\
+        a=msid-semantic:WMS *\r\n\
+        a=fingerprint:sha-256 00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00\r\n\
+        a=ice-ufrag:testufrag\r\n\
+        a=ice-pwd:testpassword12345678\r\n\
+        a=setup:actpass\r\n\
+        m=video 9 UDP/TLS/RTP/SAVPF 96 98 100 102\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=mid:0\r\n\
+        a=sendrecv\r\n\
+        a=rtcp-mux\r\n\
+        a=rtpmap:96 H264/90000\r\n\
+        a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c34\r\n\
+        a=rtpmap:98 H264/90000\r\n\
+        a=fmtp:98 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=640c34\r\n\
+        a=rtpmap:100 H264/90000\r\n\
+        a=fmtp:100 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e034\r\n\
+        a=rtpmap:102 H264/90000\r\n\
+        a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e034\r\n\
+        ";
+
+    let offer = SdpOffer::from_sdp_string(remote_offer).expect("offer should parse");
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).expect("should accept"));
+
+    let answer_sdp = answer.to_sdp_string();
+
+    // The video m-line must NOT be rejected (port 0). No local H.264 payload
+    // matches unless the level-5.2 offer is accepted against local level 3.1.
+    assert!(
+        !answer_sdp.contains("m=video 0 "),
+        "H.264 offer should negotiate, not reject the m-line:\n{answer_sdp}"
+    );
+
+    // The negotiated payload is str0m's Constrained Baseline (42e01f), matched
+    // against the remote's 42e034 with the level difference only penalizing the
+    // score per RFC 6184 §8.2.2.
+    assert!(
+        answer_sdp.contains("profile-level-id=42e01f"),
+        "Answer should negotiate Constrained Baseline (42e01f):\n{answer_sdp}"
+    );
+
+    // The answerer receives, so it adopts the remote's payload types. The
+    // Constrained Baseline packetization-mode=1 payload is PT 100 in the offer.
+    assert!(
+        answer_sdp.contains("a=rtpmap:100 H264/90000"),
+        "Answer should adopt the remote's Constrained Baseline PT 100:\n{answer_sdp}"
+    );
+
+    // The m-line stays active on the receiving side.
+    let mid = r._mids()[0];
+    assert_eq!(
+        r.media(mid).unwrap().direction(),
+        Direction::SendRecv,
+        "Video should stay active after negotiating the H.264 offer"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // SNAP (SCTP Negotiation Acceleration Protocol) tests
 // ---------------------------------------------------------------------------

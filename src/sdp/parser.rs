@@ -871,6 +871,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::format::Codec;
     use crate::io::Protocol;
 
     #[test]
@@ -1343,6 +1344,42 @@ mod test {
 
         let parsed = sdp_parser().parse(sdp);
         assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn bare_static_audio_pts_are_resolved() {
+        let sdp = "v=0\r\n\
+        o=- 1 1 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=group:BUNDLE 0\r\n\
+        m=audio 9 UDP/TLS/RTP/SAVPF 0 8 9 13\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=setup:actpass\r\n\
+        a=sendrecv\r\n\
+        a=mid:0\r\n\
+        ";
+
+        let (sdp, _) = sdp_parser()
+            .parse(sdp)
+            .expect("static PTs must not require an a=rtpmap line");
+        sdp.assert_consistency()
+            .expect("bare static PTs are consistent");
+        let params = sdp.media_lines[0].rtp_params();
+
+        let definitions: Vec<_> = params
+            .iter()
+            .map(|p| (*p.pt(), p.spec().codec, p.spec().clock_rate))
+            .collect();
+        assert_eq!(
+            definitions,
+            vec![
+                (0, Codec::PCMU, Frequency::EIGHT_KHZ),
+                (8, Codec::PCMA, Frequency::EIGHT_KHZ),
+                (9, Codec::G722, Frequency::SIXTEEN_KHZ),
+                (13, Codec::CN, Frequency::EIGHT_KHZ),
+            ]
+        );
     }
 
     #[test]
