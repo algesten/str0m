@@ -48,15 +48,13 @@ const DTLS_FIRST_BYTE_MAX: u8 = 63;
 #[derive(Clone, Debug)]
 pub struct DtlsOverIce {
     state: DtlsOverIceState,
-    /// Packets sent but not yet acknowledged.
-    ///
-    /// Always short, so a deque beats a map. The packet handed out is rotated
-    /// to the back, so one sending opportunity does not always resend the same
-    /// one.
-    unacked_packets: VecDeque<UnackedDtlsPacket>,
+    /// Always short, so a deque beats a map.
+    packets: VecDeque<DtlsOverIcePacket>,
     acks_to_send: Vec<DtlsAckHash>,
+    // %%% meh
     /// Scratch buffer for the encoded ack attribute.
     ack_encoded: Vec<u8>,
+    // %%% meh
     data_received_count: u64,
 }
 
@@ -77,12 +75,25 @@ pub enum DtlsOverIceState {
     Disabled,
 }
 
-/// A packet sent but not yet acknowledged, alongside the hash the peer will
-/// acknowledge it by.
+/// A packet taken from the DTLS engine.
+/// Taking it means owning it. The engine will never send it again, so it is
+/// delivered from here — inside connectivity checks, or as an ordinary datagram
+/// when those cannot carry it — until the peer acknowledges it.
 #[derive(Clone, Debug)]
-struct UnackedDtlsPacket {
-    packet: Vec<u8>,
+struct DtlsOverIcePacket {
+    payload: Vec<u8>,
     hash: DtlsAckHash,
+    /// How many times it has gone out over ICE.
+    ///
+    /// Zero means no connectivity check has carried it, which makes it fair
+    /// game for an ordinary DTLS packet as soon as ICE is connected. Once a
+    /// check has carried it we don't want to send it as an ordinary DTLS packet
+    /// too, because that would deliver it twice.
+    ///
+    /// Above zero it is what keeps the checks cycling: the least sent one goes
+    /// next, so the packets take turns without leaving the order they were
+    /// handed over in.
+    ice_send_count: u64,
 }
 
 /// A cheap identity for a DTLS packet, used to acknowledge it.
@@ -94,9 +105,7 @@ pub struct DtlsAckHash(u32);
 
 /// The DTLS-over-ICE attributes for one outgoing connectivity check.
 ///
-/// Both fields are already sized to fit in the check they belong to. They are
-/// owned rather than borrowed from the [`DtlsOverIce`] so the STUN message
-/// built from them does not keep the agent borrowed while it is serialized.
+/// Both fields are already sized to fit in the check they belong to.
 pub struct DtlsAttributesToSend {
     /// The DTLS packet to carry, if there is one that fits.
     pub packet: Option<Vec<u8>>,
@@ -108,7 +117,7 @@ impl DtlsOverIce {
     pub const fn new() -> Self {
         DtlsOverIce {
             state: DtlsOverIceState::RemoteSupportUnknown,
-            unacked_packets: VecDeque::new(),
+            packets: VecDeque::new(),
             acks_to_send: Vec::new(),
             ack_encoded: Vec::new(),
             data_received_count: 0,
@@ -119,56 +128,28 @@ impl DtlsOverIce {
         self.state
     }
 
-    /// Takes back the packets that have not been acknowledged.
+    /// Takes the packets the DTLS engine wanted to send, to send them over ICE
     ///
-    /// These were removed from the DTLS send queue to ride along in
-    /// connectivity checks, so nothing else will send them. Whenever this
-    /// controller can no longer deliver them — the peer turned out not to
-    /// support the extension, or ICE now has a path to send datagrams on — the
-    /// owner must take them back and send them the ordinary way. Dropping them
-    /// instead would stall the handshake until DTLS retransmitted, which not
-    /// every DTLS implementation does.
-    ///
-    /// In the order they are currently queued, and only once: afterwards this
-    /// controller holds nothing.
-    pub fn take_unacked_packets(&mut self) -> Vec<Vec<u8>> {
-        self.unacked_packets
-            .drain(..)
-            .map(|unacked| unacked.packet)
-            .collect()
-    }
-
-    /// Takes over a flight the DTLS engine wanted to send, holding it for the
-    /// coming connectivity checks.
-    ///
-    /// Replaces whatever the previous flight left behind: DTLS only ever has
-    /// one flight outstanding, so anything still unacknowledged from the last
-    /// one is superseded. An empty flight is ignored rather than treated as a
-    /// flight of nothing, so polling when the engine had nothing to say does
-    /// not throw away packets still waiting to be acknowledged.
-    ///
-    /// Packets that are not DTLS are skipped, and must be sent by ordinary
-    /// means.
-    ///
-    /// The iterator is only consumed while the extension is active, so a lazy
-    /// iterator that drains some queue leaves that queue untouched once we have
-    /// fallen back to an ordinary handshake.
-    pub fn poll_and_send(&mut self, dtls_packets: impl IntoIterator<Item = Vec<u8>>) {
+    /// DtlsOverIce *takes* them, meaning it takes responsibility for sending them,
+    /// either over ICE or as regular DTLS packets.
+    pub fn take_dtls_packets_to_send(&mut self, dtls_packets: impl IntoIterator<Item = Vec<u8>>) {
         if !self.state.is_active() {
             return;
         }
 
-        let mut started = false;
         for dtls_packet in dtls_packets {
-            if !is_dtls_packet(&dtls_packet) {
+            let hash = DtlsAckHash::of_packet(&dtls_packet);
+
+            // Don't sent the same DTLS packet twice
+            if self.packets.iter().any(|held| held.hash == hash) {
                 continue;
             }
-            if !started {
-                self.unacked_packets.clear();
-                started = true;
-            }
-            self.unacked_packets
-                .push_back(UnackedDtlsPacket::new(dtls_packet));
+
+            self.packets.push_back(DtlsOverIcePacket {
+                payload: dtls_packet,
+                hash,
+                ice_send_count: 0,
+            });
         }
     }
 
@@ -213,27 +194,36 @@ impl DtlsOverIce {
 
     /// The packet to attach to an outgoing connectivity check, if any.
     ///
-    /// The packet handed out is rotated to the back, so a check does not keep
-    /// resending the same one while others go unacknowledged. `message_length`
-    /// is how big the check already is; a packet that would push it past the
-    /// MTU is skipped without being moved, so an oversized packet cannot block
-    /// the smaller ones behind it. Such a packet simply never travels this way
-    /// and is left to ordinary DTLS retransmission.
+    /// The least sent packet goes next, so a check does not keep resending the
+    /// same one while others go unacknowledged, and ties are broken by the
+    /// order the packets were handed over in. Nothing is reordered, so a flight
+    /// still leaves in the order DTLS produced it. `message_length` is how big
+    /// the check already is; a packet that would push it past the MTU is
+    /// skipped, so an oversized packet cannot block the smaller ones behind it.
+    /// Such a packet goes out as an ordinary datagram instead, via
+    /// [`DtlsOverIce::poll_dtls_packet_to_send_not_over_ice`].
     fn packets_to_send(&mut self, message_length: usize) -> Option<&[u8]> {
         if !self.state.is_active() {
             return None;
         }
 
+        // Anything not shaped like DTLS is not put in the attribute, since the
+        // peer would only drop it again. It still goes out as a datagram.
         let index = self
-            .unacked_packets
+            .packets
             .iter()
-            .position(|unacked| fits_in_ice_check(message_length, unacked.packet.len()))?;
+            .enumerate()
+            .filter(|(_, packet)| {
+                is_dtls_packet(&packet.payload)
+                    && fits_in_ice_check(message_length, packet.payload.len())
+            })
+            .min_by_key(|(_, packet)| packet.ice_send_count)
+            .map(|(index, _)| index)?;
 
-        // Everything up to and including the one we picked goes to the back,
-        // leaving the pick last and the ones we skipped ahead of it again.
-        self.unacked_packets.rotate_left(index + 1);
+        let packet = self.packets.get_mut(index)?;
+        packet.ice_send_count += 1;
 
-        Some(&self.unacked_packets.back()?.packet)
+        Some(&packet.payload)
     }
 
     pub fn handle_ice_check_received(
@@ -252,11 +242,12 @@ impl DtlsOverIce {
                 // reported as a DTLS failure: DTLS is about to proceed
                 // normally, just over plain datagrams.
                 //
-                // The unacknowledged packets are deliberately kept, not
-                // dropped. They were taken out of the DTLS send queue, so the
-                // owner has to reclaim them with
-                // [`DtlsOverIce::take_unacked_packets`] and send them as
-                // ordinary datagrams.
+                // The packets this took on are deliberately kept. They were
+                // dropped from the DTLS send queue, so this is the only place
+                // they still exist, and it sends them as ordinary datagrams via
+                // [`DtlsOverIce::poll_dtls_packet_to_send_not_over_ice`].
+                // Any a check already carried have to go out again: the peer
+                // ignored the attribute, so it never saw them.
                 self.state = DtlsOverIceState::Disabled;
                 self.acks_to_send.clear();
                 return None;
@@ -266,8 +257,7 @@ impl DtlsOverIce {
 
         if let Some(acks_attribute) = acks_attribute {
             if let Some(acks) = DtlsAckHash::decode_attribute(acks_attribute) {
-                self.unacked_packets
-                    .retain(|unacked| !acks.contains(&unacked.hash));
+                self.packets.retain(|held| !acks.contains(&held.hash));
             }
         }
 
@@ -281,7 +271,7 @@ impl DtlsOverIce {
             self.handle_dtls_packet_received(dtls_packet);
         }
 
-        if self.state == DtlsOverIceState::WaitingForAcks && self.unacked_packets.is_empty() {
+        if self.state == DtlsOverIceState::WaitingForAcks && self.packets.is_empty() {
             self.handle_completed();
         }
 
@@ -324,8 +314,30 @@ impl DtlsOverIce {
     /// acknowledged all of it.
     fn handle_completed(&mut self) {
         self.state = DtlsOverIceState::Complete;
-        self.unacked_packets.clear();
+        self.packets.clear();
         self.acks_to_send.clear();
+    }
+
+    /// A packet to send as an ordinary DTLS packet, rather than over ICE.
+    ///
+    /// This took responsibility for the packets, so whenever an ordinary DTLS
+    /// packet can be sent, that is the better way to get them there.
+    pub fn poll_dtls_packet_to_send_not_over_ice(&mut self) -> Option<Vec<u8>> {
+        if !self.state.is_active() {
+            // Connectivity checks are no longer a way to reach the peer, so
+            // everything still held goes out the ordinary way, including
+            // anything a check carried before the extension was turned off.
+            return self.packets.pop_front().map(|packet| packet.payload);
+        }
+
+        // A check has carried this one, so sending it here as well would
+        // deliver it twice, and a duplicate handshake packet costs a round trip.
+        let index = self
+            .packets
+            .iter()
+            .position(|packet| packet.ice_send_count == 0)?;
+
+        self.packets.remove(index).map(|packet| packet.payload)
     }
 }
 
@@ -349,15 +361,6 @@ impl DtlsOverIceState {
                 | DtlsOverIceState::RemoteSupportConfirmed
                 | DtlsOverIceState::WaitingForAcks
         )
-    }
-}
-
-impl UnackedDtlsPacket {
-    fn new(packet: Vec<u8>) -> Self {
-        UnackedDtlsPacket {
-            hash: DtlsAckHash::of_packet(&packet),
-            packet,
-        }
     }
 }
 
@@ -430,6 +433,13 @@ mod test {
         bytes
     }
 
+    /// A DTLS shaped packet too big for any connectivity check to carry.
+    fn oversized_packet() -> Vec<u8> {
+        let mut bytes = packet(9);
+        bytes.resize(MAX_ICE_CHECK_LENGTH, 0);
+        bytes
+    }
+
     /// Encodes with the same code the production path uses, so the round trip
     /// test exercises the real encoder.
     fn encode_acks(acks: &[DtlsAckHash]) -> Vec<u8> {
@@ -438,9 +448,14 @@ mod test {
         out
     }
 
-    /// Hands over packets as one complete flight.
+    /// Hands over what the DTLS engine wanted to send.
     fn send_flight(pb: &mut DtlsOverIce, packets: &[Vec<u8>]) {
-        pb.poll_and_send(packets.iter().cloned());
+        pb.take_dtls_packets_to_send(packets.iter().cloned());
+    }
+
+    /// Everything waiting to go out as an ordinary datagram.
+    fn datagrams(pb: &mut DtlsOverIce) -> Vec<Vec<u8>> {
+        std::iter::from_fn(|| pb.poll_dtls_packet_to_send_not_over_ice()).collect()
     }
 
     #[test]
@@ -479,33 +494,66 @@ mod test {
     }
 
     #[test]
-    fn falling_back_hands_back_what_it_took() {
-        // The packets were taken out of the DTLS send queue, so nothing else
-        // will send them. Dropping them here would stall the handshake until
-        // DTLS retransmitted, which not every DTLS implementation does.
+    fn falling_back_sends_what_it_took_as_datagrams() {
+        // These left the DTLS send queue, so this is the only place they still
+        // exist. Dropping them would stall the handshake until DTLS
+        // retransmitted, which not every DTLS implementation does.
         let mut pb = DtlsOverIce::new();
         send_flight(&mut pb, &[packet(1), packet(2)]);
+
+        // Only the first one goes out in a check.
+        assert_eq!(pb.packets_to_send(0), Some(packet(1).as_slice()));
 
         pb.handle_ice_check_received(None, None);
         assert_eq!(pb.state(), DtlsOverIceState::Disabled);
 
-        assert_eq!(pb.take_unacked_packets(), vec![packet(1), packet(2)]);
-        // Handed back once. The DTLS send queue owns them now.
-        assert!(pb.take_unacked_packets().is_empty());
+        // Checks are no longer a way to reach the peer, so both go out the
+        // ordinary way, in the order DTLS produced them. The one a check
+        // already carried goes again: the peer ignored the attribute, so it
+        // never saw it.
+        assert_eq!(datagrams(&mut pb), vec![packet(1), packet(2)]);
     }
 
     #[test]
-    fn acknowledged_packets_are_not_handed_back() {
-        // The peer already has these, so re-sending them as datagrams would be
+    fn nothing_is_sent_as_a_datagram_while_checks_still_carry_it() {
+        // Sending it both ways would deliver it twice, and a duplicate
+        // handshake packet costs the peer a round trip.
+        let mut pb = DtlsOverIce::new();
+        send_flight(&mut pb, &[packet(1)]);
+        assert_eq!(pb.packets_to_send(0), Some(packet(1).as_slice()));
+
+        assert!(pb.state().is_active());
+        assert_eq!(pb.poll_dtls_packet_to_send_not_over_ice(), None);
+    }
+
+    #[test]
+    fn one_the_checks_have_not_carried_goes_out_as_a_datagram() {
+        // Nothing has delivered it yet, so there is no duplicate to fear and no
+        // reason to make it wait for a check.
+        let mut pb = DtlsOverIce::new();
+        send_flight(&mut pb, &[packet(1), packet(2)]);
+        assert_eq!(pb.packets_to_send(0), Some(packet(1).as_slice()));
+
+        assert!(pb.state().is_active());
+        assert_eq!(datagrams(&mut pb), vec![packet(2)]);
+    }
+
+    #[test]
+    fn acknowledged_packets_are_not_sent_again() {
+        // The peer already has these, so sending them as datagrams would be
         // pointless traffic.
         let mut pb = DtlsOverIce::new();
         send_flight(&mut pb, &[packet(1), packet(2)]);
+        assert_eq!(pb.packets_to_send(0), Some(packet(1).as_slice()));
+        assert_eq!(pb.packets_to_send(0), Some(packet(2).as_slice()));
+
         pb.handle_ice_check_received(
             None,
             Some(&encode_acks(&[DtlsAckHash::of_packet(&packet(1))])),
         );
 
-        assert_eq!(pb.take_unacked_packets(), vec![packet(2)]);
+        // Only the unacknowledged one is still offered to the checks.
+        assert_eq!(pb.packets_to_send(0), Some(packet(2).as_slice()));
     }
 
     #[test]
@@ -661,24 +709,37 @@ mod test {
     }
 
     #[test]
-    fn a_flight_replaces_the_previous_one() {
+    fn a_later_flight_is_added_to_the_earlier_one() {
+        // Both are in the DTLS send queue until acknowledged, so both still
+        // need to reach the peer.
         let mut pb = DtlsOverIce::new();
         send_flight(&mut pb, &[packet(1), packet(2)]);
-        send_flight(&mut pb, &[packet(3)]);
-        assert_eq!(pb.packets_to_send(0).expect("a packet")[5], 3);
-        assert_eq!(pb.packets_to_send(0).expect("a packet")[5], 3);
+        send_flight(&mut pb, &[packet(1), packet(2), packet(3)]);
+
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            seen.push(pb.packets_to_send(0).expect("a packet")[5]);
+        }
+        assert_eq!(seen, vec![1, 2, 3]);
     }
 
     #[test]
-    fn a_non_dtls_packet_is_not_sent() {
+    fn a_non_dtls_packet_is_not_put_in_a_check() {
+        // The peer would only drop it again. It still goes out as a datagram,
+        // since the DTLS engine handed it over and no longer has it.
         let mut pb = DtlsOverIce::new();
-        pb.poll_and_send([b"short".to_vec()]);
+        pb.take_dtls_packets_to_send([b"short".to_vec()]);
+
         assert_eq!(pb.packets_to_send(0), None);
+        assert_eq!(
+            pb.poll_dtls_packet_to_send_not_over_ice(),
+            Some(b"short".to_vec())
+        );
     }
 
     #[test]
-    fn an_empty_flight_leaves_the_previous_one_alone() {
-        // Polling when the DTLS engine had nothing to say must not throw away
+    fn an_empty_queue_leaves_what_is_held_alone() {
+        // Polling when the DTLS engine had nothing queued must not throw away
         // packets the peer has yet to acknowledge.
         let mut pb = DtlsOverIce::new();
         send_flight(&mut pb, &[packet(1)]);
@@ -708,5 +769,42 @@ mod test {
         assert!(fits_in_ice_check(0, MAX_ICE_CHECK_LENGTH - 4));
         assert!(!fits_in_ice_check(0, MAX_ICE_CHECK_LENGTH - 3));
         assert!(!fits_in_ice_check(MAX_ICE_CHECK_LENGTH, 4));
+    }
+
+    #[test]
+    fn a_packet_too_big_for_a_check_is_sent_as_a_datagram() {
+        // No check can ever carry this packet, and the DTLS engine has handed
+        // it over, so if this does not send it the ordinary way then nobody
+        // does. With a peer that supports the extension there is no fallback to
+        // rescue it either, and the handshake would stall for good.
+        let mut pb = DtlsOverIce::new();
+        send_flight(&mut pb, &[oversized_packet(), packet(1)]);
+
+        pb.handle_ice_check_received(None, Some(&[]));
+        assert_eq!(pb.state(), DtlsOverIceState::RemoteSupportConfirmed);
+
+        // The one that fits rides along in checks, and so is not also sent as a
+        // datagram. The oversized one has no other way out.
+        assert_eq!(pb.packets_to_send(0), Some(packet(1).as_slice()));
+
+        assert_eq!(
+            datagrams(&mut pb),
+            vec![oversized_packet()],
+            "a packet that cannot ride in a check must be sent as a datagram"
+        );
+    }
+
+    #[test]
+    fn an_oversized_packet_does_not_block_the_others() {
+        // It is skipped without being moved, so the smaller ones behind it keep
+        // cycling.
+        let mut pb = DtlsOverIce::new();
+        send_flight(&mut pb, &[oversized_packet(), packet(1), packet(2)]);
+
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            seen.push(pb.packets_to_send(0).expect("a packet")[5]);
+        }
+        assert_eq!(seen, vec![1, 2, 1, 2]);
     }
 }

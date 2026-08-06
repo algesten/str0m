@@ -217,7 +217,7 @@ pub(crate) mod test {
         let flight2 = dtls_packet(2);
         for (agent, packet) in [(&mut a1, &flight1), (&mut a2, &flight2)] {
             let dtls_over_ice = agent.dtls_over_ice().expect("dtls_over_ice enabled");
-            dtls_over_ice.poll_and_send([packet.clone()]);
+            dtls_over_ice.take_dtls_packets_to_send([packet.clone()]);
         }
 
         loop {

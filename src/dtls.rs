@@ -148,17 +148,6 @@ impl Dtls {
         self.pending_packets.pop_front()
     }
 
-    /// Put packets back at the head of the send queue.
-    ///
-    /// Used when packets were taken out to travel inside ICE connectivity
-    /// checks, but did not get there. They are ordinary DTLS packets again, and
-    /// go out as datagrams once ICE has somewhere to send them.
-    pub fn requeue_packets(&mut self, packets: Vec<Vec<u8>>) {
-        for packet in packets.into_iter().rev() {
-            self.pending_packets.push_front(packet.into());
-        }
-    }
-
     /// Handle an incoming DTLS packet.
     pub fn handle_receive(&mut self, packet: &[u8]) -> Result<(), DtlsError> {
         if self.active_state.is_none() {
