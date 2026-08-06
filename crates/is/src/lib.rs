@@ -248,6 +248,75 @@ pub(crate) mod test {
     }
 
     #[test]
+    pub fn dtls_response_flight_uses_the_first_binding_response() {
+        fn dtls_packet(tag: u8) -> Vec<u8> {
+            let mut bytes = vec![0u8; 40];
+            bytes[0] = 22;
+            bytes[5] = tag;
+            bytes[13] = 1;
+            bytes
+        }
+
+        let mut client = TestAgent::new(info_span!("client"));
+        let mut server = TestAgent::new(info_span!("server"));
+
+        client.enable_dtls_over_ice();
+        server.enable_dtls_over_ice();
+
+        let client_candidate = client.add_host_candidate("1.1.1.1:1000");
+        server.add_remote_candidate(client_candidate);
+        let server_candidate = server.add_host_candidate("2.2.2.2:2000");
+        client.add_remote_candidate(server_candidate);
+
+        client.set_controlling(true);
+        server.set_controlling(false);
+        client.set_remote_credentials(server.local_credentials().clone());
+        server.set_remote_credentials(client.local_credentials().clone());
+
+        let client_hello = dtls_packet(1);
+        client
+            .dtls_over_ice()
+            .unwrap()
+            .take_dtls_packets_to_send([client_hello.clone()]);
+
+        let client_time = client.time;
+        client.handle_timeout(client_time);
+        let request = client.poll_transmit().expect("binding request");
+        let request_message = StunMessage::parse(&request.contents).expect("valid STUN request");
+        assert_eq!(request_message.dtls_packet(), Some(client_hello.as_slice()));
+
+        let server_time = server.time;
+        server.handle_packet(
+            server_time,
+            StunPacket {
+                proto: request.proto,
+                source: request.source,
+                destination: request.destination,
+                message: request_message,
+            },
+        );
+
+        assert!(matches!(
+            server.poll_event(),
+            Some(IceAgentEvent::DtlsPacketReceived(packet)) if packet == client_hello
+        ));
+
+        let server_flight = dtls_packet(2);
+        server
+            .dtls_over_ice()
+            .unwrap()
+            .take_dtls_packets_to_send([server_flight.clone()]);
+
+        let response = server.poll_transmit().expect("binding response");
+        let response_message = StunMessage::parse(&response.contents).expect("valid STUN response");
+        assert!(response_message.is_successful_binding_response());
+        assert_eq!(
+            response_message.dtls_packet(),
+            Some(server_flight.as_slice())
+        );
+    }
+
+    #[test]
     pub fn dtls_over_ice_turns_off_against_a_peer_without_it() {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));

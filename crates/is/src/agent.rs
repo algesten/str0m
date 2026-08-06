@@ -89,6 +89,9 @@ pub struct IceAgent {
     /// the remote_credentials.
     stun_server_queue: VecDeque<StunRequest>,
 
+    /// SPED requests waiting for the application to process their DTLS packet.
+    dtls_stun_server_queue: VecDeque<StunRequest>,
+
     /// Remote addresses we have seen traffic appear from. This is used
     /// to dedupe [`IceAgentEvent::DiscoveredRecv`].
     discovered_recv: HashSet<(Protocol, SocketAddr)>,
@@ -374,6 +377,7 @@ impl IceAgent {
             transmit: VecDeque::new(),
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
+            dtls_stun_server_queue: VecDeque::new(),
             discovered_recv: HashSet::new(),
             nominated_send: None,
             stats: IceAgentStats::default(),
@@ -1234,10 +1238,10 @@ impl IceAgent {
         // Integrity is verified above, which is what makes reading a DTLS
         // record out of the message safe. Do this before dispatching so the
         // reply we generate below can acknowledge what just arrived.
-        self.maybe_handle_dtls_over_ice_received(&packet.message);
+        let received_dtls = self.maybe_handle_dtls_over_ice_received(&packet.message);
 
         if packet.message.is_binding_request() {
-            self.stun_server_handle_message(now, &packet);
+            self.stun_server_handle_message(now, &packet, received_dtls);
         } else if packet.message.is_successful_binding_response() {
             self.stun_client_handle_response(now, packet.message);
         } else if packet.message.is_failed_binding_response() {
@@ -1352,6 +1356,10 @@ impl IceAgent {
 
     /// Poll for the next datagram to send.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
+        while let Some(req) = self.dtls_stun_server_queue.pop_front() {
+            self.stun_server_handle_request(req);
+        }
+
         let x = self.transmit.pop_front();
         if let Some(x) = &x {
             if x.contents.len() > self.mtu_warn() {
@@ -1410,13 +1418,13 @@ impl IceAgent {
     ///
     /// **Only call this for a message whose `MESSAGE-INTEGRITY` has already
     /// been verified.**
-    fn maybe_handle_dtls_over_ice_received(&mut self, message: &StunMessage<'_>) {
+    fn maybe_handle_dtls_over_ice_received(&mut self, message: &StunMessage<'_>) -> bool {
         if !message.is_binding_request() && !message.is_successful_binding_response() {
-            return;
+            return false;
         }
 
         let Some(dtls_over_ice) = &mut self.dtls_over_ice else {
-            return;
+            return false;
         };
 
         let received =
@@ -1424,6 +1432,9 @@ impl IceAgent {
 
         if let Some(dtls_packet) = received {
             self.emit_event(IceAgentEvent::DtlsPacketReceived(dtls_packet));
+            true
+        } else {
+            false
         }
     }
 
@@ -1451,7 +1462,12 @@ impl IceAgent {
         x
     }
 
-    fn stun_server_handle_message(&mut self, now: Instant, packet: &StunPacket) {
+    fn stun_server_handle_message(
+        &mut self,
+        now: Instant,
+        packet: &StunPacket,
+        received_dtls: bool,
+    ) {
         let message = &packet.message;
         let prio = message
             .prio()
@@ -1483,7 +1499,11 @@ impl IceAgent {
             ice_controlled: message.ice_controlled(),
         };
 
-        if self.remote_credentials.is_some() {
+        if received_dtls && self.remote_credentials.is_some() {
+            // Let the application process the embedded packet before this
+            // response is serialized, so its DTLS flight can ride along.
+            self.dtls_stun_server_queue.push_back(req);
+        } else if self.remote_credentials.is_some() {
             self.stun_server_handle_request(req);
         } else {
             debug!(
