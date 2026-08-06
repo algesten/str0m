@@ -1222,6 +1222,11 @@ impl Rtc {
 
         // Capture before any partial moves of `config` below.
         let mtu = config.mtu.clone();
+        let dtls_mtu = if config.dtls_over_ice {
+            is::dtls_over_ice::dtls_mtu(*mtu.start())..=*mtu.end()
+        } else {
+            mtu.clone()
+        };
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
         let mut ice = IceAgent::with_hmac(local_creds, crypto_provider.sha1_hmac_provider);
@@ -1270,7 +1275,7 @@ impl Rtc {
                 crypto_provider.sha256_provider,
                 start,
                 config.dtls_version,
-                mtu,
+                dtls_mtu,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,

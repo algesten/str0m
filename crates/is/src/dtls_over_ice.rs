@@ -19,6 +19,7 @@
 use std::collections::VecDeque;
 
 use crc::{CRC_32_ISO_HDLC, Crc};
+use str0m_proto::DATAGRAM_MTU_TARGET_MIN;
 
 /// How many ACKs can be in one DTLS_ACKS attribute.
 /// Small because the attribute has to fit alongside everything else in a
@@ -30,6 +31,10 @@ pub const MAX_DTLS_ACK_COUNT: usize = 4;
 /// A conservative MTU (1200) less room for headers.
 const MAX_ICE_CHECK_LENGTH: usize = 1200 - 24 - 8;
 
+/// Space reserved for the authenticated STUN message and the SPED attribute
+/// headers around a DTLS packet.
+const DTLS_OVER_ICE_OVERHEAD: usize = 150;
+
 /// The length of a DTLS record header.
 const DTLS_RECORD_HEADER_LEN: usize = 13;
 
@@ -38,6 +43,13 @@ const DTLS_FIRST_BYTE_MIN: u8 = 20;
 
 /// The highest byte value that can begin a DTLS record, per RFC 7983.
 const DTLS_FIRST_BYTE_MAX: u8 = 63;
+
+/// The DTLS datagram target that leaves room for SPED encapsulation.
+pub fn dtls_mtu(ice_mtu: usize) -> usize {
+    ice_mtu
+        .saturating_sub(DTLS_OVER_ICE_OVERHEAD)
+        .max(DATAGRAM_MTU_TARGET_MIN)
+}
 
 /// Runs the DTLS handshake over ICE.
 ///
@@ -161,18 +173,21 @@ impl DtlsOverIce {
     pub fn attributes_to_send(
         &mut self,
         message_byte_len_so_far: usize,
+        ice_mtu: usize,
     ) -> Option<DtlsAttributesToSend> {
+        let max_check_length = ice_mtu.min(MAX_ICE_CHECK_LENGTH);
+
         // The ack attribute goes on every check while the extension is live,
         // even when empty: its presence is what tells the peer we support this.
         let acks = self
             .acks_to_send()
-            .filter(|ack| fits_in_ice_check(message_byte_len_so_far, ack.len()))
+            .filter(|ack| fits_in_ice_check(message_byte_len_so_far, ack.len(), max_check_length))
             .map(|ack| ack.to_vec())?;
 
         // The packet has to fit in what is left once the acks are in.
         let message_byte_len_with_acks = message_byte_len_so_far + attribute_size(acks.len());
         let packet = self
-            .packets_to_send(message_byte_len_with_acks)
+            .packets_to_send_with_limit(message_byte_len_with_acks, max_check_length)
             .map(|dtls_packet| dtls_packet.to_vec());
 
         Some(DtlsAttributesToSend { packet, acks })
@@ -202,7 +217,16 @@ impl DtlsOverIce {
     /// skipped, so an oversized packet cannot block the smaller ones behind it.
     /// Such a packet goes out as an ordinary datagram instead, via
     /// [`DtlsOverIce::poll_dtls_packet_to_send_not_over_ice`].
+    #[cfg(test)]
     fn packets_to_send(&mut self, message_length: usize) -> Option<&[u8]> {
+        self.packets_to_send_with_limit(message_length, MAX_ICE_CHECK_LENGTH)
+    }
+
+    fn packets_to_send_with_limit(
+        &mut self,
+        message_length: usize,
+        max_check_length: usize,
+    ) -> Option<&[u8]> {
         if !self.state.is_active() {
             return None;
         }
@@ -215,7 +239,7 @@ impl DtlsOverIce {
             .enumerate()
             .filter(|(_, packet)| {
                 is_dtls_packet(&packet.payload)
-                    && fits_in_ice_check(message_length, packet.payload.len())
+                    && fits_in_ice_check(message_length, packet.payload.len(), max_check_length)
             })
             .min_by_key(|(_, packet)| packet.ice_send_count)
             .map(|(index, _)| index)?;
@@ -416,8 +440,12 @@ fn attribute_size(attribute_length: usize) -> usize {
 ///
 /// A connectivity check that grew past the path MTU would fragment, and a
 /// fragmented check is worse than not carrying DTLS at all.
-fn fits_in_ice_check(message_length: usize, attribute_length: usize) -> bool {
-    message_length + attribute_size(attribute_length) <= MAX_ICE_CHECK_LENGTH
+fn fits_in_ice_check(
+    message_length: usize,
+    attribute_length: usize,
+    max_check_length: usize,
+) -> bool {
+    message_length + attribute_size(attribute_length) <= max_check_length
 }
 
 #[cfg(test)]
@@ -765,10 +793,40 @@ mod test {
 
     #[test]
     fn an_attribute_that_would_overflow_the_check_does_not_fit() {
-        assert!(fits_in_ice_check(100, 100));
-        assert!(fits_in_ice_check(0, MAX_ICE_CHECK_LENGTH - 4));
-        assert!(!fits_in_ice_check(0, MAX_ICE_CHECK_LENGTH - 3));
-        assert!(!fits_in_ice_check(MAX_ICE_CHECK_LENGTH, 4));
+        assert!(fits_in_ice_check(100, 100, MAX_ICE_CHECK_LENGTH));
+        assert!(fits_in_ice_check(
+            0,
+            MAX_ICE_CHECK_LENGTH - 4,
+            MAX_ICE_CHECK_LENGTH
+        ));
+        assert!(!fits_in_ice_check(
+            0,
+            MAX_ICE_CHECK_LENGTH - 3,
+            MAX_ICE_CHECK_LENGTH
+        ));
+        assert!(!fits_in_ice_check(
+            MAX_ICE_CHECK_LENGTH,
+            4,
+            MAX_ICE_CHECK_LENGTH
+        ));
+    }
+
+    #[test]
+    fn configured_ice_mtu_limits_attributes() {
+        let mut pb = DtlsOverIce::new();
+        let mut too_big = packet(1);
+        too_big.resize(800, 0);
+        send_flight(&mut pb, &[too_big]);
+
+        let attributes = pb.attributes_to_send(120, 900).expect("acks fit");
+        assert!(attributes.packet.is_none());
+        assert!(attributes.acks.is_empty());
+    }
+
+    #[test]
+    fn dtls_mtu_reserves_sped_overhead() {
+        assert_eq!(dtls_mtu(1150), 1000);
+        assert_eq!(dtls_mtu(DATAGRAM_MTU_TARGET_MIN), DATAGRAM_MTU_TARGET_MIN);
     }
 
     #[test]

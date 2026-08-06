@@ -407,9 +407,10 @@ impl IceAgent {
         &mut self,
         message_byte_len_so_far: usize,
     ) -> Option<DtlsAttributesToSend> {
+        let mtu = self.mtu();
         self.dtls_over_ice
             .as_mut()?
-            .attributes_to_send(message_byte_len_so_far)
+            .attributes_to_send(message_byte_len_so_far, mtu)
     }
 
     /// Set the UDP datagram MTU range used for sizing internal buffers (target..=warn).
