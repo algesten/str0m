@@ -1243,6 +1243,10 @@ impl Rtc {
 
         ice.set_mtu(mtu.clone());
 
+        if config.dtls_over_ice {
+            ice.enable_dtls_over_ice();
+        }
+
         let dtls_cert = config
             .dtls_cert
             .or_else(|| crypto_provider.dtls_provider.generate_certificate())
@@ -1479,6 +1483,31 @@ impl Rtc {
         self.session.media_by_mid(mid)
     }
 
+    /// Hands the outgoing DTLS handshake packets to the ICE agent, so they can
+    /// ride along in connectivity checks instead of waiting for ICE to finish.
+    ///
+    /// The agent takes them: they leave the DTLS send queue and this engine
+    /// will never send them itself. What the agent cannot get there inside a
+    /// check — one too big to fit, or anything left over once the peer turns
+    /// out not to implement this — it sends as an ordinary datagram itself,
+    /// through `DtlsOverIce::poll_dtls_packet_to_send_not_over_ice`.
+    ///
+    /// Only done before a pair is nominated: after that the packets can be sent
+    /// as ordinary datagrams, which is both simpler and not size limited.
+    fn maybe_poll_and_send_dtls_over_ice(&mut self) {
+        if self.send_addr.is_some() {
+            return;
+        }
+
+        let Some(dtls_over_ice) = self.ice.dtls_over_ice() else {
+            return;
+        };
+
+        let dtls = &mut self.dtls;
+        dtls_over_ice
+            .take_dtls_packets_to_send(std::iter::from_fn(|| dtls.poll_packet().map(Vec::from)));
+    }
+
     fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {
         if self.dtls.is_inited() {
             return Ok(());
@@ -1612,6 +1641,9 @@ impl Rtc {
                         destination,
                     });
                 }
+                IceAgentEvent::DtlsPacketReceived(dtls_packet) => {
+                    self.dtls.handle_receive(&dtls_packet)?;
+                }
             }
         }
 
@@ -1643,6 +1675,9 @@ impl Rtc {
                         debug!("DTLS connected");
                         self.dtls_connected = true;
                         just_connected = true;
+                        if let Some(dtls_over_ice) = self.ice.dtls_over_ice() {
+                            dtls_over_ice.handle_handshake_completed();
+                        }
                     }
                 }
                 DtlsOutput::KeyingMaterial(km, profile) => {
@@ -1695,6 +1730,8 @@ impl Rtc {
                 }
             }
         }
+
+        self.maybe_poll_and_send_dtls_over_ice();
 
         if just_connected {
             return Ok(Output::Event(Event::Connected));
@@ -1792,7 +1829,18 @@ impl Rtc {
 
         if let Some(send) = &self.send_addr {
             // These can only be sent after we got an ICE connection.
+            //
+            // If DtlsOverIce has DTLS packets that weren't delivered
+            // over ICE, it will send them as regular DTLS packets now.
             let datagram = None
+                .or_else(|| {
+                    self.ice
+                        .dtls_over_ice()
+                        .and_then(|dtls_over_ice| {
+                            dtls_over_ice.poll_dtls_packet_to_send_not_over_ice()
+                        })
+                        .map(crate::io::DatagramSend::from)
+                })
                 .or_else(|| self.dtls.poll_packet())
                 .or_else(|| self.session.poll_datagram(self.last_now));
 
@@ -2075,8 +2123,21 @@ impl Rtc {
                 };
                 self.ice.handle_packet(recv_time, packet);
             }
-            Dtls(dtls) => self.dtls.handle_receive(dtls)?,
-            Rtp(rtp) => self.session.handle_rtp_receive(recv_time, rtp),
+            Dtls(dtls) => {
+                if let Some(dtls_over_ice) = self.ice.dtls_over_ice() {
+                    // The peer deserves an acknowledgement whether the record
+                    // came inside a connectivity check or as an ordinary datagram.
+                    dtls_over_ice.handle_dtls_packet_received(dtls);
+                }
+                self.dtls.handle_receive(dtls)?
+            }
+            Rtp(rtp) => {
+                if let Some(dtls_over_ice) = self.ice.dtls_over_ice() {
+                    // Media from the peer means it considers the handshake done.
+                    dtls_over_ice.handle_received_after_handshake_completed();
+                }
+                self.session.handle_rtp_receive(recv_time, rtp)
+            }
             Rtcp(rtcp) => self.session.handle_rtcp_receive(recv_time, rtcp),
         }
 

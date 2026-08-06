@@ -9,9 +9,10 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::Sha1HmacProvider;
+use crate::dtls_over_ice::{DtlsAttributesToSend, DtlsOverIce};
 use crate::preference::default_local_preference;
 use crate::stun::{Class as StunClass, Method as StunMethod, StunTiming};
-use crate::stun::{StunMessage, StunPacket, TransId};
+use crate::stun::{HasClass, StunMessage, StunMessageBuilder, StunPacket, TransId};
 use str0m_proto::{DATAGRAM_MTU_TARGET, DATAGRAM_MTU_WARN, Id, Transmit};
 use str0m_proto::{NonCryptographicRng, Pii, Protocol};
 
@@ -111,6 +112,11 @@ pub struct IceAgent {
     /// Target MTU (start) and warn threshold (end). Buffer sizing uses the
     /// target; oversized outgoing datagrams above the warn threshold log a warning.
     mtu: RangeInclusive<usize>,
+
+    /// Runs the DTLS handshake inside connectivity checks, when enabled.
+    ///
+    /// See [`crate::dtls_over_ice`].
+    dtls_over_ice: Option<DtlsOverIce>,
 }
 
 /// IceAgent contains only static references to thread-safe traits,
@@ -171,6 +177,27 @@ fn role_name(controlling: bool) -> &'static str {
         "controlling"
     } else {
         "controlled"
+    }
+}
+
+/// Attaches the DTLS-over-ICE attributes to an outgoing connectivity check.
+///
+/// The acks attribute goes on whenever the extension is live, since its mere
+/// presence is what tells the peer we support it. The packet only goes on when
+/// there is one waiting that still fits.
+fn attach_dtls_attributes<'a>(
+    check: StunMessageBuilder<'a, HasClass>,
+    dtls: &'a Option<DtlsAttributesToSend>,
+) -> StunMessageBuilder<'a, HasClass> {
+    let Some(dtls) = dtls else {
+        return check;
+    };
+
+    let check = check.dtls_acks(&dtls.acks);
+
+    match &dtls.packet {
+        Some(dtls_packet) => check.dtls_packet(dtls_packet),
+        None => check,
     }
 }
 
@@ -294,6 +321,14 @@ pub enum IceAgentEvent {
         /// The remote address to send datagrams to.
         destination: SocketAddr,
     },
+
+    /// A DTLS packet that arrived carried inside a connectivity check.
+    ///
+    /// Only emitted when [`IceAgent::enable_dtls_over_ice`] was called. The
+    /// record comes from a STUN message whose `MESSAGE-INTEGRITY` was verified,
+    /// and should be fed to the DTLS engine as if it had arrived as an ordinary
+    /// datagram.
+    DtlsPacketReceived(Vec<u8>),
 }
 
 impl IceCreds {
@@ -347,7 +382,34 @@ impl IceAgent {
             local_preference: LocalPreferenceHolder(Arc::new(default_local_preference)),
             sha1_hmac_provider,
             mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
+            dtls_over_ice: None,
         }
+    }
+
+    /// Must be enabled before any connectivity checks are made.
+    pub fn enable_dtls_over_ice(&mut self) {
+        if self.dtls_over_ice.is_none() {
+            self.dtls_over_ice = Some(DtlsOverIce::new());
+        }
+    }
+
+    /// The DTLS-over-ICE controller, if [`IceAgent::enable_dtls_over_ice`] was called.
+    pub fn dtls_over_ice(&mut self) -> Option<&mut DtlsOverIce> {
+        self.dtls_over_ice.as_mut()
+    }
+
+    /// The DTLS-over-ICE attributes to attach to an outgoing connectivity
+    /// check that is `message_byte_len_so_far` bytes without them.
+    ///
+    /// `None` when the extension is not enabled or no longer live, or when not
+    /// even the acknowledgements fit in the check.
+    fn dtls_attributes_to_send(
+        &mut self,
+        message_byte_len_so_far: usize,
+    ) -> Option<DtlsAttributesToSend> {
+        self.dtls_over_ice
+            .as_mut()?
+            .attributes_to_send(message_byte_len_so_far)
     }
 
     /// Set the UDP datagram MTU range used for sizing internal buffers (target..=warn).
@@ -1168,6 +1230,11 @@ impl IceAgent {
             return false;
         }
 
+        // Integrity is verified above, which is what makes reading a DTLS
+        // record out of the message safe. Do this before dispatching so the
+        // reply we generate below can acknowledge what just arrived.
+        self.maybe_handle_dtls_over_ice_received(&packet.message);
+
         if packet.message.is_binding_request() {
             self.stun_server_handle_message(now, &packet);
         } else if packet.message.is_successful_binding_response() {
@@ -1336,6 +1403,27 @@ impl IceAgent {
         };
 
         Some(next)
+    }
+
+    /// Reads any DTLS packet out of a connectivity check, and acknowledges it.
+    ///
+    /// **Only call this for a message whose `MESSAGE-INTEGRITY` has already
+    /// been verified.**
+    fn maybe_handle_dtls_over_ice_received(&mut self, message: &StunMessage<'_>) {
+        if !message.is_binding_request() && !message.is_successful_binding_response() {
+            return;
+        }
+
+        let Some(dtls_over_ice) = &mut self.dtls_over_ice else {
+            return;
+        };
+
+        let received =
+            dtls_over_ice.handle_ice_check_received(message.dtls_packet(), message.dtls_acks());
+
+        if let Some(dtls_packet) = received {
+            self.emit_event(IceAgentEvent::DtlsPacketReceived(dtls_packet));
+        }
     }
 
     fn emit_event(&mut self, event: IceAgentEvent) {
@@ -1615,7 +1703,10 @@ impl IceAgent {
 
         let (_, password) = self.stun_credentials(true);
 
-        let reply = StunMessage::binding_reply(req.trans_id, req.source);
+        let reply = StunMessage::binding_reply(req.source);
+
+        let dtls = self.dtls_attributes_to_send(reply.byte_len(true));
+        let reply = attach_dtls_attributes(reply, &dtls).build(req.trans_id);
 
         trace!(
             "Send STUN reply: {} -> {} {:?}",
@@ -1707,25 +1798,31 @@ impl IceAgent {
         let prio = local.prio_prflx();
         // Only the controlling side sends USE-CANDIDATE.
         let use_candidate = self.controlling && pair.is_nominated();
+        let proto = local.proto();
+        let source = local.base();
+        let destination = remote.addr();
 
         let trans_id = pair.new_attempt(now, &self.timing_config, self.controlling);
 
         self.stats.bind_request_sent += 1;
 
-        let binding = StunMessage::binding_request(
+        let mut binding = StunMessage::binding_request(
             &username,
-            trans_id,
             self.controlling,
             self.control_tie_breaker,
             prio,
             use_candidate,
         );
 
+        // Sized against the message the attributes actually end up in.
+        let dtls = self.dtls_attributes_to_send(binding.byte_len(true));
+        binding = attach_dtls_attributes(binding, &dtls);
+
+        let binding = binding.build(trans_id);
+
         trace!(
             "Send STUN request: {} -> {} {:?}",
-            local.base(),
-            remote.addr(),
-            binding
+            source, destination, binding
         );
 
         let mut buf = vec![0_u8; self.mtu()];
@@ -1738,9 +1835,9 @@ impl IceAgent {
         buf.truncate(n);
 
         let trans = Transmit {
-            proto: local.proto(),
-            source: local.base(),
-            destination: remote.addr(),
+            proto,
+            source,
+            destination,
             contents: buf.into(),
         };
 
@@ -2675,13 +2772,13 @@ mod test {
         prio: u32,
     ) -> Vec<u8> {
         let username = format!("{}:{}", local_creds.ufrag, remote_creds.ufrag);
-        let binding_req =
-            StunMessage::binding_request(&username, TransId::new(), controlling, 0, prio, false);
+        let binding_req = StunMessage::binding_request(&username, controlling, 0, prio, false)
+            .build(TransId::new());
         serialize_stun_msg(binding_req, &local_creds.pass)
     }
 
     fn make_authenticated_stun_reply(tx_id: TransId, addr: SocketAddr, password: &str) -> Vec<u8> {
-        let reply = StunMessage::binding_reply(tx_id, addr);
+        let reply = StunMessage::binding_reply(addr).build(tx_id);
         serialize_stun_msg(reply, password)
     }
 
