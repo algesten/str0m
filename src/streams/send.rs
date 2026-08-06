@@ -1134,7 +1134,7 @@ impl StreamTx {
         const AVERAGE_PADDING_PACKET_SIZE: usize = 800;
         const FAKE_PADDING_DURATION_MILLIS: usize = 5;
 
-        let fake_packets = self.padding / AVERAGE_PADDING_PACKET_SIZE;
+        let fake_packets = self.padding.div_ceil(AVERAGE_PADDING_PACKET_SIZE);
         let fake_millis = fake_packets * FAKE_PADDING_DURATION_MILLIS;
         let fake_duration = Duration::from_millis(fake_millis as u64);
 
@@ -1295,5 +1295,18 @@ mod test {
 
         stream.reset_buffers();
         assert!(stream.queue_info().is_none());
+    }
+
+    #[test]
+    fn sub_average_padding_is_visible_to_the_pacer() {
+        let mut stream = StreamTx::new(42.into(), None, MidRid(Mid::from("0"), None), false, 1200);
+        stream.padding = 240;
+
+        let snapshot = stream
+            .queue_state_padding(Instant::now())
+            .expect("nonzero padding must produce a queue snapshot");
+
+        assert_eq!(snapshot.byte_size, 240);
+        assert_eq!(snapshot.packet_count, 1);
     }
 }
