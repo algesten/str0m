@@ -19,7 +19,6 @@
 use std::collections::VecDeque;
 
 use crc::{CRC_32_ISO_HDLC, Crc};
-use str0m_proto::DATAGRAM_MTU_TARGET_MIN;
 
 /// How many ACKs can be in one DTLS_ACKS attribute.
 /// Small because the attribute has to fit alongside everything else in a
@@ -46,16 +45,20 @@ const DTLS_FIRST_BYTE_MAX: u8 = 63;
 
 /// The DTLS datagram target that leaves room for DTLS-over-ICE encapsulation.
 ///
+/// Sized against the space a DTLS packet actually has to fit into, which is
+/// the smaller of the configured MTU and [`MAX_ICE_CHECK_LENGTH`] — a check is
+/// capped by both. Subtracting from the configured MTU alone would overshoot
+/// once that MTU is the larger of the two.
+///
 /// libwebrtc solves this by setting the DTLS MTU to a flat 900 whenever the
-/// extension is on. We subtract the encapsulation from the configured MTU
-/// instead, which comes to a similar figure at the default MTU but keeps
-/// working when the MTU is not the default: a flat 900 leaves nothing over for
-/// the check itself once the MTU drops near 900, and needlessly shrinks DTLS
-/// records when the MTU is larger.
-pub fn dtls_mtu(ice_mtu: usize) -> usize {
-    ice_mtu
+/// extension is on. We subtract the encapsulation instead, which comes to a
+/// similar figure at the default MTU but keeps working when the MTU is not the
+/// default: a flat 900 leaves nothing over for the check itself once the MTU
+/// drops near 900, and needlessly shrinks DTLS records when the MTU is larger.
+pub fn dtls_mtu(configured_mtu: usize) -> usize {
+    configured_mtu
+        .min(MAX_ICE_CHECK_LENGTH)
         .saturating_sub(DTLS_OVER_ICE_OVERHEAD)
-        .max(DATAGRAM_MTU_TARGET_MIN)
 }
 
 /// Runs the DTLS handshake over ICE.
@@ -459,6 +462,8 @@ fn fits_in_ice_check(
 mod test {
     use super::*;
 
+    use str0m_proto::{DATAGRAM_MTU_TARGET_MAX, DATAGRAM_MTU_TARGET_MIN};
+
     /// A DTLS shaped packet with a distinguishing byte, so hashes differ.
     fn packet(tag: u8) -> Vec<u8> {
         let mut bytes = vec![0u8; 20];
@@ -833,7 +838,24 @@ mod test {
     #[test]
     fn dtls_mtu_reserves_dtls_over_ice_overhead() {
         assert_eq!(dtls_mtu(1150), 1000);
-        assert_eq!(dtls_mtu(DATAGRAM_MTU_TARGET_MIN), DATAGRAM_MTU_TARGET_MIN);
+
+        // Whatever the configured MTU, what the DTLS engine is allowed to
+        // produce has to leave room for the check that has to carry it. A check
+        // is capped by the configured MTU and by MAX_ICE_CHECK_LENGTH alike, so
+        // it is the smaller of the two that the packet has to fit inside.
+        for ice_mtu in [
+            DATAGRAM_MTU_TARGET_MIN,
+            900,
+            1150,
+            MAX_ICE_CHECK_LENGTH,
+            DATAGRAM_MTU_TARGET_MAX,
+        ] {
+            let budget = ice_mtu.min(MAX_ICE_CHECK_LENGTH);
+            assert!(
+                dtls_mtu(ice_mtu) + DTLS_OVER_ICE_OVERHEAD <= budget,
+                "dtls_mtu({ice_mtu}) leaves no room for the check carrying it"
+            );
+        }
     }
 
     #[test]
