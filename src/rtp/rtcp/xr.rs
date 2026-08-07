@@ -154,8 +154,10 @@ impl Dlrr {
         buf[0] = 5_u8;
         // reserved;
         buf[1] = 0_u8;
-        // block length
-        let len: u16 = self.items.len() as u16 * 12_u16;
+        // block length, in 32-bit words (RFC 3611 §3): each DLRR sub-block is 3 words
+        // (ssrc + last_rr + delay = 12 bytes). Must match the parser, which divides this
+        // field by 3 to recover the item count.
+        let len: u16 = self.items.len() as u16 * 3_u16;
         buf[2..4].copy_from_slice(&len.to_be_bytes());
 
         let mut buf = &mut buf[4..];
@@ -164,7 +166,8 @@ impl Dlrr {
             buf[0..4].copy_from_slice(&item.ssrc.to_be_bytes());
             buf[4..8].copy_from_slice(&item.last_rr_time.to_be_bytes());
             buf[8..12].copy_from_slice(&item.last_rr_delay.to_be_bytes());
-            buf = &mut buf[4..];
+            // advance past the full 12-byte sub-block
+            buf = &mut buf[12..];
         }
 
         self.len()

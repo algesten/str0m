@@ -16,6 +16,7 @@ use crate::pacer::QueueState;
 use crate::packet::Vp8Patch;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, Descriptions, Extension, ExtensionMap, ExtensionValues, Frequency};
+use crate::rtp_::{Dlrr, DlrrItem, ExtendedReport, ReportBlock};
 use crate::rtp_::{MAX_BLANK_PADDING_PAYLOAD_SIZE, Sdes, SdesType};
 use crate::rtp_::{MediaTime, Mid, NackEntry, ReportList, Rtcp, RtpHeader};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
@@ -23,7 +24,7 @@ use crate::rtp_::{SRTP_BLOCK_SIZE, SeqNo};
 use crate::session::PacketReceipt;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::{InstantExt, already_happened, not_happening};
+use crate::util::{InstantExt, SystemTimeExt, already_happened, not_happening};
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
@@ -80,6 +81,17 @@ impl StreamTxQueueInfo for QueueSnapshot {
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
 ///
+/// Last RRTR (Receiver Reference Time, RFC 3611 §4.4) received from the remote.
+#[derive(Debug, Clone, Copy)]
+struct LastRrtr {
+    /// SSRC of the RRTR sender.
+    ssrc: Ssrc,
+    /// Middle 32 bits of the RRTR NTP timestamp (LRR).
+    lrr: u32,
+    /// When the RRTR arrived locally.
+    received_at: Instant,
+}
+
 /// This is RTP level API. For frame level API see [`Rtc::writer`][crate::Rtc::writer].
 #[derive(Debug)]
 pub struct StreamTx {
@@ -172,6 +184,10 @@ pub struct StreamTx {
     /// that the receiver has bound the Mid/Rid tuple to the SSRC and no longer
     /// needs to be sent on every packet
     remote_acked_ssrc: bool,
+
+    /// Last RRTR (Receiver Reference Time, RFC 3611 §4.4) received from the remote,
+    /// so we can answer it with a DLRR (§4.5).
+    last_rrtr: Option<LastRrtr>,
 
     // Same as `remote_acked_ssrc`, but for the RTX SSRC
     remote_acked_rtx_ssrc: bool,
@@ -332,6 +348,7 @@ impl StreamTx {
             pt_for_padding: None,
             remote_acked_ssrc: false,
             remote_acked_rtx_ssrc: false,
+            last_rrtr: None,
             mtu_warn,
         }
     }
@@ -943,6 +960,17 @@ impl StreamTx {
             Remb(r) => {
                 self.pending_request_remb = Some(Bitrate::from(r.bitrate as f64));
             }
+            Rrtr((rrtr, ssrc)) => {
+                // DLRR responder half (RFC 3611 §4.5): the remote (SFU) sent us its
+                // reference time; remember its LRR (mid-32 of the RRTR ntp) and arrival
+                // so create_sr_and_update can reply with a DLRR to let it measure RTT.
+                let lrr = (rrtr.ntp_time.as_ntp_64() >> 16) as u32;
+                self.last_rrtr = Some(LastRrtr {
+                    ssrc,
+                    lrr,
+                    received_at: now,
+                });
+            }
             Twcc(_) => unreachable!("TWCC should be handled on session level"),
             _ => {}
         }
@@ -990,8 +1018,33 @@ impl StreamTx {
             feedback.push_back(Rtcp::SourceDescription(ds));
         }
 
+        if let Some(xr) = self.create_dlrr(now) {
+            feedback.push_back(Rtcp::ExtendedReport(xr));
+        }
+
         // Update timestamp to move time when next is created.
         self.last_sender_report = now;
+    }
+
+    // DLRR responder half (RFC 3611 §4.5). If the remote sent us an RRTR, reply with a
+    // DLRR carrying its LRR and the delay (1/65536 s units) since we received it, so the
+    // remote can compute RTT / a capture-clock offset.
+    fn create_dlrr(&self, now: Instant) -> Option<ExtendedReport> {
+        let LastRrtr { ssrc, lrr, received_at } = self.last_rrtr?;
+
+        let delay = now.saturating_duration_since(received_at);
+        let last_rr_delay = ((delay.as_micros() * 65_536) / 1_000_000) as u32;
+
+        Some(ExtendedReport {
+            ssrc: self.ssrc,
+            blocks: vec![ReportBlock::Dlrr(Dlrr {
+                items: vec![DlrrItem {
+                    ssrc,
+                    last_rr_time: lrr,
+                    last_rr_delay,
+                }],
+            })],
+        })
     }
 
     fn create_sender_report(&self, now: Instant) -> SenderReport {
