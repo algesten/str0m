@@ -1247,6 +1247,16 @@ impl Rtc {
             ice.enable_dtls_over_ice();
         }
 
+        // See the comment for DTLS_OVER_ICE_MTU for why this is needed.
+        let dtls_mtu = if config.dtls_over_ice {
+            let normal_target = *mtu.start();
+            let normal_warn = *mtu.end();
+            let dtls_over_ice_target = normal_target.min(is::dtls_over_ice::DTLS_OVER_ICE_MTU);
+            dtls_over_ice_target..=normal_warn
+        } else {
+            mtu.clone()
+        };
+
         let dtls_cert = config
             .dtls_cert
             .or_else(|| crypto_provider.dtls_provider.generate_certificate())
@@ -1270,7 +1280,7 @@ impl Rtc {
                 crypto_provider.sha256_provider,
                 start,
                 config.dtls_version,
-                mtu,
+                dtls_mtu,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,

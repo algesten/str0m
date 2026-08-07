@@ -30,6 +30,16 @@ pub const MAX_DTLS_ACK_COUNT: usize = 4;
 /// A conservative MTU (1200) less room for headers.
 const MAX_ICE_CHECK_LENGTH: usize = 1200 - 24 - 8;
 
+/// The MTU to use when DTLS-over-ICE is enabled.
+///
+/// We need to lower the DTLS MTU because otherwise large DTLS packets, such
+/// as DTLS 1.3 ClientHello using PQC, would not fit in an ICE packet.
+///
+/// libwebrtc lowers the DTLS MTU to 900, so we will as well.
+/// It might be a bit conservative, but once DTLS packets are split over
+/// 2 packets, it should be plenty.
+pub const DTLS_OVER_ICE_MTU: usize = 900;
+
 /// The length of a DTLS record header.
 const DTLS_RECORD_HEADER_LEN: usize = 13;
 
