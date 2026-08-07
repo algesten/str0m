@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Add `DirectApi::send_pli_feedback` to send a PLI with a chosen sender SSRC #1025
+
 # 0.22.0
 
   * Make audio and video RTCP report intervals configurable #1021
