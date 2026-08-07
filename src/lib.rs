@@ -1222,6 +1222,11 @@ impl Rtc {
 
         // Capture before any partial moves of `config` below.
         let mtu = config.mtu.clone();
+        let dtls_mtu = if config.dtls_over_ice {
+            is::dtls_over_ice::dtls_mtu(*mtu.start())..=*mtu.end()
+        } else {
+            mtu.clone()
+        };
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
         let mut ice = IceAgent::with_hmac(local_creds, crypto_provider.sha1_hmac_provider);
@@ -1246,16 +1251,6 @@ impl Rtc {
         if config.dtls_over_ice {
             ice.enable_dtls_over_ice();
         }
-
-        // See the comment for DTLS_OVER_ICE_MTU for why this is needed.
-        let dtls_mtu = if config.dtls_over_ice {
-            let normal_target = *mtu.start();
-            let normal_warn = *mtu.end();
-            let dtls_over_ice_target = normal_target.min(is::dtls_over_ice::DTLS_OVER_ICE_MTU);
-            dtls_over_ice_target..=normal_warn
-        } else {
-            mtu.clone()
-        };
 
         let dtls_cert = config
             .dtls_cert
