@@ -1,11 +1,11 @@
 #![allow(clippy::new_without_default)]
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 use std::panic::UnwindSafe;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sctp_proto::{Association, AssociationHandle, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
@@ -42,6 +42,13 @@ pub(crate) struct RtcSctp {
     handle: AssociationHandle,
     assoc: Option<Association>,
     entries: Vec<StreamEntry>,
+    // Stream ids that still owe a `StreamEvent::ResetComplete`,
+    // thos ids needs to be held back from reuse.
+    reset_pending: HashSet<u16>,
+    // Completed resets awaiting delivery to the caller.
+    // Used to guarantee emission ordering, ResetComplete must
+    // be sent after Close.
+    reset_complete: VecDeque<u16>,
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
     client: bool,
@@ -84,6 +91,8 @@ struct StreamEntry {
     id: u16,
     /// If we are to close this entry.
     do_close: bool,
+    /// Deadline for retrying `open_stream` when it fails.
+    open_deadline: Option<Instant>,
     /// If the queued outgoing data drops below this threshold, Rtc is to emit an
     /// event to the user.
     buffered_threshold: BufferedThresholdConfig,
@@ -127,6 +136,15 @@ pub(crate) enum SctpEvent {
         label: String,
     },
     Close {
+        id: u16,
+        /// Whether a reset handshake is outstanding for this stream id.
+        reset_pending: bool,
+    },
+    /// The reset handshake for a closed stream completed and sctp-proto emitted
+    /// StreamEvent::ResetComplete. The stream id is now safe to be used again.
+    ///
+    /// Always reported after the `Close` for the same id.
+    StreamResetComplete {
         id: u16,
     },
     Data {
@@ -247,6 +265,17 @@ impl StreamEntry {
 /// chunk header + some extra.
 const SCTP_OVERHEAD: usize = 40;
 
+/// How long `open_stream` keeps retrying when blocked by a transient error
+/// which could happen during reset handshake (RFC 6525).
+/// Past this the peer is considered broken and the open gives up.
+const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Backstop poll interval while an open is retrying. Retries are normally
+/// driven by the network input that unblocks them,
+/// either the reciprocal reset or RECONFIG-RESPONSE arriving.
+/// This interval guarantees progress in case of absence of the latter messages.
+const STREAM_OPEN_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
 /// Empirical: SCTP `max_payload_size` of 1200 has produced 1277-byte DTLS-wrapped
 /// datagrams (77 bytes combined SCTP + DTLS overhead).
 const _: () = assert!(
@@ -275,6 +304,8 @@ impl RtcSctp {
             handle: AssociationHandle(0), // temporary
             assoc: None,
             entries: vec![],
+            reset_pending: HashSet::new(),
+            reset_complete: VecDeque::new(),
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
             client: false,
@@ -522,9 +553,13 @@ impl RtcSctp {
 
     /// Close stream.
     pub fn close_stream(&mut self, id: u16) {
-        if let Some(entry) = self.entries.iter_mut().find(|v| v.id == id) {
-            entry.do_close = true;
-        }
+        let Some(entry) = self.entries.iter_mut().find(|v| v.id == id) else {
+            return;
+        };
+        entry.do_close = true;
+
+        // Explicitly close the sctp stream to allow re-use of the same id.
+        let _ = self.sctp_propagate_close(id);
     }
 
     pub fn close(&mut self) -> Result<(), SctpError> {
@@ -707,6 +742,11 @@ impl RtcSctp {
             return None;
         }
 
+        // Remove closed entries. handle_timeout() also does this, but the
+        // remote can reuse a stream id (its reset handshake completed) before
+        // our next timeout.
+        self.entries.retain(|e| e.state != StreamEntryState::Closed);
+
         if let Some(t) = self.pushed_back_transmit.take() {
             return Some(SctpEvent::Transmit { packets: t });
         }
@@ -736,6 +776,9 @@ impl RtcSctp {
 
             if let Event::AssociationLost { ref reason } = e {
                 debug!("Association lost, reason: {}", reason);
+                // No reset can complete on a dead association.
+                self.reset_pending.clear();
+                self.reset_complete.clear();
                 return Some(SctpEvent::AssociationLost);
             }
 
@@ -750,14 +793,31 @@ impl RtcSctp {
                         );
                     }
                     StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. } => {
-                        let entry = stream_entry(
-                            &mut self.entries,
-                            id,
-                            StreamEntryState::AwaitConfig,
-                            "closed",
-                        );
-                        debug!("Stream {} closed", id);
-                        entry.do_close = true;
+                        // sctp-proto unregistered it when a reset arrived.
+                        // Id reuse is signalled separately by StreamEvent::ResetComplete.
+                        //
+                        // sctp-proto arms that completion here, so from now on a reset
+                        // is outstanding for the id even if we never closed it locally.
+                        self.reset_pending.insert(id);
+
+                        // Only a live entry has anything to drop. Closed entries and
+                        // missing ones already went through Close, and an AwaitOpen
+                        // entry is a new incarnation waiting on the same id, it must
+                        // not be killed by the old pending teardown.
+                        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+                            if entry.state != StreamEntryState::Closed
+                                && entry.state != StreamEntryState::AwaitOpen
+                            {
+                                debug!("Stream {} finished", id);
+                                entry.do_close = true;
+                            }
+                        }
+                    }
+                    StreamEvent::ResetComplete { id } => {
+                        // The reset handshake for this id has fully completed.
+                        debug!("Stream {} reset complete", id);
+                        self.reset_pending.remove(&id);
+                        self.reset_complete.push_back(id);
                     }
                     StreamEvent::BufferedAmountLow { id } => {
                         return Some(SctpEvent::BufferedAmountLow { id });
@@ -779,9 +839,16 @@ impl RtcSctp {
                 debug!("Open stream {}", entry.id);
                 match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
                     Ok(mut s) => {
+                        entry.open_deadline = None;
+
                         if !entry.configure_reliability(&mut s) {
                             entry.set_state(StreamEntryState::Closed);
-                            return Some(SctpEvent::Close { id: entry.id });
+                            let stream_id = entry.id;
+                            let reset_pending = self.sctp_propagate_close(stream_id);
+                            return Some(SctpEvent::Close {
+                                id: stream_id,
+                                reset_pending,
+                            });
                         }
 
                         let config = entry.config.as_ref().expect("config if AwaitOpen");
@@ -809,35 +876,89 @@ impl RtcSctp {
                                     );
                                     entry.do_close = true;
                                     entry.set_state(StreamEntryState::Closed);
-                                    return Some(SctpEvent::Close { id: entry.id });
+                                    let stream_id = entry.id;
+                                    let reset_pending = self.sctp_propagate_close(stream_id);
+                                    return Some(SctpEvent::Close {
+                                        id: stream_id,
+                                        reset_pending,
+                                    });
                                 }
                             }
                         }
 
                         // Continuing means we are opening the stream out-of-band.
                     }
-                    Err(ProtoError::ErrStreamAlreadyExist) => {
+                    Err(
+                        e @ (ProtoError::ErrStreamAlreadyExist | ProtoError::ErrStreamResetPending),
+                    ) => {
                         let config = entry.config.as_ref().expect("config if AwaitOpen");
                         let in_band = config.negotiated.is_none();
 
-                        if in_band {
-                            warn!(
-                                "Opening stream {} failed: ErrStreamAlreadyExists with in-band",
-                                entry.id
-                            );
+                        // ErrStreamAlreadyExist has two causes:
+                        // - the remote created it by sending on it first
+                        // - a previous incarnation of the id is still registered,
+                        //   reset handshake hasn't finished
+                        let stale_incarnation = matches!(e, ProtoError::ErrStreamAlreadyExist)
+                            && assoc
+                                .stream(entry.id)
+                                .map(|s| !s.is_readable() && !s.is_writable())
+                                .unwrap_or(false);
+
+                        if in_band
+                            || stale_incarnation
+                            || matches!(e, ProtoError::ErrStreamResetPending)
+                        {
+                            // RFC 6525 reset handshake for a previous
+                            // incarnation of this stream id hasn't finished yet
+                            //
+                            // - AlreadyExist clears when the remote's reciprocal reset arrives
+                            // - ResetPending when the RECONFIG-RESPONSE arrives (silently)
+                            //
+                            // In both cases,  stay in AwaitOpen and retry until past the deadline.
+                            let deadline = *entry
+                                .open_deadline
+                                .get_or_insert(self.last_now + STREAM_OPEN_TIMEOUT);
+
+                            if self.last_now < deadline {
+                                debug!("Stream {} open blocked ({:?}), will retry", entry.id, e);
+                                continue;
+                            }
+
+                            debug!("Opening stream {} failed after retries: {:?}", entry.id, e);
                             entry.do_close = true;
                             entry.set_state(StreamEntryState::Closed);
-                            return Some(SctpEvent::Close { id: entry.id });
+                            let stream_id = entry.id;
+                            let reset_pending = self.sctp_propagate_close(stream_id);
+                            return Some(SctpEvent::Close {
+                                id: stream_id,
+                                reset_pending,
+                            });
                         }
 
-                        // Continuing means we are opening the stream out-of-band. The error can happen
-                        // if both streams are declared and one side starts sending to the other
+                        // Continuing means we are adopting the live out-of-band stream the
+                        // remote created. It skipped the Ok branch above, so reliability
+                        // params haven't been applied to it yet.
+                        let mut stream = assoc.stream(entry.id).expect("stream that exists");
+                        if !entry.configure_reliability(&mut stream) {
+                            entry.set_state(StreamEntryState::Closed);
+                            let stream_id = entry.id;
+                            let reset_pending = self.sctp_propagate_close(stream_id);
+                            return Some(SctpEvent::Close {
+                                id: stream_id,
+                                reset_pending,
+                            });
+                        }
                     }
                     Err(e) => {
                         warn!("Opening stream {} failed: {:?}", entry.id, e);
                         entry.do_close = true;
                         entry.set_state(StreamEntryState::Closed);
-                        return Some(SctpEvent::Close { id: entry.id });
+                        let stream_id = entry.id;
+                        let reset_pending = self.sctp_propagate_close(stream_id);
+                        return Some(SctpEvent::Close {
+                            id: stream_id,
+                            reset_pending,
+                        });
                     }
                 }
 
@@ -857,7 +978,12 @@ impl RtcSctp {
 
             if entry.do_close && entry.state != StreamEntryState::Closed {
                 entry.set_state(StreamEntryState::Closed);
-                return Some(SctpEvent::Close { id: entry.id });
+                let stream_id = entry.id;
+                let reset_pending = self.sctp_propagate_close(stream_id);
+                return Some(SctpEvent::Close {
+                    id: stream_id,
+                    reset_pending,
+                });
             }
 
             let mut stream = match assoc.stream(entry.id) {
@@ -947,7 +1073,12 @@ impl RtcSctp {
                                     );
                                     entry.do_close = true;
                                     entry.set_state(StreamEntryState::Closed);
-                                    return Some(SctpEvent::Close { id: entry.id });
+                                    let stream_id = entry.id;
+                                    let reset_pending = self.sctp_propagate_close(stream_id);
+                                    return Some(SctpEvent::Close {
+                                        id: stream_id,
+                                        reset_pending,
+                                    });
                                 }
                             }
                         }
@@ -983,11 +1114,36 @@ impl RtcSctp {
             }
         }
 
+        // Reset completions are reported last. Reaching here means the entry loop had
+        // no `Close` left to emit, so the close for a released id has been delivered.
+        if let Some(id) = self.reset_complete.pop_front() {
+            return Some(SctpEvent::StreamResetComplete { id });
+        }
+
         None
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.assoc.as_mut().and_then(|a| a.poll_timeout())
+        let assoc_timeout = self.assoc.as_mut().and_then(|a| a.poll_timeout());
+
+        // Wakeup backstop for entries whose open_stream() is being retried.
+        //
+        // Normally no wakeup is needed: a blocked open re-attempts on the
+        // next do_poll(), and the packet that unblocks it (the peer's
+        // RECONFIG-RESPONSE or reset) itself triggers handle_input() and that poll.
+        //
+        // Returning a wakeup while any entry retries guarantees the open
+        // either resolves or fails within STREAM_OPEN_TIMEOUT.
+        let retry_timeout = self
+            .entries
+            .iter()
+            .any(|e| e.state == StreamEntryState::AwaitOpen && e.open_deadline.is_some())
+            .then(|| self.last_now + STREAM_OPEN_RETRY_INTERVAL);
+
+        match (assoc_timeout, retry_timeout) {
+            (Some(a), Some(r)) => Some(a.min(r)),
+            (a, r) => a.or(r),
+        }
     }
 
     pub fn push_back_transmit(&mut self, data: VecDeque<Vec<u8>>) {
@@ -1013,6 +1169,26 @@ impl RtcSctp {
             .iter()
             .find(|s| s.id == sctp_stream_id)
             .and_then(|s| s.config.as_ref())
+    }
+
+    /// Close the sctp stream to allow re-use of the same id.
+    ///
+    /// Returns whether a reset handshake is outstanding for `stream_id`.
+    fn sctp_propagate_close(&mut self, stream_id: u16) -> bool {
+        let did_reset = match self.assoc.as_mut().map(|assoc| assoc.stream(stream_id)) {
+            // `close()` only fails on the reset, which needs an established
+            // association. Closing a channel while the association is shutting down
+            // therefore queues nothing and no completion will ever arrive.
+            Some(Ok(mut stream)) => stream.close().is_ok(),
+            // No stream to reset.
+            _ => false,
+        };
+
+        if did_reset {
+            self.reset_pending.insert(stream_id);
+        }
+
+        self.reset_pending.contains(&stream_id)
     }
 
     #[cfg(test)]
@@ -1052,6 +1228,7 @@ fn stream_entry<'a>(
             state: initial_state,
             id,
             do_close: false,
+            open_deadline: None,
             buffered_threshold: BufferedThresholdConfig::Unconfigured,
         };
         entries.push(e);
@@ -1108,7 +1285,15 @@ impl fmt::Debug for SctpEvent {
                 .field("id", id)
                 .field("label", label)
                 .finish(),
-            Self::Close { id } => f.debug_struct("Close").field("id", id).finish(),
+            Self::Close { id, reset_pending } => f
+                .debug_struct("Close")
+                .field("id", id)
+                .field("reset_pending", reset_pending)
+                .finish(),
+            Self::StreamResetComplete { id } => f
+                .debug_struct("StreamResetComplete")
+                .field("id", id)
+                .finish(),
             Self::Data { id, binary, data } => f
                 .debug_struct("Data")
                 .field("id", id)
@@ -1266,9 +1451,10 @@ mod tests {
     }
 
     /// Regression test: when `assoc.open_stream()` returns `ErrStreamAlreadyExist`
-    /// for an in-band (DCEP) data channel, the entry must transition to Closed and
-    /// emit `SctpEvent::Close`. Before the fix, it stayed in `AwaitOpen` and retried
-    /// on every `do_poll()`, causing an infinite loop.
+    /// for an in-band (DCEP) data channel, the entry must eventually transition to
+    /// Closed and emit `SctpEvent::Close`. The error is transient (a reset
+    /// handshake could clear it), so the entry retries first — but bounded by
+    /// `STREAM_OPEN_TIMEOUT`, not the infinite loop this once was.
     #[test]
     fn err_stream_already_exist_in_band_returns_close() {
         let (mut client, _server) = connect_client_server();
@@ -1296,22 +1482,121 @@ mod tests {
             state: StreamEntryState::AwaitOpen,
             id: stream_id,
             do_close: false,
+            open_deadline: None,
             buffered_threshold: BufferedThresholdConfig::Unconfigured,
         });
 
-        // Before the fix: do_poll() would return None (continue skipped close handling)
-        // and the entry would remain in AwaitOpen, retrying forever.
-        // After the fix: do_poll() should return SctpEvent::Close.
+        // The first poll retries instead of failing (arms the deadline).
+        let event = client.do_poll();
+        assert!(
+            event.is_none(),
+            "expected retry (no event) for stream {stream_id}, got {event:?}"
+        );
+
+        // Past the deadline the open gives up and closes.
+        let later = Instant::now() + STREAM_OPEN_TIMEOUT + Duration::from_secs(1);
+        client.handle_timeout(later);
         let event = client.do_poll();
 
         assert!(
-            matches!(&event, Some(SctpEvent::Close { id }) if *id == stream_id),
+            matches!(&event, Some(SctpEvent::Close { id, .. }) if *id == stream_id),
             "expected SctpEvent::Close for stream {stream_id}, got {event:?}"
         );
 
         // Verify entry transitioned to Closed.
         let entry = client.entries.iter().find(|e| e.id == stream_id).unwrap();
         assert_eq!(entry.state, StreamEntryState::Closed);
+    }
+
+    #[test]
+    fn negotiated_reuse_does_not_report_open_for_old_closed_stream() {
+        let (mut client, _server) = connect_client_server();
+        let stream_id = 0;
+
+        let assoc = client.assoc.as_mut().unwrap();
+        let mut old = assoc
+            .open_stream(stream_id, PayloadProtocolIdentifier::Unknown)
+            .expect("old stream should open");
+        old.close().expect("old stream should start closing");
+
+        client.entries.push(StreamEntry {
+            config: Some(ChannelConfig {
+                label: "replacement".to_string(),
+                ordered: true,
+                reliability: Reliability::Reliable,
+                negotiated: Some(stream_id),
+                protocol: String::new(),
+            }),
+            state: StreamEntryState::AwaitOpen,
+            id: stream_id,
+            do_close: false,
+            open_deadline: None,
+            buffered_threshold: BufferedThresholdConfig::Unconfigured,
+        });
+
+        for _ in 0..10 {
+            match client.do_poll() {
+                Some(SctpEvent::Open { id, .. }) if id == stream_id => {
+                    panic!("replacement was reported open while the old stream still exists")
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+    }
+
+    #[test]
+    fn close_is_reported_before_reset_complete_when_events_are_batched() {
+        let now = Instant::now();
+        let (mut client, mut server) = connect_client_server();
+        let stream_id = 0;
+        let config = ChannelConfig {
+            label: "batched-close".to_string(),
+            negotiated: Some(stream_id),
+            ..Default::default()
+        };
+
+        client.open_stream(stream_id, config.clone());
+        server.open_stream(stream_id, config);
+        assert!(matches!(
+            client.do_poll(),
+            Some(SctpEvent::Open { id, .. }) if id == stream_id
+        ));
+        assert!(matches!(
+            server.do_poll(),
+            Some(SctpEvent::Open { id, .. }) if id == stream_id
+        ));
+
+        client.close_stream(stream_id);
+
+        // Move all reset packets in both directions without polling client
+        // application events. This batches Finished and ResetComplete in the
+        // association event queue, which is valid for a sans-I/O caller.
+        for _ in 0..4 {
+            while let Some(transmit) = client.poll_transmit() {
+                for packet in transmit_to_vec(transmit).unwrap() {
+                    server.handle_input(now, &packet);
+                }
+            }
+            while let Some(transmit) = server.poll_transmit() {
+                for packet in transmit_to_vec(transmit).unwrap() {
+                    client.handle_input(now, &packet);
+                }
+            }
+        }
+
+        for _ in 0..10 {
+            match client.do_poll() {
+                Some(SctpEvent::Close { id, .. }) if id == stream_id => return,
+                Some(SctpEvent::StreamResetComplete { id }) if id == stream_id => {
+                    panic!("ResetComplete was reported before Close")
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+
+        panic!("stream close was not reported");
     }
 
     /// Regression test: the DCEP-receiving side of an in-band channel must apply
