@@ -91,23 +91,6 @@ impl RtpHeader {
         buf[from + pad - 1] = pad as u8;
     }
 
-    #[allow(dead_code)] // unused since media packets are sent unpadded
-    pub(crate) fn pad_packet(
-        buf: &mut [u8],
-        header_len: usize,
-        body_len: usize,
-        block_size: usize,
-    ) -> usize {
-        let pad_len = block_size - body_len % block_size;
-        if pad_len == block_size {
-            return 0;
-        }
-
-        Self::do_pad(buf, header_len + body_len, pad_len);
-
-        pad_len
-    }
-
     /// Write a packet consisting entirely of padding and write.
     pub fn create_padding_packet(
         buf: &mut [u8],
