@@ -2,13 +2,13 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::media::{Direction, MediaKind};
-use str0m::rtp::rtcp::{ReportBlock, Rtcp};
 use str0m::rtp::RawPacket;
+use str0m::rtp::rtcp::{ReportBlock, Rtcp};
 use str0m::{Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
+use common::{TestRtc, init_crypto_default, init_log, negotiate, progress};
 
 /// Verify that a StreamTx responds to an incoming RRTR with a DLRR.
 ///
@@ -65,37 +65,55 @@ pub fn dlrr_response_to_rrtr() -> Result<(), RtcError> {
     }
 
     // R should have sent at least one RRTR.
-    let rrtr_count = r.events.iter().filter(|(_, e)| {
-        matches!(
-            e.as_raw_packet(),
-            Some(RawPacket::RtcpTx(Rtcp::ExtendedReport(xr)))
-                if xr.blocks.iter().any(|b| matches!(b, ReportBlock::Rrtr(_)))
-        )
-    }).count();
+    let rrtr_count = r
+        .events
+        .iter()
+        .filter(|(_, e)| {
+            matches!(
+                e.as_raw_packet(),
+                Some(RawPacket::RtcpTx(Rtcp::ExtendedReport(xr)))
+                    if xr.blocks.iter().any(|b| matches!(b, ReportBlock::Rrtr(_)))
+            )
+        })
+        .count();
     assert!(rrtr_count > 0, "R should have sent at least one RRTR");
 
     // L should have sent at least one DLRR in response.
-    let dlrr_reports: Vec<_> = l.events.iter().filter_map(|(_, e)| {
-        if let Some(RawPacket::RtcpTx(Rtcp::ExtendedReport(xr))) = e.as_raw_packet() {
-            if xr.blocks.iter().any(|b| matches!(b, ReportBlock::Dlrr(_))) {
-                return Some(xr);
+    let dlrr_reports: Vec<_> = l
+        .events
+        .iter()
+        .filter_map(|(_, e)| {
+            if let Some(RawPacket::RtcpTx(Rtcp::ExtendedReport(xr))) = e.as_raw_packet() {
+                if xr.blocks.iter().any(|b| matches!(b, ReportBlock::Dlrr(_))) {
+                    return Some(xr);
+                }
             }
-        }
-        None
-    }).collect();
-    assert!(!dlrr_reports.is_empty(), "L should have sent DLRR in response to RRTR");
+            None
+        })
+        .collect();
+    assert!(
+        !dlrr_reports.is_empty(),
+        "L should have sent DLRR in response to RRTR"
+    );
 
     // Verify the DLRR contains valid data.
-    let dlrr = dlrr_reports[0].blocks.iter().find_map(|b| match b {
-        ReportBlock::Dlrr(d) => Some(d),
-        _ => None,
-    }).unwrap();
+    let dlrr = dlrr_reports[0]
+        .blocks
+        .iter()
+        .find_map(|b| match b {
+            ReportBlock::Dlrr(d) => Some(d),
+            _ => None,
+        })
+        .unwrap();
     assert!(!dlrr.items.is_empty(), "DLRR should have at least one item");
     let item = &dlrr.items[0];
 
     // The last_rr_time field must be the middle 32 bits of the RRTR's NTP timestamp.
     // Verify it's non-zero and that R received the same value back (round-trip integrity).
-    assert!(item.last_rr_time != 0, "DLRR last_rr_time should be non-zero");
+    assert!(
+        item.last_rr_time != 0,
+        "DLRR last_rr_time should be non-zero"
+    );
     assert!(item.last_rr_delay != 0, "DLRR delay should be non-zero");
 
     // Verify R actually received the DLRR that L sent.
@@ -112,7 +130,10 @@ pub fn dlrr_response_to_rrtr() -> Result<(), RtcError> {
             false
         }
     });
-    assert!(r_received_dlrr, "R should have received the DLRR with matching last_rr_time");
+    assert!(
+        r_received_dlrr,
+        "R should have received the DLRR with matching last_rr_time"
+    );
 
     Ok(())
 }

@@ -1030,7 +1030,11 @@ impl StreamTx {
     // DLRR carrying its LRR and the delay (1/65536 s units) since we received it, so the
     // remote can compute RTT / a capture-clock offset.
     fn create_dlrr(&self, now: Instant) -> Option<ExtendedReport> {
-        let LastRrtr { ssrc, lrr, received_at } = self.last_rrtr?;
+        let LastRrtr {
+            ssrc,
+            lrr,
+            received_at,
+        } = self.last_rrtr?;
 
         let delay = now.saturating_duration_since(received_at);
         let last_rr_delay = ((delay.as_micros() * 65_536) / 1_000_000) as u32;
