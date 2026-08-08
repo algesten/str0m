@@ -288,12 +288,15 @@ impl Session {
             &mut self.feedback_tx,
         );
 
-        if do_nack {
-            self.last_nack = now;
-        }
-
-        // Flush any pending RRTRs as a single DLRR ExtendedReport.
-        if !self.pending_rrtrs.is_empty() {
+        // Flush any pending RRTRs as a DLRR alongside the Sender Report compound packet.
+        // We piggyback on the SR cadence so the DLRR doesn't generate extra standalone
+        // RTCP traffic that could perturb bandwidth estimation.
+        if !self.pending_rrtrs.is_empty()
+            && self
+                .feedback_tx
+                .iter()
+                .any(|r| matches!(r, Rtcp::SenderReport(_)))
+        {
             let items: Vec<DlrrItem> = self
                 .pending_rrtrs
                 .iter()
@@ -315,6 +318,10 @@ impl Session {
                 }));
 
             self.pending_rrtrs.clear();
+        }
+
+        if do_nack {
+            self.last_nack = now;
         }
 
         self.update_queue_state(now);
@@ -728,7 +735,7 @@ impl Session {
 
             if let RtcpFb::Rrtr((rrtr, ssrc)) = fb {
                 // DLRR responder (RFC 3611 §4.5): store the remote's RRTR so we can
-                // reply with a DLRR on the next timeout, letting the remote compute RTT.
+                // reply with a DLRR, letting the remote compute RTT.
                 let lrr = (rrtr.ntp_time.as_ntp_64() >> 16) as u32;
                 self.pending_rrtrs.insert(ssrc, LastRrtr { lrr, received_at: now });
                 continue;
