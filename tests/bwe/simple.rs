@@ -69,6 +69,10 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
         description: "Cellular conditions",
         config: NetemConfig::cellular().seed(42),
     };
+    plan[2] = Step::Run {
+        description: "Wait for mid",
+        duration: Duration::from_secs(40),
+    };
 
     let (mut l, mut r) = connect_with_bwe(LAYER_LOW, LAYER_MID);
 

@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::config_mod::RtcpReportIntervals;
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
@@ -14,9 +15,9 @@ use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
 use crate::util::{InstantExt, SystemTimeExt};
 use crate::util::{already_happened, calculate_rtt};
 
+use super::RtpPacket;
 use super::StreamPaused;
 use super::register::ReceiverRegister;
-use super::{RtpPacket, rr_interval};
 
 /// Incoming encoded stream.
 ///
@@ -239,9 +240,12 @@ impl StreamRx {
         self.suppress_nack = suppress;
     }
 
-    pub(crate) fn receiver_report_at(&self) -> Instant {
-        let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
-        self.last_receiver_report + rr_interval(is_audio)
+    fn is_audio(&self) -> bool {
+        self.rtx.is_none() // this is maybe not correct, but it's all we got.
+    }
+
+    pub(crate) fn receiver_report_at(&self, intervals: RtcpReportIntervals) -> Instant {
+        self.last_receiver_report + intervals.for_audio(self.is_audio())
     }
 
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
@@ -558,12 +562,12 @@ impl StreamRx {
         x
     }
 
-    pub(crate) fn need_rr(&self, now: Instant) -> bool {
+    pub(crate) fn need_rr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
         if self.ssrc.is_probe() {
             return false;
         }
 
-        now >= self.receiver_report_at()
+        now >= self.receiver_report_at(intervals)
     }
 
     pub(crate) fn create_rr_and_update(
@@ -888,5 +892,20 @@ mod tests {
             "expected repaired media time to move forward"
         );
         assert!(!stream.paused);
+    }
+
+    #[test]
+    fn receiver_report_uses_supplied_intervals() {
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let now = Instant::now();
+        stream.last_receiver_report = now;
+
+        assert_eq!(
+            stream.receiver_report_at(RtcpReportIntervals {
+                audio: Duration::from_millis(750),
+                video: Duration::from_millis(500),
+            }),
+            now + Duration::from_millis(750)
+        );
     }
 }

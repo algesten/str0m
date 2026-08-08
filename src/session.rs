@@ -7,6 +7,7 @@ use crate::Event;
 use crate::bwe::BweKind;
 use crate::bwe_::Bwe;
 use crate::config::KeyingMaterial;
+use crate::config_mod::RtcpReportIntervals;
 use crate::crypto::CryptoProvider;
 use crate::crypto::dtls::SrtpProfile;
 use crate::format::CodecConfig;
@@ -31,7 +32,7 @@ use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
-use crate::streams::{RtpPacket, Streams};
+use crate::streams::{RtpPacket, StreamTimeoutConfig, Streams};
 use crate::util::{Soonest, SystemTimeExt, already_happened, not_happening};
 use crate::{Reason, net};
 use crate::{RtcConfig, RtcError};
@@ -71,6 +72,7 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
+    intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
     pub send_buffer_video: usize,
 
@@ -170,6 +172,7 @@ impl Session {
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
+            intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
             exts: config.exts.clone(),
@@ -278,7 +281,10 @@ impl Session {
             sender_ssrc,
             do_nack,
             &self.medias,
-            &self.codec_config,
+            StreamTimeoutConfig {
+                codecs: &self.codec_config,
+                intervals: self.intervals,
+            },
             &mut self.feedback_tx,
         );
 
@@ -1057,7 +1063,7 @@ impl Session {
     }
 
     fn regular_feedback_at(&self) -> Option<Instant> {
-        self.streams.regular_feedback_at()
+        self.streams.regular_feedback_at(self.intervals)
     }
 
     fn paused_at(&self) -> Option<Instant> {
