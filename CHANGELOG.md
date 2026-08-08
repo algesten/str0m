@@ -6,10 +6,14 @@
   * Fix small padding invisible to the pacer #1020
   * Fix H.264 negotiation: accept a negotiable (downgradable) level and recognize the Constrained High profile #1016
   * Expose the latest send queue information on `StreamTx` #1005
+  * Expose locally calculated interarrival jitter on `MediaIngressStats` #997
   * Fix VP9 non-flexible SS advertising a bogus R=0 GOF for single-layer streams #999
+  * Fix AV1 depacketizer overflow on unsized OBU aggregation #1002
   * Support G722 audio codec (16 kHz codec with 8 kHz RTP clock per RFC 3551) #992
   * Support RFC 3389 Comfort Noise payloads #1013
   * Apply reliability parameters to a DCEP-receiving in-band channel #1004
+  * Normalize `Rtc` shutdown and drain RTCP, SCTP, and DTLS close output consistently #1000
+  * Fix an infinite loop when DTLS timeout handling fails #1017
 
 # 0.21.0
 
