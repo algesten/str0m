@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Stop padding media packets, no crypto need it #1023
   * Reset SCTP streams when closing data channels and safely reuse stream IDs #1010
   * Fix small padding invisible to the pacer #1020
   * Fix H.264 negotiation: accept a negotiable (downgradable) level and recognize the Constrained High profile #1016
