@@ -396,15 +396,9 @@ impl Streams {
         None
     }
 
-    pub(crate) fn regular_feedback_at(&self, intervals: RtcpReportIntervals) -> Option<Instant> {
-        let r = self
-            .streams_rx
-            .values()
-            .map(|s| s.receiver_report_at(intervals));
-        let s = self
-            .streams_tx
-            .values()
-            .map(|s| s.sender_report_at(intervals));
+    pub(crate) fn regular_feedback_at(&self, i: RtcpReportIntervals) -> Option<Instant> {
+        let r = self.streams_rx.values().map(|s| s.receiver_report_at(i));
+        let s = self.streams_tx.values().map(|s| s.sender_report_at(i));
         r.chain(s).min()
     }
 
