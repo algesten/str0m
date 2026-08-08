@@ -150,7 +150,12 @@ impl Session {
         Session {
             id,
             medias: vec![],
-            streams: Streams::new(enable_stats, *config.mtu.end()),
+            streams: Streams::new(
+                enable_stats,
+                *config.mtu.end(),
+                config.rtcp_report_interval_audio,
+                config.rtcp_report_interval_video,
+            ),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,

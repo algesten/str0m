@@ -42,6 +42,8 @@ pub struct RtcConfig {
     pub(crate) codec_config: CodecConfig,
     pub(crate) exts: ExtensionMap,
     pub(crate) stats_interval: Option<Duration>,
+    pub(crate) rtcp_report_interval_audio: Duration,
+    pub(crate) rtcp_report_interval_video: Duration,
     pub(crate) bwe_config: Option<BweConfig>,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
@@ -385,6 +387,42 @@ impl RtcConfig {
         self.stats_interval
     }
 
+    /// Sets the interval between RTCP sender/receiver reports for audio streams.
+    ///
+    /// Defaults to 5 seconds.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `interval` is zero.
+    pub fn set_rtcp_report_interval_audio(mut self, interval: Duration) -> Self {
+        assert!(!interval.is_zero());
+        self.rtcp_report_interval_audio = interval;
+        self
+    }
+
+    /// Returns the interval between RTCP sender/receiver reports for audio streams.
+    pub fn rtcp_report_interval_audio(&self) -> Duration {
+        self.rtcp_report_interval_audio
+    }
+
+    /// Sets the interval between RTCP sender/receiver reports for video streams.
+    ///
+    /// Defaults to 1 second.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `interval` is zero.
+    pub fn set_rtcp_report_interval_video(mut self, interval: Duration) -> Self {
+        assert!(!interval.is_zero());
+        self.rtcp_report_interval_video = interval;
+        self
+    }
+
+    /// Returns the interval between RTCP sender/receiver reports for video streams.
+    pub fn rtcp_report_interval_video(&self) -> Duration {
+        self.rtcp_report_interval_video
+    }
+
     /// Enables estimation of available bandwidth (BWE).
     ///
     /// None disables the BWE. This is an estimation of the send bandwidth, not receive.
@@ -712,6 +750,8 @@ impl Default for RtcConfig {
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
             stats_interval: None,
+            rtcp_report_interval_audio: Duration::from_secs(5),
+            rtcp_report_interval_video: Duration::from_secs(1),
             bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,

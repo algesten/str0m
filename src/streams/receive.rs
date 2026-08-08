@@ -14,9 +14,9 @@ use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
 use crate::util::{InstantExt, SystemTimeExt};
 use crate::util::{already_happened, calculate_rtt};
 
+use super::RtpPacket;
 use super::StreamPaused;
 use super::register::ReceiverRegister;
-use super::{RtpPacket, rr_interval};
 
 /// Incoming encoded stream.
 ///
@@ -239,9 +239,12 @@ impl StreamRx {
         self.suppress_nack = suppress;
     }
 
-    pub(crate) fn receiver_report_at(&self) -> Instant {
-        let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
-        self.last_receiver_report + rr_interval(is_audio)
+    pub(crate) fn is_audio(&self) -> bool {
+        self.rtx.is_none() // this is maybe not correct, but it's all we got.
+    }
+
+    pub(crate) fn receiver_report_at(&self, interval: Duration) -> Instant {
+        self.last_receiver_report + interval
     }
 
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
@@ -558,12 +561,12 @@ impl StreamRx {
         x
     }
 
-    pub(crate) fn need_rr(&self, now: Instant) -> bool {
+    pub(crate) fn need_rr(&self, now: Instant, interval: Duration) -> bool {
         if self.ssrc.is_probe() {
             return false;
         }
 
-        now >= self.receiver_report_at()
+        now >= self.receiver_report_at(interval)
     }
 
     pub(crate) fn create_rr_and_update(
@@ -888,5 +891,17 @@ mod tests {
             "expected repaired media time to move forward"
         );
         assert!(!stream.paused);
+    }
+
+    #[test]
+    fn receiver_report_uses_supplied_interval() {
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let now = Instant::now();
+        stream.last_receiver_report = now;
+
+        assert_eq!(
+            stream.receiver_report_at(Duration::from_millis(750)),
+            now + Duration::from_millis(750)
+        );
     }
 }

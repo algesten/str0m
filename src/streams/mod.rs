@@ -30,21 +30,6 @@ mod send_stats;
 
 pub(crate) use send::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 
-// Time between regular receiver reports.
-// https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
-// Should technically be 4 seconds according to spec, but libWebRTC
-// expects video to be every second, and audio every 5 seconds.
-const RR_INTERVAL_VIDEO: Duration = Duration::from_millis(1000);
-const RR_INTERVAL_AUDIO: Duration = Duration::from_millis(5000);
-
-fn rr_interval(audio: bool) -> Duration {
-    if audio {
-        RR_INTERVAL_AUDIO
-    } else {
-        RR_INTERVAL_VIDEO
-    }
-}
-
 /// Packet of RTP data.
 ///
 /// As emitted by [`Event::RtpPacket`][crate::Event::RtpPacket] when using rtp mode.
@@ -163,6 +148,12 @@ pub(crate) struct Streams {
     /// Threshold above which an outgoing RTP packet triggers an MTU warning. Used as a
     /// hard cap when selecting RTX cache entries for spurious padding.
     mtu_warn: usize,
+
+    /// Time between regular RTCP sender/receiver reports for audio streams.
+    rtcp_report_interval_audio: Duration,
+
+    /// Time between regular RTCP sender/receiver reports for video streams.
+    rtcp_report_interval_video: Duration,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -179,7 +170,12 @@ struct RxLookup {
 }
 
 impl Streams {
-    pub(crate) fn new(enable_stats: bool, mtu_warn: usize) -> Self {
+    pub(crate) fn new(
+        enable_stats: bool,
+        mtu_warn: usize,
+        rtcp_report_interval_audio: Duration,
+        rtcp_report_interval_video: Duration,
+    ) -> Self {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
@@ -190,6 +186,16 @@ impl Streams {
             any_nack_active: None,
             enable_stats,
             mtu_warn,
+            rtcp_report_interval_audio,
+            rtcp_report_interval_video,
+        }
+    }
+
+    fn rtcp_report_interval(&self, audio: bool) -> Duration {
+        if audio {
+            self.rtcp_report_interval_audio
+        } else {
+            self.rtcp_report_interval_video
         }
     }
 
@@ -406,8 +412,14 @@ impl Streams {
     }
 
     pub(crate) fn regular_feedback_at(&self) -> Option<Instant> {
-        let r = self.streams_rx.values().map(|s| s.receiver_report_at());
-        let s = self.streams_tx.values().map(|s| s.sender_report_at());
+        let r = self.streams_rx.values().map(|s| {
+            let interval = self.rtcp_report_interval(s.is_audio());
+            s.receiver_report_at(interval)
+        });
+        let s = self.streams_tx.values().map(|s| {
+            let interval = self.rtcp_report_interval(s.is_audio());
+            s.sender_report_at(interval)
+        });
         r.chain(s).min()
     }
 
@@ -438,7 +450,8 @@ impl Streams {
     ) {
         self.mids_to_report.clear(); // Clear for checking StreamRx.
         for stream in self.streams_rx.values() {
-            if stream.need_rr(now) {
+            let interval = self.rtcp_report_interval(stream.is_audio());
+            if stream.need_rr(now, interval) {
                 self.mids_to_report.push(stream.mid());
             }
         }
@@ -461,7 +474,8 @@ impl Streams {
 
         self.mids_to_report.clear(); // start over for StreamTx.
         for stream in self.streams_tx.values() {
-            if stream.need_sr(now) {
+            let interval = self.rtcp_report_interval(stream.is_audio());
+            if stream.need_sr(now, interval) {
                 self.mids_to_report.push(stream.mid());
             }
         }
