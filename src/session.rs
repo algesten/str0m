@@ -26,12 +26,13 @@ use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
 use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb};
+use crate::rtp_::{Dlrr, DlrrItem, ExtendedReport, ReportBlock};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
-use crate::util::{Soonest, already_happened, not_happening};
+use crate::util::{Soonest, SystemTimeExt, already_happened, not_happening};
 use crate::{Reason, net};
 use crate::{RtcConfig, RtcError};
 
@@ -42,6 +43,17 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Last RRTR (Receiver Reference Time Report, RFC 3611 §4.4) received from a remote SSRC.
+/// Stored at session level so we can respond with a DLRR regardless of which local stream
+/// the remote is observing.
+#[derive(Debug, Clone, Copy)]
+struct LastRrtr {
+    /// Middle 32 bits of the RRTR NTP timestamp (compact NTP / LRR).
+    lrr: u32,
+    /// When the RRTR arrived locally.
+    received_at: Instant,
+}
 
 pub(crate) struct Session {
     id: SessionId,
@@ -115,6 +127,10 @@ pub(crate) struct Session {
     feedback_rx: VecDeque<Rtcp>,
     rtp_closing: bool,
 
+    /// Pending RRTRs from remote SSRCs, keyed by the sender's SSRC.
+    /// Flushed as a single DLRR ExtendedReport on the next handle_timeout.
+    pending_rrtrs: HashMap<Ssrc, LastRrtr>,
+
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
     // Pending application-specific feedback (PSFB FMT=15) messages to emit as events.
@@ -186,6 +202,7 @@ impl Session {
             feedback_tx: VecDeque::new(),
             feedback_rx: VecDeque::new(),
             rtp_closing: false,
+            pending_rrtrs: HashMap::new(),
             raw_packets: if config.enable_raw_packets {
                 Some(VecDeque::new())
             } else {
@@ -267,6 +284,31 @@ impl Session {
 
         if do_nack {
             self.last_nack = now;
+        }
+
+        // Flush any pending RRTRs as a single DLRR ExtendedReport.
+        if !self.pending_rrtrs.is_empty() {
+            let items: Vec<DlrrItem> = self
+                .pending_rrtrs
+                .iter()
+                .map(|(&ssrc, &rrtr)| {
+                    let delay = now.saturating_duration_since(rrtr.received_at);
+                    let last_rr_delay = ((delay.as_micros() * 65_536) / 1_000_000) as u32;
+                    DlrrItem {
+                        ssrc,
+                        last_rr_time: rrtr.lrr,
+                        last_rr_delay,
+                    }
+                })
+                .collect();
+
+            self.feedback_tx
+                .push_back(Rtcp::ExtendedReport(ExtendedReport {
+                    ssrc: sender_ssrc,
+                    blocks: vec![ReportBlock::Dlrr(Dlrr { items })],
+                }));
+
+            self.pending_rrtrs.clear();
         }
 
         self.update_queue_state(now);
@@ -675,6 +717,14 @@ impl Session {
                 // The funky thing about TWCC reports is that they are never stapled
                 // together with other RTCP packet. If they were though, we want to
                 // handle more packets.
+                continue;
+            }
+
+            if let RtcpFb::Rrtr((rrtr, ssrc)) = fb {
+                // DLRR responder (RFC 3611 §4.5): store the remote's RRTR so we can
+                // reply with a DLRR on the next timeout, letting the remote compute RTT.
+                let lrr = (rrtr.ntp_time.as_ntp_64() >> 16) as u32;
+                self.pending_rrtrs.insert(ssrc, LastRrtr { lrr, received_at: now });
                 continue;
             }
 

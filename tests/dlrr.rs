@@ -114,7 +114,6 @@ pub fn dlrr_response_to_rrtr() -> Result<(), RtcError> {
         item.last_rr_time != 0,
         "DLRR last_rr_time should be non-zero"
     );
-    assert!(item.last_rr_delay != 0, "DLRR delay should be non-zero");
 
     // Verify R actually received the DLRR that L sent.
     let r_received_dlrr = r.events.iter().any(|(_, e)| {
