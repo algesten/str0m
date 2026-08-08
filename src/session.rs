@@ -737,7 +737,13 @@ impl Session {
                 // DLRR responder (RFC 3611 §4.5): store the remote's RRTR so we can
                 // reply with a DLRR, letting the remote compute RTT.
                 let lrr = (rrtr.ntp_time.as_ntp_64() >> 16) as u32;
-                self.pending_rrtrs.insert(ssrc, LastRrtr { lrr, received_at: now });
+                self.pending_rrtrs.insert(
+                    ssrc,
+                    LastRrtr {
+                        lrr,
+                        received_at: now,
+                    },
+                );
                 continue;
             }
 
