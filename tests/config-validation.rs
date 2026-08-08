@@ -237,6 +237,43 @@ fn config_stats_interval_custom() -> Result<(), RtcError> {
     Ok(())
 }
 
+#[test]
+fn config_rtcp_report_intervals() {
+    let default_config = RtcConfig::new();
+    assert_eq!(
+        default_config.rtcp_report_interval_audio(),
+        Duration::from_secs(5)
+    );
+    assert_eq!(
+        default_config.rtcp_report_interval_video(),
+        Duration::from_secs(1)
+    );
+
+    let config = RtcConfig::new()
+        .set_rtcp_report_interval_audio(Duration::from_millis(750))
+        .set_rtcp_report_interval_video(Duration::from_millis(500));
+    assert_eq!(
+        config.rtcp_report_interval_audio(),
+        Duration::from_millis(750)
+    );
+    assert_eq!(
+        config.rtcp_report_interval_video(),
+        Duration::from_millis(500)
+    );
+}
+
+#[test]
+#[should_panic]
+fn config_rejects_zero_audio_rtcp_report_interval() {
+    RtcConfig::new().set_rtcp_report_interval_audio(Duration::ZERO);
+}
+
+#[test]
+#[should_panic]
+fn config_rejects_zero_video_rtcp_report_interval() {
+    RtcConfig::new().set_rtcp_report_interval_video(Duration::ZERO);
+}
+
 /// Test set_stats_interval(None) produces no stats events.
 #[test]
 fn config_stats_disabled() -> Result<(), RtcError> {

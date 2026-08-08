@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::config_mod::RtcpReportIntervals;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media, SenderFeedback};
@@ -30,19 +31,9 @@ mod send_stats;
 
 pub(crate) use send::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 
-// Time between regular receiver reports.
-// https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
-// Should technically be 4 seconds according to spec, but libWebRTC
-// expects video to be every second, and audio every 5 seconds.
-const RR_INTERVAL_VIDEO: Duration = Duration::from_millis(1000);
-const RR_INTERVAL_AUDIO: Duration = Duration::from_millis(5000);
-
-fn rr_interval(audio: bool) -> Duration {
-    if audio {
-        RR_INTERVAL_AUDIO
-    } else {
-        RR_INTERVAL_VIDEO
-    }
+pub(crate) struct StreamTimeoutConfig<'a> {
+    pub(crate) codecs: &'a CodecConfig,
+    pub(crate) intervals: RtcpReportIntervals,
 }
 
 /// Packet of RTP data.
@@ -405,9 +396,9 @@ impl Streams {
         None
     }
 
-    pub(crate) fn regular_feedback_at(&self) -> Option<Instant> {
-        let r = self.streams_rx.values().map(|s| s.receiver_report_at());
-        let s = self.streams_tx.values().map(|s| s.sender_report_at());
+    pub(crate) fn regular_feedback_at(&self, i: RtcpReportIntervals) -> Option<Instant> {
+        let r = self.streams_rx.values().map(|s| s.receiver_report_at(i));
+        let s = self.streams_tx.values().map(|s| s.sender_report_at(i));
         r.chain(s).min()
     }
 
@@ -433,12 +424,14 @@ impl Streams {
         sender_ssrc: Ssrc,
         do_nack: bool,
         medias: &[Media],
-        config: &CodecConfig,
+        config: StreamTimeoutConfig<'_>,
         feedback: &mut VecDeque<Rtcp>,
     ) {
+        let StreamTimeoutConfig { codecs, intervals } = config;
+
         self.mids_to_report.clear(); // Clear for checking StreamRx.
         for stream in self.streams_rx.values() {
-            if stream.need_rr(now) {
+            if stream.need_rr(now, intervals) {
                 self.mids_to_report.push(stream.mid());
             }
         }
@@ -461,7 +454,7 @@ impl Streams {
 
         self.mids_to_report.clear(); // start over for StreamTx.
         for stream in self.streams_tx.values() {
-            if stream.need_sr(now) {
+            if stream.need_sr(now, intervals) {
                 self.mids_to_report.push(stream.mid());
             }
         }
@@ -477,7 +470,7 @@ impl Streams {
             // Finding the first (main) PT that also has RTX for the Media is expensive,
             // this closure is run only when needed.
             // The unwrap is okay because we cannot have StreamTx with a Mid without the corresponding Media.
-            let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
+            let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), codecs);
 
             stream.handle_timeout(now, get_media);
         }

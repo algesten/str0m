@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::config_mod::RtcpReportIntervals;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
@@ -25,10 +26,10 @@ use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
 use crate::util::{InstantExt, already_happened, not_happening};
 
+use super::RtpPacket;
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
 use super::send_stats::StreamTxStats;
-use super::{RtpPacket, rr_interval};
 
 /// The smallest size of padding for which we attempt to use a spurious resend. For padding
 /// requests smaller than this we use blank packets instead.
@@ -892,12 +893,16 @@ impl StreamTx {
         })
     }
 
-    pub(crate) fn sender_report_at(&self) -> Instant {
-        let Some(kind) = self.kind else {
+    fn is_audio(&self) -> bool {
+        self.kind.is_some_and(|kind| kind.is_audio())
+    }
+
+    pub(crate) fn sender_report_at(&self, intervals: RtcpReportIntervals) -> Instant {
+        if self.kind.is_none() {
             // First handle_timeout sets the kind. No sender report until then.
             return not_happening();
-        };
-        self.last_sender_report + rr_interval(kind.is_audio())
+        }
+        self.last_sender_report + intervals.for_audio(self.is_audio())
     }
 
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
@@ -973,8 +978,8 @@ impl StreamTx {
         Some(())
     }
 
-    pub(crate) fn need_sr(&self, now: Instant) -> bool {
-        now >= self.sender_report_at()
+    pub(crate) fn need_sr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
+        now >= self.sender_report_at(intervals)
     }
 
     pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
@@ -1305,5 +1310,21 @@ mod test {
 
         assert_eq!(snapshot.byte_size, 240);
         assert_eq!(snapshot.packet_count, 1);
+    }
+
+    #[test]
+    fn sender_report_uses_supplied_intervals() {
+        let mut stream = StreamTx::new(42.into(), None, MidRid(Mid::from("0"), None), false, 1200);
+        let now = Instant::now();
+        stream.kind = Some(MediaKind::Audio);
+        stream.last_sender_report = now;
+
+        assert_eq!(
+            stream.sender_report_at(RtcpReportIntervals {
+                audio: Duration::from_millis(750),
+                video: Duration::from_millis(500),
+            }),
+            now + Duration::from_millis(750)
+        );
     }
 }
