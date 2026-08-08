@@ -60,7 +60,7 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
-    rtcp_report_intervals: RtcpReportIntervals,
+    intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
     pub send_buffer_video: usize,
 
@@ -156,7 +156,7 @@ impl Session {
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
-            rtcp_report_intervals: config.rtcp_report_intervals,
+            intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
             exts: config.exts.clone(),
@@ -266,7 +266,7 @@ impl Session {
             &self.medias,
             StreamTimeoutConfig {
                 codecs: &self.codec_config,
-                report_intervals: self.rtcp_report_intervals,
+                intervals: self.intervals,
             },
             &mut self.feedback_tx,
         );
@@ -1013,7 +1013,7 @@ impl Session {
     }
 
     fn regular_feedback_at(&self) -> Option<Instant> {
-        self.streams.regular_feedback_at(self.rtcp_report_intervals)
+        self.streams.regular_feedback_at(self.intervals)
     }
 
     fn paused_at(&self) -> Option<Instant> {

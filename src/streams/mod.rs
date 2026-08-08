@@ -33,11 +33,15 @@ pub(crate) use send::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 
 pub(crate) struct StreamTimeoutConfig<'a> {
     pub(crate) codecs: &'a CodecConfig,
-    pub(crate) report_intervals: RtcpReportIntervals,
+    pub(crate) intervals: RtcpReportIntervals,
 }
 
-fn rtcp_report_interval(audio: bool, config: RtcpReportIntervals) -> Duration {
-    if audio { config.audio } else { config.video }
+fn rtcp_report_interval(audio: bool, intervals: RtcpReportIntervals) -> Duration {
+    if audio {
+        intervals.audio
+    } else {
+        intervals.video
+    }
 }
 
 /// Packet of RTP data.
@@ -400,13 +404,13 @@ impl Streams {
         None
     }
 
-    pub(crate) fn regular_feedback_at(&self, config: RtcpReportIntervals) -> Option<Instant> {
+    pub(crate) fn regular_feedback_at(&self, intervals: RtcpReportIntervals) -> Option<Instant> {
         let r = self.streams_rx.values().map(|s| {
-            let interval = rtcp_report_interval(s.is_audio(), config);
+            let interval = rtcp_report_interval(s.is_audio(), intervals);
             s.receiver_report_at(interval)
         });
         let s = self.streams_tx.values().map(|s| {
-            let interval = rtcp_report_interval(s.is_audio(), config);
+            let interval = rtcp_report_interval(s.is_audio(), intervals);
             s.sender_report_at(interval)
         });
         r.chain(s).min()
@@ -437,14 +441,11 @@ impl Streams {
         config: StreamTimeoutConfig<'_>,
         feedback: &mut VecDeque<Rtcp>,
     ) {
-        let StreamTimeoutConfig {
-            codecs,
-            report_intervals,
-        } = config;
+        let StreamTimeoutConfig { codecs, intervals } = config;
 
         self.mids_to_report.clear(); // Clear for checking StreamRx.
         for stream in self.streams_rx.values() {
-            let interval = rtcp_report_interval(stream.is_audio(), report_intervals);
+            let interval = rtcp_report_interval(stream.is_audio(), intervals);
             if stream.need_rr(now, interval) {
                 self.mids_to_report.push(stream.mid());
             }
@@ -468,7 +469,7 @@ impl Streams {
 
         self.mids_to_report.clear(); // start over for StreamTx.
         for stream in self.streams_tx.values() {
-            let interval = rtcp_report_interval(stream.is_audio(), report_intervals);
+            let interval = rtcp_report_interval(stream.is_audio(), intervals);
             if stream.need_sr(now, interval) {
                 self.mids_to_report.push(stream.mid());
             }
