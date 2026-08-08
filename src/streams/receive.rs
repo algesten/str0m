@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::config_mod::RtcpReportIntervals;
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
@@ -239,12 +240,12 @@ impl StreamRx {
         self.suppress_nack = suppress;
     }
 
-    pub(crate) fn is_audio(&self) -> bool {
+    fn is_audio(&self) -> bool {
         self.rtx.is_none() // this is maybe not correct, but it's all we got.
     }
 
-    pub(crate) fn receiver_report_at(&self, interval: Duration) -> Instant {
-        self.last_receiver_report + interval
+    pub(crate) fn receiver_report_at(&self, intervals: RtcpReportIntervals) -> Instant {
+        self.last_receiver_report + intervals.for_audio(self.is_audio())
     }
 
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
@@ -561,12 +562,12 @@ impl StreamRx {
         x
     }
 
-    pub(crate) fn need_rr(&self, now: Instant, interval: Duration) -> bool {
+    pub(crate) fn need_rr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
         if self.ssrc.is_probe() {
             return false;
         }
 
-        now >= self.receiver_report_at(interval)
+        now >= self.receiver_report_at(intervals)
     }
 
     pub(crate) fn create_rr_and_update(
@@ -894,13 +895,16 @@ mod tests {
     }
 
     #[test]
-    fn receiver_report_uses_supplied_interval() {
+    fn receiver_report_uses_supplied_intervals() {
         let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
         let now = Instant::now();
         stream.last_receiver_report = now;
 
         assert_eq!(
-            stream.receiver_report_at(Duration::from_millis(750)),
+            stream.receiver_report_at(RtcpReportIntervals {
+                audio: Duration::from_millis(750),
+                video: Duration::from_millis(500),
+            }),
             now + Duration::from_millis(750)
         );
     }

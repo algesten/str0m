@@ -67,6 +67,12 @@ pub(crate) struct RtcpReportIntervals {
     pub(crate) video: Duration,
 }
 
+impl RtcpReportIntervals {
+    pub(crate) fn for_audio(self, audio: bool) -> Duration {
+        if audio { self.audio } else { self.video }
+    }
+}
+
 impl RtcConfig {
     /// Creates a new default config.
     pub fn new() -> Self {

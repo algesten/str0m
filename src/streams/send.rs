@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::config_mod::RtcpReportIntervals;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
@@ -892,16 +893,16 @@ impl StreamTx {
         })
     }
 
-    pub(crate) fn is_audio(&self) -> bool {
+    fn is_audio(&self) -> bool {
         self.kind.is_some_and(|kind| kind.is_audio())
     }
 
-    pub(crate) fn sender_report_at(&self, interval: Duration) -> Instant {
+    pub(crate) fn sender_report_at(&self, intervals: RtcpReportIntervals) -> Instant {
         if self.kind.is_none() {
             // First handle_timeout sets the kind. No sender report until then.
             return not_happening();
         }
-        self.last_sender_report + interval
+        self.last_sender_report + intervals.for_audio(self.is_audio())
     }
 
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
@@ -977,8 +978,8 @@ impl StreamTx {
         Some(())
     }
 
-    pub(crate) fn need_sr(&self, now: Instant, interval: Duration) -> bool {
-        now >= self.sender_report_at(interval)
+    pub(crate) fn need_sr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
+        now >= self.sender_report_at(intervals)
     }
 
     pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
@@ -1312,14 +1313,17 @@ mod test {
     }
 
     #[test]
-    fn sender_report_uses_supplied_interval() {
+    fn sender_report_uses_supplied_intervals() {
         let mut stream = StreamTx::new(42.into(), None, MidRid(Mid::from("0"), None), false, 1200);
         let now = Instant::now();
         stream.kind = Some(MediaKind::Audio);
         stream.last_sender_report = now;
 
         assert_eq!(
-            stream.sender_report_at(Duration::from_millis(750)),
+            stream.sender_report_at(RtcpReportIntervals {
+                audio: Duration::from_millis(750),
+                video: Duration::from_millis(500),
+            }),
             now + Duration::from_millis(750)
         );
     }
