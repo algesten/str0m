@@ -1036,7 +1036,7 @@ dependencies = [
 
 [[package]]
 name = "is"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "crc",
  "hmac",
@@ -1933,7 +1933,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "str0m"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "_str0m_test",
  "arrayvec",
@@ -1968,7 +1968,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-apple-crypto"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "apple-cryptokit-rs",
  "cc",
@@ -1987,7 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-aws-lc-rs"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aws-lc-rs",
  "dimpl",
@@ -1997,7 +1997,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-netem"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "fastrand",
  "str0m-proto",
@@ -2005,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-openssl"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "arrayvec",
  "dimpl",
@@ -2018,7 +2018,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "base64ct",
  "dimpl",
@@ -2031,7 +2031,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-rust-crypto"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2047,7 +2047,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-wincrypto"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dimpl",
  "rand_core 0.6.4",

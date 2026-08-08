@@ -1,5 +1,7 @@
 # Unreleased
 
+# 0.22.0
+
   * Make audio and video RTCP report intervals configurable #1021
   * Stop padding media packets, no crypto need it #1023
   * Reset SCTP streams when closing data channels and safely reuse stream IDs #1010
