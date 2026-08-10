@@ -12,9 +12,12 @@ use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
 /// Build a `TestRtc` whose `Rtc` has RFC 2198 RED enabled, honouring the per-peer crypto
 /// provider env vars like `TestRtc::new` does.
-fn rtc_with_red(peer: Peer) -> TestRtc {
+fn rtc_with_red(peer: Peer, stats: bool) -> TestRtc {
     let now = Instant::now();
     let mut builder = Rtc::builder().enable_opus(true, true);
+    if stats {
+        builder = builder.set_stats_interval(Some(Duration::from_millis(100)));
+    }
     if let Some(crypto) = peer.crypto_provider() {
         builder = builder.set_crypto_provider(crypto);
     }
@@ -37,16 +40,27 @@ fn run_audio(
     media_loss: Option<NetemConfig>,
     secs: u64,
 ) -> (TestRtc, TestRtc) {
+    run_audio_options(red_l, red_r, media_loss, secs, false, false)
+}
+
+fn run_audio_options(
+    red_l: bool,
+    red_r: bool,
+    media_loss: Option<NetemConfig>,
+    secs: u64,
+    stats: bool,
+    frame_metadata: bool,
+) -> (TestRtc, TestRtc) {
     init_log();
     init_crypto_default();
 
     let mut l = if red_l {
-        rtc_with_red(Peer::Left)
+        rtc_with_red(Peer::Left, stats)
     } else {
         TestRtc::new(Peer::Left)
     };
     let mut r = if red_r {
-        rtc_with_red(Peer::Right)
+        rtc_with_red(Peer::Right, stats)
     } else {
         TestRtc::new(Peer::Right)
     };
@@ -80,18 +94,22 @@ fn run_audio(
     }
 
     let pt = l.params_opus().pt();
-    let data = vec![1_u8; 80];
-
     let mut start_of_talk_spurt = true;
+    let mut frame_index = 0_u8;
     loop {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
-        l.writer(mid)
+        let value = if frame_metadata { frame_index % 100 } else { 1 };
+        let mut writer = l
+            .writer(mid)
             .unwrap()
-            .start_of_talkspurt(start_of_talk_spurt)
-            .write(pt, wallclock, time, data.clone())
-            .unwrap();
+            .start_of_talkspurt(start_of_talk_spurt);
+        if frame_metadata {
+            writer = writer.audio_level(-(value as i8), true);
+        }
+        writer.write(pt, wallclock, time, vec![value; 80]).unwrap();
         start_of_talk_spurt = false;
+        frame_index = frame_index.wrapping_add(1);
 
         progress(&mut l, &mut r).unwrap();
 
@@ -101,6 +119,50 @@ fn run_audio(
     }
 
     (l, r)
+}
+
+#[test]
+fn red_receive_stats_include_the_complete_wire_payload() {
+    let (l, r) = run_audio_options(true, true, None, 2, true, false);
+
+    let sent = l.events.iter().rev().find_map(|(_, e)| match e {
+        Event::PeerStats(s) if s.bytes_tx > 0 => Some(s.bytes_tx),
+        _ => None,
+    });
+    let received = r.events.iter().rev().find_map(|(_, e)| match e {
+        Event::PeerStats(s) if s.bytes_rx > 0 => Some(s.bytes_rx),
+        _ => None,
+    });
+
+    assert_eq!(
+        received, sent,
+        "RED receive accounting must include headers and redundant media counted by the sender"
+    );
+}
+
+#[test]
+fn red_recovered_frames_do_not_inherit_the_carrier_audio_level() {
+    let loss = NetemConfig::new()
+        .loss(RandomLoss::new(Probability::new(0.08)))
+        .seed(7);
+    let (_, r) = run_audio_options(true, true, Some(loss), 4, false, true);
+
+    let mismatched = r.events.iter().find_map(|(_, e)| match e {
+        Event::MediaData(m) => {
+            let expected = -(m.data[0] as i8);
+            (m.ext_vals.audio_level != Some(expected)).then_some((
+                m.data[0],
+                m.ext_vals.audio_level,
+                expected,
+            ))
+        }
+        _ => None,
+    });
+
+    assert!(
+        mismatched.is_none(),
+        "recovered frame inherited carrier metadata: {mismatched:?}"
+    );
 }
 
 /// With RED enabled on both peers, audio flows transparently: the application writes and reads
@@ -138,7 +200,7 @@ pub fn red_offer_lists_red_pt_in_mline() {
     init_log();
     init_crypto_default();
 
-    let mut l = rtc_with_red(Peer::Left);
+    let mut l = rtc_with_red(Peer::Left, false);
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
 
     let mut change = l.sdp_api();
@@ -222,7 +284,7 @@ pub fn red_send_toggle_no_renegotiation() {
     init_log();
     init_crypto_default();
 
-    let mut l = rtc_with_red(Peer::Left); // frame mode, RED on: wraps outgoing Opus
+    let mut l = rtc_with_red(Peer::Left, false); // frame mode, RED on: wraps outgoing Opus
 
     let now = Instant::now();
     let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_opus(true, true);
@@ -306,7 +368,7 @@ pub fn red_rtp_mode_passthrough() {
     init_log();
     init_crypto_default();
 
-    let mut l = rtc_with_red(Peer::Left); // frame mode, RED on: wraps outgoing Opus
+    let mut l = rtc_with_red(Peer::Left, false); // frame mode, RED on: wraps outgoing Opus
 
     let now = Instant::now();
     let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_opus(true, true);

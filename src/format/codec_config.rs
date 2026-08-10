@@ -684,6 +684,7 @@ impl CodecSpec {
 
 #[cfg(test)]
 mod test {
+    use crate::io::MultiplexKind;
     use crate::packet::MediaKind;
     use crate::rtp_::Direction;
     use crate::rtp_::Frequency;
@@ -709,6 +710,18 @@ mod test {
         }
 
         assert!(CodecSpec::from_static_pt(PT_OPUS).is_none());
+    }
+
+    #[test]
+    fn default_red_payload_types_are_demultiplexed_as_rtp() {
+        for pt in [PT_G722_RED, PT_PCMU_RED, PT_PCMA_RED] {
+            let packet = [0x80, *pt, 0];
+            assert_eq!(
+                MultiplexKind::try_from(packet.as_slice()).unwrap(),
+                MultiplexKind::Rtp,
+                "RED payload type {pt} must not be demultiplexed as RTCP"
+            );
+        }
     }
 
     #[test]
@@ -934,6 +947,31 @@ mod test {
             opus.red(),
             None,
             "RED must be dropped when remote doesn't offer it"
+        );
+    }
+
+    #[test]
+    fn conflicting_remote_red_mappings_do_not_panic() {
+        let shared_red_pt = Pt::new_with_value(63);
+
+        let mut local = CodecConfig::empty();
+        local.enable_g722(true, true);
+        local.enable_pcmu(true, true);
+
+        let mut remote = CodecConfig::empty();
+        remote.enable_g722(true, true);
+        remote.enable_pcmu(true, true);
+        for p in remote.params.iter_mut() {
+            p.red = Some(shared_red_pt);
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            local.update_params(remote.params(), Direction::SendRecv);
+        }));
+
+        assert!(
+            result.is_ok(),
+            "a conflicting remote RED mapping must be rejected or negotiated without panicking"
         );
     }
 

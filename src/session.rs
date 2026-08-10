@@ -1427,6 +1427,7 @@ mod tests {
     use super::*;
     use crate::RtcConfig;
     use crate::io::DATAGRAM_MTU_TARGET;
+    use crate::packet::RedEncoder;
 
     #[test]
     fn session_mtu_matches_config() {
@@ -1437,5 +1438,17 @@ mod tests {
         let cfg = RtcConfig::default().set_mtu(900..=1280);
         let s = Session::new(&cfg);
         assert_eq!(s.mtu(), 900);
+    }
+
+    #[test]
+    fn un_red_rejects_a_primary_payload_type_mismatch() {
+        let expected_primary_pt = Pt::new_with_value(111);
+        let data = RedEncoder::encode(0, &[1, 2, 3], &[]);
+        let mut header = RtpHeader::default();
+
+        assert!(
+            un_red(&mut header, &data, expected_primary_pt).is_none(),
+            "RED associated with Opus must not reinterpret a PCMU primary block as Opus"
+        );
     }
 }

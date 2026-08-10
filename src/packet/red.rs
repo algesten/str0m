@@ -327,6 +327,23 @@ mod test {
     }
 
     #[test]
+    fn public_encoder_output_is_accepted_by_public_decoder() {
+        let redundant: Vec<_> = (0..33)
+            .map(|i| RedundantBlock {
+                pt: 111,
+                timestamp_offset: i + 1,
+                payload: vec![i as u8],
+            })
+            .collect();
+
+        let encoded = RedEncoder::encode(111, &[0xAA], &redundant);
+        assert!(
+            RedDecoder::decode(&encoded).is_ok(),
+            "the public decoder must accept packets produced by the public encoder"
+        );
+    }
+
+    #[test]
     fn recovery_blocks_derive_distance_from_offset_and_cap_depth() {
         // Oldest-first, frame = 960 (Opus 20 ms @ 48 kHz), so the closest same-PT block (offset
         // 960) is one packet back. Index 1 carries a different PT and must be skipped. Distance is
@@ -385,5 +402,24 @@ mod test {
             .map(|(b, _)| *b)
             .collect();
         assert_eq!(backs, vec![1]);
+    }
+
+    #[test]
+    fn recovery_blocks_without_main_minus_one_do_not_fabricate_sequence_numbers() {
+        let block = |ts| RedBlock {
+            pt: 111,
+            timestamp_offset: ts,
+            payload: &[0u8],
+            is_primary: false,
+        };
+
+        // The public send configuration permits [3, 5]. Without a main-1 block, the receiver
+        // cannot infer the duration of one packet from timestamp offsets alone. Treating the
+        // smallest offset as one packet would inject main-3 at sequence main-1.
+        let redundant = vec![block(4800), block(2880)];
+        assert!(
+            red_recovery_blocks(&redundant, 111).is_empty(),
+            "recovery must skip blocks when their sequence distance cannot be established"
+        );
     }
 }
