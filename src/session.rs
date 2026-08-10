@@ -744,7 +744,10 @@ impl Session {
                 // DLRR responder (RFC 3611 §4.5): store the remote's RRTR so we can
                 // reply with a DLRR, letting the remote compute RTT.
                 let lrr = (rrtr.ntp_time.as_ntp_64() >> 16) as u32;
-                let entry = LastRrtr { lrr, received_at: now };
+                let entry = LastRrtr {
+                    lrr,
+                    received_at: now,
+                };
 
                 // Update in place if this SSRC is already pending (preserves queue order).
                 if let Some(existing) = self.pending_rrtrs.iter_mut().find(|(s, _)| *s == ssrc) {
