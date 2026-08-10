@@ -224,7 +224,7 @@ impl RtcConfig {
     /// // For the session to use only OPUS and VP8.
     /// let mut rtc = RtcConfig::default()
     ///     .clear_codecs()
-    ///     .enable_opus(true)
+    ///     .enable_opus(true, false)
     ///     .enable_vp8(true)
     ///     .build(Instant::now());
     /// # }
@@ -234,28 +234,16 @@ impl RtcConfig {
         self
     }
 
-    /// Enable opus audio codec.
+    /// Enable opus audio codec, optionally with RFC 2198 RED (redundant audio).
     ///
-    /// Enabled by default.
-    pub fn enable_opus(mut self, enabled: bool) -> Self {
-        self.codec_config.enable_opus(enabled);
-        self
-    }
-
-    /// Enable RFC 2198 RED (redundant audio). Off by default. Requires an audio codec.
-    ///
-    /// RED carries redundant copies of earlier frames in each packet so the receiver can recover
-    /// packet losses without retransmission, at the cost of extra audio payload size. It applies to
-    /// every enabled audio codec (Opus, PCMU, PCMA, G722), each getting its own RED payload type.
-    ///
-    /// Call this after enabling audio codecs: RED folds onto the enabled audio payloads, so
-    /// enabling it while no audio codec is configured is a no-op (and is logged). The redundancy
-    /// depth is set with [`Self::set_red_distances`] (default one level, the previous frame), and
-    /// wrapping can be toggled at runtime on the send side without renegotiation via
-    /// [`SdpApi::set_red_send`][crate::change::SdpApi::set_red_send] /
+    /// Enabled by default (without RED). `use_red` folds a RED payload type onto Opus so the
+    /// receiver can recover packet loss without retransmission, at the cost of extra audio payload
+    /// size. Each audio codec carries its own RED payload type. The redundancy depth is set with
+    /// [`Self::set_red_distances`] (default one level, the previous frame), and wrapping can be
+    /// toggled at runtime on the send side without renegotiation via
     /// [`DirectApi::set_red_send`][crate::change::DirectApi::set_red_send].
-    pub fn enable_red(mut self, enabled: bool) -> Self {
-        self.codec_config.enable_red(enabled);
+    pub fn enable_opus(mut self, enabled: bool, use_red: bool) -> Self {
+        self.codec_config.enable_opus(enabled, use_red);
         self
     }
 
@@ -265,25 +253,27 @@ impl RtcConfig {
     ///
     /// The pattern is sanitised (zeros and values deeper than the recovery depth are dropped, then
     /// sorted and de-duped), falling back to `[1]` if empty. This only sets the pattern; enable RED
-    /// with [`Self::enable_red`] for it to take effect.
+    /// via the `use_red` argument of an audio codec (e.g. [`Self::enable_opus`]) for it to take effect.
     pub fn set_red_distances(mut self, distances: &[u32]) -> Self {
         self.codec_config.set_red_distances(distances);
         self
     }
 
-    /// Enable PCM μ-law audio codec.
+    /// Enable PCM μ-law audio codec, optionally with RFC 2198 RED (see [`Self::enable_opus`] for
+    /// `use_red`).
     ///
     /// This is 14-bit audio compressed to 8-bit as specified by G.711
-    pub fn enable_pcmu(mut self, enabled: bool) -> Self {
-        self.codec_config.enable_pcmu(enabled);
+    pub fn enable_pcmu(mut self, enabled: bool, use_red: bool) -> Self {
+        self.codec_config.enable_pcmu(enabled, use_red);
         self
     }
 
-    /// Enable PCM a-law audio codec.
+    /// Enable PCM a-law audio codec, optionally with RFC 2198 RED (see [`Self::enable_opus`] for
+    /// `use_red`).
     ///
     /// This is 13-bit audio compressed to 8-bit as specified by G.711
-    pub fn enable_pcma(mut self, enabled: bool) -> Self {
-        self.codec_config.enable_pcma(enabled);
+    pub fn enable_pcma(mut self, enabled: bool, use_red: bool) -> Self {
+        self.codec_config.enable_pcma(enabled, use_red);
         self
     }
 
@@ -294,8 +284,10 @@ impl RtcConfig {
     /// codec samples at 16 kHz. str0m treats G722 as a 16 kHz codec in the API and
     /// handles the 8 kHz RTP timestamp mapping internally. See
     /// <https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55>
-    pub fn enable_g722(mut self, enabled: bool) -> Self {
-        self.codec_config.enable_g722(enabled);
+    ///
+    /// See [`Self::enable_opus`] for `use_red`.
+    pub fn enable_g722(mut self, enabled: bool, use_red: bool) -> Self {
+        self.codec_config.enable_g722(enabled, use_red);
         self
     }
 

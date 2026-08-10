@@ -91,7 +91,7 @@ impl CodecConfig {
     /// Creates a new config with all default configurations enabled.
     pub fn new_with_defaults() -> Self {
         let mut c = Self::empty();
-        c.enable_opus(true);
+        c.enable_opus(true, false);
 
         c.enable_vp8(true);
         c.enable_h264(true);
@@ -139,12 +139,12 @@ impl CodecConfig {
                 format,
             },
             resend,
-            red: None,
             fb_transport_cc,
             fb_fir,
             fb_nack,
             fb_pli,
             fb_remb,
+            red: None,
             locked: false,
         };
 
@@ -213,22 +213,33 @@ impl CodecConfig {
         )
     }
 
-    /// Convenience for adding a PCM u-law payload type.
-    pub fn enable_pcmu(&mut self, enabled: bool) {
+    /// Convenience for adding a PCM u-law payload type, optionally with RFC 2198 RED.
+    ///
+    /// `use_red` folds a RED payload type onto this codec so the receiver can recover packet loss
+    /// without retransmission, at the cost of extra audio payload size.
+    pub fn enable_pcmu(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::PCMU);
         if !enabled {
             return;
         }
         self.add_static_config(PT_PCMU);
+        if use_red {
+            self.set_red_pt(Codec::PCMU, PT_PCMU_RED);
+        }
     }
 
-    /// Convenience for adding a PCM a-law payload type.
-    pub fn enable_pcma(&mut self, enabled: bool) {
+    /// Convenience for adding a PCM a-law payload type, optionally with RFC 2198 RED.
+    ///
+    /// See [`Self::enable_pcmu`] for `use_red`.
+    pub fn enable_pcma(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::PCMA);
         if !enabled {
             return;
         }
         self.add_static_config(PT_PCMA);
+        if use_red {
+            self.set_red_pt(Codec::PCMA, PT_PCMA_RED);
+        }
     }
 
     /// Convenience for adding a G722 payload type.
@@ -237,12 +248,17 @@ impl CodecConfig {
     /// 8000 Hz. The codec is configured at 16 kHz here; str0m maps to 8 kHz for the
     /// SDP `a=rtpmap` line and when converting to/from RTP timestamps. See
     /// <https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55>
-    pub fn enable_g722(&mut self, enabled: bool) {
+    ///
+    /// See [`Self::enable_pcmu`] for `use_red`.
+    pub fn enable_g722(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::G722);
         if !enabled {
             return;
         }
         self.add_static_config(PT_G722);
+        if use_red {
+            self.set_red_pt(Codec::G722, PT_G722_RED);
+        }
     }
 
     /// Add the static Comfort Noise payload type at 8000 Hz.
@@ -257,8 +273,10 @@ impl CodecConfig {
         self.add_static_config(PT_COMFORT_NOISE);
     }
 
-    /// Add a default OPUS payload type.
-    pub fn enable_opus(&mut self, enabled: bool) {
+    /// Add a default OPUS payload type, optionally with RFC 2198 RED.
+    ///
+    /// See [`Self::enable_pcmu`] for `use_red`.
+    pub fn enable_opus(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::Opus);
         if !enabled {
             return;
@@ -274,27 +292,18 @@ impl CodecConfig {
                 use_inband_fec: Some(true),
                 ..Default::default()
             },
-        )
+        );
+        if use_red {
+            self.set_red_pt(Codec::Opus, PT_RED);
+        }
     }
 
-    /// Enable RFC 2198 RED (redundant audio) for the enabled audio codecs. Off by default.
-    ///
-    /// RED roughly doubles audio payload size, so it is opt-in. Applies to every enabled audio
-    /// codec (Opus, PCMU, PCMA, G722), each getting its own RED payload type. This is a no-op
-    /// when no audio codec is enabled.
-    pub fn enable_red(&mut self, enabled: bool) {
-        if enabled && !self.params.iter().any(|p| p.spec.codec.is_audio()) {
-            warn!("enable_red(true) ignored: no audio codec is enabled");
-        }
-        for p in &mut self.params {
-            let default_red_pt = match p.spec.codec {
-                Codec::Opus => Some(PT_RED),
-                Codec::G722 => Some(PT_G722_RED),
-                Codec::PCMU => Some(PT_PCMU_RED),
-                Codec::PCMA => Some(PT_PCMA_RED),
-                _ => None,
-            };
-            p.red = if enabled { default_red_pt } else { None };
+    /// Fold the given RFC 2198 RED payload type onto the enabled param for `codec`. Used by the
+    /// audio enable fns when `use_red` is set; each audio codec has its own RED payload type so the
+    /// `a=rtpmap` entries (which carry each codec's clock rate) don't collide in SDP.
+    fn set_red_pt(&mut self, codec: Codec, red_pt: Pt) {
+        if let Some(p) = self.params.iter_mut().find(|p| p.spec.codec == codec) {
+            p.red = Some(red_pt);
         }
     }
 
@@ -314,8 +323,8 @@ impl CodecConfig {
     ///
     /// The input is sanitised: zeros and values deeper than the receiver recovery depth are
     /// dropped, then the rest is sorted and de-duplicated. An empty or fully invalid input falls
-    /// back to the default `[1]`. This only sets the pattern; RED still has to be enabled with
-    /// [`Self::enable_red`] (or negotiated) for any redundancy to be sent.
+    /// back to the default `[1]`. This only sets the pattern; RED still has to be enabled via the
+    /// `use_red` argument of an audio enable fn (e.g. [`Self::enable_opus`]) or negotiated.
     pub fn set_red_distances(&mut self, distances: &[u32]) {
         let mut sane: Vec<u32> = distances
             .iter()
@@ -832,8 +841,7 @@ mod test {
     #[test]
     fn enable_red_links_opus() {
         let mut c = CodecConfig::empty();
-        c.enable_opus(true);
-        c.enable_red(true);
+        c.enable_opus(true, true);
         let opus = c
             .params()
             .iter()
@@ -845,11 +853,10 @@ mod test {
     #[test]
     fn enable_red_links_all_audio_codecs_with_distinct_pts() {
         let mut c = CodecConfig::empty();
-        c.enable_opus(true);
-        c.enable_g722(true);
-        c.enable_pcmu(true);
-        c.enable_pcma(true);
-        c.enable_red(true);
+        c.enable_opus(true, true);
+        c.enable_g722(true, true);
+        c.enable_pcmu(true, true);
+        c.enable_pcma(true, true);
 
         let params = c.params();
         let red_of = |codec| {
@@ -893,12 +900,10 @@ mod test {
     #[test]
     fn red_kept_when_both_sides_enable() {
         let mut local = CodecConfig::empty();
-        local.enable_opus(true);
-        local.enable_red(true);
+        local.enable_opus(true, true);
 
         let mut remote = CodecConfig::empty();
-        remote.enable_opus(true);
-        remote.enable_red(true);
+        remote.enable_opus(true, true);
 
         local.update_params(remote.params(), Direction::SendRecv);
 
@@ -913,11 +918,10 @@ mod test {
     #[test]
     fn red_dropped_when_remote_lacks_red() {
         let mut local = CodecConfig::empty();
-        local.enable_opus(true);
-        local.enable_red(true);
+        local.enable_opus(true, true);
 
         let mut remote = CodecConfig::empty();
-        remote.enable_opus(true); // remote does not offer RED
+        remote.enable_opus(true, false); // remote does not offer RED
 
         local.update_params(remote.params(), Direction::SendRecv);
 
