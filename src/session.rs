@@ -45,17 +45,6 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Last RRTR (Receiver Reference Time Report, RFC 3611 §4.4) received from a remote SSRC.
-/// Stored at session level so we can respond with a DLRR regardless of which local stream
-/// the remote is observing.
-#[derive(Debug, Clone, Copy)]
-struct LastRrtr {
-    /// Middle 32 bits of the RRTR NTP timestamp (compact NTP / LRR).
-    lrr: u32,
-    /// When the RRTR arrived locally.
-    received_at: Instant,
-}
-
 pub(crate) struct Session {
     id: SessionId,
 
@@ -144,6 +133,17 @@ pub(crate) struct Session {
 
     #[cfg(feature = "_internal_test_exports")]
     pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
+}
+
+/// Last RRTR (Receiver Reference Time Report, RFC 3611 §4.4) received from a remote SSRC.
+/// Stored at session level so we can respond with a DLRR regardless of which local stream
+/// the remote is observing.
+#[derive(Debug, Clone, Copy)]
+struct LastRrtr {
+    /// Middle 32 bits of the RRTR NTP timestamp (compact NTP / LRR).
+    lrr: u32,
+    /// When the RRTR arrived locally.
+    received_at: Instant,
 }
 
 impl Session {
