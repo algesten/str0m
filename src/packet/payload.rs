@@ -342,4 +342,18 @@ mod test {
             "all levels fit a large budget"
         );
     }
+
+    #[test]
+    fn red_primary_header_does_not_exceed_payload_budget() {
+        let mut red = red_state(&[1]);
+        let payload = vec![0xAA; BUDGET];
+
+        let out = red.wrap(payload, 960, BUDGET);
+
+        assert!(
+            out.len() <= BUDGET,
+            "RED payload is {} bytes for a {BUDGET}-byte budget",
+            out.len()
+        );
+    }
 }
