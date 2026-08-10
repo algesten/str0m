@@ -45,6 +45,12 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Maximum number of pending RRTR entries before oldest are dropped.
+const MAX_PENDING_RRTRS: usize = 300;
+
+/// Maximum number of DLRR items to include in a single ExtendedReport.
+const MAX_DLRR_PER_REPORT: usize = 50;
+
 pub(crate) struct Session {
     id: SessionId,
 
@@ -118,9 +124,10 @@ pub(crate) struct Session {
     feedback_rx: VecDeque<Rtcp>,
     rtp_closing: bool,
 
-    /// Pending RRTRs from remote SSRCs, keyed by the sender's SSRC.
-    /// Flushed as a single DLRR ExtendedReport on the next handle_timeout.
-    pending_rrtrs: HashMap<Ssrc, LastRrtr>,
+    /// Pending RRTRs from remote SSRCs in FIFO order, deduplicated by SSRC.
+    /// A new RRTR for an already-pending SSRC updates its value in place.
+    /// Capped at 300 entries; at most 50 are consumed per DLRR report.
+    pending_rrtrs: VecDeque<(Ssrc, LastRrtr)>,
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
@@ -205,7 +212,7 @@ impl Session {
             feedback_tx: VecDeque::new(),
             feedback_rx: VecDeque::new(),
             rtp_closing: false,
-            pending_rrtrs: HashMap::new(),
+            pending_rrtrs: VecDeque::new(),
             raw_packets: if config.enable_raw_packets {
                 Some(VecDeque::new())
             } else {
@@ -291,16 +298,18 @@ impl Session {
         // Flush any pending RRTRs as a DLRR alongside the Sender Report compound packet.
         // We piggyback on the SR cadence so the DLRR doesn't generate extra standalone
         // RTCP traffic that could perturb bandwidth estimation.
+        // Consume at most 50 entries per report; the rest remain for subsequent SRs.
         if !self.pending_rrtrs.is_empty()
             && self
                 .feedback_tx
                 .iter()
                 .any(|r| matches!(r, Rtcp::SenderReport(_)))
         {
+            let n = self.pending_rrtrs.len().min(MAX_DLRR_PER_REPORT);
             let items: Vec<DlrrItem> = self
                 .pending_rrtrs
-                .iter()
-                .map(|(&ssrc, &rrtr)| {
+                .drain(..n)
+                .map(|(ssrc, rrtr)| {
                     let delay = now.saturating_duration_since(rrtr.received_at);
                     let last_rr_delay = ((delay.as_micros() * 65_536) / 1_000_000) as u32;
                     DlrrItem {
@@ -316,8 +325,6 @@ impl Session {
                     ssrc: sender_ssrc,
                     blocks: vec![ReportBlock::Dlrr(Dlrr { items })],
                 }));
-
-            self.pending_rrtrs.clear();
         }
 
         if do_nack {
@@ -737,13 +744,18 @@ impl Session {
                 // DLRR responder (RFC 3611 §4.5): store the remote's RRTR so we can
                 // reply with a DLRR, letting the remote compute RTT.
                 let lrr = (rrtr.ntp_time.as_ntp_64() >> 16) as u32;
-                self.pending_rrtrs.insert(
-                    ssrc,
-                    LastRrtr {
-                        lrr,
-                        received_at: now,
-                    },
-                );
+                let entry = LastRrtr { lrr, received_at: now };
+
+                // Update in place if this SSRC is already pending (preserves queue order).
+                if let Some(existing) = self.pending_rrtrs.iter_mut().find(|(s, _)| *s == ssrc) {
+                    existing.1 = entry;
+                } else {
+                    // Cap at 300 entries; drop the oldest if full.
+                    if self.pending_rrtrs.len() >= MAX_PENDING_RRTRS {
+                        self.pending_rrtrs.pop_front();
+                    }
+                    self.pending_rrtrs.push_back((ssrc, entry));
+                }
                 continue;
             }
 
