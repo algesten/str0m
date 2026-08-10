@@ -14,7 +14,7 @@ use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 /// provider env vars like `TestRtc::new` does.
 fn rtc_with_red(peer: Peer) -> TestRtc {
     let now = Instant::now();
-    let mut builder = Rtc::builder().enable_red(true);
+    let mut builder = Rtc::builder().enable_opus(true, true);
     if let Some(crypto) = peer.crypto_provider() {
         builder = builder.set_crypto_provider(crypto);
     }
@@ -225,7 +225,7 @@ pub fn red_send_toggle_no_renegotiation() {
     let mut l = rtc_with_red(Peer::Left); // frame mode, RED on: wraps outgoing Opus
 
     let now = Instant::now();
-    let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_red(true);
+    let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_opus(true, true);
     if let Some(crypto) = Peer::Right.crypto_provider() {
         r_builder = r_builder.set_crypto_provider(crypto);
     }
@@ -275,7 +275,7 @@ pub fn red_send_toggle_no_renegotiation() {
         progress(&mut l, &mut r).unwrap();
 
         if !toggled && l.duration() > Duration::from_secs(1) {
-            l.rtc.sdp_api().set_red_send(mid, false);
+            l.rtc.direct_api().set_red_send(mid, false);
             toggled = true;
         }
         if l.duration() > Duration::from_secs(3) {
@@ -309,7 +309,7 @@ pub fn red_rtp_mode_passthrough() {
     let mut l = rtc_with_red(Peer::Left); // frame mode, RED on: wraps outgoing Opus
 
     let now = Instant::now();
-    let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_red(true);
+    let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_opus(true, true);
     if let Some(crypto) = Peer::Right.crypto_provider() {
         r_builder = r_builder.set_crypto_provider(crypto);
     }

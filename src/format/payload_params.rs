@@ -85,10 +85,6 @@ pub struct PayloadParams {
     /// This is used to, via PT, separate RTX resend streams from the main stream.
     pub(crate) resend: Option<Pt>,
 
-    /// The RFC 2198 RED payload type that wraps this primary codec, if negotiated.
-    /// Like `resend`, this links a secondary PT to this primary via SDP.
-    pub(crate) red: Option<Pt>,
-
     /// The codec with settings for this group of parameters.
     pub(crate) spec: CodecSpec,
 
@@ -107,6 +103,10 @@ pub struct PayloadParams {
     /// Whether the payload uses the REMB (Receiver Estimated Maximum Bitrate) mechanic.
     pub(crate) fb_remb: bool,
 
+    /// The RFC 2198 RED payload type that wraps this primary codec, if negotiated.
+    /// Like `resend`, this links a secondary PT to this primary via SDP.
+    pub(crate) red: Option<Pt>,
+
     /// Whether the payload is locked by negotiation or can still be debated.
     ///
     /// If we make an OFFER or ANSWER and the direction is sendrecv/recvonly, the parameters are locked
@@ -120,13 +120,13 @@ impl PartialEq for PayloadParams {
     fn eq(&self, other: &Self) -> bool {
         self.pt == other.pt
             && self.resend == other.resend
-            && self.red == other.red
             && self.spec == other.spec
             && self.fb_transport_cc == other.fb_transport_cc
             && self.fb_nack == other.fb_nack
             && self.fb_pli == other.fb_pli
             && self.fb_fir == other.fb_fir
             && self.fb_remb == other.fb_remb
+            && self.red == other.red
     }
 }
 
@@ -160,7 +160,6 @@ impl PayloadParams {
         PayloadParams {
             pt,
             resend,
-            red: None,
 
             spec,
 
@@ -173,6 +172,7 @@ impl PayloadParams {
             fb_pli: is_video,
             fb_remb: is_video,
 
+            red: None,
             locked: false,
         }
     }
@@ -189,7 +189,6 @@ impl PayloadParams {
         PayloadParams {
             pt,
             resend: None,
-            red: None,
             spec: CodecSpec {
                 codec: Codec::Null,
                 clock_rate: Frequency::NINETY_KHZ,
@@ -201,6 +200,7 @@ impl PayloadParams {
             fb_pli: false,
             fb_fir: false,
             fb_remb: false,
+            red: None,
             locked: false,
         }
     }
@@ -214,11 +214,6 @@ impl PayloadParams {
     /// This is used to, via PT, separate RTX resend streams from the main stream.
     pub fn resend(&self) -> Option<Pt> {
         self.resend
-    }
-
-    /// The RFC 2198 RED payload type wrapping this primary codec, if negotiated.
-    pub fn red(&self) -> Option<Pt> {
-        self.red
     }
 
     /// The codec with settings for this group of parameters.
@@ -274,6 +269,11 @@ impl PayloadParams {
     /// Whether the payload uses the REMB (Receiver Estimated Maximum Bitrate) mechanic.
     pub fn fb_remb(&self) -> bool {
         self.fb_remb
+    }
+
+    /// The RFC 2198 RED payload type wrapping this primary codec, if negotiated.
+    pub fn red(&self) -> Option<Pt> {
+        self.red
     }
 
     pub(crate) fn match_score(&self, o: &PayloadParams) -> Option<usize> {

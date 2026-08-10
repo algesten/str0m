@@ -469,24 +469,12 @@ impl Media {
         rid: Option<Rid>,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
-        red_distances: &[u32],
     ) -> &mut Payloader {
-        let payloader = self.payloaders.entry((pt, rid)).or_insert_with(|| {
+        self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
             Payloader::new(params.spec, vp9_mode)
-        });
-        // Keep the RED linkage current with the negotiated params so a remapped or dropped RED
-        // PT can't go stale in the cached payloader. The runtime send toggle gates wrapping here:
-        // when RED sending is off we pass `None`, so packets go out as the plain codec PT even
-        // though RED stays negotiated on the m-line and can be turned back on with no renegotiation.
-        let red = if self.red_send_enabled {
-            params.iter().find(|p| p.pt == pt).and_then(|p| p.red)
-        } else {
-            None
-        };
-        payloader.set_red(red, pt, red_distances);
-        payloader
+        })
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
@@ -533,7 +521,18 @@ impl Media {
 
         let pt = *pt;
 
-        let payloader = self.payloader_for(pt, *rid, params, vp9_mode, red_distances);
+        // Keep the RED linkage current with the negotiated params so a remapped or dropped RED PT
+        // can't go stale in the cached payloader. The runtime send toggle gates wrapping here: when
+        // RED sending is off we pass `None`, so packets go out as the plain codec PT even though RED
+        // stays negotiated on the m-line and can be turned back on with no renegotiation.
+        let red = if self.red_send_enabled {
+            params.iter().find(|p| p.pt == pt).and_then(|p| p.red)
+        } else {
+            None
+        };
+
+        let payloader = self.payloader_for(pt, *rid, params, vp9_mode);
+        payloader.set_red(red, pt, red_distances);
 
         let rtp_size: usize = mtu - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs

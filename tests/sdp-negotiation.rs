@@ -585,7 +585,7 @@ fn max_bundle_offer_accepted() {
         info_span!("R"),
         Rtc::builder()
             .clear_codecs()
-            .enable_opus(true)
+            .enable_opus(true, false)
             .enable_vp8(true)
             .build(Instant::now()),
     );

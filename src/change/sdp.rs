@@ -362,17 +362,6 @@ impl<'a> SdpApi<'a> {
         }
     }
 
-    /// Turn RFC 2198 RED wrapping on or off on the send side at runtime.
-    ///
-    /// RED availability is fixed when the m-line is negotiated; this only decides whether outgoing
-    /// packets are wrapped in RED right now, and needs no renegotiation (so it applies immediately,
-    /// with or without a following [`SdpApi::apply()`]). Enabling has no effect on media where RED
-    /// was not negotiated. This is the send-side lever an SFU uses to turn redundancy on for a leg
-    /// that is losing packets and off again when it recovers.
-    pub fn set_red_send(&mut self, mid: Mid, enabled: bool) {
-        self.rtc.session.set_red_send(mid, enabled);
-    }
-
     /// Stop an already existing media.
     ///
     /// The next generated offer emits the m-line with port 0 and excludes
