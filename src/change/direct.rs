@@ -408,4 +408,18 @@ impl<'a> DirectApi<'a> {
             .session
             .send_app_specific_feedback(sender_ssrc, media_ssrc, payload);
     }
+
+    /// Send a Picture Loss Indication (PLI, PT=206 FMT=1) for a media stream,
+    /// choosing the `sender_ssrc` of the outgoing RTCP feedback.
+    ///
+    /// The PLI is queued into the regular RTCP compound packet. The `sender_ssrc`
+    /// sets the feedback packet's sender SSRC. `media_ssrc` is the SSRC of the
+    /// stream a keyframe is requested for.
+    ///
+    /// Unlike requesting a keyframe on a local receive stream, this does not require a
+    /// receive stream for `media_ssrc` and lets the caller choose the sender SSRC, so it
+    /// can relay a keyframe request for a stream sourced by the remote peer.
+    pub fn send_pli_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc) {
+        self.rtc.session.send_pli_feedback(sender_ssrc, media_ssrc);
+    }
 }

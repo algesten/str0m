@@ -23,6 +23,7 @@ use crate::pacer::{Pacer, PacerImpl};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
 use crate::rtp_::MidRid;
+use crate::rtp_::Pli;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
@@ -359,6 +360,16 @@ impl Session {
         };
         self.feedback_tx
             .push_back(Rtcp::AppSpecificFeedback(feedback));
+    }
+
+    /// Enqueue a Picture Loss Indication (PLI, PT=206 FMT=1) for `media_ssrc`, to be
+    /// sent as part of the regular RTCP compound packet. The feedback packet's sender
+    /// SSRC is set to `sender_ssrc`.
+    pub(crate) fn send_pli_feedback(&mut self, sender_ssrc: Ssrc, media_ssrc: Ssrc) {
+        self.feedback_tx.push_back(Rtcp::Pli(Pli {
+            sender_ssrc,
+            ssrc: media_ssrc,
+        }));
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
