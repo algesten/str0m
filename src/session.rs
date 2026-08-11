@@ -469,7 +469,40 @@ impl Session {
         }
     }
 
-    pub(crate) fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
+    pub(crate) fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
+        self.handle_rtp_inner(now, header, buf, None);
+    }
+
+    /// Handle an RTP packet that is already plaintext, i.e. was not received over the network.
+    ///
+    /// See [`crate::change::DirectApi::inject_rtp()`].
+    pub(crate) fn inject_rtp(&mut self, now: Instant, packet: &[u8]) {
+        let Some(header) = RtpHeader::parse(packet, &self.exts) else {
+            trace!("Failed to parse injected RTP header");
+            return;
+        };
+        if packet.len() < header.header_len {
+            trace!("Injected RTP packet is shorter than its own header");
+            return;
+        }
+        let (_, payload) = packet.split_at(header.header_len);
+        self.handle_rtp_inner(now, header, packet, Some(payload));
+    }
+
+    /// The shared receive path.
+    ///
+    /// `plaintext` is `None` for packets off the network, which are SRTP protected and decrypted here.
+    /// When it is `Some`, `buf` is not protected and the given payload is used as-is; everything else —
+    /// sequence extension, replay rejection, TWCC and NACK bookkeeping, RTX unwrapping and
+    /// depacketization — is deliberately identical, so an injected packet is indistinguishable from a
+    /// received one downstream.
+    fn handle_rtp_inner(
+        &mut self,
+        now: Instant,
+        mut header: RtpHeader,
+        buf: &[u8],
+        plaintext: Option<&[u8]>,
+    ) {
         // Rewrite absolute-send-time (if present) to be relative to now.
         header.ext_vals.update_absolute_send_time(now);
 
@@ -481,11 +514,16 @@ impl Session {
             return;
         };
 
-        let srtp = match self.srtp_rx.as_mut() {
-            Some(v) => v,
-            None => {
-                trace!("Rejecting SRTP while missing SrtpContext");
-                return;
+        // An injected packet needs no SRTP context, and may well arrive before one exists.
+        let srtp = if plaintext.is_some() {
+            None
+        } else {
+            match self.srtp_rx.as_mut() {
+                Some(v) => Some(v),
+                None => {
+                    trace!("Rejecting SRTP while missing SrtpContext");
+                    return;
+                }
             }
         };
 
@@ -532,21 +570,27 @@ impl Session {
         // The decrypted plaintext borrows from the SRTP scratch buffer. We
         // narrow it down to the actual payload via slicing only, then build
         // the final `Arc<[u8]>` in a single allocation at the end.
-        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
-            Some(d) => d,
-            None => {
-                trace!(
-                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
-                    rid: {:?} seq_no: {} is_repair: {}",
-                    header.ssrc,
-                    pt,
-                    stream.mid(),
-                    stream.rid(),
-                    seq_no,
-                    is_repair
-                );
-                return;
-            }
+        let data = match (plaintext, srtp) {
+            // Already plaintext; nothing to decrypt.
+            (Some(data), _) => data,
+            (None, Some(srtp)) => match srtp.unprotect_rtp(buf, &header, *seq_no) {
+                Some(d) => d,
+                None => {
+                    trace!(
+                        "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
+                        rid: {:?} seq_no: {} is_repair: {}",
+                        header.ssrc,
+                        pt,
+                        stream.mid(),
+                        stream.rid(),
+                        seq_no,
+                        is_repair
+                    );
+                    return;
+                }
+            },
+            // Unreachable: srtp is only None when plaintext is Some.
+            (None, None) => return,
         };
 
         let data = if header.has_padding {

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::Candidate;
 use crate::IceCreds;
@@ -260,6 +261,28 @@ impl<'a> DirectApi<'a> {
             .session
             .streams
             .expect_stream_rx(ssrc, rtx, midrid, suppress_nack)
+    }
+
+    /// Feed a plaintext RTP packet in as if it had arrived from the network.
+    ///
+    /// The packet takes the same path as one received via [`Rtc::handle_input()`] after decryption:
+    /// sequence number extension, replay rejection, TWCC and NACK bookkeeping, RTX unwrapping and
+    /// depacketization. Downstream it is indistinguishable from a packet that really arrived, which
+    /// includes being marked as received so it is no longer NACKed.
+    ///
+    /// This exists for repair schemes str0m does not implement itself. FlexFEC and RED both reconstruct
+    /// whole RTP packets the receiver never saw on the wire, and without a way to hand one back the
+    /// reconstruction cannot reach the depacketizer. It is also a convenient way to drive a session from
+    /// recorded packets in tests.
+    ///
+    /// The packet must be **plaintext** and complete, header included. SRTP protected packets belong in
+    /// [`Rtc::handle_input()`]. `now` should be when the data that produced this packet arrived, which
+    /// is not necessarily the current instant.
+    ///
+    /// A packet for an SSRC with no receive stream is dropped; declare one with
+    /// [`Self::expect_stream_rx()`] first.
+    pub fn inject_rtp(&mut self, now: Instant, packet: &[u8]) {
+        self.rtc.session.inject_rtp(now, packet);
     }
 
     /// Remove the receive stream for the given SSRC.
