@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use str0m::change::Injected;
 use str0m::media::{MediaKind, Pt};
 use str0m::rtp::Ssrc;
 use str0m::{Event, Rtc, RtcError};
@@ -73,7 +74,7 @@ pub fn rtp_inject() -> Result<(), RtcError> {
                 let time = 48_000 + injected as u32 * 960;
                 let packet = rtp_packet(pt, ssrc, seq_no, time, payload);
 
-                r.direct_api().inject_rtp(now, &packet);
+                r.direct_api().inject_rtp(now, &packet, Injected::Received);
                 injected += 1;
             }
         }
@@ -134,7 +135,7 @@ pub fn rtp_inject_unknown_ssrc() -> Result<(), RtcError> {
 
     let now = r.start + r.duration();
     let packet = rtp_packet(pt, 9999.into(), 1, 48_000, &[0xAA; 8]);
-    r.direct_api().inject_rtp(now, &packet);
+    r.direct_api().inject_rtp(now, &packet, Injected::Received);
 
     progress(&mut l, &mut r)?;
 
@@ -158,10 +159,124 @@ pub fn rtp_inject_malformed() -> Result<(), RtcError> {
     let now = r.start + r.duration();
 
     for length in 0..12 {
-        r.direct_api().inject_rtp(now, &vec![0x80; length]);
+        r.direct_api()
+            .inject_rtp(now, &vec![0x80; length], Injected::Received);
     }
-    r.direct_api().inject_rtp(now, &[]);
+    r.direct_api().inject_rtp(now, &[], Injected::Received);
 
     progress(&mut l, &mut r)?;
+    Ok(())
+}
+
+/// The two modes must account differently, which is the whole reason the distinction exists.
+///
+/// A reconstructed packet is one the network dropped. Registering it as received would erase exactly that
+/// much loss from receiver reports and TWCC feedback — the two things a sender uses to size its bitrate
+/// and its repair overhead. So `Recovered` reaches the depacketizer and touches nothing else, while
+/// `Received` is accounted for like a packet off the wire.
+#[test]
+pub fn injected_recovered_packets_are_not_counted_as_received() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    /// Feeds `count` packets in as `injected` and returns `(media events, packets counted, bytes counted)`.
+    fn run(injected: Injected, count: usize) -> Result<(usize, u64, u64), RtcError> {
+        let now = Instant::now();
+        let rtc_l = Rtc::builder().clear_codecs().enable_opus(true).build(now);
+        let rtc_r = Rtc::builder()
+            .clear_codecs()
+            .enable_opus(true)
+            .set_reordering_size_audio(0)
+            // Statistics are off by default, and they are what this test is about.
+            .set_stats_interval(Some(Duration::from_millis(100)))
+            .build(now);
+        let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);
+
+        let mid = "aud".into();
+        let ssrc: Ssrc = 42.into();
+        r.direct_api().declare_media(mid, MediaKind::Audio);
+        r.direct_api().expect_stream_rx(ssrc, None, mid, None);
+
+        let max = l.last.max(r.last);
+        l.last = max;
+        r.last = max;
+
+        let pt = r.params_opus().pt();
+        let payload = [0x11u8; 60];
+        let mut sent = 0;
+        let mut next = r.last + Duration::from_millis(50);
+
+        loop {
+            if r.start + r.duration() > next {
+                next = r.last + Duration::from_millis(50);
+                if sent < count {
+                    let now = r.start + r.duration();
+                    let packet = rtp_packet(
+                        pt,
+                        ssrc,
+                        2000 + sent as u16,
+                        96_000 + sent as u32 * 960,
+                        &payload,
+                    );
+                    r.direct_api().inject_rtp(now, &packet, injected);
+                    sent += 1;
+                }
+            }
+            progress(&mut l, &mut r)?;
+            if r.duration() > Duration::from_secs(4) {
+                break;
+            }
+        }
+
+        let media = r
+            .events
+            .iter()
+            .filter(|(_, e)| matches!(e, Event::MediaData(_)))
+            .count();
+        // The newest statistics report for the receive stream.
+        let (packets, bytes) = r
+            .events
+            .iter()
+            .filter_map(|(_, e)| match e {
+                Event::MediaIngressStats(stats) => Some((stats.packets, stats.bytes)),
+                _ => None,
+            })
+            .next_back()
+            .unwrap_or((0, 0));
+        Ok((media, packets, bytes))
+    }
+
+    const COUNT: usize = 5;
+    let (received_media, received_packets, received_bytes) = run(Injected::Received, COUNT)?;
+    let (recovered_media, recovered_packets, recovered_bytes) = run(Injected::Recovered, COUNT)?;
+
+    // Both reach the application. That is the part that must not differ.
+    assert_eq!(
+        received_media, COUNT,
+        "Received packets should be depacketized"
+    );
+    assert_eq!(
+        recovered_media, COUNT,
+        "Recovered packets must reach the depacketizer too — that is what injection is for"
+    );
+
+    // Only one of them is counted.
+    assert_eq!(
+        received_packets, COUNT as u64,
+        "Received packets are counted as received"
+    );
+    assert!(
+        received_bytes > 0,
+        "and their bytes are counted: {received_bytes}"
+    );
+    assert_eq!(
+        recovered_packets, 0,
+        "a reconstructed packet was never received, so it must not be counted as one"
+    );
+    assert_eq!(
+        recovered_bytes, 0,
+        "nor may its bytes be, or the receive rate overstates what arrived"
+    );
+
     Ok(())
 }

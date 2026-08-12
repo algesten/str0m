@@ -17,6 +17,7 @@ use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
 use crate::util::already_happened;
 
+pub(crate) use self::receive::RegisterUpdateReceipt;
 pub use self::receive::StreamRx;
 pub use self::send::{RtpWrite, StreamTx, StreamTxQueueInfo};
 

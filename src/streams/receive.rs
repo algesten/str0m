@@ -451,6 +451,20 @@ impl StreamRx {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// The extended media time for a header, without registering the packet as received.
+    ///
+    /// A reconstructed packet needs a timestamp on the same extended timeline as everything else, but
+    /// registering it would erase the loss that made it necessary from receiver reports. So the
+    /// extension is available separately from the bookkeeping.
+    pub(crate) fn media_time_for(&self, header: &RtpHeader, clock_rate: Frequency) -> MediaTime {
+        let previous = self.last_time.map(|t| t.numer());
+        MediaTime::new(extend_u32(previous, header.timestamp), clock_rate)
+    }
+
+    /// Builds the packet the depayloader will see.
+    ///
+    /// `count_stats` is false for a reconstructed packet: `stats` reports what was *received*, and a
+    /// packet the network dropped was not.
     pub(crate) fn handle_rtp(
         &mut self,
         now: Instant,
@@ -458,6 +472,7 @@ impl StreamRx {
         payload: Arc<[u8]>,
         seq_no: SeqNo,
         time: MediaTime,
+        count_stats: bool,
     ) -> RtpPacket {
         trace!("Handle RTP: {:?}", header);
 
@@ -482,8 +497,10 @@ impl StreamRx {
             timestamp: now,
         };
 
-        self.stats.bytes += packet.payload.len() as u64;
-        self.stats.packets += 1;
+        if count_stats {
+            self.stats.bytes += packet.payload.len() as u64;
+            self.stats.packets += 1;
+        }
 
         packet
     }
