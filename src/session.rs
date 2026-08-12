@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use crate::Event;
 use crate::bwe::BweKind;
 use crate::bwe_::Bwe;
+use crate::change::Injected;
 use crate::config::KeyingMaterial;
 use crate::config_mod::RtcpReportIntervals;
 use crate::crypto::CryptoProvider;
@@ -32,7 +33,7 @@ use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
-use crate::streams::{RtpPacket, StreamTimeoutConfig, Streams};
+use crate::streams::{RegisterUpdateReceipt, RtpPacket, StreamTimeoutConfig, Streams};
 use crate::util::{Soonest, already_happened, not_happening};
 use crate::{Reason, net};
 use crate::{RtcConfig, RtcError};
@@ -480,7 +481,46 @@ impl Session {
         }
     }
 
-    pub(crate) fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
+    pub(crate) fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
+        self.handle_rtp_inner(now, header, buf, None, Injected::Received);
+    }
+
+    /// Handle an RTP packet that is already plaintext, i.e. was not received over the network.
+    ///
+    /// See [`crate::change::DirectApi::inject_rtp()`].
+    pub(crate) fn inject_rtp(&mut self, now: Instant, packet: &[u8], injected: Injected) {
+        let Some(header) = RtpHeader::parse(packet, &self.exts) else {
+            trace!("Failed to parse injected RTP header");
+            return;
+        };
+        if packet.len() < header.header_len {
+            trace!("Injected RTP packet is shorter than its own header");
+            return;
+        }
+        let (_, payload) = packet.split_at(header.header_len);
+        self.handle_rtp_inner(now, header, packet, Some(payload), injected);
+    }
+
+    /// The shared receive path.
+    ///
+    /// `plaintext` is `None` for packets off the network, which are SRTP protected and decrypted here.
+    /// When it is `Some`, `buf` is not protected and the given payload is used as-is; everything else —
+    /// sequence extension, replay rejection, TWCC and NACK bookkeeping, RTX unwrapping and
+    /// depacketization — is deliberately identical, so an injected packet is indistinguishable from a
+    /// received one downstream.
+    fn handle_rtp_inner(
+        &mut self,
+        now: Instant,
+        mut header: RtpHeader,
+        buf: &[u8],
+        plaintext: Option<&[u8]>,
+        injected: Injected,
+    ) {
+        // A reconstructed packet never arrived. It has to reach the depacketizer, but everything that
+        // describes the network to the sender -- TWCC, the register that feeds receiver-report loss, and
+        // the byte and packet counters -- must keep describing the network. See `Injected`.
+        let counts_as_received = injected == Injected::Received;
+
         // Rewrite absolute-send-time (if present) to be relative to now.
         header.ext_vals.update_absolute_send_time(now);
 
@@ -492,11 +532,16 @@ impl Session {
             return;
         };
 
-        let srtp = match self.srtp_rx.as_mut() {
-            Some(v) => v,
-            None => {
-                trace!("Rejecting SRTP while missing SrtpContext");
-                return;
+        // An injected packet needs no SRTP context, and may well arrive before one exists.
+        let srtp = if plaintext.is_some() {
+            None
+        } else {
+            match self.srtp_rx.as_mut() {
+                Some(v) => Some(v),
+                None => {
+                    trace!("Rejecting SRTP while missing SrtpContext");
+                    return;
+                }
             }
         };
 
@@ -543,21 +588,27 @@ impl Session {
         // The decrypted plaintext borrows from the SRTP scratch buffer. We
         // narrow it down to the actual payload via slicing only, then build
         // the final `Arc<[u8]>` in a single allocation at the end.
-        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
-            Some(d) => d,
-            None => {
-                trace!(
-                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
-                    rid: {:?} seq_no: {} is_repair: {}",
-                    header.ssrc,
-                    pt,
-                    stream.mid(),
-                    stream.rid(),
-                    seq_no,
-                    is_repair
-                );
-                return;
-            }
+        let data = match (plaintext, srtp) {
+            // Already plaintext; nothing to decrypt.
+            (Some(data), _) => data,
+            (None, Some(srtp)) => match srtp.unprotect_rtp(buf, &header, *seq_no) {
+                Some(d) => d,
+                None => {
+                    trace!(
+                        "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
+                        rid: {:?} seq_no: {} is_repair: {}",
+                        header.ssrc,
+                        pt,
+                        stream.mid(),
+                        stream.rid(),
+                        seq_no,
+                        is_repair
+                    );
+                    return;
+                }
+            },
+            // Unreachable: srtp is only None when plaintext is Some.
+            (None, None) => return,
         };
 
         let data = if header.has_padding {
@@ -577,7 +628,7 @@ impl Session {
         }
 
         // Mark as received for TWCC purposes
-        if let Some(transport_cc) = header.ext_vals.transport_cc {
+        if counts_as_received && let Some(transport_cc) = header.ext_vals.transport_cc {
             let prev = self.twcc_rx_register.max_seq();
             let extended = extend_u16(prev.map(|s| *s), transport_cc);
             self.twcc_rx_register.update_seq(extended.into(), now);
@@ -585,10 +636,25 @@ impl Session {
 
         // Store largest seen seq_no for the SSRC. This is used in case we get SSRC changes
         // like A -> B -> A. When we go back to A, we must keep the ROC.
-        update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
+        //
+        // Skipped for a reconstructed packet: this exists to keep SRTP's rollover counter continuous, and
+        // a packet that was never decrypted has no bearing on it.
+        if counts_as_received {
+            update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
+        }
 
         // Register reception in nack registers.
-        let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
+        let receipt_outer = if counts_as_received {
+            stream.update_register(now, &header, clock_rate, is_repair, seq_no)
+        } else {
+            // Deliberately unregistered, so the loss this packet's absence caused is still reported. A
+            // retransmission of it may therefore still arrive; the depacketizing buffer drops the
+            // duplicate sequence number.
+            RegisterUpdateReceipt {
+                time: stream.media_time_for(&header, clock_rate),
+                is_new_packet: true,
+            }
+        };
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
@@ -615,7 +681,14 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no);
+            let receipt = if counts_as_received {
+                stream.update_register(now, &header, clock_rate, false, seq_no)
+            } else {
+                RegisterUpdateReceipt {
+                    time: stream.media_time_for(&header, clock_rate),
+                    is_new_packet: true,
+                }
+            };
             (receipt, data)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
@@ -628,13 +701,22 @@ impl Session {
             return;
         }
 
-        self.media_bytes_rx += data.len() as u64;
+        if counts_as_received {
+            self.media_bytes_rx += data.len() as u64;
+        }
 
         // One-shot conversion to Arc<[u8]>: a single allocation that copies
         // only the trimmed payload bytes out of the SRTP scratch buffer.
         let payload: Arc<[u8]> = Arc::from(data);
 
-        let packet = stream.handle_rtp(now, header, payload, seq_no, receipt.time);
+        let packet = stream.handle_rtp(
+            now,
+            header,
+            payload,
+            seq_no,
+            receipt.time,
+            counts_as_received,
+        );
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().

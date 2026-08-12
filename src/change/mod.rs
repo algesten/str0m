@@ -17,4 +17,4 @@ pub(crate) use sdp::AddMedia;
 pub use sdp::{SdpAnswer, SdpApi, SdpOffer, SdpPendingOffer};
 
 mod direct;
-pub use direct::DirectApi;
+pub use direct::{DirectApi, Injected};

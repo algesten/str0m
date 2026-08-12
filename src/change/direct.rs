@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::Candidate;
 use crate::IceCreds;
@@ -36,6 +37,33 @@ use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, StreamRx
 /// </div>
 pub struct DirectApi<'a> {
     rtc: &'a mut Rtc,
+}
+
+/// Why a plaintext packet is being fed to [`DirectApi::inject_rtp()`], and so whether it counts as
+/// received.
+///
+/// The distinction is not cosmetic. TWCC feedback and receiver-report loss are what a sender uses to size
+/// its bitrate and its repair overhead, so they have to keep describing the network rather than the
+/// application's view of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Injected {
+    /// The packet genuinely arrived, by a route str0m did not decrypt: a replayed capture, a relay that
+    /// decrypted once and fans out, a bridge from another transport.
+    ///
+    /// Accounted for exactly like a packet off the wire -- registered as received, counted, and reported
+    /// in TWCC feedback. Anything else would make the statistics understate what arrived.
+    Received,
+    /// The packet never arrived and was reconstructed: by FEC, by RED, or by anything else the
+    /// application repairs with.
+    ///
+    /// Delivered to the depacketizer, but deliberately invisible to receive accounting. Every
+    /// reconstructed packet is one the network dropped, so registering it would hide exactly that much
+    /// loss from the sender -- and the loss is the signal that made it send repair data in the first
+    /// place.
+    ///
+    /// The cost is that a retransmission of the same packet may still be requested and arrive. That is
+    /// harmless: the depacketizing buffer drops a duplicate sequence number.
+    Recovered,
 }
 
 impl<'a> DirectApi<'a> {
@@ -260,6 +288,28 @@ impl<'a> DirectApi<'a> {
             .session
             .streams
             .expect_stream_rx(ssrc, rtx, midrid, suppress_nack)
+    }
+
+    /// Feed a plaintext RTP packet in through the normal receive path.
+    ///
+    /// The packet reaches sequence-number extension, replay rejection, RTX unwrapping and
+    /// depacketization exactly as one off the wire would, so it is indistinguishable downstream. What
+    /// differs is the accounting, and `injected` decides it -- see [`Injected`], because the two honest
+    /// reasons to call this want opposite answers.
+    ///
+    /// This exists because there is otherwise no way in: [`Rtc::handle_input()`] requires an
+    /// SRTP-protected packet, so an application holding plaintext RTP -- replayed from a capture,
+    /// decrypted once in a relay, bridged in over another transport, or reconstructed by a repair scheme
+    /// str0m does not implement -- cannot use str0m's depacketizers at all.
+    ///
+    /// The packet must be **plaintext** and complete, header included. SRTP-protected packets belong in
+    /// [`Rtc::handle_input()`]. `now` should be when the data that produced this packet arrived, which is
+    /// not necessarily the current instant.
+    ///
+    /// A packet for an SSRC with no receive stream is dropped; declare one with
+    /// [`Self::expect_stream_rx()`] first.
+    pub fn inject_rtp(&mut self, now: Instant, packet: &[u8], injected: Injected) {
+        self.rtc.session.inject_rtp(now, packet, injected);
     }
 
     /// Remove the receive stream for the given SSRC.
