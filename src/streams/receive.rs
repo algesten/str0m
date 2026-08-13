@@ -585,7 +585,7 @@ impl StreamRx {
             self.stats.jitter = report.jitter;
         }
 
-        let xr = self.create_extended_receiver_report(now);
+        let xr = self.create_extended_receiver_report(now, sender_ssrc);
 
         trace!(
             "Created feedback RR/XR ({:?}): {:?} {:?}",
@@ -637,14 +637,14 @@ impl StreamRx {
         }
     }
 
-    fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
+    fn create_extended_receiver_report(&self, now: Instant, sender_ssrc: Ssrc) -> ExtendedReport {
         // we only want to report our time to measure RTT,
         // the source will answer with Dlrr feedback, allowing us to calculate RTT
         let block = ReportBlock::Rrtr(Rrtr {
             ntp_time: now.to_system_time(),
         });
         ExtendedReport {
-            ssrc: self.ssrc,
+            ssrc: sender_ssrc,
             blocks: vec![block],
         }
     }
