@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Respond to RRTR with DLRR #1022
+  * Use a local SSRC as the originator of outgoing RRTR reports #PR_NUMBER
   * Add `DirectApi::send_pli_feedback` to send a PLI with a chosen sender SSRC #1025
 
 # 0.22.0

@@ -64,19 +64,31 @@ pub fn dlrr_response_to_rrtr() -> Result<(), RtcError> {
         }
     }
 
-    // R should have sent at least one RRTR.
-    let rrtr_count = r
+    let media_ssrc = l
         .events
         .iter()
-        .filter(|(_, e)| {
-            matches!(
-                e.as_raw_packet(),
-                Some(RawPacket::RtcpTx(Rtcp::ExtendedReport(xr)))
-                    if xr.blocks.iter().any(|b| matches!(b, ReportBlock::Rrtr(_)))
-            )
+        .find_map(|(_, e)| match e.as_raw_packet() {
+            Some(RawPacket::RtpTx(header, _)) => Some(header.ssrc),
+            _ => None,
         })
-        .count();
-    assert!(rrtr_count > 0, "R should have sent at least one RRTR");
+        .expect("L should have sent RTP");
+
+    // R should have sent at least one RRTR, using its local RTCP SSRC rather than
+    // the remote media SSRC it is reporting on.
+    let rrtr_ssrc = r
+        .events
+        .iter()
+        .find_map(|(_, e)| {
+            let Some(RawPacket::RtcpTx(Rtcp::ExtendedReport(xr))) = e.as_raw_packet() else {
+                return None;
+            };
+            xr.blocks
+                .iter()
+                .any(|b| matches!(b, ReportBlock::Rrtr(_)))
+                .then_some(xr.ssrc)
+        })
+        .expect("R should have sent at least one RRTR");
+    assert_ne!(rrtr_ssrc, media_ssrc);
 
     // L should have sent at least one DLRR in response.
     let dlrr_reports: Vec<_> = l
@@ -107,6 +119,7 @@ pub fn dlrr_response_to_rrtr() -> Result<(), RtcError> {
         .unwrap();
     assert!(!dlrr.items.is_empty(), "DLRR should have at least one item");
     let item = &dlrr.items[0];
+    assert_eq!(item.ssrc, rrtr_ssrc);
 
     // The last_rr_time field must be the middle 32 bits of the RRTR's NTP timestamp.
     // Verify it's non-zero and that R received the same value back (round-trip integrity).
