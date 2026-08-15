@@ -59,11 +59,12 @@ pub(crate) const PT_OPUS: Pt = Pt::new_with_value(111);
 /// Default RFC 2198 RED payload types, one per audio codec. RED links a single primary codec
 /// via `a=fmtp` and carries that codec's clock rate in `a=rtpmap`, so each audio codec that has
 /// RED needs its own RED payload type. These are the defaults; they are reassigned on conflict
-/// during negotiation, mirroring RTX.
+/// during negotiation, mirroring RTX. They stay below 64 so they are never mistaken for RTCP by
+/// the RTP/RTCP demultiplexer (which reserves payload types 64..=95, see `MultiplexKind`).
 pub(crate) const PT_RED: Pt = Pt::new_with_value(63);
-pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(64);
-pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(65);
-pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(66);
+pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(62);
+pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(61);
+pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(60);
 
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
@@ -322,8 +323,11 @@ impl CodecConfig {
     /// levels for higher loss. Deeper redundancy trades bandwidth for resilience.
     ///
     /// The input is sanitised: zeros and values deeper than the receiver recovery depth are
-    /// dropped, then the rest is sorted and de-duplicated. An empty or fully invalid input falls
-    /// back to the default `[1]`. This only sets the pattern; RED still has to be enabled via the
+    /// dropped, then the rest is sorted and de-duplicated. Distance 1 is always included: recovery
+    /// derives each block's sequence distance from the closest redundant block, treating it as one
+    /// packet back, so a pattern must anchor on distance 1 or the receiver maps the blocks to the
+    /// wrong sequence numbers (a `[2, 4]` pattern becomes `[1, 2, 4]`). An empty or fully invalid
+    /// input falls back to `[1]`. This only sets the pattern; RED still has to be enabled via the
     /// `use_red` argument of an audio enable fn (e.g. [`Self::enable_opus`]) or negotiated.
     pub fn set_red_distances(&mut self, distances: &[u32]) {
         let mut sane: Vec<u32> = distances
@@ -333,6 +337,11 @@ impl CodecConfig {
             .collect();
         sane.sort_unstable();
         sane.dedup();
+        // Always anchor on distance 1 so the receiver can establish the packet duration from the
+        // closest block; without it a pattern like `[2, 4]` is silently mis-recovered.
+        if sane.first() != Some(&1) {
+            sane.insert(0, 1);
+        }
         self.red_distances = sane.into_boxed_slice();
     }
 
@@ -908,6 +917,13 @@ mod test {
         // Empty or fully invalid input falls back to the default single level.
         c.set_red_distances(&[0, 999]);
         assert_eq!(c.red_distances(), &[1]);
+
+        // Distance 1 is always included as the recovery anchor: a pattern without it (which the
+        // receiver would mis-map) gets 1 prepended rather than mis-recovered.
+        c.set_red_distances(&[2, 4]);
+        assert_eq!(c.red_distances(), &[1, 2, 4]);
+        c.set_red_distances(&[3, 5]);
+        assert_eq!(c.red_distances(), &[1, 3, 5]);
     }
 
     #[test]

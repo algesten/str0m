@@ -45,10 +45,20 @@ impl RedState {
         let primary_pt = *self.primary_pt;
         let len = self.history.len();
 
-        // Room for redundancy after the primary payload and its 1-byte RED header. `saturating_sub`
-        // gives 0 for a near-MTU primary, so we send it primary-only rather than overflow. RFC 2198
-        // headers: 1 byte for the primary block, 4 bytes for each redundant block.
-        let mut remaining = budget.saturating_sub(payload.len() + 1);
+        // Even the mandatory 1-byte primary RED header must fit the budget. When it cannot (a
+        // primary that already fills the MTU), emit the payload unwrapped so RED never pushes the
+        // packet past `budget`. `push_sample` reserves this header byte when packetizing for RED,
+        // so in normal operation the primary always leaves room and this only guards a direct call
+        // or pathological input.
+        if payload.len() + 1 > budget {
+            self.history.push_back((payload.clone(), rtp_time));
+            self.trim_history();
+            return payload;
+        }
+
+        // Room for redundancy after the primary payload and its 1-byte RED header. The guard above
+        // makes the subtraction safe. RFC 2198 headers: 1 byte primary, 4 bytes per redundant block.
+        let mut remaining = budget - payload.len() - 1;
 
         // Add the most recent levels first (distance 1 is the most valuable). Collected here
         // shallowest-first, then reversed to oldest-first for the wire.
@@ -72,9 +82,9 @@ impl RedState {
             }
             let cost = 4 + block.payload.len();
             if cost > remaining {
-                // Out of budget: stop so the kept (shallowest) levels stay contiguous. Redundancy
-                // never pushes the encoded RED past `budget`; only the 1-byte primary header can,
-                // and only for a primary that already fills the MTU — still far under the buffer.
+                // Out of budget: stop so the kept (shallowest) levels stay contiguous. The primary
+                // and its header are already guaranteed to fit, so the encoded RED stays within
+                // `budget`.
                 break;
             }
             remaining -= cost;
@@ -85,11 +95,16 @@ impl RedState {
 
         let bytes = RedEncoder::encode(primary_pt, &payload, &kept);
         self.history.push_back((payload, rtp_time));
+        self.trim_history();
+        bytes
+    }
+
+    /// Cap history at the deepest configured distance so it never grows without bound.
+    fn trim_history(&mut self) {
         let max_distance = self.distances.last().copied().unwrap_or(1) as usize;
         while self.history.len() > max_distance {
             self.history.pop_front();
         }
-        bytes
     }
 }
 
@@ -167,7 +182,14 @@ impl Payloader {
             ..
         } = to_payload;
 
-        let chunks = self.pack.packetize(mtu, data.as_ref())?;
+        // When RED is on, reserve the 1-byte RED primary header so the wrapped packet still fits
+        // the MTU (the primary chunk plus that header must not exceed `mtu`).
+        let packetize_mtu = if self.red.is_some() {
+            mtu.saturating_sub(1)
+        } else {
+            mtu
+        };
+        let chunks = self.pack.packetize(packetize_mtu, data.as_ref())?;
         let len = chunks.len();
 
         for (idx, data) in chunks.into_iter().enumerate() {

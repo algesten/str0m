@@ -23,6 +23,7 @@ use crate::pacer::{Pacer, PacerImpl};
 use crate::packet::{RedBlock, RedDecoder, red_recovery_blocks};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
+use crate::rtp_::ExtensionValues;
 use crate::rtp_::MediaTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::Pli;
@@ -656,6 +657,10 @@ impl Session {
         // primary, filling single-packet losses from the next packet's redundancy.
         let mut red_recovered: Vec<(RtpHeader, Arc<[u8]>, SeqNo, MediaTime)> = Vec::new();
 
+        // Capture the full wire payload length before RED unwrapping narrows `data` to the primary
+        // block. The sender counts the whole RED-wrapped payload, so receive stats must too.
+        let wire_payload_len = data.len();
+
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
@@ -728,6 +733,10 @@ impl Session {
                 // RFC 2198: the marker bit is not carried for redundant blocks. Clearing it also
                 // stops a recovered (historical) audio frame being seen as a start-of-talkspurt.
                 rec_header.marker = false;
+                // Redundant blocks carry no header extensions, so a recovered frame cannot carry
+                // its own (e.g. audio level). Clear the carrier's extensions rather than let the
+                // recovered frame inherit the current packet's metadata.
+                rec_header.ext_vals = ExtensionValues::default();
                 red_recovered.push((rec_header, Arc::from(b.payload), rec_seq, rec_time));
             }
             (receipt_outer, un.primary)
@@ -742,7 +751,14 @@ impl Session {
             return;
         }
 
-        self.media_bytes_rx += data.len() as u64;
+        // For RED (frame mode) `data` is now just the unwrapped primary; count the full RED wire
+        // payload instead so receive accounting matches the sender's byte count.
+        let rx_bytes = if is_red && !self.rtp_mode {
+            wire_payload_len
+        } else {
+            data.len()
+        };
+        self.media_bytes_rx += rx_bytes as u64;
 
         // One-shot conversion to Arc<[u8]>: a single allocation that copies
         // only the trimmed payload bytes out of the SRTP scratch buffer.
@@ -1399,6 +1415,13 @@ fn un_red<'a>(header: &mut RtpHeader, data: &'a [u8], pt: Pt) -> Option<UnRed<'a
     let mut redundant = Vec::new();
     for b in blocks {
         if b.is_primary {
+            // RFC 2198 lets redundant blocks use a different PT, but the primary block must carry
+            // the codec this RED stream negotiated (`pt`, e.g. Opus). A mismatch means this is not
+            // the primary we expect, so drop the packet rather than mislabel a foreign codec (e.g.
+            // reinterpret a PCMU primary as Opus).
+            if b.pt != *pt {
+                return None;
+            }
             primary = Some(b.payload);
         } else {
             redundant.push(b);

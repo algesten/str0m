@@ -118,6 +118,17 @@ fn run_audio_options(
         }
     }
 
+    // Drain (stats only): let every in-flight packet deliver and both peers emit a final stats
+    // snapshot that includes all of them, so cumulative tx/rx byte counters are compared at aligned
+    // points. Otherwise the last tx and rx snapshots (each on its own timer) can land a packet apart
+    // and the exact-equality check is off by one packet's worth of bytes.
+    if stats {
+        let drain_until = l.duration() + Duration::from_millis(300);
+        while l.duration() < drain_until {
+            progress(&mut l, &mut r).unwrap();
+        }
+    }
+
     (l, r)
 }
 
@@ -147,14 +158,17 @@ fn red_recovered_frames_do_not_inherit_the_carrier_audio_level() {
         .seed(7);
     let (_, r) = run_audio_options(true, true, Some(loss), 4, false, true);
 
+    // A RED-recovered frame carries no audio level of its own: RFC 2198 redundant blocks carry
+    // only codec payload, not RTP header extensions, so the frame's original audio level is not on
+    // the wire and is delivered as None. What it must never do is inherit the carrier packet's
+    // level, so flag only a frame that carries a level different from its own.
     let mismatched = r.events.iter().find_map(|(_, e)| match e {
         Event::MediaData(m) => {
             let expected = -(m.data[0] as i8);
-            (m.ext_vals.audio_level != Some(expected)).then_some((
-                m.data[0],
-                m.ext_vals.audio_level,
-                expected,
-            ))
+            m.ext_vals
+                .audio_level
+                .filter(|&lvl| lvl != expected)
+                .map(|lvl| (m.data[0], lvl, expected))
         }
         _ => None,
     });

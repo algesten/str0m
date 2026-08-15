@@ -768,15 +768,18 @@ impl PayloadParams {
             }
 
             // RED is opt-in on our side and audio-only: keep it only if the matched remote also
-            // offers RED (`and`) and our codec is an audio codec. Adopt the remote's RED PT,
-            // remapping on conflict when we control it.
+            // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
+            // codecs mapped to the same PT), so resolve any collision before claiming it. The
+            // collision check runs regardless of who controls PT allocation: only the resolution
+            // differs, and claiming the same PT twice would panic.
             let mut remote_red = self
                 .red
                 .and(first.red)
                 .filter(|_| self.spec.codec.is_audio());
-            if local_is_controlling {
-                if let Some(red) = remote_red {
-                    if claimed.is_claimed(red) {
+            if let Some(red) = remote_red {
+                if claimed.is_claimed(red) {
+                    if local_is_controlling {
+                        // We control PT allocation: remap the conflicting RED to a free PT.
                         if let Some(new_red) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
                             debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
                             remote_red = Some(new_red);
@@ -786,6 +789,12 @@ impl PayloadParams {
                             debug!("No free PT for RED; dropping it");
                             remote_red = None;
                         }
+                    } else {
+                        // The remote dictated the PTs and mapped a RED PT that is already taken.
+                        // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
+                        // rather than claim the same PT twice (which would panic).
+                        debug!("Conflicting remote RED PT {:?}; dropping it", red);
+                        remote_red = None;
                     }
                 }
             }

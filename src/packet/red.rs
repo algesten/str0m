@@ -68,7 +68,15 @@ impl RedEncoder {
     /// skipped (see [`RedundantBlock::fits`]) so the output is always a valid RED payload, never
     /// silently truncated.
     pub fn encode(primary_pt: u8, primary: &[u8], redundant: &[RedundantBlock]) -> Vec<u8> {
-        let blocks: Vec<&RedundantBlock> = redundant.iter().filter(|b| b.fits()).collect();
+        // Cap at the decoder's bound so encoder output always round-trips: `RedDecoder::decode`
+        // rejects more than `MAX_REDUNDANT_BLOCKS` redundant blocks as a DoS guard. The internal
+        // sender never approaches this (at most `MAX_RED_RECOVERY_DEPTH` levels), so this only
+        // clamps public-API misuse.
+        let blocks: Vec<&RedundantBlock> = redundant
+            .iter()
+            .filter(|b| b.fits())
+            .take(MAX_REDUNDANT_BLOCKS)
+            .collect();
 
         let mut out = Vec::with_capacity(primary.len() + blocks.len() * 4 + 1);
 
@@ -189,11 +197,11 @@ pub(crate) fn red_recovery_blocks<'a>(
     // A redundant block carries only a timestamp offset, not a sequence number, so how many
     // packets back it sits is derived from the offset: `distance = offset / frame`, where `frame`
     // is the RTP ticks per packet. That frame size is not reliably signalled (Opus `minptime` is a
-    // minimum, not the actual value), so we take it from the closest same-PT block, which is one
-    // packet back for every real sender (browsers and str0m both include main-1). Blocks whose
-    // offset is not a clean multiple of that frame (irregular packetization) are skipped rather
-    // than mapped to a wrong sequence number, so recovery is best effort and never fabricates a
-    // packet at the wrong seq from a well-formed but unexpected payload.
+    // minimum, not the actual value), so we estimate it from the closest same-PT block, which is
+    // one packet back for every real sender (browsers and str0m both include main-1). The estimate
+    // is only trustworthy if every same-PT offset is an exact multiple of it; otherwise the packet
+    // duration cannot be established from offsets alone and we recover nothing. This keeps recovery
+    // best effort and never fabricates a packet at the wrong seq.
     let same_pt = |b: &&RedBlock<'_>| b.pt == primary_pt && b.timestamp_offset > 0;
     let Some(frame) = redundant
         .iter()
@@ -203,13 +211,20 @@ pub(crate) fn red_recovery_blocks<'a>(
     else {
         return Vec::new();
     };
+    // If any same-PT offset is not a multiple of the smallest one, the smallest is not reliably
+    // distance 1 (e.g. a [3, 5] pattern with no main-1 block), so recover nothing rather than map
+    // it to distance 1 and inject a frame at the wrong sequence number.
+    if redundant
+        .iter()
+        .filter(same_pt)
+        .any(|b| b.timestamp_offset % frame != 0)
+    {
+        return Vec::new();
+    }
     redundant
         .iter()
         .filter(same_pt)
         .filter_map(|b| {
-            if b.timestamp_offset % frame != 0 {
-                return None;
-            }
             let back = (b.timestamp_offset / frame) as u64;
             (back <= MAX_RED_RECOVERY_DEPTH).then_some((back, b))
         })
@@ -395,13 +410,10 @@ mod test {
             "distances derived from offsets, never mis-mapped"
         );
 
-        // An offset that is not a clean multiple of the frame is skipped, not mis-mapped.
+        // If any offset is not a clean multiple of the smallest, the packet duration can't be
+        // established, so the whole set is skipped rather than mis-mapped.
         let irregular = vec![block(960), block(1441)];
-        let backs: Vec<u64> = red_recovery_blocks(&irregular, 111)
-            .iter()
-            .map(|(b, _)| *b)
-            .collect();
-        assert_eq!(backs, vec![1]);
+        assert!(red_recovery_blocks(&irregular, 111).is_empty());
     }
 
     #[test]
