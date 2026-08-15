@@ -252,7 +252,8 @@ impl RtcConfig {
     /// `[1, 3, 5]` sends three levels for higher loss at the cost of more bandwidth.
     ///
     /// The pattern is sanitised (zeros and values deeper than the recovery depth are dropped, then
-    /// sorted and de-duped), falling back to `[1]` if empty. This only sets the pattern; enable RED
+    /// sorted and de-duped) and always includes distance 1 as the recovery anchor (so `[2, 4]`
+    /// becomes `[1, 2, 4]`), falling back to `[1]` if empty. This only sets the pattern; enable RED
     /// via the `use_red` argument of an audio codec (e.g. [`Self::enable_opus`]) for it to take effect.
     pub fn set_red_distances(mut self, distances: &[u32]) -> Self {
         self.codec_config.set_red_distances(distances);
