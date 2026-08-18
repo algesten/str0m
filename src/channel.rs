@@ -330,11 +330,23 @@ impl ChannelHandler {
                 continue;
             }
 
-            // We need to allocate
+            // We need to allocate. Walk this parity's ids until we find a free one.
+            //
+            // A remote peer can fill every id (sctp-proto enforces no stream-count),
+            // the next allocation could overflow, instead fail the allocation gracefully.
             let mut proposed = base;
-
             while taken.contains(&proposed) {
-                proposed += 2
+                match proposed.checked_add(2) {
+                    Some(next) => proposed = next,
+                    None => break, // id space for this parity is exhausted
+                }
+            }
+
+            if taken.contains(&proposed) {
+                // Exhausted, the loop broke on overflow, leave the channel
+                // unallocated, it is retried on the next timeout.
+                warn!("SCTP stream id space exhausted, cannot allocate {:?}", a.id);
+                continue;
             }
 
             // Found the next free.
