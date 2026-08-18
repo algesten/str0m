@@ -98,7 +98,11 @@ impl AeadAes128GcmCipher for OsslAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
+        if input.len() < AeadAes128Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "SRTP GCM decrypt input shorter than auth tag".into(),
+            ));
+        }
 
         let (cipher_text, tag) = input.split_at(input.len() - AeadAes128Gcm::TAG_LEN);
 
@@ -165,7 +169,11 @@ impl AeadAes256GcmCipher for OsslAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
+        if input.len() < AeadAes256Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "SRTP GCM decrypt input shorter than auth tag".into(),
+            ));
+        }
 
         let (cipher_text, tag) = input.split_at(input.len() - AeadAes256Gcm::TAG_LEN);
 

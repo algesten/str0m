@@ -69,7 +69,11 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
+        if input.len() < AeadAes128Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "SRTP GCM decrypt input shorter than auth tag".into(),
+            ));
+        }
         aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
 }
@@ -104,7 +108,11 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
+        if input.len() < AeadAes256Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "SRTP GCM decrypt input shorter than auth tag".into(),
+            ));
+        }
         aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
 }

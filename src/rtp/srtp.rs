@@ -29,6 +29,10 @@ const LABEL_RTCP_SALT: u8 = 5;
 
 pub const SRTP_BLOCK_SIZE: usize = 16;
 const SRTCP_INDEX_LEN: usize = 4;
+// SRTCP header and sender SSRC keep the first 8 bytes (RTCP ), 
+// encrypted payload, SRTCP index and tag follow.
+// A valid SRTCP packet is never shorter than this header + index + tag.
+const SRTCP_HEADER_LEN: usize = 8;
 const MAX_TAG_LEN: usize = AeadAes256Gcm::TAG_LEN;
 pub const SRTCP_OVERHEAD: usize = MAX_TAG_LEN + SRTCP_INDEX_LEN;
 pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
@@ -311,7 +315,7 @@ impl SrtpContext {
     ) -> Option<&[u8]> {
         match &mut self.rtp {
             Derived::Aes128CmSha1_80 { key, salt, dec, .. } => {
-                if buf.len() < Aes128CmSha1_80::HMAC_TAG_LEN {
+                if buf.len() < header.header_len + Aes128CmSha1_80::HMAC_TAG_LEN {
                     return None;
                 }
 
@@ -348,7 +352,7 @@ impl SrtpContext {
                 Some(&self.rx_scratch[..input.len()])
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
-                if buf.len() < AeadAes128Gcm::TAG_LEN {
+                if buf.len() < header.header_len + AeadAes128Gcm::TAG_LEN {
                     return None;
                 }
 
@@ -379,7 +383,7 @@ impl SrtpContext {
                 Some(&self.rx_scratch[..out_len])
             }
             Derived::AeadAes256Gcm { salt, dec, .. } => {
-                if buf.len() < AeadAes256Gcm::TAG_LEN {
+                if buf.len() < header.header_len + AeadAes256Gcm::TAG_LEN {
                     return None;
                 }
 
@@ -513,7 +517,7 @@ impl SrtpContext {
     pub fn unprotect_rtcp(&mut self, buf: &[u8]) -> Option<Vec<u8>> {
         match &mut self.rtcp {
             Derived::Aes128CmSha1_80 { key, salt, dec, .. } => {
-                if buf.len() < Aes128CmSha1_80::HMAC_TAG_LEN + SRTCP_INDEX_LEN {
+                if buf.len() < SRTCP_HEADER_LEN + SRTCP_INDEX_LEN + Aes128CmSha1_80::HMAC_TAG_LEN {
                     return None;
                 }
 
@@ -573,7 +577,7 @@ impl SrtpContext {
                 Some(output)
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
-                if buf.len() < SRTCP_INDEX_LEN + AeadAes128Gcm::TAG_LEN {
+                if buf.len() < SRTCP_HEADER_LEN + SRTCP_INDEX_LEN + AeadAes128Gcm::TAG_LEN {
                     // Too short
                     return None;
                 }
@@ -645,7 +649,7 @@ impl SrtpContext {
                 Some(output)
             }
             Derived::AeadAes256Gcm { salt, dec, .. } => {
-                if buf.len() < SRTCP_INDEX_LEN + AeadAes256Gcm::TAG_LEN {
+                if buf.len() < SRTCP_HEADER_LEN + SRTCP_INDEX_LEN + AeadAes256Gcm::TAG_LEN {
                     // Too short
                     return None;
                 }

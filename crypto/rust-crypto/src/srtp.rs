@@ -104,7 +104,11 @@ impl AeadAes128GcmCipher for RustCryptoAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
+        if input.len() < AeadAes128Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "SRTP GCM decrypt input shorter than auth tag".into(),
+            ));
+        }
 
         let nonce = Nonce::from_slice(iv);
 
@@ -175,7 +179,11 @@ impl AeadAes256GcmCipher for RustCryptoAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
+        if input.len() < AeadAes256Gcm::TAG_LEN {
+            return Err(CryptoError::Other(
+                "SRTP GCM decrypt input shorter than auth tag".into(),
+            ));
+        }
 
         let nonce = Nonce::from_slice(iv);
 
