@@ -604,7 +604,7 @@ impl RtcSctp {
             })
             .sum();
 
-        MAX_BUFFERED_ACROSS_STREAMS - total
+        MAX_BUFFERED_ACROSS_STREAMS.saturating_sub(total)
     }
 
     pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
