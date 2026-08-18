@@ -32,6 +32,9 @@ const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
 /// Upper bound on the number of concurrently tracked SCTP streams.
 const MAX_SCTP_STREAMS: usize = 8192;
 
+/// Maximum self-recursion depth of `do_poll`.
+const MAX_SCTP_POLL_DEPTH: usize = 64;
+
 /// Maximum message size we advertise in SDP (what we can receive)
 pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
 
@@ -737,6 +740,18 @@ impl RtcSctp {
     }
 
     pub fn do_poll(&mut self) -> Option<SctpEvent> {
+        self.do_poll_inner(0)
+    }
+
+    fn do_poll_inner(&mut self, depth: usize) -> Option<SctpEvent> {
+        // Recursion flushes whatever the send produces. But if the peer has
+        // stopped accepting data the send produces nothing, so we move on to the
+        // next channel and recurse again, once per pending channel. The depth is
+        // tracked and capped to avoid overflowing the stack.
+        if depth >= MAX_SCTP_POLL_DEPTH {
+            return None;
+        }
+
         if self.state == RtcSctpState::Uninited {
             // Need to call `init()` before any polling starts.
             return None;
@@ -772,7 +787,7 @@ impl RtcSctp {
             if let Event::Connected = e {
                 assoc.set_max_send_message_size(self.remote_max_message_size);
                 set_state(&mut self.state, RtcSctpState::Established);
-                return self.poll();
+                return self.do_poll_inner(depth + 1);
             }
 
             if let Event::AssociationLost { ref reason } = e {
@@ -876,7 +891,7 @@ impl RtcSctp {
 
                                     // Start over with polling, since we might have caused
                                     // some network traffic by writing the DcepOpen.
-                                    return self.do_poll();
+                                    return self.do_poll_inner(depth + 1);
                                 }
                                 Err(e) => {
                                     warn!(
