@@ -257,7 +257,11 @@ impl<'a> TryFrom<&'a [u8]> for Dlrr {
         let words_per_block = 3;
         let blocks = u16::from_be_bytes(buf[2..4].try_into().unwrap()) / words_per_block;
 
-        let mut items: Vec<DlrrItem> = Vec::with_capacity(blocks as usize);
+        // `blocks` comes from the buffer content,
+        // cap the pre-allocation by what the buffer could actually hold (12 bytes/item)
+        // so a small packet can't force a huge allocation.
+        let cap = (blocks as usize).min(buf.len() / 12);
+        let mut items: Vec<DlrrItem> = Vec::with_capacity(cap);
 
         // move on after the header
         let mut buf = &buf[4..];

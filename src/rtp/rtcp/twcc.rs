@@ -114,7 +114,7 @@ impl Iterator for TwccIter {
                 Delta::Large(v) => {
                     let dur = Duration::from_micros(250 * v.unsigned_abs() as u64);
                     Some(if v < 0 {
-                        self.time_base.checked_sub(dur).unwrap()
+                        self.time_base.checked_sub(dur).unwrap_or(self.time_base)
                     } else {
                         self.time_base + dur
                     })
