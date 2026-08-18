@@ -533,14 +533,16 @@ impl RtcSctp {
                 // out-of-band where remote started. We can go to Open, but must configure the local
                 // stream for it first.
 
-                // The association must be open since we don't get AwaitConfig state without
-                // polling from the remote peer.
-                let mut stream = self
-                    .assoc
-                    .as_mut()
-                    .expect("association to be open")
-                    .stream(entry.id)
-                    .expect("stream of entry in AwaitConfig");
+                // The stream can already be gone even though our entry is
+                // still AwaitConfig. Close the channel gracefully instead of panicking.
+                let Some(assoc) = self.assoc.as_mut() else {
+                    entry.do_close = true;
+                    return;
+                };
+                let Ok(mut stream) = assoc.stream(entry.id) else {
+                    entry.do_close = true;
+                    return;
+                };
 
                 if !entry.configure_reliability(&mut stream) {
                     return;
