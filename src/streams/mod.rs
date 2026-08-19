@@ -430,6 +430,7 @@ impl Streams {
     pub(crate) fn handle_timeout(
         &mut self,
         now: Instant,
+        // %%%% What's this sender_ssrc?
         sender_ssrc: Ssrc,
         do_nack: bool,
         medias: &[Media],
@@ -444,6 +445,14 @@ impl Streams {
         }
 
         for stream in self.streams_rx.values_mut() {
+            let sender_ssrc = stream.rtcp_sender_ssrc().unwrap_or_else(|| {
+                medias
+                    .iter()
+                    .find(|media| media.mid() == stream.mid())
+                    .and_then(Media::rtcp_sender_ssrc)
+                    .unwrap_or(sender_ssrc)
+            });
+
             stream.maybe_create_keyframe_request(sender_ssrc, feedback);
             stream.maybe_create_remb_request(sender_ssrc, feedback);
 

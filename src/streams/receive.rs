@@ -40,6 +40,10 @@ pub struct StreamRx {
     /// The Media mid/rid this stream belongs to.
     midrid: MidRid,
 
+    // %%% comment: And if it's not set? Also: why "local"?
+    /// Local SSRC used as the sender of RTCP feedback for this stream.
+    rtcp_sender_ssrc: Option<Ssrc>,
+
     /// Incoming CNAME in Sdes reports.
     cname: Option<String>,
 
@@ -150,6 +154,7 @@ impl StreamRx {
             rtx: None,
             previous_ssrc: None,
             midrid,
+            rtcp_sender_ssrc: None,
             cname: None,
             suppress_nack,
             last_used: already_happened(),
@@ -193,6 +198,22 @@ impl StreamRx {
     /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
         self.midrid.rid()
+    }
+
+    // %%% comment: why "local"?
+    /// Set the local SSRC used as the sender of RTCP feedback for this stream.
+    ///
+    /// This affects receiver reports and feedback such as NACK and PLI. When
+    /// unset, the containing [`Media`][crate::media::Media] setting or the
+    /// session default is used.
+    pub fn set_rtcp_sender_ssrc(&mut self, ssrc: Ssrc) {
+        self.rtcp_sender_ssrc = Some(ssrc);
+    }
+
+    // %%% comment: why "local"?
+    /// Local SSRC explicitly configured as the sender of RTCP feedback.
+    pub fn rtcp_sender_ssrc(&self) -> Option<Ssrc> {
+        self.rtcp_sender_ssrc
     }
 
     /// CNAME as sent by remote peer in a Sdes.
@@ -581,7 +602,7 @@ impl StreamRx {
             self.stats.jitter = report.jitter;
         }
 
-        let xr = self.create_extended_receiver_report(now);
+        let xr = self.create_extended_receiver_report(now, sender_ssrc);
 
         trace!(
             "Created feedback RR/XR ({:?}): {:?} {:?}",
@@ -633,14 +654,15 @@ impl StreamRx {
         }
     }
 
-    fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
+    fn create_extended_receiver_report(&self, now: Instant, sender_ssrc: Ssrc) -> ExtendedReport {
         // we only want to report our time to measure RTT,
         // the source will answer with Dlrr feedback, allowing us to calculate RTT
         let block = ReportBlock::Rrtr(Rrtr {
             ntp_time: now.to_system_time(),
         });
+        // %%% Is this right?
         ExtendedReport {
-            ssrc: self.ssrc,
+            ssrc: sender_ssrc,
             blocks: vec![block],
         }
     }
