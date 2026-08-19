@@ -673,4 +673,45 @@ mod tests {
         handler.association_lost();
         assert!(handler.closed_stream_ids.is_empty());
     }
+
+    /// A remote peer decides which SCTP stream ids exist on the association, and
+    /// `ensure_channel_id_for()` gives every one of them an allocation. A peer that
+    /// opens every id of our parity therefore leaves `do_allocations()` with no free
+    /// id to hand out.
+    ///
+    /// The allocator walks `proposed += 2` with no upper bound. Past 65535 that is a
+    /// debug-build overflow panic, and in release it wraps back to `base` and spins
+    /// forever inside `do_allocations()`, hanging the whole event loop.
+    ///
+    /// Failing to allocate is fine, str0m retries on the next timeout. Panicking or
+    /// hanging is not.
+    #[test]
+    fn stream_id_space_exhausted_by_remote() {
+        let sctp = RtcSctp::new(1200);
+        let base: u16 = if sctp.is_client() { 0 } else { 1 };
+
+        let mut handler = ChannelHandler::default();
+
+        // What the peer did: claim every stream id of our parity. Going through
+        // `ensure_channel_id_for()` for each is the realistic route but is quadratic,
+        // so seed the equivalent state directly.
+        handler.closed_stream_ids = (base..=u16::MAX).step_by(2).collect();
+        assert_eq!(handler.closed_stream_ids.len(), 32768);
+
+        // Now the local application asks for a data channel.
+        let id = handler.new_channel(&Default::default());
+
+        handler.do_allocations(&sctp);
+
+        let alloc = handler
+            .allocations
+            .iter()
+            .find(|a| a.id == id)
+            .expect("the allocation entry to still be there");
+
+        assert!(
+            alloc.sctp_stream_id.is_none(),
+            "no id can be allocated when the peer holds the whole parity"
+        );
+    }
 }

@@ -120,7 +120,10 @@ impl Iterator for TwccIter {
                     })
                 }
             },
-            _ => unreachable!(),
+            // A VectorDouble chunk can carry 0b11 for any of its statuses. The
+            // parser maps that to Unknown and consumes no delta, so there is nothing
+            // to report for it either.
+            PacketStatus::Unknown => None,
         };
 
         if let Some(new_timebase) = instant {

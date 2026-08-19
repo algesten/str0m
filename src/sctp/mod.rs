@@ -1468,6 +1468,63 @@ mod tests {
         (client, server)
     }
 
+    /// A stream the remote opened can be gone from the association by the time the
+    /// application configures it.
+    ///
+    /// `StreamEntryState::AwaitConfig` is set when a `Readable`/`Writable` event
+    /// arrives
+    /// for an id we have no config for. If the peer then resets that stream, sctp-proto
+    /// unregisters it during `handle_input()`, while our entry stays `AwaitConfig` until
+    /// the reset event is drained in a later `do_poll()`.
+    #[test]
+    fn open_stream_out_of_band_after_remote_reset() {
+        let (mut client, _server) = connect_client_server();
+
+        let stream_id: u16 = 3;
+        assert!(
+            client.assoc.as_mut().unwrap().stream(stream_id).is_err(),
+            "the association must not have this stream for the test to mean anything"
+        );
+
+        client.entries.insert(
+            stream_id,
+            StreamEntry {
+                config: None,
+                state: StreamEntryState::AwaitConfig,
+                id: stream_id,
+                do_close: false,
+                open_deadline: None,
+                buffered_threshold: BufferedThresholdConfig::Unconfigured,
+            },
+        );
+
+        client.open_stream(
+            stream_id,
+            ChannelConfig {
+                label: "negotiated".to_string(),
+                ordered: true,
+                reliability: Reliability::Reliable,
+                negotiated: Some(stream_id),
+                protocol: String::new(),
+            },
+        );
+
+        let entry = client
+            .entries
+            .get(&stream_id)
+            .expect("entry to still exist");
+
+        assert!(
+            entry.do_close,
+            "a stream that vanished from the association should be marked for close"
+        );
+        assert_ne!(
+            entry.state,
+            StreamEntryState::Open,
+            "must not go Open when there is no underlying stream"
+        );
+    }
+
     /// Regression test: when `assoc.open_stream()` returns `ErrStreamAlreadyExist`
     /// for an in-band (DCEP) data channel, the entry must eventually transition to
     /// Closed and emit `SctpEvent::Close`. The error is transient (a reset
