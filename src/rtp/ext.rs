@@ -943,8 +943,6 @@ impl ExtensionValues {
         let mut offset = already_happened() + since_beginning;
 
         if offset + relative_64_secs > now {
-            // `Instant - Duration` panics on underflow on non-Linux clocks
-            // (macOS/Windows) with low uptime; saturate instead of panicking.
             offset = offset
                 .checked_sub(Duration::from_secs(64))
                 .unwrap_or(offset);

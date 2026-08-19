@@ -29,9 +29,6 @@ const LABEL_RTCP_SALT: u8 = 5;
 
 pub const SRTP_BLOCK_SIZE: usize = 16;
 const SRTCP_INDEX_LEN: usize = 4;
-// SRTCP header and sender SSRC keep the first 8 bytes (RTCP ), 
-// encrypted payload, SRTCP index and tag follow.
-// A valid SRTCP packet is never shorter than this header + index + tag.
 const SRTCP_HEADER_LEN: usize = 8;
 const MAX_TAG_LEN: usize = AeadAes256Gcm::TAG_LEN;
 pub const SRTCP_OVERHEAD: usize = MAX_TAG_LEN + SRTCP_INDEX_LEN;
