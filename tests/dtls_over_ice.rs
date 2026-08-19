@@ -106,3 +106,211 @@ pub fn dtls_over_ice_falls_back_when_peer_does_not_support_it() -> Result<(), Rt
 
     Ok(())
 }
+
+/// A DTLS 1.3 ClientHello only fits in connectivity checks because the DTLS
+/// MTU is lowered while this extension is enabled.
+///
+/// Lifting that does not break the handshake, which is what makes it worth a
+/// test of its own: DTLS just falls back to ordinary datagrams and everything
+/// still connects. What is quietly lost is the first flight riding along, which
+/// is the whole point of the extension. So this asserts on the packets rather
+/// than on the connection.
+///
+/// The whole message has to arrive, not merely some of it. A ClientHello too
+/// big for one check is split across several, and every DTLS fragment repeats
+/// the handshake header — so finding *a* ClientHello record in a check says
+/// nothing about whether the rest of it got there too. Today dimpl pads the
+/// ClientHello out to the DTLS MTU and it is always exactly one unfragmented
+/// packet, but that stops being true as soon as a post-quantum key share makes
+/// the content itself exceed the MTU.
+///
+/// Every MTU we accept is covered, because the ways of getting this wrong fail
+/// at one end of the range or the other while looking fine at the default. A
+/// flat cap stops working once the MTU drops to meet it; sizing against the
+/// configured MTU alone overshoots once that MTU exceeds what a check may hold.
+///
+/// DTLS 1.3 only, so this runs on the dimpl-backed providers.
+#[cfg(any(
+    feature = "aws-lc-rs",
+    feature = "rust-crypto",
+    feature = "openssl-dimpl",
+    feature = "wincrypto-dimpl",
+    feature = "apple-crypto",
+))]
+#[test]
+pub fn dtls_13_client_hello_is_carried_whole() -> Result<(), RtcError> {
+    use str0m::{DATAGRAM_MTU_TARGET, DATAGRAM_MTU_TARGET_MAX, DATAGRAM_MTU_TARGET_MIN};
+
+    init_log();
+    init_crypto_default();
+
+    for mtu in [
+        DATAGRAM_MTU_TARGET_MIN,
+        900,
+        DATAGRAM_MTU_TARGET,
+        1200,
+        DATAGRAM_MTU_TARGET_MAX,
+    ] {
+        match client_hello_bytes_missing_from_checks(mtu)? {
+            None => panic!(
+                "at mtu {mtu} no connectivity check carried any of the DTLS 1.3 \
+                 ClientHello, so it does not fit in one"
+            ),
+            Some(0) => {}
+            Some(missing) => panic!(
+                "at mtu {mtu} the connectivity checks carried all but {missing} \
+                 bytes of the DTLS 1.3 ClientHello"
+            ),
+        }
+    }
+
+    Ok(())
+}
+
+/// How many bytes of the DTLS 1.3 ClientHello never rode in a connectivity
+/// check, or `None` if none of it did.
+///
+/// One peer is enough. The checks go out as soon as there are handshake packets
+/// to put in them, and nobody has to answer for us to look at what we sent.
+#[cfg(any(
+    feature = "aws-lc-rs",
+    feature = "rust-crypto",
+    feature = "openssl-dimpl",
+    feature = "wincrypto-dimpl",
+    feature = "apple-crypto",
+))]
+fn client_hello_bytes_missing_from_checks(mtu: usize) -> Result<Option<usize>, RtcError> {
+    use std::time::Instant;
+
+    use str0m::config::DtlsVersion;
+    use str0m::ice::{IceCreds, StunMessage};
+    use str0m::{Candidate, Input, Output, Rtc};
+
+    let now = Instant::now();
+    let mut rtc = Rtc::builder()
+        .enable_dtls_over_ice(true)
+        .set_dtls_version(DtlsVersion::Dtls13)
+        .set_mtu(mtu..=mtu)
+        .build(now);
+
+    let local = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
+    let remote = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
+    rtc.add_local_candidate(local);
+    rtc.add_remote_candidate(remote);
+
+    // Nothing answers, so the remote credentials and fingerprint are never
+    // used. They only need to exist for the handshake to start.
+    let fingerprint = rtc.direct_api().local_dtls_fingerprint().clone();
+    rtc.direct_api().set_remote_fingerprint(fingerprint);
+    rtc.direct_api().set_remote_ice_credentials(IceCreds::new());
+    rtc.direct_api().set_ice_controlling(true);
+    rtc.direct_api().start_dtls(true).unwrap();
+
+    let mut message_length = None;
+    let mut fragments = Vec::new();
+    let mut checks_sent = 0;
+    let mut now = now;
+
+    for _ in 0..50 {
+        now += Duration::from_millis(20);
+        rtc.handle_input(Input::Timeout(now))?;
+
+        loop {
+            match rtc.poll_output()? {
+                Output::Timeout(_) => break,
+                Output::Event(_) => continue,
+                Output::Transmit(transmit) => {
+                    let Ok(message) = StunMessage::parse(&transmit.contents) else {
+                        continue;
+                    };
+                    checks_sent += 1;
+
+                    let Some(fragment) = message.dtls_packet().and_then(client_hello_fragment)
+                    else {
+                        continue;
+                    };
+                    message_length = Some(fragment.message_length);
+                    if !fragments.contains(&fragment) {
+                        fragments.push(fragment);
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        checks_sent > 0,
+        "no connectivity checks were sent at all at mtu {mtu}"
+    );
+
+    // Nothing of it arrived. The message length is only known from a fragment,
+    // so there is no byte count to report.
+    let Some(message_length) = message_length else {
+        return Ok(None);
+    };
+
+    // Walk the fragments in order, tracking how far a contiguous run from the
+    // start of the message reaches. Fragments may repeat and may arrive in any
+    // order, so this counts coverage rather than bytes.
+    fragments.sort_by_key(|fragment| fragment.offset);
+    let covered = fragments
+        .iter()
+        .fold(0, |covered, fragment| match fragment.offset <= covered {
+            true => covered.max(fragment.offset + fragment.length),
+            false => covered,
+        });
+
+    Ok(Some(message_length.saturating_sub(covered)))
+}
+
+/// One fragment of a DTLS ClientHello.
+///
+/// Every fragment of a handshake message repeats the message type and total
+/// length, and says which slice of the message it holds.
+#[cfg(any(
+    feature = "aws-lc-rs",
+    feature = "rust-crypto",
+    feature = "openssl-dimpl",
+    feature = "wincrypto-dimpl",
+    feature = "apple-crypto",
+))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ClientHelloFragment {
+    message_length: usize,
+    offset: usize,
+    length: usize,
+}
+
+/// Reads a DTLS packet as a ClientHello fragment, if that is what it holds.
+#[cfg(any(
+    feature = "aws-lc-rs",
+    feature = "rust-crypto",
+    feature = "openssl-dimpl",
+    feature = "wincrypto-dimpl",
+    feature = "apple-crypto",
+))]
+fn client_hello_fragment(packet: &[u8]) -> Option<ClientHelloFragment> {
+    /// A DTLS record header, after which the handshake header begins.
+    const DTLS_RECORD_HEADER_LEN: usize = 13;
+    const DTLS_HANDSHAKE_RECORD: u8 = 22;
+    const DTLS_CLIENT_HELLO: u8 = 1;
+
+    let handshake = packet
+        .strip_prefix(&[DTLS_HANDSHAKE_RECORD])
+        .and_then(|_| packet.get(DTLS_RECORD_HEADER_LEN..))?;
+
+    // msg_type(1) msg_length(3) message_seq(2) fragment_offset(3) fragment_length(3)
+    if handshake.len() < 12 || handshake[0] != DTLS_CLIENT_HELLO {
+        return None;
+    }
+
+    let be24 = |bytes: &[u8]| {
+        ((bytes[0] as usize) << 16) | ((bytes[1] as usize) << 8) | (bytes[2] as usize)
+    };
+
+    Some(ClientHelloFragment {
+        message_length: be24(&handshake[1..4]),
+        offset: be24(&handshake[6..9]),
+        length: be24(&handshake[9..12]),
+    })
+}
