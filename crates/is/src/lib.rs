@@ -248,6 +248,105 @@ pub(crate) mod test {
     }
 
     #[test]
+    pub fn a_client_hello_split_in_two_arrives_whole() {
+        // A ClientHello too big for one connectivity check is split by DTLS
+        // into several records, each holding a slice of the one handshake
+        // message. A check carries at most one DTLS packet, so the fragments
+        // have to travel in separate checks, and the peer can do nothing at all
+        // until every one of them has arrived.
+        //
+        // Nothing str0m sends is big enough to be fragmented today, because
+        // dimpl pads the ClientHello out to exactly the DTLS MTU. That changes
+        // as soon as a post-quantum key share makes the content itself larger
+        // than the MTU, so the fragments here are built by hand.
+
+        /// A DTLS record header, after which the handshake header begins.
+        const RECORD_HEADER_LEN: usize = 13;
+        /// msg_type(1) msg_length(3) message_seq(2) fragment_offset(3) fragment_length(3)
+        const HANDSHAKE_HEADER_LEN: usize = 12;
+
+        fn be24(value: usize) -> [u8; 3] {
+            [(value >> 16) as u8, (value >> 8) as u8, value as u8]
+        }
+
+        /// One fragment of a ClientHello, as the DTLS engine would emit it.
+        fn client_hello_fragment(message_length: usize, offset: usize, length: usize) -> Vec<u8> {
+            let mut bytes = vec![0u8; RECORD_HEADER_LEN + HANDSHAKE_HEADER_LEN + length];
+            bytes[0] = 22; // handshake record
+            let record_length = (HANDSHAKE_HEADER_LEN + length) as u16;
+            bytes[11..13].copy_from_slice(&record_length.to_be_bytes());
+            bytes[13] = 1; // client_hello, repeated in every fragment
+            bytes[14..17].copy_from_slice(&be24(message_length));
+            bytes[19..22].copy_from_slice(&be24(offset));
+            bytes[22..25].copy_from_slice(&be24(length));
+            bytes
+        }
+
+        // As big as the DTLS engine is allowed to make them, so this breaks if
+        // a packet of the size we ask for stops fitting in a check.
+        let packet_length = dtls_over_ice::dtls_mtu(str0m_proto::DATAGRAM_MTU_TARGET);
+        let fragment_length = packet_length - RECORD_HEADER_LEN - HANDSHAKE_HEADER_LEN;
+        let message_length = 2 * fragment_length;
+
+        let first = client_hello_fragment(message_length, 0, fragment_length);
+        let second = client_hello_fragment(message_length, fragment_length, fragment_length);
+
+        // Two of them cannot share a check, so this only passes if the checks
+        // take turns carrying them.
+        assert!(
+            2 * packet_length > str0m_proto::DATAGRAM_MTU_TARGET,
+            "the fragments are small enough to share one check, \
+             so this would not test anything"
+        );
+
+        let mut client = TestAgent::new(info_span!("client"));
+        let mut server = TestAgent::new(info_span!("server"));
+
+        client.enable_dtls_over_ice();
+        server.enable_dtls_over_ice();
+
+        let c1 = client.add_host_candidate("1.1.1.1:1000");
+        server.add_remote_candidate(c1);
+
+        let c2 = server.add_host_candidate("2.2.2.2:1000");
+        client.add_remote_candidate(c2);
+
+        client.set_controlling(true);
+        server.set_controlling(false);
+
+        client
+            .dtls_over_ice()
+            .expect("dtls_over_ice enabled")
+            .take_dtls_packets_to_send([first.clone(), second.clone()]);
+
+        loop {
+            if client.state().is_connected() && server.state().is_connected() {
+                break;
+            }
+            progress(&mut client, &mut server);
+        }
+
+        let arrived: Vec<&Vec<u8>> = server
+            .events
+            .iter()
+            .filter_map(|(_, e)| match e {
+                IceAgentEvent::DtlsPacketReceived(packet) => Some(packet),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            arrived.contains(&&first),
+            "the first fragment of the ClientHello never arrived"
+        );
+        assert!(
+            arrived.contains(&&second),
+            "the second fragment of the ClientHello never arrived, so the peer \
+             has a ClientHello it can never reassemble"
+        );
+    }
+
+    #[test]
     pub fn dtls_response_flight_uses_the_first_binding_response() {
         fn dtls_packet(tag: u8) -> Vec<u8> {
             let mut bytes = vec![0u8; 40];
