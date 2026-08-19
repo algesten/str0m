@@ -7,6 +7,12 @@ pub struct Goodbye {
     pub reports: ReportList<Ssrc>,
 }
 
+impl Goodbye {
+    pub(crate) fn sender_ssrc(&self) -> Option<Ssrc> {
+        self.reports.get(0).copied()
+    }
+}
+
 impl RtcpPacket for Goodbye {
     fn header(&self) -> RtcpHeader {
         RtcpHeader {

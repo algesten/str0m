@@ -252,17 +252,20 @@ impl Session {
         // Payload any waiting frames
         self.do_payload()?;
 
-        let sender_ssrc = self.streams.first_ssrc_local();
+        // These SSRCs are on media level, but we need transport-wide or session-wide SSRCs.
+        // We fill in the first discovered media SSRC in each direction.
+        let transport_wide_rtcp_sender_ssrc = self.streams.first_ssrc_local();
+        let transport_wide_rtcp_ssrc = self.streams.first_ssrc_remote();
 
         let do_nack = now >= self.nack_at().unwrap_or(not_happening());
 
         self.streams.handle_timeout(
             now,
-            sender_ssrc,
             do_nack,
             &self.medias,
             &self.codec_config,
             &mut self.feedback_tx,
+            transport_wide_rtcp_sender_ssrc,
         );
 
         if do_nack {
@@ -273,7 +276,11 @@ impl Session {
 
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
-                self.create_twcc_feedback(sender_ssrc, now);
+                self.create_twcc_feedback(
+                    transport_wide_rtcp_sender_ssrc,
+                    transport_wide_rtcp_ssrc,
+                    now,
+                );
             }
         }
 
@@ -323,14 +330,17 @@ impl Session {
         stream.generate_padding(padding_request.padding);
     }
 
-    fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
+    fn create_twcc_feedback(
+        &mut self,
+        transport_wide_rtcp_sender_ssrc: Ssrc,
+        transport_wide_rtcp_ssrc: Ssrc,
+        now: Instant,
+    ) -> Option<()> {
         self.last_twcc = now;
         let mut twcc = self.twcc_rx_register.build_report(self.mtu() - 100)?;
 
-        // These SSRC are on media level, but twcc is on session level,
-        // we fill in the first discovered media SSRC in each direction.
-        twcc.sender_ssrc = sender_ssrc;
-        twcc.ssrc = self.streams.first_ssrc_remote();
+        twcc.sender_ssrc = transport_wide_rtcp_sender_ssrc;
+        twcc.ssrc = transport_wide_rtcp_ssrc;
 
         trace!("Created feedback TWCC: {:?}", twcc);
         self.feedback_tx.push_front(Rtcp::Twcc(twcc));

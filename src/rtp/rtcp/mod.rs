@@ -156,10 +156,12 @@ impl Rtcp {
         // Pack RTCP feedback packets. Merge together ones of the same type.
         Rtcp::pack(feedback, word_capacity);
 
-        let sender_ssrc = feedback.front().and_then(Rtcp::sender_ssrc);
+        let first_sender_ssrc = feedback.front().and_then(Rtcp::sender_ssrc);
         let mut offset = 0;
         while let Some(fb) = feedback.front() {
-            if fb.sender_ssrc() != sender_ssrc {
+            // Keep one sender SSRC per SRTCP datagram. Leave other sender groups queued so
+            // a later poll protects and emits each group under its own sender SSRC.
+            if fb.sender_ssrc() != first_sender_ssrc {
                 break;
             }
 
@@ -192,10 +194,12 @@ impl Rtcp {
     }
 
     fn merge(&mut self, other: &mut Rtcp, words_left: usize) -> bool {
+        // Merging discards `other`'s RTCP envelope, including its sender SSRC.
+        // Only merge equal senders so the combined reports keep the correct identity.
         match (self, other) {
             // Stack receiver reports into sender reports.
             (Rtcp::SenderReport(sr), Rtcp::ReceiverReport(rr))
-                if sr.sender_info.ssrc == rr.sender_ssrc =>
+                if sr.sender_ssrc() == rr.sender_ssrc =>
             {
                 let n = sr.reports.append_all_possible(&mut rr.reports, words_left);
                 n > 0
@@ -211,16 +215,14 @@ impl Rtcp {
 
             // Stack source descriptions.
             (Rtcp::SourceDescription(s1), Rtcp::SourceDescription(s2))
-                if s1.reports.get(0).map(|v| v.ssrc) == s2.reports.get(0).map(|v| v.ssrc) =>
+                if s1.sender_ssrc() == s2.sender_ssrc() =>
             {
                 let n = s1.reports.append_all_possible(&mut s2.reports, words_left);
                 n > 0
             }
 
             // Stack source descriptions.
-            (Rtcp::Goodbye(g1), Rtcp::Goodbye(g2))
-                if g1.reports.get(0).copied() == g2.reports.get(0).copied() =>
-            {
+            (Rtcp::Goodbye(g1), Rtcp::Goodbye(g2)) if g1.sender_ssrc() == g2.sender_ssrc() => {
                 let n = g1.reports.append_all_possible(&mut g2.reports, words_left);
                 n > 0
             }
@@ -299,8 +301,8 @@ impl Rtcp {
             return;
         }
 
-        // Keep each SRTCP datagram sender-homogeneous while retaining the
-        // conventional packet ordering within each sender group.
+        // Make sure each SRTCP datagram has the same sender SSRC while retaining the
+        // conventional packet ordering within each group sharing a sender SSRC.
         feedback
             .make_contiguous()
             .sort_by_key(|v| (v.sender_ssrc(), v.order_no()));
@@ -376,11 +378,11 @@ impl Rtcp {
 
     fn sender_ssrc(&self) -> Option<Ssrc> {
         match self {
-            Rtcp::SenderReport(v) => Some(v.sender_info.ssrc),
+            Rtcp::SenderReport(v) => Some(v.sender_ssrc()),
             Rtcp::ReceiverReport(v) => Some(v.sender_ssrc),
-            Rtcp::ExtendedReport(v) => Some(v.ssrc),
-            Rtcp::SourceDescription(v) => v.reports.get(0).map(|v| v.ssrc),
-            Rtcp::Goodbye(v) => v.reports.get(0).copied(),
+            Rtcp::ExtendedReport(v) => Some(v.sender_ssrc()),
+            Rtcp::SourceDescription(v) => v.sender_ssrc(),
+            Rtcp::Goodbye(v) => v.sender_ssrc(),
             Rtcp::Nack(v) => Some(v.sender_ssrc),
             Rtcp::Pli(v) => Some(v.sender_ssrc),
             Rtcp::Fir(v) => Some(v.sender_ssrc),
@@ -567,9 +569,9 @@ mod test {
     fn pack_sr_4_rr() {
         let now = SystemTime::now();
         let mut queue = VecDeque::new();
-        queue.push_back(rr(3));
-        queue.push_back(rr(4));
-        queue.push_back(rr(5));
+        queue.push_back(rr_with_sender_ssrc_42(3));
+        queue.push_back(rr_with_sender_ssrc_42(4));
+        queue.push_back(rr_with_sender_ssrc_42(5));
         queue.push_back(sr(42, now)); // should be sorted to front
 
         Rtcp::pack(&mut queue, 350);
@@ -592,10 +594,10 @@ mod test {
     #[test]
     fn pack_4_rr() {
         let mut queue = VecDeque::new();
-        queue.push_back(rr(1));
-        queue.push_back(rr(2));
-        queue.push_back(rr(3));
-        queue.push_back(rr(4));
+        queue.push_back(rr_with_sender_ssrc_42(1));
+        queue.push_back(rr_with_sender_ssrc_42(2));
+        queue.push_back(rr_with_sender_ssrc_42(3));
+        queue.push_back(rr_with_sender_ssrc_42(4));
 
         Rtcp::pack(&mut queue, 350);
 
@@ -619,9 +621,9 @@ mod test {
         let now = SystemTime::now();
         let mut feedback = VecDeque::new();
         feedback.push_back(sr(42, now));
-        feedback.push_back(rr(3));
-        feedback.push_back(rr(4));
-        feedback.push_back(rr(5));
+        feedback.push_back(rr_with_sender_ssrc_42(3));
+        feedback.push_back(rr_with_sender_ssrc_42(4));
+        feedback.push_back(rr_with_sender_ssrc_42(5));
 
         let mut buf = vec![0_u8; 1360];
         let n = Rtcp::write_packet(&mut feedback, &mut buf, |_| {});
@@ -637,9 +639,9 @@ mod test {
 
         let mut compare = VecDeque::new();
         compare.push_back(sr(42, now2));
-        compare.push_back(rr(3));
-        compare.push_back(rr(4));
-        compare.push_back(rr(5));
+        compare.push_back(rr_with_sender_ssrc_42(3));
+        compare.push_back(rr_with_sender_ssrc_42(4));
+        compare.push_back(rr_with_sender_ssrc_42(5));
         Rtcp::pack(&mut compare, 1400);
 
         assert_eq!(parsed, compare);
@@ -671,11 +673,11 @@ mod test {
         })
     }
 
-    fn rr(ssrc: u32) -> Rtcp {
-        rr_from(42, ssrc)
+    fn rr_with_sender_ssrc_42(ssrc: u32) -> Rtcp {
+        rr(42, ssrc)
     }
 
-    fn rr_from(sender_ssrc: u32, ssrc: u32) -> Rtcp {
+    fn rr(sender_ssrc: u32, ssrc: u32) -> Rtcp {
         Rtcp::ReceiverReport(ReceiverReport {
             sender_ssrc: sender_ssrc.into(),
             reports: report(ssrc).into(),
@@ -685,12 +687,12 @@ mod test {
     #[test]
     fn write_packet_keeps_sender_ssrcs_in_separate_datagrams() {
         let mut feedback = VecDeque::from([
-            rr_from(10, 1),
+            rr(10, 1),
             Rtcp::Pli(Pli {
                 sender_ssrc: 10.into(),
                 ssrc: 1.into(),
             }),
-            rr_from(20, 2),
+            rr(20, 2),
         ]);
         let mut buf = vec![0_u8; 1360];
 

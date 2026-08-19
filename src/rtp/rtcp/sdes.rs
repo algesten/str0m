@@ -11,6 +11,12 @@ pub struct Descriptions {
     pub reports: Box<ReportList<Sdes>>,
 }
 
+impl Descriptions {
+    pub(crate) fn sender_ssrc(&self) -> Option<Ssrc> {
+        self.reports.get(0).map(|v| v.ssrc)
+    }
+}
+
 /// A single source description (SDES).
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]

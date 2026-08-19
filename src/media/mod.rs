@@ -29,7 +29,7 @@ mod writer;
 pub use writer::Writer;
 
 pub use crate::packet::MediaKind;
-pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid, Ssrc};
+pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid};
 
 /// Mid used for SSRC 0 non-media BWE probes.
 ///
@@ -55,10 +55,6 @@ pub struct Media {
     ///
     /// RTP level.
     cname: String,
-
-    // %%% this comment: why 'default'?
-    /// Default local SSRC used as the sender of RTCP feedback for this media.
-    rtcp_sender_ssrc: Option<Ssrc>,
 
     /// Rid that we are expecting to see on incoming RTP packets that map to this mid.
     /// Once discovered, we make an entry in `stream_rx`.
@@ -216,21 +212,6 @@ impl Media {
     /// cnames can be found in [`StreamRx::cname`][crate::rtp::StreamRx::cname].
     pub fn cname(&self) -> &str {
         &self.cname
-    }
-
-    // %%% this comment: why 'default'?
-    /// Set the default local SSRC used as the sender of RTCP feedback for this media.
-    ///
-    /// A sender configured directly on a [`StreamRx`][crate::rtp::StreamRx]
-    /// takes precedence over this value.
-    pub fn set_rtcp_sender_ssrc(&mut self, ssrc: Ssrc) {
-        self.rtcp_sender_ssrc = Some(ssrc);
-    }
-
-    // %%% this comment: why 'default'?
-    /// Default local SSRC configured as the sender of RTCP feedback.
-    pub fn rtcp_sender_ssrc(&self) -> Option<Ssrc> {
-        self.rtcp_sender_ssrc
     }
 
     /// Add rid as one we are expecting to receive for this mid.
@@ -609,7 +590,6 @@ impl Default for Media {
             index: 0,
             app_tmp: false,
             cname: Id::<20>::random().to_string(),
-            rtcp_sender_ssrc: None,
             msid: Msid::random(),
             kind: MediaKind::Video,
             remote_pts: vec![],

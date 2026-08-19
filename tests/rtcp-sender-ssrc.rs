@@ -10,15 +10,6 @@ use common::{connect_l_r, init_crypto_default, init_log, progress};
 
 #[test]
 fn configured_stream_rx_sender_ssrc_is_used_for_reports() -> Result<(), RtcError> {
-    configured_sender_ssrc_is_used_for_feedback(true)
-}
-
-#[test]
-fn configured_media_sender_ssrc_is_used_for_reports() -> Result<(), RtcError> {
-    configured_sender_ssrc_is_used_for_feedback(false)
-}
-
-fn configured_sender_ssrc_is_used_for_feedback(stream_override: bool) -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
@@ -33,15 +24,10 @@ fn configured_sender_ssrc_is_used_for_feedback(stream_override: bool) -> Result<
 
     {
         let mut direct = r.direct_api();
-        let media = direct.declare_media(mid, MediaKind::Video);
-        if !stream_override {
-            media.set_rtcp_sender_ssrc(rtcp_sender_ssrc);
-        }
+        direct.declare_media(mid, MediaKind::Video);
 
         let stream = direct.expect_stream_rx(remote_ssrc, None, mid, None);
-        if stream_override {
-            stream.set_rtcp_sender_ssrc(rtcp_sender_ssrc);
-        }
+        stream.set_rtcp_sender_ssrc(rtcp_sender_ssrc);
         stream.request_keyframe(KeyframeRequestKind::Pli);
     }
 

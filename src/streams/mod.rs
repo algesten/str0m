@@ -430,12 +430,11 @@ impl Streams {
     pub(crate) fn handle_timeout(
         &mut self,
         now: Instant,
-        // %%%% What's this sender_ssrc?
-        sender_ssrc: Ssrc,
         do_nack: bool,
         medias: &[Media],
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
+        transport_wide_rtcp_sender_ssrc: Ssrc,
     ) {
         self.mids_to_report.clear(); // Clear for checking StreamRx.
         for stream in self.streams_rx.values() {
@@ -445,24 +444,22 @@ impl Streams {
         }
 
         for stream in self.streams_rx.values_mut() {
-            let sender_ssrc = stream.rtcp_sender_ssrc().unwrap_or_else(|| {
-                medias
-                    .iter()
-                    .find(|media| media.mid() == stream.mid())
-                    .and_then(Media::rtcp_sender_ssrc)
-                    .unwrap_or(sender_ssrc)
-            });
+            // If a stream is configured with a specific RTCP sender SSRC, use that.
+            // Otherwise, use the transport-wide RTCP sender SSRC as the default.
+            let rtcp_sender_ssrc = stream
+                .rtcp_sender_ssrc()
+                .unwrap_or(transport_wide_rtcp_sender_ssrc);
 
-            stream.maybe_create_keyframe_request(sender_ssrc, feedback);
-            stream.maybe_create_remb_request(sender_ssrc, feedback);
+            stream.maybe_create_keyframe_request(rtcp_sender_ssrc, feedback);
+            stream.maybe_create_remb_request(rtcp_sender_ssrc, feedback);
 
             // All StreamRx belonging to the same Mid are reported together.
             if self.mids_to_report.contains(&stream.mid()) {
-                stream.create_rr_and_update(now, sender_ssrc, feedback);
+                stream.create_rr_and_update(now, rtcp_sender_ssrc, feedback);
             }
 
             if do_nack {
-                stream.maybe_create_nack(sender_ssrc, feedback);
+                stream.maybe_create_nack(rtcp_sender_ssrc, feedback);
             }
 
             stream.handle_timeout(now);

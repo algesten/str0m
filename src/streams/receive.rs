@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::MidRid;
@@ -33,16 +33,16 @@ pub struct StreamRx {
     /// Identifier of a resend (RTX) stream. This can be set later, once we discover it.
     rtx: Option<Ssrc>,
 
+    /// If set, the RTCP sender SSRC that will be used for RTCP such as receiver reports and feedback.
+    /// If not set, a default value will be chosen.
+    rtcp_sender_ssrc: Option<Ssrc>,
+
     /// Previous main SSRC. This is to ensure we never go "backwards" in terms
     /// of changing SSRC (for FF).
     previous_ssrc: Option<Ssrc>,
 
     /// The Media mid/rid this stream belongs to.
     midrid: MidRid,
-
-    // %%% comment: And if it's not set? Also: why "local"?
-    /// Local SSRC used as the sender of RTCP feedback for this stream.
-    rtcp_sender_ssrc: Option<Ssrc>,
 
     /// Incoming CNAME in Sdes reports.
     cname: Option<String>,
@@ -152,9 +152,9 @@ impl StreamRx {
         StreamRx {
             ssrc,
             rtx: None,
+            rtcp_sender_ssrc: None,
             previous_ssrc: None,
             midrid,
-            rtcp_sender_ssrc: None,
             cname: None,
             suppress_nack,
             last_used: already_happened(),
@@ -200,18 +200,14 @@ impl StreamRx {
         self.midrid.rid()
     }
 
-    // %%% comment: why "local"?
-    /// Set the local SSRC used as the sender of RTCP feedback for this stream.
-    ///
-    /// This affects receiver reports and feedback such as NACK and PLI. When
-    /// unset, the containing [`Media`][crate::media::Media] setting or the
-    /// session default is used.
+    /// If set, the RTCP sender SSRC that will be used for RTCP such as receiver reports and feedback.
+    /// If not set, a default value will be chosen.
     pub fn set_rtcp_sender_ssrc(&mut self, ssrc: Ssrc) {
         self.rtcp_sender_ssrc = Some(ssrc);
     }
 
-    // %%% comment: why "local"?
-    /// Local SSRC explicitly configured as the sender of RTCP feedback.
+    /// If set, the RTCP sender SSRC that will be used for RTCP such as receiver reports and feedback.
+    /// If not set, a default value will be chosen.
     pub fn rtcp_sender_ssrc(&self) -> Option<Ssrc> {
         self.rtcp_sender_ssrc
     }
@@ -602,7 +598,8 @@ impl StreamRx {
             self.stats.jitter = report.jitter;
         }
 
-        let xr = self.create_extended_receiver_report(now, sender_ssrc);
+        let ntp_time = now.to_system_time();
+        let xr = Self::create_extended_receiver_report(sender_ssrc, ntp_time);
 
         trace!(
             "Created feedback RR/XR ({:?}): {:?} {:?}",
@@ -654,16 +651,12 @@ impl StreamRx {
         }
     }
 
-    fn create_extended_receiver_report(&self, now: Instant, sender_ssrc: Ssrc) -> ExtendedReport {
-        // we only want to report our time to measure RTT,
-        // the source will answer with Dlrr feedback, allowing us to calculate RTT
-        let block = ReportBlock::Rrtr(Rrtr {
-            ntp_time: now.to_system_time(),
-        });
-        // %%% Is this right?
+    fn create_extended_receiver_report(sender_ssrc: Ssrc, ntp_time: SystemTime) -> ExtendedReport {
+        // We only want to report our time to measure RTT.
+        // The source will answer with Dlrr feedback, allowing us to calculate RTT.
         ExtendedReport {
             ssrc: sender_ssrc,
-            blocks: vec![block],
+            blocks: vec![ReportBlock::Rrtr(Rrtr { ntp_time })],
         }
     }
 

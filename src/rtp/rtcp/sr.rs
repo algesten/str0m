@@ -16,6 +16,12 @@ pub struct SenderReport {
     pub reports: ReportList<ReceptionReport>,
 }
 
+impl SenderReport {
+    pub(crate) fn sender_ssrc(&self) -> Ssrc {
+        self.sender_info.ssrc
+    }
+}
+
 /// Information about a stream being sent.
 ///
 /// A subset of the information contained in Sender Reports(SR).

@@ -26,6 +26,12 @@ pub struct ExtendedReport {
     pub blocks: Vec<ReportBlock>,
 }
 
+impl ExtendedReport {
+    pub(crate) fn sender_ssrc(&self) -> Ssrc {
+        self.ssrc
+    }
+}
+
 /// Parts of an extended report XR.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(missing_docs)]
