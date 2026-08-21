@@ -104,11 +104,10 @@ impl AeadAes128GcmCipher for RustCryptoAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        if input.len() < AeadAes128Gcm::TAG_LEN {
-            return Err(CryptoError::Other(
-                "SRTP GCM decrypt input shorter than auth tag".into(),
-            ));
-        }
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
+        assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
 
         let nonce = Nonce::from_slice(iv);
 
@@ -179,11 +178,10 @@ impl AeadAes256GcmCipher for RustCryptoAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        if input.len() < AeadAes256Gcm::TAG_LEN {
-            return Err(CryptoError::Other(
-                "SRTP GCM decrypt input shorter than auth tag".into(),
-            ));
-        }
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
+        assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
 
         let nonce = Nonce::from_slice(iv);
 
