@@ -39,7 +39,7 @@ pub fn random_config(rng: &mut Rng) -> Option<RtcConfig> {
     c = c.set_ice_lite(rng.bool()?);
     c = c.set_fingerprint_verification(rng.bool()?);
     c = c.clear_codecs();
-    c = c.enable_opus(rng.bool()?);
+    c = c.enable_opus(rng.bool()?, false);
     c = c.enable_h264(rng.bool()?);
     c = c.enable_vp8(rng.bool()?);
     c = c.enable_vp9(rng.bool()?);

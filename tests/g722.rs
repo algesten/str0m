@@ -27,8 +27,9 @@ pub fn g722_media_mode_is_16khz_both_ways() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new_with_config(Peer::Left, |c| c.clear_codecs().enable_g722(true));
-    let mut r = TestRtc::new_with_config(Peer::Right, |c| c.clear_codecs().enable_g722(true));
+    let mut l = TestRtc::new_with_config(Peer::Left, |c| c.clear_codecs().enable_g722(true, false));
+    let mut r =
+        TestRtc::new_with_config(Peer::Right, |c| c.clear_codecs().enable_g722(true, false));
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -119,7 +120,7 @@ fn rtp_mode_g722(peer: Peer, now: Instant) -> Rtc {
         .set_rtp_mode(true)
         .enable_raw_packets(true)
         .clear_codecs()
-        .enable_g722(true);
+        .enable_g722(true, false);
     if let Some(crypto) = peer.crypto_provider() {
         b = b.set_crypto_provider(crypto);
     }
@@ -228,12 +229,15 @@ pub fn g722_sample_send_to_rtp_receive() -> Result<(), RtcError> {
 
     let now = Instant::now();
     // L writes via the sample/frame API (16 kHz media time).
-    let rtc_l = Rtc::builder().clear_codecs().enable_g722(true).build(now);
+    let rtc_l = Rtc::builder()
+        .clear_codecs()
+        .enable_g722(true, false)
+        .build(now);
     // R reads raw RTP packets (8 kHz wire clock).
     let rtc_r = Rtc::builder()
         .set_rtp_mode(true)
         .clear_codecs()
-        .enable_g722(true)
+        .enable_g722(true, false)
         .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);
@@ -324,13 +328,13 @@ pub fn g722_rtp_send_to_sample_receive() -> Result<(), RtcError> {
     let rtc_l = Rtc::builder()
         .set_rtp_mode(true)
         .clear_codecs()
-        .enable_g722(true)
+        .enable_g722(true, false)
         .build(now);
     // R reads frames via the sample API (16 kHz media time), no reorder hold-back.
     let rtc_r = Rtc::builder()
         .set_reordering_size_audio(0)
         .clear_codecs()
-        .enable_g722(true)
+        .enable_g722(true, false)
         .build(now);
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);

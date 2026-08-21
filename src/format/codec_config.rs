@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 
 use crate::packet::H266ProfileTierLevel;
+use crate::packet::MAX_RED_RECOVERY_DEPTH;
 use crate::packet::MediaKind;
 use crate::rtp_::Pt;
 use crate::rtp_::{Direction, Frequency};
@@ -55,10 +56,23 @@ pub(crate) const PT_H266_RTX: Pt = Pt::new_with_value(105);
 /// Default payload type for Opus.
 pub(crate) const PT_OPUS: Pt = Pt::new_with_value(111);
 
+/// Default RFC 2198 RED payload types, one per audio codec. RED links a single primary codec
+/// via `a=fmtp` and carries that codec's clock rate in `a=rtpmap`, so each audio codec that has
+/// RED needs its own RED payload type. These are the defaults; they are reassigned on conflict
+/// during negotiation, mirroring RTX. They stay below 64 so they are never mistaken for RTCP by
+/// the RTP/RTCP demultiplexer (which reserves payload types 64..=95, see `MultiplexKind`).
+pub(crate) const PT_RED: Pt = Pt::new_with_value(63);
+pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(62);
+pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(61);
+pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(60);
+
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
     params: Vec<PayloadParams>,
+    /// RFC 2198 RED send-side redundancy pattern: how many packets back each redundant level
+    /// carries. Empty means the default single level `[1]` (see [`Self::red_distances`]).
+    red_distances: Box<[u32]>,
 }
 
 impl CodecConfig {
@@ -71,13 +85,14 @@ impl CodecConfig {
     pub fn new_from_payload_params(payload_params: Vec<PayloadParams>) -> Self {
         CodecConfig {
             params: payload_params,
+            ..Default::default()
         }
     }
 
     /// Creates a new config with all default configurations enabled.
     pub fn new_with_defaults() -> Self {
         let mut c = Self::empty();
-        c.enable_opus(true);
+        c.enable_opus(true, false);
 
         c.enable_vp8(true);
         c.enable_h264(true);
@@ -130,6 +145,7 @@ impl CodecConfig {
             fb_nack,
             fb_pli,
             fb_remb,
+            red: None,
             locked: false,
         };
 
@@ -198,22 +214,33 @@ impl CodecConfig {
         )
     }
 
-    /// Convenience for adding a PCM u-law payload type.
-    pub fn enable_pcmu(&mut self, enabled: bool) {
+    /// Convenience for adding a PCM u-law payload type, optionally with RFC 2198 RED.
+    ///
+    /// `use_red` folds a RED payload type onto this codec so the receiver can recover packet loss
+    /// without retransmission, at the cost of extra audio payload size.
+    pub fn enable_pcmu(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::PCMU);
         if !enabled {
             return;
         }
         self.add_static_config(PT_PCMU);
+        if use_red {
+            self.set_red_pt(Codec::PCMU, PT_PCMU_RED);
+        }
     }
 
-    /// Convenience for adding a PCM a-law payload type.
-    pub fn enable_pcma(&mut self, enabled: bool) {
+    /// Convenience for adding a PCM a-law payload type, optionally with RFC 2198 RED.
+    ///
+    /// See [`Self::enable_pcmu`] for `use_red`.
+    pub fn enable_pcma(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::PCMA);
         if !enabled {
             return;
         }
         self.add_static_config(PT_PCMA);
+        if use_red {
+            self.set_red_pt(Codec::PCMA, PT_PCMA_RED);
+        }
     }
 
     /// Convenience for adding a G722 payload type.
@@ -222,12 +249,17 @@ impl CodecConfig {
     /// 8000 Hz. The codec is configured at 16 kHz here; str0m maps to 8 kHz for the
     /// SDP `a=rtpmap` line and when converting to/from RTP timestamps. See
     /// <https://en.wikipedia.org/wiki/RTP_payload_formats#cite_note-55>
-    pub fn enable_g722(&mut self, enabled: bool) {
+    ///
+    /// See [`Self::enable_pcmu`] for `use_red`.
+    pub fn enable_g722(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::G722);
         if !enabled {
             return;
         }
         self.add_static_config(PT_G722);
+        if use_red {
+            self.set_red_pt(Codec::G722, PT_G722_RED);
+        }
     }
 
     /// Add the static Comfort Noise payload type at 8000 Hz.
@@ -242,8 +274,10 @@ impl CodecConfig {
         self.add_static_config(PT_COMFORT_NOISE);
     }
 
-    /// Add a default OPUS payload type.
-    pub fn enable_opus(&mut self, enabled: bool) {
+    /// Add a default OPUS payload type, optionally with RFC 2198 RED.
+    ///
+    /// See [`Self::enable_pcmu`] for `use_red`.
+    pub fn enable_opus(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::Opus);
         if !enabled {
             return;
@@ -259,7 +293,56 @@ impl CodecConfig {
                 use_inband_fec: Some(true),
                 ..Default::default()
             },
-        )
+        );
+        if use_red {
+            self.set_red_pt(Codec::Opus, PT_RED);
+        }
+    }
+
+    /// Fold the given RFC 2198 RED payload type onto the enabled param for `codec`. Used by the
+    /// audio enable fns when `use_red` is set; each audio codec has its own RED payload type so the
+    /// `a=rtpmap` entries (which carry each codec's clock rate) don't collide in SDP.
+    fn set_red_pt(&mut self, codec: Codec, red_pt: Pt) {
+        if let Some(p) = self.params.iter_mut().find(|p| p.spec.codec == codec) {
+            p.red = Some(red_pt);
+        }
+    }
+
+    /// The RFC 2198 RED send-side redundancy pattern: how many packets back each redundant level
+    /// carries. Defaults to `[1]` (one level, the previous packet, as browsers send).
+    pub fn red_distances(&self) -> &[u32] {
+        if self.red_distances.is_empty() {
+            &[1]
+        } else {
+            &self.red_distances
+        }
+    }
+
+    /// Set the RFC 2198 RED send-side redundancy pattern. Each entry is how many packets back a
+    /// redundant level carries: `[1]` is one level (the previous packet), `[1, 3, 5]` sends three
+    /// levels for higher loss. Deeper redundancy trades bandwidth for resilience.
+    ///
+    /// The input is sanitised: zeros and values deeper than the receiver recovery depth are
+    /// dropped, then the rest is sorted and de-duplicated. Distance 1 is always included: recovery
+    /// derives each block's sequence distance from the closest redundant block, treating it as one
+    /// packet back, so a pattern must anchor on distance 1 or the receiver maps the blocks to the
+    /// wrong sequence numbers (a `[2, 4]` pattern becomes `[1, 2, 4]`). An empty or fully invalid
+    /// input falls back to `[1]`. This only sets the pattern; RED still has to be enabled via the
+    /// `use_red` argument of an audio enable fn (e.g. [`Self::enable_opus`]) or negotiated.
+    pub fn set_red_distances(&mut self, distances: &[u32]) {
+        let mut sane: Vec<u32> = distances
+            .iter()
+            .copied()
+            .filter(|&d| (1..=MAX_RED_RECOVERY_DEPTH as u32).contains(&d))
+            .collect();
+        sane.sort_unstable();
+        sane.dedup();
+        // Always anchor on distance 1 so the receiver can establish the packet duration from the
+        // closest block; without it a pattern like `[2, 4]` is silently mis-recovered.
+        if sane.first() != Some(&1) {
+            sane.insert(0, 1);
+        }
+        self.red_distances = sane.into_boxed_slice();
     }
 
     /// Add a default VP8 payload type.
@@ -474,6 +557,10 @@ impl CodecConfig {
             if let Some(rtx) = p.resend {
                 claimed.assert_claim_once(rtx);
             }
+
+            if let Some(red) = p.red {
+                claimed.assert_claim_once(red);
+            }
         }
 
         // Collect all currently unlocked PTs since we will need to avoid them when reassigning.
@@ -481,7 +568,7 @@ impl CodecConfig {
             .params
             .iter()
             .filter(|p| !p.locked)
-            .flat_map(|p| [Some(p.pt()), p.resend()])
+            .flat_map(|p| [Some(p.pt()), p.resend(), p.red()])
             .flatten()
             .collect::<HashSet<_>>();
 
@@ -519,6 +606,25 @@ impl CodecConfig {
 
                 claimed.assert_claim_once(pt);
                 unlocked.remove(&pt);
+            }
+
+            // RED rides its own PT (like RTX); reassign it if it now collides.
+            if let Some(red) = p.red {
+                if claimed.is_claimed(red) {
+                    match claimed.find_unclaimed(PREFERED_RANGES, &unlocked) {
+                        Some(new_red) => {
+                            debug!("Reassigned RED PT {:?} => {:?}", p.red, new_red);
+                            p.red = Some(new_red);
+                            claimed.assert_claim_once(new_red);
+                            unlocked.remove(&new_red);
+                        }
+                        // RED is opt-in; drop it rather than panic if no PT is free.
+                        None => {
+                            debug!("No free PT for RED; dropping it");
+                            p.red = None;
+                        }
+                    }
+                }
             }
 
             let Some(rtx) = p.resend else {
@@ -587,6 +693,7 @@ impl CodecSpec {
 
 #[cfg(test)]
 mod test {
+    use crate::io::MultiplexKind;
     use crate::packet::MediaKind;
     use crate::rtp_::Direction;
     use crate::rtp_::Frequency;
@@ -612,6 +719,18 @@ mod test {
         }
 
         assert!(CodecSpec::from_static_pt(PT_OPUS).is_none());
+    }
+
+    #[test]
+    fn default_red_payload_types_are_demultiplexed_as_rtp() {
+        for pt in [PT_G722_RED, PT_PCMU_RED, PT_PCMA_RED] {
+            let packet = [0x80, *pt, 0];
+            assert_eq!(
+                MultiplexKind::try_from(packet.as_slice()).unwrap(),
+                MultiplexKind::Rtp,
+                "RED payload type {pt} must not be demultiplexed as RTCP"
+            );
+        }
     }
 
     #[test]
@@ -738,6 +857,137 @@ mod test {
         assert_eq!(
             configured,
             vec![(96, 16_000), (97, 24_000), (98, 32_000), (99, 48_000)]
+        );
+    }
+
+    #[test]
+    fn enable_red_links_opus() {
+        let mut c = CodecConfig::empty();
+        c.enable_opus(true, true);
+        let opus = c
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .unwrap();
+        assert_eq!(opus.red(), Some(PT_RED));
+    }
+
+    #[test]
+    fn enable_red_links_all_audio_codecs_with_distinct_pts() {
+        let mut c = CodecConfig::empty();
+        c.enable_opus(true, true);
+        c.enable_g722(true, true);
+        c.enable_pcmu(true, true);
+        c.enable_pcma(true, true);
+
+        let params = c.params();
+        let red_of = |codec| {
+            params
+                .iter()
+                .find(|p| p.spec().codec == codec)
+                .unwrap()
+                .red()
+        };
+
+        // Every enabled audio codec gets RED, each with its own distinct payload type so the
+        // `a=rtpmap` entries (which each carry that codec's clock rate) don't collide in SDP.
+        assert_eq!(red_of(Codec::Opus), Some(PT_RED));
+        assert_eq!(red_of(Codec::G722), Some(PT_G722_RED));
+        assert_eq!(red_of(Codec::PCMU), Some(PT_PCMU_RED));
+        assert_eq!(red_of(Codec::PCMA), Some(PT_PCMA_RED));
+        // All four RED payload types are distinct.
+        let pts = [PT_RED, PT_G722_RED, PT_PCMU_RED, PT_PCMA_RED];
+        for (i, a) in pts.iter().enumerate() {
+            for b in &pts[i + 1..] {
+                assert_ne!(a, b, "RED payload types must be distinct");
+            }
+        }
+    }
+
+    #[test]
+    fn set_red_distances_sanitises_input() {
+        let mut c = CodecConfig::empty();
+        // Default is a single level, the previous packet.
+        assert_eq!(c.red_distances(), &[1]);
+
+        // Unsorted, duplicated, zero, and over-cap values are cleaned to a sorted distinct set.
+        c.set_red_distances(&[5, 1, 0, 3, 3, 1, 999]);
+        assert_eq!(c.red_distances(), &[1, 3, 5]);
+
+        // Empty or fully invalid input falls back to the default single level.
+        c.set_red_distances(&[0, 999]);
+        assert_eq!(c.red_distances(), &[1]);
+
+        // Distance 1 is always included as the recovery anchor: a pattern without it (which the
+        // receiver would mis-map) gets 1 prepended rather than mis-recovered.
+        c.set_red_distances(&[2, 4]);
+        assert_eq!(c.red_distances(), &[1, 2, 4]);
+        c.set_red_distances(&[3, 5]);
+        assert_eq!(c.red_distances(), &[1, 3, 5]);
+    }
+
+    #[test]
+    fn red_kept_when_both_sides_enable() {
+        let mut local = CodecConfig::empty();
+        local.enable_opus(true, true);
+
+        let mut remote = CodecConfig::empty();
+        remote.enable_opus(true, true);
+
+        local.update_params(remote.params(), Direction::SendRecv);
+
+        let opus = local
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .unwrap();
+        assert_eq!(opus.red(), Some(PT_RED));
+    }
+
+    #[test]
+    fn red_dropped_when_remote_lacks_red() {
+        let mut local = CodecConfig::empty();
+        local.enable_opus(true, true);
+
+        let mut remote = CodecConfig::empty();
+        remote.enable_opus(true, false); // remote does not offer RED
+
+        local.update_params(remote.params(), Direction::SendRecv);
+
+        let opus = local
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .unwrap();
+        assert_eq!(
+            opus.red(),
+            None,
+            "RED must be dropped when remote doesn't offer it"
+        );
+    }
+
+    #[test]
+    fn conflicting_remote_red_mappings_do_not_panic() {
+        let shared_red_pt = Pt::new_with_value(63);
+
+        let mut local = CodecConfig::empty();
+        local.enable_g722(true, true);
+        local.enable_pcmu(true, true);
+
+        let mut remote = CodecConfig::empty();
+        remote.enable_g722(true, true);
+        remote.enable_pcmu(true, true);
+        for p in remote.params.iter_mut() {
+            p.red = Some(shared_red_pt);
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            local.update_params(remote.params(), Direction::SendRecv);
+        }));
+
+        assert!(
+            result.is_ok(),
+            "a conflicting remote RED mapping must be rejected or negotiated without panicking"
         );
     }
 
