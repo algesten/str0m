@@ -29,12 +29,6 @@ pub use error::SctpError;
 /// Bytes that can be buffered inside str0m across all streams.
 const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
 
-/// Upper bound on the number of concurrently tracked SCTP streams.
-const MAX_SCTP_STREAMS: usize = 8192;
-
-/// Maximum self-recursion depth of `do_poll`.
-const MAX_SCTP_POLL_DEPTH: usize = 64;
-
 /// Maximum message size we advertise in SDP (what we can receive)
 pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
 
@@ -740,215 +734,230 @@ impl RtcSctp {
     }
 
     pub fn do_poll(&mut self) -> Option<SctpEvent> {
-        self.do_poll_inner(0)
-    }
-
-    fn do_poll_inner(&mut self, depth: usize) -> Option<SctpEvent> {
-        // Recursion flushes whatever the send produces. But if the peer has
-        // stopped accepting data the send produces nothing, so we move on to the
-        // next channel and recurse again, once per pending channel. The depth is
-        // tracked and capped to avoid overflowing the stack.
-        if depth >= MAX_SCTP_POLL_DEPTH {
-            return None;
-        }
-
-        if self.state == RtcSctpState::Uninited {
-            // Need to call `init()` before any polling starts.
-            return None;
-        }
-
-        // Remove closed entries. handle_timeout() also does this, but the
-        // remote can reuse a stream id (its reset handshake completed) before
-        // our next timeout.
-        self.entries
-            .retain(|_, e| e.state != StreamEntryState::Closed);
-
-        if let Some(t) = self.pushed_back_transmit.take() {
-            return Some(SctpEvent::Transmit { packets: t });
-        }
-
-        while let Some(t) = self.poll_transmit() {
-            let Some(buf) = transmit_to_vec(t) else {
-                continue;
-            };
-
-            return Some(SctpEvent::Transmit { packets: buf });
-        }
-
-        // Don't progress to move data between association and endpoint until we have an
-        // association we want to drive forward.
-        if !self.state.propagate_endpoint_to_assoc() {
-            return None;
-        }
-
-        let assoc = self.assoc.as_mut()?;
-
-        while let Some(e) = assoc.poll() {
-            if let Event::Connected = e {
-                assoc.set_max_send_message_size(self.remote_max_message_size);
-                set_state(&mut self.state, RtcSctpState::Established);
-                return self.do_poll_inner(depth + 1);
+        // A completed handshake or a written DCEP open can produce more to send, so
+        // those start over from the top instead of falling through. There is one
+        // restart per channel waiting to open, which is why this is a loop and not
+        // recursion.
+        'restart: loop {
+            if self.state == RtcSctpState::Uninited {
+                // Need to call `init()` before any polling starts.
+                return None;
             }
 
-            if let Event::AssociationLost { ref reason } = e {
-                debug!("Association lost, reason: {}", reason);
-                // No reset can complete on a dead association.
-                self.reset_pending.clear();
-                self.reset_complete.clear();
-                return Some(SctpEvent::AssociationLost);
+            // Remove closed entries. handle_timeout() also does this, but the
+            // remote can reuse a stream id (its reset handshake completed) before
+            // our next timeout.
+            self.entries
+                .retain(|_, e| e.state != StreamEntryState::Closed);
+
+            if let Some(t) = self.pushed_back_transmit.take() {
+                return Some(SctpEvent::Transmit { packets: t });
             }
 
-            if let Event::Stream(se) = e {
-                match se {
-                    StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
-                        if !self.entries.contains_key(&id) {
-                            // A peer can open a stream just by sending one
-                            // DATA chunk on a fresh id, cap the number of tracked streams.
-                            if self.entries.len() < MAX_SCTP_STREAMS {
-                                stream_entry(
-                                    &mut self.entries,
-                                    id,
-                                    StreamEntryState::AwaitConfig,
-                                    "readable/writable",
-                                );
-                            } else {
-                                debug!("Ignoring remote stream {} (stream cap reached)", id);
-                            }
-                        }
-                    }
-                    StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. } => {
-                        // sctp-proto unregistered it when a reset arrived.
-                        // Id reuse is signalled separately by StreamEvent::ResetComplete.
-                        //
-                        // sctp-proto arms that completion here, so from now on a reset
-                        // is outstanding for the id even if we never closed it locally.
-                        self.reset_pending.insert(id);
+            while let Some(t) = self.poll_transmit() {
+                let Some(buf) = transmit_to_vec(t) else {
+                    continue;
+                };
 
-                        // Only a live entry has anything to drop. Closed entries and
-                        // missing ones already went through Close, and an AwaitOpen
-                        // entry is a new incarnation waiting on the same id, it must
-                        // not be killed by the old pending teardown.
-                        if let Some(entry) = self.entries.get_mut(&id) {
-                            if entry.state != StreamEntryState::Closed
-                                && entry.state != StreamEntryState::AwaitOpen
-                            {
-                                debug!("Stream {} finished", id);
-                                entry.do_close = true;
+                return Some(SctpEvent::Transmit { packets: buf });
+            }
+
+            // Don't progress to move data between association and endpoint until we have an
+            // association we want to drive forward.
+            if !self.state.propagate_endpoint_to_assoc() {
+                return None;
+            }
+
+            let assoc = self.assoc.as_mut()?;
+
+            while let Some(e) = assoc.poll() {
+                if let Event::Connected = e {
+                    assoc.set_max_send_message_size(self.remote_max_message_size);
+                    set_state(&mut self.state, RtcSctpState::Established);
+                    continue 'restart;
+                }
+
+                if let Event::AssociationLost { ref reason } = e {
+                    debug!("Association lost, reason: {}", reason);
+                    // No reset can complete on a dead association.
+                    self.reset_pending.clear();
+                    self.reset_complete.clear();
+                    return Some(SctpEvent::AssociationLost);
+                }
+
+                if let Event::Stream(se) = e {
+                    match se {
+                        StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
+                            stream_entry(
+                                &mut self.entries,
+                                id,
+                                StreamEntryState::AwaitConfig,
+                                "readable/writable",
+                            );
+                        }
+                        StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. } => {
+                            // sctp-proto unregistered it when a reset arrived.
+                            // Id reuse is signalled separately by StreamEvent::ResetComplete.
+                            //
+                            // sctp-proto arms that completion here, so from now on a reset
+                            // is outstanding for the id even if we never closed it locally.
+                            self.reset_pending.insert(id);
+
+                            // Only a live entry has anything to drop. Closed entries and
+                            // missing ones already went through Close, and an AwaitOpen
+                            // entry is a new incarnation waiting on the same id, it must
+                            // not be killed by the old pending teardown.
+                            if let Some(entry) = self.entries.get_mut(&id) {
+                                if entry.state != StreamEntryState::Closed
+                                    && entry.state != StreamEntryState::AwaitOpen
+                                {
+                                    debug!("Stream {} finished", id);
+                                    entry.do_close = true;
+                                }
                             }
                         }
+                        StreamEvent::ResetComplete { id } => {
+                            // The reset handshake for this id has fully completed.
+                            debug!("Stream {} reset complete", id);
+                            self.reset_pending.remove(&id);
+                            self.reset_complete.push_back(id);
+                        }
+                        StreamEvent::BufferedAmountLow { id } => {
+                            return Some(SctpEvent::BufferedAmountLow { id });
+                        }
+                        _ => {}
                     }
-                    StreamEvent::ResetComplete { id } => {
-                        // The reset handshake for this id has fully completed.
-                        debug!("Stream {} reset complete", id);
-                        self.reset_pending.remove(&id);
-                        self.reset_complete.push_back(id);
-                    }
-                    StreamEvent::BufferedAmountLow { id } => {
-                        return Some(SctpEvent::BufferedAmountLow { id });
-                    }
-                    _ => {}
                 }
             }
-        }
 
-        // Must wait for association state to be established before opening streams.
-        if self.state != RtcSctpState::Established {
-            return None;
-        }
+            // Must wait for association state to be established before opening streams.
+            if self.state != RtcSctpState::Established {
+                return None;
+            }
 
-        for entry in self.entries.values_mut() {
-            let want_open = entry.state == StreamEntryState::AwaitOpen;
+            for entry in self.entries.values_mut() {
+                let want_open = entry.state == StreamEntryState::AwaitOpen;
 
-            if want_open {
-                debug!("Open stream {}", entry.id);
-                match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
-                    Ok(mut s) => {
-                        entry.open_deadline = None;
+                if want_open {
+                    debug!("Open stream {}", entry.id);
+                    match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
+                        Ok(mut s) => {
+                            entry.open_deadline = None;
 
-                        if !entry.configure_reliability(&mut s) {
-                            entry.set_state(StreamEntryState::Closed);
-                            let stream_id = entry.id;
-                            let reset_pending = self.sctp_propagate_close(stream_id);
-                            return Some(SctpEvent::Close {
-                                id: stream_id,
-                                reset_pending,
-                            });
-                        }
+                            if !entry.configure_reliability(&mut s) {
+                                entry.set_state(StreamEntryState::Closed);
+                                let stream_id = entry.id;
+                                let reset_pending = self.sctp_propagate_close(stream_id);
+                                return Some(SctpEvent::Close {
+                                    id: stream_id,
+                                    reset_pending,
+                                });
+                            }
 
-                        let config = entry.config.as_ref().expect("config if AwaitOpen");
-                        let in_band = config.negotiated.is_none();
+                            let config = entry.config.as_ref().expect("config if AwaitOpen");
+                            let in_band = config.negotiated.is_none();
 
-                        if in_band {
-                            let dcep: DcepOpen = config.into();
-                            let mut buf = vec![0; 1500];
-                            let n = dcep.marshal_to(&mut buf);
-                            buf.truncate(n);
+                            if in_band {
+                                let dcep: DcepOpen = config.into();
+                                let mut buf = vec![0; 1500];
+                                let n = dcep.marshal_to(&mut buf);
+                                buf.truncate(n);
 
-                            match s.write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep) {
-                                Ok(l) => {
-                                    assert!(n == l);
-                                    entry.set_state(StreamEntryState::AwaitDcepAck);
+                                match s.write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep) {
+                                    Ok(l) => {
+                                        assert!(n == l);
+                                        entry.set_state(StreamEntryState::AwaitDcepAck);
 
-                                    // Start over with polling, since we might have caused
-                                    // some network traffic by writing the DcepOpen.
-                                    return self.do_poll_inner(depth + 1);
+                                        // Start over with polling, since we might have caused
+                                        // some network traffic by writing the DcepOpen.
+                                        continue 'restart;
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to write DCEP open on stream {}: {:?}",
+                                            entry.id, e
+                                        );
+                                        entry.do_close = true;
+                                        entry.set_state(StreamEntryState::Closed);
+                                        let stream_id = entry.id;
+                                        let reset_pending = self.sctp_propagate_close(stream_id);
+                                        return Some(SctpEvent::Close {
+                                            id: stream_id,
+                                            reset_pending,
+                                        });
+                                    }
                                 }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to write DCEP open on stream {}: {:?}",
+                            }
+
+                            // Continuing means we are opening the stream out-of-band.
+                        }
+                        Err(
+                            e @ (ProtoError::ErrStreamAlreadyExist
+                            | ProtoError::ErrStreamResetPending),
+                        ) => {
+                            let config = entry.config.as_ref().expect("config if AwaitOpen");
+                            let in_band = config.negotiated.is_none();
+
+                            // ErrStreamAlreadyExist has two causes:
+                            // - the remote created it by sending on it first
+                            // - a previous incarnation of the id is still registered,
+                            //   reset handshake hasn't finished
+                            let stale_incarnation = matches!(e, ProtoError::ErrStreamAlreadyExist)
+                                && assoc
+                                    .stream(entry.id)
+                                    .map(|s| !s.is_readable() && !s.is_writable())
+                                    .unwrap_or(false);
+
+                            if in_band
+                                || stale_incarnation
+                                || matches!(e, ProtoError::ErrStreamResetPending)
+                            {
+                                // RFC 6525 reset handshake for a previous
+                                // incarnation of this stream id hasn't finished yet
+                                //
+                                // - AlreadyExist clears when the remote's reciprocal reset arrives
+                                // - ResetPending when the RECONFIG-RESPONSE arrives (silently)
+                                //
+                                // In both cases,  stay in AwaitOpen and retry until past the deadline.
+                                let deadline = *entry
+                                    .open_deadline
+                                    .get_or_insert(self.last_now + STREAM_OPEN_TIMEOUT);
+
+                                if self.last_now < deadline {
+                                    debug!(
+                                        "Stream {} open blocked ({:?}), will retry",
                                         entry.id, e
                                     );
-                                    entry.do_close = true;
-                                    entry.set_state(StreamEntryState::Closed);
-                                    let stream_id = entry.id;
-                                    let reset_pending = self.sctp_propagate_close(stream_id);
-                                    return Some(SctpEvent::Close {
-                                        id: stream_id,
-                                        reset_pending,
-                                    });
+                                    continue;
                                 }
+
+                                debug!("Opening stream {} failed after retries: {:?}", entry.id, e);
+                                entry.do_close = true;
+                                entry.set_state(StreamEntryState::Closed);
+                                let stream_id = entry.id;
+                                let reset_pending = self.sctp_propagate_close(stream_id);
+                                return Some(SctpEvent::Close {
+                                    id: stream_id,
+                                    reset_pending,
+                                });
+                            }
+
+                            // Continuing means we are adopting the live out-of-band stream the
+                            // remote created. It skipped the Ok branch above, so reliability
+                            // params haven't been applied to it yet.
+                            let mut stream = assoc.stream(entry.id).expect("stream that exists");
+                            if !entry.configure_reliability(&mut stream) {
+                                entry.set_state(StreamEntryState::Closed);
+                                let stream_id = entry.id;
+                                let reset_pending = self.sctp_propagate_close(stream_id);
+                                return Some(SctpEvent::Close {
+                                    id: stream_id,
+                                    reset_pending,
+                                });
                             }
                         }
-
-                        // Continuing means we are opening the stream out-of-band.
-                    }
-                    Err(
-                        e @ (ProtoError::ErrStreamAlreadyExist | ProtoError::ErrStreamResetPending),
-                    ) => {
-                        let config = entry.config.as_ref().expect("config if AwaitOpen");
-                        let in_band = config.negotiated.is_none();
-
-                        // ErrStreamAlreadyExist has two causes:
-                        // - the remote created it by sending on it first
-                        // - a previous incarnation of the id is still registered,
-                        //   reset handshake hasn't finished
-                        let stale_incarnation = matches!(e, ProtoError::ErrStreamAlreadyExist)
-                            && assoc
-                                .stream(entry.id)
-                                .map(|s| !s.is_readable() && !s.is_writable())
-                                .unwrap_or(false);
-
-                        if in_band
-                            || stale_incarnation
-                            || matches!(e, ProtoError::ErrStreamResetPending)
-                        {
-                            // RFC 6525 reset handshake for a previous
-                            // incarnation of this stream id hasn't finished yet
-                            //
-                            // - AlreadyExist clears when the remote's reciprocal reset arrives
-                            // - ResetPending when the RECONFIG-RESPONSE arrives (silently)
-                            //
-                            // In both cases,  stay in AwaitOpen and retry until past the deadline.
-                            let deadline = *entry
-                                .open_deadline
-                                .get_or_insert(self.last_now + STREAM_OPEN_TIMEOUT);
-
-                            if self.last_now < deadline {
-                                debug!("Stream {} open blocked ({:?}), will retry", entry.id, e);
-                                continue;
-                            }
-
-                            debug!("Opening stream {} failed after retries: {:?}", entry.id, e);
+                        Err(e) => {
+                            warn!("Opening stream {} failed: {:?}", entry.id, e);
                             entry.do_close = true;
                             entry.set_state(StreamEntryState::Closed);
                             let stream_id = entry.id;
@@ -958,193 +967,169 @@ impl RtcSctp {
                                 reset_pending,
                             });
                         }
+                    }
 
-                        // Continuing means we are adopting the live out-of-band stream the
-                        // remote created. It skipped the Ok branch above, so reliability
-                        // params haven't been applied to it yet.
-                        let mut stream = assoc.stream(entry.id).expect("stream that exists");
-                        if !entry.configure_reliability(&mut stream) {
-                            entry.set_state(StreamEntryState::Closed);
-                            let stream_id = entry.id;
-                            let reset_pending = self.sctp_propagate_close(stream_id);
-                            return Some(SctpEvent::Close {
-                                id: stream_id,
-                                reset_pending,
+                    // Consider out-of-band stream open.
+                    let config = entry.config.as_ref().expect("config if AwaitOpen");
+                    let in_band = config.negotiated.is_none();
+                    assert!(!in_band);
+
+                    let label = config.label.clone();
+                    entry.set_state(StreamEntryState::Open);
+
+                    return Some(SctpEvent::Open {
+                        id: entry.id,
+                        label,
+                    });
+                }
+
+                if entry.do_close && entry.state != StreamEntryState::Closed {
+                    entry.set_state(StreamEntryState::Closed);
+                    let stream_id = entry.id;
+                    let reset_pending = self.sctp_propagate_close(stream_id);
+                    return Some(SctpEvent::Close {
+                        id: stream_id,
+                        reset_pending,
+                    });
+                }
+
+                let mut stream = match assoc.stream(entry.id) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // This is expected on browser refresh or similar abrupt shutdown.
+                        debug!("Getting stream {} failed: {:?}", entry.id, e);
+                        entry.do_close = true;
+                        continue;
+                    }
+                };
+
+                // Propagate the desired buffered threshold.
+                // The idea is to only do this if the user has changed the value for it without
+                // incurring the cost of looking up the currently confifured value.
+                if let BufferedThresholdConfig::Desired(x) = entry.buffered_threshold {
+                    if let Err(e) = stream.set_buffered_amount_low_threshold(x) {
+                        debug!("Setting buffered_amount_low_threshold failed: {:?}", e);
+                        entry.do_close = true;
+                        entry.buffered_threshold = BufferedThresholdConfig::Unconfigured;
+                        continue;
+                    }
+
+                    entry.buffered_threshold = BufferedThresholdConfig::Configured(x);
+                }
+                match stream_read_data(&mut stream) {
+                    Ok(Some((buf, ppi))) => {
+                        if ppi != PayloadProtocolIdentifier::Dcep {
+                            // This is the normal path for incoming data.
+                            let buf = ppi_adjust_buf(buf, ppi);
+                            let binary = matches!(
+                                ppi,
+                                PayloadProtocolIdentifier::Binary
+                                    | PayloadProtocolIdentifier::BinaryEmpty
+                            );
+                            return Some(SctpEvent::Data {
+                                id: entry.id,
+                                binary,
+                                data: buf,
                             });
                         }
-                    }
-                    Err(e) => {
-                        warn!("Opening stream {} failed: {:?}", entry.id, e);
-                        entry.do_close = true;
-                        entry.set_state(StreamEntryState::Closed);
-                        let stream_id = entry.id;
-                        let reset_pending = self.sctp_propagate_close(stream_id);
-                        return Some(SctpEvent::Close {
-                            id: stream_id,
-                            reset_pending,
-                        });
-                    }
-                }
 
-                // Consider out-of-band stream open.
-                let config = entry.config.as_ref().expect("config if AwaitOpen");
-                let in_band = config.negotiated.is_none();
-                assert!(!in_band);
+                        // It's Dcep, either a DcepOpen or DcepAck.
+                        match entry.state {
+                            // We are in AwaitConfig state which means we are either going to get it via
+                            // the DcepOpen, or by an out-of-band configuration via open_stream.
+                            // This indicates we are doing in-band.
+                            StreamEntryState::AwaitConfig => {
+                                let dcep: DcepOpen = match buf.as_slice().try_into() {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        warn!("Failed to read incoming DCEP {}: {:?}", entry.id, e);
+                                        entry.do_close = true;
+                                        continue;
+                                    }
+                                };
 
-                let label = config.label.clone();
-                entry.set_state(StreamEntryState::Open);
+                                if entry.config.is_none() {
+                                    entry.config = Some((&dcep).into());
+                                } else {
+                                    warn!("Received DcepOpen for configured stream: {}", entry.id);
+                                }
 
-                return Some(SctpEvent::Open {
-                    id: entry.id,
-                    label,
-                });
-            }
+                                // Apply DcepOpen's reliability parameters to the sctp-proto stream.
+                                // Without this, the DCEP-receiving side of an in-band channel sends
+                                // with stream defaults: ordered and fully reliable.
+                                if !entry.configure_reliability(&mut stream) {
+                                    continue;
+                                }
 
-            if entry.do_close && entry.state != StreamEntryState::Closed {
-                entry.set_state(StreamEntryState::Closed);
-                let stream_id = entry.id;
-                let reset_pending = self.sctp_propagate_close(stream_id);
-                return Some(SctpEvent::Close {
-                    id: stream_id,
-                    reset_pending,
-                });
-            }
+                                let mut obuf = [0];
+                                DcepAck.marshal_to(&mut obuf);
+                                match stream.write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep)
+                                {
+                                    Ok(l) => {
+                                        assert!(obuf.len() == l);
+                                        entry.set_state(StreamEntryState::Open);
 
-            let mut stream = match assoc.stream(entry.id) {
-                Ok(v) => v,
-                Err(e) => {
-                    // This is expected on browser refresh or similar abrupt shutdown.
-                    debug!("Getting stream {} failed: {:?}", entry.id, e);
-                    entry.do_close = true;
-                    continue;
-                }
-            };
+                                        return Some(SctpEvent::Open {
+                                            id: entry.id,
+                                            label: dcep.label,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Failed to write DCEP ack on stream {}: {:?}",
+                                            entry.id, e
+                                        );
+                                        entry.do_close = true;
+                                        entry.set_state(StreamEntryState::Closed);
+                                        let stream_id = entry.id;
+                                        let reset_pending = self.sctp_propagate_close(stream_id);
+                                        return Some(SctpEvent::Close {
+                                            id: stream_id,
+                                            reset_pending,
+                                        });
+                                    }
+                                }
+                            }
+                            StreamEntryState::AwaitDcepAck => {
+                                let res: Result<DcepAck, _> = buf.as_slice().try_into();
 
-            // Propagate the desired buffered threshold.
-            // The idea is to only do this if the user has changed the value for it without
-            // incurring the cost of looking up the currently confifured value.
-            if let BufferedThresholdConfig::Desired(x) = entry.buffered_threshold {
-                if let Err(e) = stream.set_buffered_amount_low_threshold(x) {
-                    debug!("Setting buffered_amount_low_threshold failed: {:?}", e);
-                    entry.do_close = true;
-                    entry.buffered_threshold = BufferedThresholdConfig::Unconfigured;
-                    continue;
-                }
-
-                entry.buffered_threshold = BufferedThresholdConfig::Configured(x);
-            }
-            match stream_read_data(&mut stream) {
-                Ok(Some((buf, ppi))) => {
-                    if ppi != PayloadProtocolIdentifier::Dcep {
-                        // This is the normal path for incoming data.
-                        let buf = ppi_adjust_buf(buf, ppi);
-                        let binary = matches!(
-                            ppi,
-                            PayloadProtocolIdentifier::Binary
-                                | PayloadProtocolIdentifier::BinaryEmpty
-                        );
-                        return Some(SctpEvent::Data {
-                            id: entry.id,
-                            binary,
-                            data: buf,
-                        });
-                    }
-
-                    // It's Dcep, either a DcepOpen or DcepAck.
-                    match entry.state {
-                        // We are in AwaitConfig state which means we are either going to get it via
-                        // the DcepOpen, or by an out-of-band configuration via open_stream.
-                        // This indicates we are doing in-band.
-                        StreamEntryState::AwaitConfig => {
-                            let dcep: DcepOpen = match buf.as_slice().try_into() {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    warn!("Failed to read incoming DCEP {}: {:?}", entry.id, e);
+                                if let Err(e) = res {
+                                    warn!("Failed to read incoming DCEP ACK {}: {:?}", entry.id, e);
                                     entry.do_close = true;
                                     continue;
                                 }
-                            };
 
-                            if entry.config.is_none() {
-                                entry.config = Some((&dcep).into());
-                            } else {
-                                warn!("Received DcepOpen for configured stream: {}", entry.id);
+                                entry.set_state(StreamEntryState::Open);
+                                let config = entry.config.as_ref().expect("config when DcepAck");
+
+                                return Some(SctpEvent::Open {
+                                    id: entry.id,
+                                    label: config.label.clone(),
+                                });
                             }
-
-                            // Apply DcepOpen's reliability parameters to the sctp-proto stream.
-                            // Without this, the DCEP-receiving side of an in-band channel sends
-                            // with stream defaults: ordered and fully reliable.
-                            if !entry.configure_reliability(&mut stream) {
-                                continue;
-                            }
-
-                            let mut obuf = [0];
-                            DcepAck.marshal_to(&mut obuf);
-                            match stream.write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep) {
-                                Ok(l) => {
-                                    assert!(obuf.len() == l);
-                                    entry.set_state(StreamEntryState::Open);
-
-                                    return Some(SctpEvent::Open {
-                                        id: entry.id,
-                                        label: dcep.label,
-                                    });
-                                }
-                                Err(e) => {
-                                    warn!(
-                                        "Failed to write DCEP ack on stream {}: {:?}",
-                                        entry.id, e
-                                    );
-                                    entry.do_close = true;
-                                    entry.set_state(StreamEntryState::Closed);
-                                    let stream_id = entry.id;
-                                    let reset_pending = self.sctp_propagate_close(stream_id);
-                                    return Some(SctpEvent::Close {
-                                        id: stream_id,
-                                        reset_pending,
-                                    });
-                                }
-                            }
-                        }
-                        StreamEntryState::AwaitDcepAck => {
-                            let res: Result<DcepAck, _> = buf.as_slice().try_into();
-
-                            if let Err(e) = res {
-                                warn!("Failed to read incoming DCEP ACK {}: {:?}", entry.id, e);
+                            _ => {
+                                warn!(
+                                    "Stream {} in wrong state when receiving DCEP: {:?}",
+                                    entry.id, entry.state
+                                );
                                 entry.do_close = true;
                                 continue;
                             }
-
-                            entry.set_state(StreamEntryState::Open);
-                            let config = entry.config.as_ref().expect("config when DcepAck");
-
-                            return Some(SctpEvent::Open {
-                                id: entry.id,
-                                label: config.label.clone(),
-                            });
-                        }
-                        _ => {
-                            warn!(
-                                "Stream {} in wrong state when receiving DCEP: {:?}",
-                                entry.id, entry.state
-                            );
-                            entry.do_close = true;
-                            continue;
                         }
                     }
+                    Ok(None) => continue,
+                    Err(_) => entry.do_close = true,
                 }
-                Ok(None) => continue,
-                Err(_) => entry.do_close = true,
             }
-        }
 
-        // Reset completions are reported last. Reaching here means the entry loop had
-        // no `Close` left to emit, so the close for a released id has been delivered.
-        if let Some(id) = self.reset_complete.pop_front() {
-            return Some(SctpEvent::StreamResetComplete { id });
-        }
+            // Reset completions are reported last. Reaching here means the entry loop had
+            // no `Close` left to emit, so the close for a released id has been delivered.
+            if let Some(id) = self.reset_complete.pop_front() {
+                return Some(SctpEvent::StreamResetComplete { id });
+            }
 
-        None
+            return None;
+        }
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
