@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.23.0"
+version = "0.23.1"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -39,7 +39,7 @@ exclude = ["crates/fuzz"]
 
 [workspace.dependencies]
 # Internal crates
-str0m = { version = "0.23.0", path = ".", default-features = false }
+str0m = { version = "0.23.1", path = ".", default-features = false }
 str0m-proto = { version = "0.7.0", path = "crates/proto", default-features = false }
 is = { version = "0.11.0", path = "crates/is", default-features = false }
 str0m-netem = { version = "0.4.0", path = "crates/netem" }
@@ -53,7 +53,7 @@ _str0m_test = { path = "crates/_str0m_test" }
 # Core dependencies
 tracing = "0.1.37"
 fastrand = "2.0.1"
-sctp-proto = "0.10.3"
+sctp-proto = "0.10.4"
 combine = "4.6.6"
 subtle = "2.0.0"
 arrayvec = "0.7.6"
