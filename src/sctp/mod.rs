@@ -1,6 +1,6 @@
 #![allow(clippy::new_without_default)]
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 use std::panic::UnwindSafe;
@@ -41,7 +41,8 @@ pub(crate) struct RtcSctp {
     fake_addr: SocketAddr,
     handle: AssociationHandle,
     assoc: Option<Association>,
-    entries: BTreeMap<u16, StreamEntry>,
+    // Sorted by `id` so lookups can binary search. Keep it that way.
+    entries: Vec<StreamEntry>,
     // Stream ids that still owe a `StreamEvent::ResetComplete`,
     // thos ids needs to be held back from reuse.
     reset_pending: HashSet<u16>,
@@ -303,7 +304,7 @@ impl RtcSctp {
             fake_addr,
             handle: AssociationHandle(0), // temporary
             assoc: None,
-            entries: BTreeMap::new(),
+            entries: Vec::new(),
             reset_pending: HashSet::new(),
             reset_complete: VecDeque::new(),
             pushed_back_transmit: None,
@@ -555,7 +556,7 @@ impl RtcSctp {
 
     /// Close stream.
     pub fn close_stream(&mut self, id: u16) {
-        if let Some(entry) = self.entries.get_mut(&id) {
+        if let Some(entry) = entry_by_id_mut(&mut self.entries, id) {
             entry.do_close = true;
 
             // Explicitly close the sctp stream to allow re-use of the same id.
@@ -580,7 +581,7 @@ impl RtcSctp {
             return false;
         }
 
-        let Some(rec) = self.entries.get(&id) else {
+        let Some(rec) = entry_by_id(&self.entries, id) else {
             return false;
         };
 
@@ -596,7 +597,7 @@ impl RtcSctp {
         // The amount currently buffered.
         let total: usize = self
             .entries
-            .values()
+            .iter()
             .filter_map(|e| {
                 assoc
                     .stream(e.id)
@@ -618,7 +619,7 @@ impl RtcSctp {
             .as_mut()
             .ok_or(SctpError::WriteBeforeEstablished)?;
 
-        let rec = self.entries.get(&id).expect("stream entry for write");
+        let rec = entry_by_id(&self.entries, id).expect("stream entry for write");
 
         if rec.state != StreamEntryState::Open {
             return Err(SctpError::WriteBeforeEstablished);
@@ -654,10 +655,8 @@ impl RtcSctp {
     }
 
     pub fn set_buffered_amount_low_threshold(&mut self, id: u16, threshold: usize) {
-        let entry = self
-            .entries
-            .get_mut(&id)
-            .expect("stream entry for valid channel id");
+        let entry =
+            entry_by_id_mut(&mut self.entries, id).expect("stream entry for valid channel id");
 
         // This update will be propagated on next poll.
         entry.buffered_threshold.set(threshold);
@@ -706,8 +705,7 @@ impl RtcSctp {
         self.last_now = now;
 
         // Remove closed entries.
-        self.entries
-            .retain(|_, e| e.state != StreamEntryState::Closed);
+        self.entries.retain(|e| e.state != StreamEntryState::Closed);
 
         let Some(assoc) = &mut self.assoc else {
             return;
@@ -747,8 +745,7 @@ impl RtcSctp {
             // Remove closed entries. handle_timeout() also does this, but the
             // remote can reuse a stream id (its reset handshake completed) before
             // our next timeout.
-            self.entries
-                .retain(|_, e| e.state != StreamEntryState::Closed);
+            self.entries.retain(|e| e.state != StreamEntryState::Closed);
 
             if let Some(t) = self.pushed_back_transmit.take() {
                 return Some(SctpEvent::Transmit { packets: t });
@@ -807,7 +804,7 @@ impl RtcSctp {
                             // missing ones already went through Close, and an AwaitOpen
                             // entry is a new incarnation waiting on the same id, it must
                             // not be killed by the old pending teardown.
-                            if let Some(entry) = self.entries.get_mut(&id) {
+                            if let Some(entry) = entry_by_id_mut(&mut self.entries, id) {
                                 if entry.state != StreamEntryState::Closed
                                     && entry.state != StreamEntryState::AwaitOpen
                                 {
@@ -835,7 +832,7 @@ impl RtcSctp {
                 return None;
             }
 
-            for entry in self.entries.values_mut() {
+            for entry in self.entries.iter_mut() {
                 let want_open = entry.state == StreamEntryState::AwaitOpen;
 
                 if want_open {
@@ -1145,7 +1142,7 @@ impl RtcSctp {
         // either resolves or fails within STREAM_OPEN_TIMEOUT.
         let retry_timeout = self
             .entries
-            .values()
+            .iter()
             .any(|e| e.state == StreamEntryState::AwaitOpen && e.open_deadline.is_some())
             .then(|| self.last_now + STREAM_OPEN_RETRY_INTERVAL);
 
@@ -1174,9 +1171,7 @@ impl RtcSctp {
     }
 
     pub fn config(&self, sctp_stream_id: u16) -> Option<&ChannelConfig> {
-        self.entries
-            .get(&sctp_stream_id)
-            .and_then(|s| s.config.as_ref())
+        entry_by_id(&self.entries, sctp_stream_id).and_then(|s| s.config.as_ref())
     }
 
     /// Close the sctp stream to allow re-use of the same id.
@@ -1220,23 +1215,44 @@ fn set_state(current_state: &mut RtcSctpState, state: RtcSctpState) {
     }
 }
 
+fn entry_index(entries: &[StreamEntry], id: u16) -> Result<usize, usize> {
+    entries.binary_search_by_key(&id, |e| e.id)
+}
+
+fn entry_by_id(entries: &[StreamEntry], id: u16) -> Option<&StreamEntry> {
+    entry_index(entries, id).ok().map(|i| &entries[i])
+}
+
+fn entry_by_id_mut(entries: &mut [StreamEntry], id: u16) -> Option<&mut StreamEntry> {
+    entry_index(entries, id).ok().map(|i| &mut entries[i])
+}
+
 fn stream_entry<'a>(
-    entries: &'a mut BTreeMap<u16, StreamEntry>,
+    entries: &'a mut Vec<StreamEntry>,
     id: u16,
     initial_state: StreamEntryState,
     reason: &'static str,
 ) -> &'a mut StreamEntry {
-    entries.entry(id).or_insert_with(|| {
-        debug!("New stream {} ({:?}): {}", id, initial_state, reason);
-        StreamEntry {
-            config: None,
-            state: initial_state,
-            id,
-            do_close: false,
-            open_deadline: None,
-            buffered_threshold: BufferedThresholdConfig::Unconfigured,
+    let idx = match entry_index(entries, id) {
+        Ok(idx) => idx,
+        Err(idx) => {
+            debug!("New stream {} ({:?}): {}", id, initial_state, reason);
+            entries.insert(
+                idx,
+                StreamEntry {
+                    config: None,
+                    state: initial_state,
+                    id,
+                    do_close: false,
+                    open_deadline: None,
+                    buffered_threshold: BufferedThresholdConfig::Unconfigured,
+                },
+            );
+            idx
         }
-    })
+    };
+
+    &mut entries[idx]
 }
 
 fn stream_read_data(
@@ -1366,6 +1382,12 @@ impl From<(ReliabilityType, u32)> for Reliability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Insert an entry directly, keeping `entries` sorted by id.
+    fn insert_entry(entries: &mut Vec<StreamEntry>, entry: StreamEntry) {
+        let idx = entry_index(entries, entry.id).expect_err("entry should not already exist");
+        entries.insert(idx, entry);
+    }
     use str0m_proto::DATAGRAM_MTU_TARGET;
 
     #[test]
@@ -1471,8 +1493,8 @@ mod tests {
             "the association must not have this stream for the test to mean anything"
         );
 
-        client.entries.insert(
-            stream_id,
+        insert_entry(
+            &mut client.entries,
             StreamEntry {
                 config: None,
                 state: StreamEntryState::AwaitConfig,
@@ -1496,7 +1518,8 @@ mod tests {
 
         let entry = client
             .entries
-            .get(&stream_id)
+            .iter()
+            .find(|e| e.id == stream_id)
             .expect("entry to still exist");
 
         assert!(
@@ -1531,8 +1554,8 @@ mod tests {
         // Manually add an entry in AwaitOpen state with in-band config (negotiated: None).
         // This simulates a locally-initiated in-band channel whose stream ID conflicts
         // with one already opened by the remote peer.
-        client.entries.insert(
-            stream_id,
+        insert_entry(
+            &mut client.entries,
             StreamEntry {
                 config: Some(ChannelConfig {
                     label: "test".to_string(),
@@ -1567,7 +1590,7 @@ mod tests {
         );
 
         // Verify entry transitioned to Closed.
-        let entry = client.entries.get(&stream_id).unwrap();
+        let entry = entry_by_id(&client.entries, stream_id).unwrap();
         assert_eq!(entry.state, StreamEntryState::Closed);
     }
 
@@ -1582,8 +1605,8 @@ mod tests {
             .expect("old stream should open");
         old.close().expect("old stream should start closing");
 
-        client.entries.insert(
-            stream_id,
+        insert_entry(
+            &mut client.entries,
             StreamEntry {
                 config: Some(ChannelConfig {
                     label: "replacement".to_string(),
