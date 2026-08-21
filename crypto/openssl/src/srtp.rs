@@ -98,6 +98,9 @@ impl AeadAes128GcmCipher for OsslAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
 
         let (cipher_text, tag) = input.split_at(input.len() - AeadAes128Gcm::TAG_LEN);
@@ -165,6 +168,9 @@ impl AeadAes256GcmCipher for OsslAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
 
         let (cipher_text, tag) = input.split_at(input.len() - AeadAes256Gcm::TAG_LEN);

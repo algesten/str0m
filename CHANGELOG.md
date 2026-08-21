@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Guard SRTP/SRTCP and RTCP parsing against malformed input #1029
+
 # 0.23.0
 
   * Respond to RRTR with DLRR #1022

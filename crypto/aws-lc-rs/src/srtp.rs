@@ -109,6 +109,9 @@ impl AeadAes128GcmCipher for AwsLcRsAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
 
         let nonce = Nonce::try_assume_unique_for_key(iv)
@@ -182,6 +185,9 @@ impl AeadAes256GcmCipher for AwsLcRsAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
 
         let nonce = Nonce::try_assume_unique_for_key(iv)

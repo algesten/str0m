@@ -943,7 +943,9 @@ impl ExtensionValues {
         let mut offset = already_happened() + since_beginning;
 
         if offset + relative_64_secs > now {
-            offset -= Duration::from_secs(64);
+            offset = offset
+                .checked_sub(Duration::from_secs(64))
+                .unwrap_or(offset);
         }
 
         self.abs_send_time = Some(offset + relative_64_secs);

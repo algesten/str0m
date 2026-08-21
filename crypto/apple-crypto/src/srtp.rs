@@ -69,6 +69,9 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
         aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
@@ -104,6 +107,9 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
+        // Caller contract: `SrtpContext::unprotect_rtp` and `unprotect_rtcp` guarantee
+        // the input holds at least the auth tag. A shorter buffer is a bug in str0m,
+        // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
         aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
