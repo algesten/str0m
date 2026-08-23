@@ -23,8 +23,8 @@ const MAX_REDUNDANT_BLOCKS: usize = 32;
 
 /// How many packets back we recover from on receive, and the deepest distance a sender may be
 /// configured to send (see `CodecConfig::set_red_distances`). This covers realistic multi-level
-/// patterns such as `[1, 3, 5]` while bounding the per-packet recovery work (decode + depayload) a
-/// hostile peer can trigger, independent of how many blocks the payload carries.
+/// patterns such as `[1, 3, 5]` while bounding the per-packet recovery work (decode + depayload +
+/// seq lookup) a hostile peer can trigger, independent of how many blocks the payload carries.
 pub(crate) const MAX_RED_RECOVERY_DEPTH: u64 = 8;
 
 /// A redundant block to prepend to the primary payload (older media).
@@ -181,54 +181,19 @@ impl RedDecoder {
     }
 }
 
-/// Select the redundant blocks to attempt recovery from, given the decoded redundant blocks
-/// (oldest first) and the primary payload type.
+/// The redundant blocks that carry `primary_pt` and sit strictly before the primary.
 ///
-/// Returns `(distance_back, block)` pairs, where `distance_back` is how many sequence numbers
-/// before the primary the block sits (1 = the immediately preceding packet). Only the most-recent
-/// [`MAX_RED_RECOVERY_DEPTH`] blocks that carry `primary_pt` are returned: RFC 2198 allows a
-/// redundant block to use a different PT, and str0m only recovers the primary (Opus) codec, so
-/// blocks of another PT are skipped; bounding the depth caps the recovery work a hostile peer can
-/// trigger regardless of how many blocks the payload packs.
-pub(crate) fn red_recovery_blocks<'a>(
+/// RFC 2198 allows a redundant block to use a different PT than the primary; str0m only
+/// recovers the negotiated codec, so blocks of another PT are skipped. Which sequence number a
+/// block belongs to is decided by the receiving stream (it needs the surrounding received
+/// packets, see `StreamRx::red_locate_seq`), not from the offsets alone.
+pub(crate) fn red_same_pt_blocks<'a>(
     redundant: &'a [RedBlock<'a>],
     primary_pt: u8,
-) -> Vec<(u64, &'a RedBlock<'a>)> {
-    // A redundant block carries only a timestamp offset, not a sequence number, so how many
-    // packets back it sits is derived from the offset: `distance = offset / frame`, where `frame`
-    // is the RTP ticks per packet. That frame size is not reliably signalled (Opus `minptime` is a
-    // minimum, not the actual value), so we estimate it from the closest same-PT block, which is
-    // one packet back for every real sender (browsers and str0m both include main-1). The estimate
-    // is only trustworthy if every same-PT offset is an exact multiple of it; otherwise the packet
-    // duration cannot be established from offsets alone and we recover nothing. This keeps recovery
-    // best effort and never fabricates a packet at the wrong seq.
-    let same_pt = |b: &&RedBlock<'_>| b.pt == primary_pt && b.timestamp_offset > 0;
-    let Some(frame) = redundant
-        .iter()
-        .filter(same_pt)
-        .map(|b| b.timestamp_offset)
-        .min()
-    else {
-        return Vec::new();
-    };
-    // If any same-PT offset is not a multiple of the smallest one, the smallest is not reliably
-    // distance 1 (e.g. a [3, 5] pattern with no main-1 block), so recover nothing rather than map
-    // it to distance 1 and inject a frame at the wrong sequence number.
-    if redundant
-        .iter()
-        .filter(same_pt)
-        .any(|b| b.timestamp_offset % frame != 0)
-    {
-        return Vec::new();
-    }
+) -> impl Iterator<Item = &'a RedBlock<'a>> {
     redundant
         .iter()
-        .filter(same_pt)
-        .filter_map(|b| {
-            let back = (b.timestamp_offset / frame) as u64;
-            (back <= MAX_RED_RECOVERY_DEPTH).then_some((back, b))
-        })
-        .collect()
+        .filter(move |b| b.pt == primary_pt && b.timestamp_offset > 0)
 }
 
 #[cfg(test)]
@@ -342,6 +307,26 @@ mod test {
     }
 
     #[test]
+    fn same_pt_blocks_skip_foreign_pt_and_primary_offset() {
+        let block = |pt, ts| RedBlock {
+            pt,
+            timestamp_offset: ts,
+            payload: &[0u8],
+            is_primary: false,
+        };
+        let redundant = vec![
+            block(111, 1920),
+            block(96, 960),
+            block(111, 0),
+            block(111, 960),
+        ];
+        let offsets: Vec<u32> = red_same_pt_blocks(&redundant, 111)
+            .map(|b| b.timestamp_offset)
+            .collect();
+        assert_eq!(offsets, vec![1920, 960]);
+    }
+
+    #[test]
     fn public_encoder_output_is_accepted_by_public_decoder() {
         let redundant: Vec<_> = (0..33)
             .map(|i| RedundantBlock {
@@ -355,83 +340,6 @@ mod test {
         assert!(
             RedDecoder::decode(&encoded).is_ok(),
             "the public decoder must accept packets produced by the public encoder"
-        );
-    }
-
-    #[test]
-    fn recovery_blocks_derive_distance_from_offset_and_cap_depth() {
-        // Oldest-first, frame = 960 (Opus 20 ms @ 48 kHz), so the closest same-PT block (offset
-        // 960) is one packet back. Index 1 carries a different PT and must be skipped. Distance is
-        // derived from the offset, and only same-PT blocks within MAX_RED_RECOVERY_DEPTH are kept.
-        let block = |pt, ts| RedBlock {
-            pt,
-            timestamp_offset: ts,
-            payload: &[0u8],
-            is_primary: false,
-        };
-        // oldest-first: distance 9 (over cap), foreign PT, distance 8, distance 1.
-        let redundant = vec![
-            block(111, 960 * 9),
-            block(96, 960 * 7),
-            block(111, 960 * 8),
-            block(111, 960),
-        ];
-
-        let got = red_recovery_blocks(&redundant, 111);
-        let backs: Vec<u64> = got.iter().map(|(back, _)| *back).collect();
-        // Distances 1 and 8 are within depth; distance 9 is capped out, the foreign PT is skipped.
-        assert_eq!(backs, vec![8, 1]);
-        assert!(got.iter().all(|(_, b)| b.pt == 111));
-
-        // A block list whose only same-PT block is the primary (offset 0) yields nothing.
-        let foreign = vec![block(111, 0), block(96, 960), block(96, 1920)];
-        assert!(red_recovery_blocks(&foreign, 111).is_empty());
-    }
-
-    #[test]
-    fn recovery_blocks_handle_non_contiguous_offsets() {
-        // A non-contiguous [1,3,5] pattern: frame = 960 (the closest block), so distances 1, 3, 5
-        // are derived from the offsets. All are within MAX_RED_RECOVERY_DEPTH and each maps to its
-        // true distance from the offset, never to a wrong seq the way a positional index would.
-        let block = |ts| RedBlock {
-            pt: 111,
-            timestamp_offset: ts,
-            payload: &[0u8],
-            is_primary: false,
-        };
-        let redundant = vec![block(4800), block(2880), block(960)]; // main-5, main-3, main-1
-        let backs: Vec<u64> = red_recovery_blocks(&redundant, 111)
-            .iter()
-            .map(|(b, _)| *b)
-            .collect();
-        assert_eq!(
-            backs,
-            vec![5, 3, 1],
-            "distances derived from offsets, never mis-mapped"
-        );
-
-        // If any offset is not a clean multiple of the smallest, the packet duration can't be
-        // established, so the whole set is skipped rather than mis-mapped.
-        let irregular = vec![block(960), block(1441)];
-        assert!(red_recovery_blocks(&irregular, 111).is_empty());
-    }
-
-    #[test]
-    fn recovery_blocks_without_main_minus_one_do_not_fabricate_sequence_numbers() {
-        let block = |ts| RedBlock {
-            pt: 111,
-            timestamp_offset: ts,
-            payload: &[0u8],
-            is_primary: false,
-        };
-
-        // The public send configuration permits [3, 5]. Without a main-1 block, the receiver
-        // cannot infer the duration of one packet from timestamp offsets alone. Treating the
-        // smallest offset as one packet would inject main-3 at sequence main-1.
-        let redundant = vec![block(4800), block(2880)];
-        assert!(
-            red_recovery_blocks(&redundant, 111).is_empty(),
-            "recovery must skip blocks when their sequence distance cannot be established"
         );
     }
 }

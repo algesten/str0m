@@ -46,7 +46,7 @@ mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod red;
-pub(crate) use red::{MAX_RED_RECOVERY_DEPTH, red_recovery_blocks};
+pub(crate) use red::{MAX_RED_RECOVERY_DEPTH, red_same_pt_blocks};
 pub use red::{RedBlock, RedDecoder, RedEncoder, RedundantBlock};
 
 mod vp8;

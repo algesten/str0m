@@ -20,7 +20,7 @@ use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
 use crate::pacer::PacerControl;
 use crate::pacer::{Pacer, PacerImpl};
-use crate::packet::{RedBlock, RedDecoder, red_recovery_blocks};
+use crate::packet::{RedBlock, RedDecoder, red_same_pt_blocks};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
 use crate::rtp_::ExtensionValues;
@@ -694,32 +694,15 @@ impl Session {
             let Some(un) = un_red(&mut header, data, pt) else {
                 return;
             };
-            // Each redundant block carries an earlier frame. If that sequence number is still
-            // missing, deliver it as a recovered packet so a single loss is filled without a
-            // retransmission. is_new_packet is side-effect free and only true for a real gap.
-            // `red_recovery_blocks` bounds this to the most-recent few same-PT blocks, so a hostile
-            // peer can't turn one packet into unbounded recovery work, and a block whose codec
-            // differs from the primary (RFC 2198 permits that) is never fed to the depayloader.
-            for (back, b) in red_recovery_blocks(&un.redundant, *pt) {
-                let Some(rec_seq_val) = (*seq_no).checked_sub(back) else {
-                    continue;
-                };
-                let rec_seq: SeqNo = rec_seq_val.into();
-                // Two blocks in the same RED packet must never rebuild the same seq_no. That can
-                // only happen if a malformed packet repeats an offset (well-formed senders don't),
-                // but `is_new_packet` below is side-effect free, so without this guard both blocks
-                // would pass it and inject a duplicate.
-                if red_recovered.iter().any(|(_, _, s, _)| *s == rec_seq) {
-                    continue;
-                }
-                // Recover only a still-missing sequence number. Recovered packets are not added to
-                // the receiver register (they were lost on the wire and rebuilt from FEC, so the
-                // real loss is still reported); the jitter buffer dedups any later real arrival.
-                if !stream.is_new_packet(false, rec_seq) {
-                    continue;
-                }
+            // Each redundant block carries an earlier frame. Place it at the sequence number it
+            // belongs to (derived from its timestamp and the packets received around it, see
+            // `StreamRx::red_locate_seq`) and, if that is still missing, deliver it as a
+            // recovered packet so a loss is filled without a retransmission. Only same-PT blocks
+            // are considered: RFC 2198 permits a redundant block of another codec, which must
+            // never be fed to this depayloader.
+            for b in red_same_pt_blocks(&un.redundant, *pt) {
                 // Skip recovery (rather than inject a bad timestamp) if the offset somehow
-                // exceeds the primary's extended media time, mirroring the seq-no guard above.
+                // exceeds the primary's extended media time.
                 let Some(numer) = receipt_outer
                     .time
                     .numer()
@@ -727,6 +710,17 @@ impl Session {
                 else {
                     continue;
                 };
+                // Correct-or-skip: `None` when the block can't be proven to belong to a missing
+                // seq no, or when that seq no was already received or recovered.
+                let Some(rec_seq) = stream.red_locate_seq(seq_no, numer) else {
+                    continue;
+                };
+                // Mark it so the seq is neither NACKed nor recovered again from a later packet.
+                // It is not counted as received (it was lost on the wire), so reception reports
+                // still carry the real loss. `red_locate_seq` now rejects this seq, which also
+                // dedups a malformed packet repeating the same offset.
+                stream.mark_red_recovered(rec_seq, numer);
+
                 let rec_time = MediaTime::new(numer, clock_rate);
                 let mut rec_header = header.clone();
                 rec_header.sequence_number = *rec_seq as u16;
@@ -764,7 +758,7 @@ impl Session {
         // only the trimmed payload bytes out of the SRTP scratch buffer.
         let payload: Arc<[u8]> = Arc::from(data);
 
-        let packet = stream.handle_rtp(now, header, payload, seq_no, receipt.time);
+        let packet = stream.handle_rtp(now, header, payload, seq_no, receipt.time, rx_bytes);
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().
