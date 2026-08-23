@@ -1521,6 +1521,9 @@ impl AsSdpMediaLine for Media {
             if let Some(rtx) = p.resend() {
                 pts.push(rtx);
             }
+            if let Some(red) = p.red() {
+                pts.push(red);
+            }
         }
 
         if let Some(s) = self.simulcast() {

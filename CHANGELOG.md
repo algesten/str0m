@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Add RFC 2198 RED (redundant audio) support for all audio codecs #982
+
 # 0.23.1
 
   * Guard SRTP/SRTCP and RTCP parsing against malformed input #1029
