@@ -453,3 +453,292 @@ pub fn red_rtp_mode_passthrough() {
     // The RED payload is well-formed and parseable with the public decoder.
     assert!(RedDecoder::decode(&red_packets[0].payload).is_ok());
 }
+
+// ---------------------------------------------------------------------------------------------
+// Hand-crafted RED on the wire.
+//
+// L runs in RTP mode and writes RED packets built with the public encoder, so the tests control
+// the exact redundancy pattern, the frame timing and which sequence numbers are lost. R runs in
+// frame mode and has to unwrap and recover. Frame `k` carries payload `[k; 80]` so every emitted
+// `MediaData` identifies which frame it is, and `seq_range`/`time` show where R placed it.
+// ---------------------------------------------------------------------------------------------
+
+mod raw {
+    use super::*;
+    use common::connect_l_r_with_rtc;
+    use str0m::Rtc;
+    use str0m::media::{Frequency, MediaData, Mid, Pt};
+    use str0m::rtp::rtcp::Rtcp;
+    use str0m::rtp::{RawPacket, RedEncoder, RedundantBlock, RtpWrite, SeqNo, Ssrc};
+
+    pub const BASE_SEQ: u64 = 47_000;
+    pub const BASE_TS: u32 = 10_000;
+    pub const FRAME: u32 = 960; // Opus 20 ms @ 48 kHz
+
+    pub struct RawRed {
+        pub l: TestRtc,
+        pub r: TestRtc,
+        pub mid: Mid,
+        pub ssrc: Ssrc,
+        pub opus_pt: Pt,
+        pub red_pt: Pt,
+    }
+
+    /// Connect L (RTP mode) and R (frame mode, `r_reordering` = `set_reordering_size_audio`)
+    /// with Opus + RED over DirectApi.
+    pub fn connect(r_reordering: Option<usize>) -> RawRed {
+        init_log();
+        init_crypto_default();
+        let now = Instant::now();
+
+        let mut lb = Rtc::builder()
+            .set_rtp_mode(true)
+            .enable_raw_packets(true)
+            .enable_opus(true, true);
+        if let Some(c) = Peer::Left.crypto_provider() {
+            lb = lb.set_crypto_provider(c);
+        }
+        let mut rb = Rtc::builder()
+            .enable_raw_packets(true)
+            .enable_opus(true, true);
+        if let Some(n) = r_reordering {
+            rb = rb.set_reordering_size_audio(n);
+        }
+        if let Some(c) = Peer::Right.crypto_provider() {
+            rb = rb.set_crypto_provider(c);
+        }
+
+        let (mut l, mut r) = connect_l_r_with_rtc(lb.build(now), rb.build(now));
+
+        let mid: Mid = "aud".into();
+        let ssrc: Ssrc = 42.into();
+
+        l.direct_api().declare_media(mid, MediaKind::Audio);
+        l.direct_api().declare_stream_tx(ssrc, None, mid, None);
+        r.direct_api().declare_media(mid, MediaKind::Audio);
+        r.direct_api().expect_stream_rx(ssrc, None, mid, None);
+
+        let max = l.last.max(r.last);
+        l.last = max;
+        r.last = max;
+
+        let opus = l.params_opus();
+        let red_pt = opus.red().expect("RED enabled on L");
+        assert!(r.params_opus().red().is_some(), "RED enabled on R");
+
+        RawRed {
+            l,
+            r,
+            mid,
+            ssrc,
+            opus_pt: opus.pt(),
+            red_pt,
+        }
+    }
+
+    impl RawRed {
+        /// Send frames `0..ts.len()` at the given RTP timestamps, seq `BASE_SEQ + k`. Each packet
+        /// carries, as redundancy, the frames `k - d` for every `d` in `distances` (oldest first).
+        /// Frames whose index is in `lost` are built (so their redundancy history is right) but
+        /// never written. Then lets everything settle.
+        pub fn send(&mut self, ts: &[u32], distances: &[u8], lost: &[u8]) {
+            let payload = |k: u8| vec![k; 80];
+            let n = ts.len() as u8;
+
+            for k in 0..n {
+                let mut blocks: Vec<RedundantBlock> = distances
+                    .iter()
+                    .filter_map(|&d| k.checked_sub(d))
+                    .map(|kk| RedundantBlock {
+                        pt: *self.opus_pt,
+                        timestamp_offset: ts[k as usize] - ts[kk as usize],
+                        payload: payload(kk),
+                    })
+                    .collect();
+                // RFC 2198: oldest first.
+                blocks.sort_by_key(|b| std::cmp::Reverse(b.timestamp_offset));
+
+                let red = RedEncoder::encode(*self.opus_pt, &payload(k), &blocks);
+
+                if !lost.contains(&k) {
+                    let wallclock = self.l.start + self.l.duration();
+                    let seq_no: SeqNo = (BASE_SEQ + k as u64).into();
+                    let mut direct = self.l.direct_api();
+                    let stream = direct.stream_tx(&self.ssrc).unwrap();
+                    stream.write_rtp(
+                        RtpWrite::new(self.red_pt, seq_no, ts[k as usize], wallclock, red)
+                            .marker(k == 0),
+                    );
+                }
+
+                progress(&mut self.l, &mut self.r).unwrap();
+            }
+
+            let settle = self.l.duration() + Duration::from_secs(2);
+            while self.l.duration() < settle {
+                progress(&mut self.l, &mut self.r).unwrap();
+            }
+        }
+
+        pub fn media(&self) -> Vec<&MediaData> {
+            self.r
+                .events
+                .iter()
+                .filter_map(|(_, e)| match e {
+                    Event::MediaData(m) if m.mid == self.mid => Some(m),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// Every delivered frame must sit at its own sequence number and RTP time. A RED
+        /// recovery that maps a redundant block to the wrong seq shows up here.
+        pub fn assert_consistent(&self, ts: &[u32]) {
+            for m in self.media() {
+                let k = m.data[0];
+                let seq = *m.seq_range.start();
+                let time = m.time.rebase(Frequency::FORTY_EIGHT_KHZ).numer();
+                assert_eq!(
+                    *seq,
+                    BASE_SEQ + k as u64,
+                    "frame {k} delivered at seq {seq} (expected {})",
+                    BASE_SEQ + k as u64
+                );
+                assert_eq!(
+                    time, ts[k as usize] as u64,
+                    "frame {k} delivered at rtp time {time} (expected {})",
+                    ts[k as usize]
+                );
+            }
+        }
+
+        pub fn delivered(&self, k: u8) -> usize {
+            self.media().iter().filter(|m| m.data[0] == k).count()
+        }
+
+        /// Sequence numbers R asked to have retransmitted (extended against `BASE_SEQ`).
+        pub fn nacked_seqs(&self) -> Vec<u64> {
+            self.r
+                .events
+                .iter()
+                .filter_map(|(_, e)| match e.as_raw_packet() {
+                    Some(RawPacket::RtcpTx(Rtcp::Nack(n))) => Some(n),
+                    _ => None,
+                })
+                .flat_map(|n| {
+                    n.reports
+                        .iter()
+                        .flat_map(|r| r.into_iter(SeqNo::from(BASE_SEQ)).map(|s| *s))
+                })
+                .collect()
+        }
+    }
+
+    pub fn uniform(n: usize) -> Vec<u32> {
+        (0..n as u32).map(|k| BASE_TS + k * FRAME).collect()
+    }
+}
+
+use raw::{BASE_SEQ, FRAME};
+
+/// A remote sender is not bound by our `set_red_distances` sanitiser. With a `[2, 4]` pattern and
+/// no main-1 block, the receiver must not assume the closest block is one packet back: after
+/// losing frames 5 and 6, frame 7's closest block is frame 5, which must never be delivered as
+/// seq 6.
+#[test]
+fn red_recovery_never_misplaces_frames_for_a_pattern_without_main_minus_one() {
+    let mut t = raw::connect(None);
+    let ts = raw::uniform(24);
+
+    t.send(&ts, &[2, 4], &[5, 6]);
+
+    t.assert_consistent(&ts);
+}
+
+/// Opus frame duration is not constant (10/20/40/60 ms, adaptive ptime, DTX). Offsets alone then
+/// don't give a sequence distance: with a libwebrtc-like `[1, 2, 3]` pattern, where frame 4 is a
+/// 40 ms frame and frames 3..=6 are lost, frame 7's main-3 block (frame 4) sits 3840 ticks back,
+/// which looks like four 20 ms packets. It must not be delivered as seq 3.
+#[test]
+fn red_recovery_never_misplaces_frames_when_frame_duration_varies() {
+    let mut t = raw::connect(None);
+
+    let mut ts = raw::uniform(24);
+    // Frame 4 lasts 40 ms: everything after it shifts by one extra frame.
+    for v in ts.iter_mut().skip(5) {
+        *v += FRAME;
+    }
+
+    t.send(&ts, &[1, 2, 3], &[3, 4, 5, 6]);
+
+    t.assert_consistent(&ts);
+}
+
+/// A sequence number recovered from RED was never on the wire, but the receiver has the frame,
+/// so it must not ask for a retransmission of it. Frame 5 is recovered from frame 6. Frame 9 is
+/// lost together with frame 10 (which carried its redundancy) and is therefore genuinely
+/// missing: that one must still be NACKed, proving the NACK path is live.
+#[test]
+fn red_recovered_seq_no_is_not_nacked() {
+    let mut t = raw::connect(None);
+    let ts = raw::uniform(60);
+
+    t.send(&ts, &[1], &[5, 9, 10]);
+
+    assert_eq!(t.delivered(5), 1, "frame 5 recovered from RED");
+    assert_eq!(t.delivered(9), 0, "frame 9 had no surviving redundancy");
+
+    let nacked = t.nacked_seqs();
+    assert!(
+        nacked.contains(&(BASE_SEQ + 9)),
+        "genuinely lost seq must be NACKed: {nacked:?}"
+    );
+    assert!(
+        !nacked.contains(&(BASE_SEQ + 5)),
+        "RED-recovered seq must not be NACKed: {nacked:?}"
+    );
+}
+
+/// With multi-level redundancy the same lost frame is carried by several later packets. It must
+/// be delivered once, also when the application has turned the reordering buffer off
+/// (`set_reordering_size_audio(0)`), which is exactly the configuration that does not
+/// de-duplicate late arrivals.
+#[test]
+fn red_recovered_frame_is_delivered_once_without_reordering_buffer() {
+    let mut t = raw::connect(Some(0));
+    let ts = raw::uniform(30);
+
+    t.send(&ts, &[1, 3], &[5]);
+
+    t.assert_consistent(&ts);
+    assert_eq!(t.delivered(5), 1, "frame 5 delivered exactly once");
+    for k in 0..30u8 {
+        assert!(
+            t.delivered(k) <= 1,
+            "frame {k} delivered {} times",
+            t.delivered(k)
+        );
+    }
+}
+
+/// The per-mid ingress stats must count the full RED wire payload like the per-mid egress stats
+/// on the sender do (and like `PeerStats` already does), not just the unwrapped primary block.
+#[test]
+fn red_media_ingress_stats_match_media_egress_stats() {
+    let (l, r) = run_audio_options(true, true, None, 2, true, false);
+
+    let sent = l.events.iter().rev().find_map(|(_, e)| match e {
+        Event::MediaEgressStats(s) if s.bytes > 0 => Some(s.bytes),
+        _ => None,
+    });
+    let received = r.events.iter().rev().find_map(|(_, e)| match e {
+        Event::MediaIngressStats(s) if s.bytes > 0 => Some(s.bytes),
+        _ => None,
+    });
+
+    assert!(sent.is_some(), "egress stats emitted");
+    assert_eq!(
+        received, sent,
+        "RED ingress accounting must include the RED headers and redundant blocks"
+    );
+}
