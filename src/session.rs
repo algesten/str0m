@@ -710,8 +710,9 @@ impl Session {
                 else {
                     continue;
                 };
-                // Correct-or-skip: `None` when the block can't be proven to belong to a missing
-                // seq no, or when that seq no was already received or recovered.
+                // `None` when the block can't be tied to a currently-missing seq no (see
+                // `red_locate_seq` for the exact vs. best-effort cases), or when that seq no
+                // was already received or recovered. Recovery only ever fills a hole.
                 let Some(rec_seq) = stream.red_locate_seq(seq_no, numer) else {
                     continue;
                 };

@@ -412,13 +412,20 @@ impl StreamRx {
     /// nearest received packets `L` (latest with time before) and `U` (earliest with time after)
     /// and look at the missing sequence numbers between them:
     ///
-    /// * exactly one missing: that is the block, whatever the durations were;
+    /// * exactly one missing: that is the block, whatever the durations were — this case is
+    ///   exact;
     /// * several missing: only if `L..U` is uniformly spaced and the block time lands exactly on
-    ///   one of the missing slots; otherwise give up.
+    ///   one of the missing slots; otherwise give up. This case *assumes* a constant frame
+    ///   duration across the gap, which holds for the fixed-ptime senders seen in practice
+    ///   (WebRTC uses 20 ms). Under variable Opus ptime the derived slot can be a neighbouring
+    ///   lost sequence number rather than the block's true one, so recovered audio may land one
+    ///   or two frames off.
     ///
-    /// This is correct-or-skip: a block is never placed at a sequence number it cannot be
-    /// proven to belong to. `carrier` is the packet the block arrived in; recovery is limited to
-    /// `MAX_RED_RECOVERY_DEPTH` packets behind it.
+    /// The bound this always keeps is that a candidate must be a currently *missing* sequence
+    /// number (`register.accepts`): recovery only ever fills a hole, and never overwrites a
+    /// correctly received frame — the worst case above only reorders audio among frames that
+    /// were all lost anyway. `carrier` is the packet the block arrived in; recovery is limited
+    /// to `MAX_RED_RECOVERY_DEPTH` packets behind it.
     pub(crate) fn red_locate_seq(&self, carrier: SeqNo, block_time: u64) -> Option<SeqNo> {
         let register = self.register.as_ref()?;
 
