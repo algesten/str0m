@@ -210,6 +210,14 @@ impl DepacketizingBuffer {
                     tail,
                 };
                 self.queue.insert(i, entry);
+
+                // The depack cache is keyed by queue index. Inserting at or before the cached
+                // segment shifts it, so the cache would answer for the wrong packets.
+                if let Some((range, _)) = &self.depack_cache {
+                    if i <= range.end {
+                        self.depack_cache = None;
+                    }
+                }
             }
         }
     }
