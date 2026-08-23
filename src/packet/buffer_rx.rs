@@ -494,6 +494,22 @@ mod test {
     }
 
     #[test]
+    fn late_packet_in_front_of_waiting_frame() {
+        // Seq 3 is late. Seq 4 arrives first and waits for contiguity (it is depacketized ahead
+        // and cached). When 3 then arrives it is inserted in front of 4, and both must come out
+        // as themselves: 3 must not be emitted with 4's data.
+        test_n(
+            15,
+            &[
+                (1, 1, &[1, 1, 9], &[(1, &[1, 1, 9])]),
+                (2, 2, &[1, 2, 9], &[(2, &[1, 2, 9])]),
+                (4, 4, &[1, 4, 9], &[]),
+                (3, 3, &[1, 3, 9], &[(3, &[1, 3, 9]), (4, &[1, 4, 9])]),
+            ],
+        )
+    }
+
+    #[test]
     fn ext_vals_extracts_from_first_and_last_packet() {
         let first_time = Instant::now();
         let abs_capture_time = AbsCaptureTime {

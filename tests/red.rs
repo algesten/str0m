@@ -721,6 +721,23 @@ fn red_recovered_frame_is_delivered_once_without_reordering_buffer() {
     }
 }
 
+/// A burst of three losses under a `[1, 3, 5]` pattern is filled in over several later packets
+/// (8 and 10 from packet 11, then 9 from packet 12 once 8 and 10 are known). Each frame must be
+/// delivered exactly once, at its own sequence number, and nothing gets NACKed.
+#[test]
+fn red_recovers_a_burst_over_several_packets() {
+    let mut t = raw::connect(None);
+    let ts = raw::uniform(30);
+
+    t.send(&ts, &[1, 3, 5], &[8, 9, 10]);
+
+    t.assert_consistent(&ts);
+    for k in 0..30u8 {
+        assert_eq!(t.delivered(k), 1, "frame {k} delivered exactly once");
+    }
+    assert!(t.nacked_seqs().is_empty(), "nothing to NACK");
+}
+
 /// The per-mid ingress stats must count the full RED wire payload like the per-mid egress stats
 /// on the sender do (and like `PeerStats` already does), not just the unwrapped primary block.
 #[test]
