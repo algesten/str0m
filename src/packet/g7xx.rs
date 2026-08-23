@@ -35,6 +35,14 @@ impl Packetizer for G7xxPacketizer {
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
         false
     }
+
+    fn marks_talkspurt(&self) -> bool {
+        true
+    }
+
+    fn nackable(&self) -> bool {
+        false
+    }
 }
 
 /// Depacketizer for G711 packets

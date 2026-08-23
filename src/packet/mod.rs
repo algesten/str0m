@@ -46,7 +46,7 @@ mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod red;
-pub(crate) use red::{MAX_RED_RECOVERY_DEPTH, red_same_pt_blocks};
+pub(crate) use red::{MAX_RED_RECOVERY_DEPTH, RedSender, red_same_pt_blocks};
 pub use red::{RedBlock, RedDecoder, RedEncoder, RedundantBlock};
 
 mod vp8;
@@ -80,7 +80,7 @@ mod contiguity_vp9;
 mod error;
 
 mod payload;
-pub(crate) use payload::Payloader;
+pub(crate) use payload::{Payloader, RedSink};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.
@@ -118,6 +118,18 @@ pub trait Packetizer: fmt::Debug {
 
     /// Tell if this is the last packet of a frame.
     fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool;
+
+    /// Whether a start-of-talkspurt should set the RTP marker bit for this codec. Audio codecs
+    /// that mark talkspurt boundaries return `true`; video and comfort noise return `false`.
+    fn marks_talkspurt(&self) -> bool {
+        false
+    }
+
+    /// Default nackability of packets this packetizer produces. Video is nackable (answered via
+    /// RTX); audio is not, so audio packetizers override this to `false`.
+    fn nackable(&self) -> bool {
+        true
+    }
 }
 
 /// Codec specific information
@@ -335,6 +347,24 @@ impl CodecPacketizer {
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
         }
     }
+
+    /// Apply codec-specific configuration derived from the negotiated [`CodecSpec`]. Keeps this
+    /// knowledge inside the codec-aware packetizer so the generic [`Payloader`] never has to name
+    /// concrete packetizer variants.
+    pub(crate) fn configure_for(&mut self, spec: &crate::format::CodecSpec) {
+        // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1).
+        if let CodecPacketizer::H265(h265) = self {
+            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                h265.with_donl(true);
+            }
+        }
+        // Enable DONL for H.266 when sprop-max-don-diff > 0 (RFC 9328 §7.2).
+        if let CodecPacketizer::H266(h266) = self {
+            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                h266.with_donl(true);
+            }
+        }
+    }
 }
 
 impl From<Codec> for CodecPacketizer {
@@ -398,6 +428,42 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::Av1(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Null(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Boxed(v) => v.is_marker(data, previous, last),
+        }
+    }
+
+    fn marks_talkspurt(&self) -> bool {
+        use CodecPacketizer::*;
+        match self {
+            G711(v) => v.marks_talkspurt(),
+            G722(v) => v.marks_talkspurt(),
+            H264(v) => v.marks_talkspurt(),
+            H265(v) => v.marks_talkspurt(),
+            H266(v) => v.marks_talkspurt(),
+            Opus(v) => v.marks_talkspurt(),
+            ComfortNoise(v) => v.marks_talkspurt(),
+            Vp8(v) => v.marks_talkspurt(),
+            Vp9(v) => v.marks_talkspurt(),
+            Av1(v) => v.marks_talkspurt(),
+            Null(v) => v.marks_talkspurt(),
+            Boxed(v) => v.marks_talkspurt(),
+        }
+    }
+
+    fn nackable(&self) -> bool {
+        use CodecPacketizer::*;
+        match self {
+            G711(v) => v.nackable(),
+            G722(v) => v.nackable(),
+            H264(v) => v.nackable(),
+            H265(v) => v.nackable(),
+            H266(v) => v.nackable(),
+            Opus(v) => v.nackable(),
+            ComfortNoise(v) => v.nackable(),
+            Vp8(v) => v.nackable(),
+            Vp9(v) => v.nackable(),
+            Av1(v) => v.nackable(),
+            Null(v) => v.nackable(),
+            Boxed(v) => v.nackable(),
         }
     }
 }
