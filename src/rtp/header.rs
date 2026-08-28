@@ -465,6 +465,10 @@ mod test {
         }
 
         let mut exts = ExtensionMap::empty();
+        // The expected bytes below carry the level with the V bit CLEAR, which
+        // is what `voice_activity: Some(false)` above asks for. They used to
+        // have bit 7 set (170 = 0xAA rather than 42 = 0x2A) because the
+        // serializer let the sign of the negative level spill into that bit.
         exts.set(3, Extension::AudioLevel);
 
         let buf1 = mk_header(47_000, 10_000, -42, false, &exts);
@@ -472,13 +476,13 @@ mod test {
         let buf3 = mk_header(47_002, 14_000, -44, false, &exts);
 
         let p1 = &[
-            144, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 0xBE, 0xDE, 0, 1, 48, 170, 0, 0,
+            144, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 0xBE, 0xDE, 0, 1, 48, 42, 0, 0,
         ];
         let p2 = &[
-            144, 161, 183, 153, 0, 0, 46, 224, 0, 0, 0, 44, 0xBE, 0xDE, 0, 1, 48, 171, 0, 0,
+            144, 161, 183, 153, 0, 0, 46, 224, 0, 0, 0, 44, 0xBE, 0xDE, 0, 1, 48, 43, 0, 0,
         ];
         let p3 = &[
-            144, 33, 183, 154, 0, 0, 54, 176, 0, 0, 0, 44, 0xBE, 0xDE, 0, 1, 48, 172, 0, 0,
+            144, 33, 183, 154, 0, 0, 54, 176, 0, 0, 0, 44, 0xBE, 0xDE, 0, 1, 48, 44, 0, 0,
         ];
 
         assert_eq!(&buf1, p1);
@@ -510,6 +514,8 @@ mod test {
         }
 
         let mut exts = ExtensionMap::empty();
+        // Same correction as above: the V bit is clear because the header
+        // asks for `voice_activity: Some(false)`.
         // An ID larger than 14 forces the 2-byte header extension form
         exts.set(15, Extension::AudioLevel);
 
@@ -518,13 +524,13 @@ mod test {
         let buf3 = mk_header(47_002, 14_000, -44, false, &exts);
 
         let p1 = &[
-            144, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 0x10, 0x00, 0, 1, 15, 1, 170, 0,
+            144, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 0x10, 0x00, 0, 1, 15, 1, 42, 0,
         ];
         let p2 = &[
-            144, 161, 183, 153, 0, 0, 46, 224, 0, 0, 0, 44, 0x10, 0x00, 0, 1, 15, 1, 171, 0,
+            144, 161, 183, 153, 0, 0, 46, 224, 0, 0, 0, 44, 0x10, 0x00, 0, 1, 15, 1, 43, 0,
         ];
         let p3 = &[
-            144, 33, 183, 154, 0, 0, 54, 176, 0, 0, 0, 44, 0x10, 0x00, 0, 1, 15, 1, 172, 0,
+            144, 33, 183, 154, 0, 0, 54, 176, 0, 0, 0, 44, 0x10, 0x00, 0, 1, 15, 1, 44, 0,
         ];
 
         assert_eq!(&buf1, p1);

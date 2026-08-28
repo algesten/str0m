@@ -664,7 +664,11 @@ impl Extension {
             AudioLevel => {
                 let v1 = ev.audio_level?;
                 let v2 = ev.voice_activity?;
-                buf[0] = if v2 { 0x80 } else { 0 } | (-(0x7f & v1) as u8);
+                // `v1` is negative, so masking it before negating leaves the
+                // sign bit in place: for -37 the expression `-(0x7f & v1)`
+                // yields 0xA5, which already has bit 7 set. Taking the
+                // magnitude first keeps the sign out of the V bit.
+                buf[0] = if v2 { 0x80 } else { 0 } | (v1.unsigned_abs() & 0x7f);
                 Some(1)
             }
             TransmissionTimeOffset => {
@@ -1579,5 +1583,32 @@ mod test {
             e1.iter_video().collect::<Vec<_>>(),
             vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
+    }
+
+    #[test]
+    fn audio_level_round_trip() {
+        // The V bit (voice activity) must survive serialization for every
+        // level on the scale, not just when it is set.
+        let mut exts = ExtensionMap::empty();
+        exts.set(1, Extension::AudioLevel);
+
+        for level in -127..=0 {
+            for voice_activity in [false, true] {
+                let ev = ExtensionValues {
+                    audio_level: Some(level),
+                    voice_activity: Some(voice_activity),
+                    ..Default::default()
+                };
+
+                let mut buf = vec![0_u8; 8];
+                exts.write_to(&mut buf[..], &ev, ExtensionsForm::OneByte);
+
+                let mut ev2 = ExtensionValues::default();
+                exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
+
+                assert_eq!(ev2.audio_level, Some(level));
+                assert_eq!(ev2.voice_activity, Some(voice_activity));
+            }
+        }
     }
 }
