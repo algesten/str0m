@@ -50,3 +50,22 @@ pub fn default_provider() -> CryptoProvider {
         dtls_provider: &DTLS,
     }
 }
+
+/// Create the Windows CNG crypto provider used by the Dimpl DTLS backend.
+///
+/// This allows callers that need non-default Dimpl configuration to construct
+/// `dimpl::Config` directly while retaining the Windows CNG implementation.
+pub fn dimpl_crypto_provider() -> dimpl::crypto::CryptoProvider {
+    dimpl_provider::default_provider()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn exposed_dimpl_provider_builds_config() {
+        dimpl::Config::builder()
+            .with_crypto_provider(super::dimpl_crypto_provider())
+            .build()
+            .expect("Windows CNG Dimpl provider should build a valid config");
+    }
+}
