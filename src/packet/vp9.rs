@@ -813,6 +813,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[allow(clippy::erasing_op, clippy::identity_op)]
     fn test_vp9_packet_unmarshal() -> Result<(), PacketError> {
         let tests: Vec<(&str, &[u8], Vp9Depacketizer, &[u8], Option<PacketError>)> = vec![
             (
@@ -1086,13 +1087,13 @@ mod test {
             (
                 "ParseRefIdx",
                 &[
-                    0xD8,          /* I:1 P:1 L:0 F:1
-                                    * B:1 E:0 V:0 Z:0 */
-                    0x80,          // Two byte pictureID.
-                    17,            // TL0PICIDX
-                    (17 << 1) | 1, // P_DIFF N:1
-                    (18 << 1) | 1, // P_DIFF N:1
-                    127 << 1,      // P_DIFF N:0
+                    0xD8,                              /* I:1 P:1 L:0 F:1
+                                                        * B:1 E:0 V:0 Z:0 */
+                    (0x80 | ((17 >> 8) & 0x7F)) as u8, // Two byte pictureID.
+                    17,                                // TL0PICIDX
+                    (17 << 1) | 1,                     // P_DIFF N:1
+                    (18 << 1) | 1,                     // P_DIFF N:1
+                    (127 << 1) | 0,                    // P_DIFF N:0
                 ],
                 Vp9Depacketizer {
                     i: true,
