@@ -60,7 +60,7 @@ pub fn get_last_bwe_estimate(rtc: &TestRtc) -> Option<Bitrate> {
                 None
             }
         })
-        .last()
+        .next_back()
         .copied()
 }
 
@@ -74,6 +74,8 @@ pub struct BweTestContext {
     /// Accumulated byte budget for sending (smooths out timing variations)
     byte_budget: f64,
 }
+
+type ProbeCheck = Arc<dyn Fn(usize, &ProbeClusterConfig) -> bool>;
 
 #[derive(Clone)]
 pub enum Step {
@@ -100,7 +102,7 @@ pub enum Step {
     },
     CheckProbe {
         description: &'static str,
-        check: Arc<dyn Fn(usize, &ProbeClusterConfig) -> bool>,
+        check: ProbeCheck,
     },
     /// Assert no probes fired since last event_offset update
     AssertNoProbes { description: &'static str },

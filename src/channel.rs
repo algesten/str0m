@@ -690,12 +690,14 @@ mod tests {
         let sctp = RtcSctp::new(1200);
         let base: u16 = if sctp.is_client() { 0 } else { 1 };
 
-        let mut handler = ChannelHandler::default();
+        let mut handler = ChannelHandler {
+            closed_stream_ids: (base..=u16::MAX).step_by(2).collect(),
+            ..Default::default()
+        };
 
         // What the peer did: claim every stream id of our parity. Going through
         // `ensure_channel_id_for()` for each is the realistic route but is quadratic,
         // so seed the equivalent state directly.
-        handler.closed_stream_ids = (base..=u16::MAX).step_by(2).collect();
         assert_eq!(handler.closed_stream_ids.len(), 32768);
 
         // Now the local application asks for a data channel.

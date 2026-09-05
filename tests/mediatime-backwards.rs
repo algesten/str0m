@@ -166,11 +166,9 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
                     problematic_ts = Some(header.timestamp);
                 }
             }
-            Event::StreamPaused(stream_paused) => {
-                if !stream_paused.paused {
-                    stream_unpaused_after_problematic = true;
-                    info!("Stream unpaused after receiving problematic packet");
-                }
+            Event::StreamPaused(stream_paused) if !stream_paused.paused => {
+                stream_unpaused_after_problematic = true;
+                info!("Stream unpaused after receiving problematic packet");
             }
             _ => {}
         }

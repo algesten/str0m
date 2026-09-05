@@ -925,9 +925,7 @@ mod test {
         let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
         let mut buf = DepacketizingBuffer::new(depack, hold_back);
 
-        let mut step = 1;
-
-        for (seq, time, data, checks) in v {
+        for (step, (seq, time, data, checks)) in (1..).zip(v.iter()) {
             let meta = RtpMeta {
                 received: Instant::now(),
                 seq_no: (*seq).into(),
@@ -975,8 +973,6 @@ mod test {
                     step, depack.data, *ddata
                 );
             }
-
-            step += 1;
         }
     }
 

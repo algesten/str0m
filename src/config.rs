@@ -864,6 +864,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "mtu range start must be <= end")]
     fn set_mtu_panics_on_inverted_range() {
-        let _ = RtcConfig::default().set_mtu(1300..=1299);
+        let _ = RtcConfig::default().set_mtu(RangeInclusive::new(1300, 1299));
     }
 }

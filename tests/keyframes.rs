@@ -418,9 +418,7 @@ pub fn test_h265_keyframes_detection() -> Result<(), RtcError> {
         .filter_map(|l| {
             let i = l.find("Seq=")?;
             let s = &l[i + 4..];
-            let end = s
-                .find(|c: char| !c.is_ascii_digit())
-                .unwrap_or_else(|| s.len());
+            let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
             s[..end].parse::<u16>().ok()
         })
         .collect();
@@ -523,9 +521,7 @@ pub fn test_h266_keyframes_detection() -> Result<(), RtcError> {
         .filter_map(|l| {
             let i = l.find("Seq=")?;
             let s = &l[i + 4..];
-            let end = s
-                .find(|c: char| !c.is_ascii_digit())
-                .unwrap_or_else(|| s.len());
+            let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
             s[..end].parse::<u16>().ok()
         })
         .collect();

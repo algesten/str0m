@@ -817,7 +817,7 @@ mod test {
         let result = packetizer.packetize(100, &payload);
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 13 as usize);
+        assert_eq!(result.unwrap().len(), 13);
     }
 
     #[test]
@@ -1259,7 +1259,7 @@ mod test {
     fn packetize_respects_mtu() {
         // OBU header (frame-type, no size field) + payload bytes.
         let mut payload = vec![0x30u8];
-        payload.extend(std::iter::repeat(0xABu8).take(2000));
+        payload.extend(std::iter::repeat_n(0xABu8, 2000));
         for &mtu in &[100usize, 300, 600, 1200] {
             let mut packetizer = Av1Packetizer::default();
             let pkts = packetizer

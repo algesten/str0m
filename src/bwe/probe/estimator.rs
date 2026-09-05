@@ -516,10 +516,10 @@ mod test {
             // send spaced 4ms, recv spaced 4ms (same ordering)
             crate::rtp_::TwccSendRecord::test_new(
                 pid,
-                base + Duration::from_millis(i as u64 * 4),
+                base + Duration::from_millis(i * 4),
                 1200,
-                base + Duration::from_millis(i as u64 * 4 + 1),
-                Some(base + Duration::from_millis(i as u64 * 4 + 2)),
+                base + Duration::from_millis(i * 4 + 1),
+                Some(base + Duration::from_millis(i * 4 + 2)),
             )
         });
 
@@ -529,9 +529,9 @@ mod test {
             let pid = TwccPacketId::with_cluster(seq, cluster);
             crate::rtp_::TwccSendRecord::test_new(
                 pid,
-                base + Duration::from_millis(100 + i as u64),
+                base + Duration::from_millis(100 + i),
                 1200,
-                base + Duration::from_millis(150 + i as u64),
+                base + Duration::from_millis(150 + i),
                 None, // lost
             )
         });
@@ -577,10 +577,10 @@ mod test {
                 let pid = TwccPacketId::with_cluster(seq, cluster);
                 crate::rtp_::TwccSendRecord::test_new(
                     pid,
-                    base + Duration::from_millis(i as u64 * 50),
+                    base + Duration::from_millis(i * 50),
                     1200,
-                    base + Duration::from_millis(250 + i as u64),
-                    Some(base + Duration::from_millis(300 + (i as u64 % 2))), // ~0-1ms spread
+                    base + Duration::from_millis(250 + i),
+                    Some(base + Duration::from_millis(300 + (i % 2))), // ~0-1ms spread
                 )
             })
             .collect();
@@ -611,8 +611,8 @@ mod test {
                     pid,
                     base, // identical send time for all
                     1200,
-                    base + Duration::from_millis(10 + i as u64),
-                    Some(base + Duration::from_millis(20 + i as u64)),
+                    base + Duration::from_millis(10 + i),
+                    Some(base + Duration::from_millis(20 + i)),
                 )
             })
             .collect();

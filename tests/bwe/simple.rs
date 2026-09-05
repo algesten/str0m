@@ -99,7 +99,7 @@ pub fn bwe_wifi_normal() -> Result<(), RtcError> {
 
     let mut ctx = BweTestContext::new(&mut l, &mut r);
 
-    ctx.run_plan(&mut l, &mut r, &RAMP_UP_SINGLE)?;
+    ctx.run_plan(&mut l, &mut r, RAMP_UP_SINGLE)?;
 
     Ok(())
 }
@@ -120,7 +120,7 @@ pub fn bwe_wifi_congested() -> Result<(), RtcError> {
 
     let mut ctx = BweTestContext::new(&mut l, &mut r);
 
-    ctx.run_plan(&mut l, &mut r, &RAMP_UP_SINGLE)?;
+    ctx.run_plan(&mut l, &mut r, RAMP_UP_SINGLE)?;
 
     Ok(())
 }
