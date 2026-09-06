@@ -1,5 +1,6 @@
 //! Strategy that amends the [`Rtc`] via SDP OFFER/ANSWER negotiation.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 use std::slice::Iter;
@@ -1327,12 +1328,23 @@ fn update_media(
     }
 
     // Narrowing/ordering of of PT
+    let mut remote_telephone_events = HashMap::new();
     let pts: Vec<Pt> = m
         .rtp_params()
         .into_iter()
-        .filter_map(|p| config.sdp_match_remote(p, m.direction()))
+        .filter_map(|p| {
+            let pt = config.sdp_match_remote(p, m.direction())?;
+            if p.spec().codec.is_telephone_event() {
+                let events = m
+                    .telephone_events(p.pt())
+                    .unwrap_or_else(|| crate::format::TelephoneEvents::from_range(0, 15));
+                remote_telephone_events.insert(pt, events);
+            }
+            Some(pt)
+        })
         .collect();
     media.set_remote_pts(pts);
+    media.set_remote_telephone_events(remote_telephone_events);
 
     let mut remote_extmap = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {
