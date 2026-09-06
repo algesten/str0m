@@ -55,6 +55,7 @@ pub enum Codec {
     G722,
     /// Comfort Noise payload, per RFC 3389.
     CN,
+    AmrWb,
     H264,
     // TODO show this when we support h265.
     #[doc(hidden)]
@@ -88,7 +89,7 @@ impl Codec {
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {
         use Codec::*;
-        matches!(self, Opus | PCMU | PCMA | G722 | CN)
+        matches!(self, Opus | PCMU | PCMA | G722 | CN | AmrWb)
     }
 
     /// Tells if codec is video.
@@ -116,6 +117,7 @@ impl<'a> From<&'a str> for Codec {
             "pcma" => Codec::PCMA,
             "g722" => Codec::G722,
             "cn" => Codec::CN,
+            "amr-wb" => Codec::AmrWb,
             "h264" => Codec::H264,
             "h265" => Codec::H265,
             "h266" => Codec::H266,
@@ -137,6 +139,7 @@ impl fmt::Display for Codec {
             Codec::PCMA => write!(f, "PCMA"),
             Codec::G722 => write!(f, "G722"),
             Codec::CN => write!(f, "CN"),
+            Codec::AmrWb => write!(f, "AMR-WB"),
             Codec::H264 => write!(f, "H264"),
             Codec::H265 => write!(f, "H265"),
             Codec::H266 => write!(f, "H266"),
