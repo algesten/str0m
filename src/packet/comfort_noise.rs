@@ -22,6 +22,13 @@ impl Packetizer for ComfortNoisePacketizer {
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
         false
     }
+
+    // Comfort noise deliberately does not set the talkspurt marker (unlike other audio), so it
+    // keeps the default `marks_talkspurt() == false`.
+
+    fn nackable(&self) -> bool {
+        false
+    }
 }
 
 impl Depacketizer for ComfortNoiseDepacketizer {

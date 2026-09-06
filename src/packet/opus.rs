@@ -31,6 +31,14 @@ impl Packetizer for OpusPacketizer {
         // TODO: dtx
         false
     }
+
+    fn marks_talkspurt(&self) -> bool {
+        true
+    }
+
+    fn nackable(&self) -> bool {
+        false
+    }
 }
 
 /// Depacketizes Opus RTP packets.
