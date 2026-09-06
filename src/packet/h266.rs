@@ -1001,7 +1001,7 @@ mod test {
                 typ: u8,
             }
 
-            let tests = vec![
+            let tests = [
                 // S=1, type 7 (IDR_W_RADL)
                 TestType {
                     value: 0x87,
@@ -1086,14 +1086,14 @@ mod test {
         fn test_h266_single_nalunit_packet() -> Result<()> {
             // Valid single NAL (TRAIL, type 0) -> Annex-B out.
             let nal = make_nal(0, 5);
-            let (out, keyframe) = depacketize_all(&[nal.clone()])?;
+            let (out, keyframe) = depacketize_all(std::slice::from_ref(&nal))?;
             assert_eq!(&out[..4], &[0, 0, 0, 1]);
             assert_eq!(&out[4..], &nal[..]);
             assert!(!keyframe);
 
             // IDR single NAL flags keyframe.
             let idr = make_nal(H266NALU_IDR_W_RADL, 5);
-            let (out, keyframe) = depacketize_all(&[idr.clone()])?;
+            let (out, keyframe) = depacketize_all(std::slice::from_ref(&idr))?;
             assert_eq!(&out[4..], &idr[..]);
             assert!(keyframe);
 
@@ -1214,7 +1214,7 @@ mod test {
                 expect_err: bool, // all error cases expect ErrShortPacket
             }
 
-            let tests = vec![
+            let tests = [
                 // empty
                 TestType {
                     raw: &[],
@@ -2266,7 +2266,7 @@ mod test {
         fn test_h266_fu_preserves_layer_and_tid() -> Result<()> {
             // TRAIL (type 1) on layer 5, temporal sublayer tid=3.
             let mut nal = hdr(1, 5, 3).to_vec();
-            nal.extend(std::iter::repeat(0xAB).take(998));
+            nal.extend(std::iter::repeat_n(0xAB, 998));
 
             let mut pck = H266Packetizer::default();
             let packets = pck.packetize(100, &nal)?;
@@ -2294,7 +2294,7 @@ mod test {
         fn test_h266_fu_preserves_z_bit() -> Result<()> {
             let mut nal = hdr(1, 2, 1).to_vec();
             nal[0] |= 0b0100_0000; // set Z
-            nal.extend(std::iter::repeat(0xCD).take(500));
+            nal.extend(std::iter::repeat_n(0xCD, 500));
 
             let mut pck = H266Packetizer::default();
             let packets = pck.packetize(100, &nal)?;
@@ -2561,7 +2561,7 @@ mod test {
         fn test_h266_fu_preserves_all_header_flags() -> Result<()> {
             let mut nal = hdr(1, 1, 1).to_vec();
             nal[0] |= 0b1100_0000; // F + Z
-            nal.extend(std::iter::repeat(0x5A).take(400));
+            nal.extend(std::iter::repeat_n(0x5A, 400));
 
             let mut pck = H266Packetizer::default();
             let packets = pck.packetize(100, &nal)?;

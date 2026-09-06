@@ -518,7 +518,7 @@ fn ice_stun_max_retransmits() -> Result<(), RtcError> {
     // With max_retransmits=3, we should see limited retransmissions
     // The exact count depends on implementation details, but should be bounded
     // Key verification: count should be <= max_retransmits + 1 (initial + retransmits)
-    let expected_max = (max_retransmits + 1) as usize + 2; // +2 for timing tolerance
+    let expected_max = max_retransmits + 1 + 2; // +2 for timing tolerance
 
     assert!(
         transmit_count <= expected_max,

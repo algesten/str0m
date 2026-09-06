@@ -1173,7 +1173,7 @@ mod test {
                 rfc7714::PROTECTED_RTP_PACKET,
                 "failed to encrypted packet.\n{:02x?}\n{:02x?}",
                 out,
-                &rfc7714::PLAINTEXT_RTP_PACKET
+                rfc7714::PLAINTEXT_RTP_PACKET
             );
         }
 
@@ -1193,7 +1193,7 @@ mod test {
                 &rfc7714::PLAINTEXT_RTP_PACKET[12..],
                 "failed to decrypt packet.\n{:02x?}\n{:02x?}",
                 out,
-                &rfc7714::PLAINTEXT_RTP_PACKET
+                rfc7714::PLAINTEXT_RTP_PACKET
             );
         }
 
@@ -1401,7 +1401,7 @@ mod test {
                 rfc7714::PROTECTED_RTP_PACKET,
                 "failed to encrypted packet.\n{:02x?}\n{:02x?}",
                 out,
-                &rfc7714::PLAINTEXT_RTP_PACKET
+                rfc7714::PLAINTEXT_RTP_PACKET
             );
         }
 
@@ -1421,7 +1421,7 @@ mod test {
                 &rfc7714::PLAINTEXT_RTP_PACKET[12..],
                 "failed to decrypt packet.\n{:02x?}\n{:02x?}",
                 out,
-                &rfc7714::PLAINTEXT_RTP_PACKET
+                rfc7714::PLAINTEXT_RTP_PACKET
             );
         }
 

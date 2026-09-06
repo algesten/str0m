@@ -287,7 +287,7 @@ fn dtls_handshake_completes_under_packet_loss() {
     let lossy = NetemConfig::new()
         .loss(RandomLoss::new(Probability::new(0.3)))
         .seed(1);
-    l.set_netem(lossy.clone());
+    l.set_netem(lossy);
     r.set_netem(lossy);
 
     let host_l = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();

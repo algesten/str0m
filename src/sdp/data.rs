@@ -1980,8 +1980,8 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
 
             let parsed = FormatParams::parse_line(&fmtp_str);
             assert!(parsed.stereo.is_none());
-            assert_eq!(parsed.stereo.unwrap_or(false), false);
-            assert_eq!(parsed.sprop_stereo.unwrap_or(false), false);
+            assert!(!parsed.stereo.unwrap_or(false));
+            assert!(!parsed.sprop_stereo.unwrap_or(false));
         }
     }
 

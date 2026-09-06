@@ -813,6 +813,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[allow(clippy::erasing_op, clippy::identity_op)]
     fn test_vp9_packet_unmarshal() -> Result<(), PacketError> {
         let tests: Vec<(&str, &[u8], Vp9Depacketizer, &[u8], Option<PacketError>)> = vec![
             (
@@ -1136,11 +1137,9 @@ mod test {
 
     #[test]
     fn test_vp9_packetizer_payload() -> Result<(), PacketError> {
-        let mut r0 = 8692;
         let mut rands = vec![];
-        for _ in 0..10 {
+        for r0 in 8692..8702 {
             rands.push(vec![(r0 >> 8) as u8 | 0x80, (r0 & 0xFF) as u8]);
-            r0 += 1;
         }
 
         // Non-flexible mode (F=0) header layout:
@@ -1269,7 +1268,7 @@ mod test {
         assert_eq!(pkt[0], 0xAE, "Keyframe flags should be 0xAE");
         // PID
         assert_eq!(pkt[1], (100 >> 8) as u8 | 0x80);
-        assert_eq!(pkt[2], 100 & 0xFF);
+        assert_eq!(pkt[2], 100);
         // L byte: TID=0, U=1, SID=0, D=0
         assert_eq!(pkt[3], 0x10);
         // tl0picidx = 1 (first frame)
@@ -1391,11 +1390,9 @@ mod test {
 
     #[test]
     fn test_vp9_packetizer_flexible_mode() -> Result<(), PacketError> {
-        let mut r0 = 8692;
         let mut rands = vec![];
-        for _ in 0..10 {
+        for r0 in 8692..8702 {
             rands.push(vec![(r0 >> 8) as u8 | 0x80, (r0 & 0xFF) as u8]);
-            r0 += 1;
         }
 
         // With VP9_FLEXIBLE_HEADER_SIZE=3, min productive MTU is 4.
@@ -1565,7 +1562,7 @@ mod test {
     fn packetize_respects_mtu() -> Result<(), PacketError> {
         // VP9 profile 0 keyframe header followed by payload bytes.
         let mut payload = vec![0x82u8];
-        payload.extend(std::iter::repeat(0xABu8).take(2000));
+        payload.extend(std::iter::repeat_n(0xABu8, 2000));
         for &mtu in &[100usize, 300, 600, 1200] {
             let mut pck = Vp9Packetizer {
                 initial_picture_id: 100,

@@ -229,7 +229,7 @@ mod tests {
         // Simulate bursty encoder: alternate between large and small frames
         let mut time = now;
         for i in 0..100 {
-            time = time + Duration::from_millis(33); // ~30fps
+            time += Duration::from_millis(33); // ~30fps
 
             if i % 10 == 0 {
                 // Keyframe: 10x normal size

@@ -56,7 +56,7 @@ where
     }
 }
 
-#[allow(clippy::unchecked_duration_subtraction)]
+#[allow(clippy::unchecked_time_subtraction)]
 #[cfg(test)]
 mod test {
     use std::time::{Duration, Instant};
