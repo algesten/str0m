@@ -759,10 +759,8 @@ fn handle_event(
 ) {
     match event {
         Event::IceConnectionStateChange(ice_state) => match ice_state {
-            IceConnectionState::Checking => {
-                if timing.ice_checking.is_none() {
-                    timing.ice_checking = Some(Instant::now());
-                }
+            IceConnectionState::Checking if timing.ice_checking.is_none() => {
+                timing.ice_checking = Some(Instant::now());
             }
             IceConnectionState::Completed => {
                 timing.ice_completed = Some(Instant::now());
