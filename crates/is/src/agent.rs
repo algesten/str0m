@@ -944,6 +944,7 @@ impl IceAgent {
                 && v.base() == c.base()
                 && v.raddr() == c.raddr()
                 && v.kind() == c.kind()
+                && v.proto() == c.proto()
         }) {
             if !other.discarded() {
                 debug!("Local candidate to discard {:?}", Pii(&other));
@@ -962,6 +963,7 @@ impl IceAgent {
                     && v.base() == c.base()
                     && v.raddr() == c.raddr()
                     && v.kind() == c.kind()
+                    && v.proto() == c.proto()
             })
         {
             if !other.discarded() {
@@ -2184,6 +2186,63 @@ mod test {
     }
 
     #[test]
+    fn does_not_invalidate_local_candidate_with_same_ip_but_different_protocol() {
+        let mut agent = new_test_agent();
+        let udp = Candidate::host(ipv4_1(), "udp").unwrap();
+        let tcp = Candidate::host(ipv4_1(), "tcp").unwrap();
+
+        agent.add_local_candidate(udp.clone()).unwrap();
+        agent.add_local_candidate(tcp.clone()).unwrap();
+
+        let invalidated = agent.invalidate_candidate(&tcp);
+        assert!(invalidated);
+
+        let udp_discarded = agent
+            .local_candidates
+            .iter()
+            .find(|v| {
+                v.addr() == udp.addr()
+                    && v.base() == udp.base()
+                    && v.raddr() == udp.raddr()
+                    && v.kind() == udp.kind()
+                    && v.proto() == udp.proto()
+            })
+            .unwrap()
+            .discarded();
+        assert!(!udp_discarded);
+
+        let tcp_discarded = agent
+            .local_candidates
+            .iter()
+            .find(|v| {
+                v.addr() == tcp.addr()
+                    && v.base() == tcp.base()
+                    && v.raddr() == tcp.raddr()
+                    && v.kind() == tcp.kind()
+                    && v.proto() == tcp.proto()
+            })
+            .unwrap()
+            .discarded();
+        assert!(tcp_discarded);
+
+        let invalidated = agent.invalidate_candidate(&udp);
+        assert!(invalidated);
+        let udp_discarded = agent
+            .local_candidates
+            .iter()
+            .find(|v| {
+                v.addr() == udp.addr()
+                    && v.base() == udp.base()
+                    && v.raddr() == udp.raddr()
+                    && v.kind() == udp.kind()
+                    && v.proto() == udp.proto()
+            })
+            .unwrap()
+            .discarded();
+        assert!(udp_discarded);
+    }
+
+    #[test]
     fn does_not_invalidate_remote_candidate_with_same_ip_but_different_kind() {
         let mut agent = new_test_agent();
         let host = Candidate::host(ipv4_1(), "udp").unwrap();
@@ -2196,6 +2255,63 @@ mod test {
 
         let invalidated = agent.invalidate_candidate(&host);
         assert!(invalidated);
+    }
+
+    #[test]
+    fn does_not_invalidate_remote_candidate_with_same_ip_but_different_protocol() {
+        let mut agent = new_test_agent();
+        let udp = Candidate::host(ipv4_1(), "udp").unwrap();
+        let tcp = Candidate::host(ipv4_1(), "tcp").unwrap();
+
+        agent.add_remote_candidate(udp.clone());
+        agent.add_remote_candidate(tcp.clone());
+
+        let invalidated = agent.invalidate_candidate(&tcp);
+        assert!(invalidated);
+
+        let udp_discarded = agent
+            .remote_candidates
+            .iter()
+            .find(|v| {
+                v.addr() == udp.addr()
+                    && v.base() == udp.base()
+                    && v.raddr() == udp.raddr()
+                    && v.kind() == udp.kind()
+                    && v.proto() == udp.proto()
+            })
+            .unwrap()
+            .discarded();
+        assert!(!udp_discarded);
+
+        let tcp_discarded = agent
+            .remote_candidates
+            .iter()
+            .find(|v| {
+                v.addr() == tcp.addr()
+                    && v.base() == tcp.base()
+                    && v.raddr() == tcp.raddr()
+                    && v.kind() == tcp.kind()
+                    && v.proto() == tcp.proto()
+            })
+            .unwrap()
+            .discarded();
+        assert!(tcp_discarded);
+
+        let invalidated = agent.invalidate_candidate(&udp);
+        assert!(invalidated);
+        let udp_discarded = agent
+            .remote_candidates
+            .iter()
+            .find(|v| {
+                v.addr() == udp.addr()
+                    && v.base() == udp.base()
+                    && v.raddr() == udp.raddr()
+                    && v.kind() == udp.kind()
+                    && v.proto() == udp.proto()
+            })
+            .unwrap()
+            .discarded();
+        assert!(udp_discarded);
     }
 
     #[test]
