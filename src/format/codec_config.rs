@@ -66,6 +66,9 @@ pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(62);
 pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(61);
 pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(60);
 
+/// Default payload type for AMR-WB (RFC 4867).
+pub(crate) const PT_AMR_WB: Pt = Pt::new_with_value(122);
+
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
@@ -272,6 +275,32 @@ impl CodecConfig {
             return;
         }
         self.add_static_config(PT_COMFORT_NOISE);
+    }
+
+    /// Enable the AMR-WB (Adaptive Multi-Rate Wideband) audio codec.
+    ///
+    /// Adds a 16 kHz mono AMR-WB payload type using the octet-aligned RFC 4867
+    /// layout without redundancy (`octet-align=1;max-red=0`). Each media write
+    /// must contain exactly one 3GPP IF frame. Mode-change capability stays
+    /// unset because str0m cannot enforce period-2 changes on application-supplied
+    /// frames. Disabled by default.
+    pub fn enable_amr_wb(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::AmrWb);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            PT_AMR_WB,
+            None,
+            Codec::AmrWb,
+            Frequency::SIXTEEN_KHZ,
+            Some(1),
+            FormatParams {
+                octet_align: Some(true),
+                max_red: Some(0),
+                ..Default::default()
+            },
+        );
     }
 
     /// Add a default OPUS payload type, optionally with RFC 2198 RED.
@@ -900,6 +929,42 @@ mod test {
         for (i, a) in pts.iter().enumerate() {
             for b in &pts[i + 1..] {
                 assert_ne!(a, b, "RED payload types must be distinct");
+            }
+        }
+    }
+
+    #[test]
+    fn enable_amr_wb_uses_default_pt() {
+        let mut config = CodecConfig::empty();
+
+        config.enable_amr_wb(true);
+
+        let amr_wb = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::AmrWb)
+            .expect("AMR-WB should be enabled");
+        assert_eq!(amr_wb.pt(), PT_AMR_WB);
+    }
+
+    #[test]
+    fn enable_amr_wb_keeps_payload_types_unique_with_defaults() {
+        let mut config = CodecConfig::new_with_defaults();
+
+        config.enable_amr_wb(true);
+
+        let amr_wb = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::AmrWb)
+            .expect("AMR-WB should be enabled");
+        assert_eq!(amr_wb.pt(), PT_AMR_WB);
+
+        let mut seen = std::collections::HashSet::new();
+        for param in config.params() {
+            assert!(seen.insert(param.pt()), "duplicate PT {}", param.pt());
+            if let Some(rtx) = param.resend() {
+                assert!(seen.insert(rtx), "duplicate PT {rtx}");
             }
         }
     }

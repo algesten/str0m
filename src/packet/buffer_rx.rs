@@ -142,6 +142,7 @@ impl DepacketizingBuffer {
             | CodecDepacketizer::Opus(_)
             | CodecDepacketizer::ComfortNoise(_)
             | CodecDepacketizer::G711(_)
+            | CodecDepacketizer::AmrWb(_)
             | CodecDepacketizer::Null(_) => Contiguity::None,
         };
 
