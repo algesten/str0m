@@ -463,9 +463,6 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
         #[cfg(feature = "openssl-dimpl")]
         "openssl-dimpl" => str0m_openssl::default_provider(),
 
-        #[cfg(all(feature = "wincrypto-dimpl", target_os = "windows"))]
-        "wincrypto-dimpl" => str0m_wincrypto::default_provider(),
-
         #[cfg(all(feature = "wincrypto", target_os = "windows"))]
         "wincrypto" => str0m_wincrypto::default_provider(),
 
@@ -485,8 +482,6 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
             available.push("openssl-dimpl");
             #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             available.push("wincrypto");
-            #[cfg(all(feature = "wincrypto-dimpl", target_os = "windows"))]
-            available.push("wincrypto-dimpl");
             #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
             available.push("apple-crypto");
 
