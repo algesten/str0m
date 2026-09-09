@@ -2052,7 +2052,6 @@ dependencies = [
  "dimpl",
  "rand_core 0.6.4",
  "str0m-proto",
- "tracing",
  "windows",
  "x25519-dalek",
 ]
