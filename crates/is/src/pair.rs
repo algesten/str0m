@@ -358,6 +358,31 @@ impl CandidatePair {
         trace!("Recorded binding response: {:?}", self);
     }
 
+    /// Marks the pair as validated by an incoming binding request we answered.
+    ///
+    /// This is for ice-lite only. A lite agent sends no checks of its own, so
+    /// [`CandidatePair::record_binding_response`] never runs for it and the
+    /// pair would stay `Waiting` for its entire life.
+    ///
+    /// This is weaker than [`CandidatePair::record_binding_response`] and
+    /// says so: a binding *response* proves return routability, while an
+    /// answered request proves only that the sender knows our password. An
+    /// ice-lite agent cannot obtain the former by construction, so the
+    /// alternative is not a stronger check but a permanently unusable
+    /// state. The caller restricts this to controlled agents, where
+    /// nomination — which is what governs egress — already accepts a
+    /// forged request without return-routability proof.
+    pub fn record_remote_binding_request_success(&mut self) {
+        if self.state != CheckState::Succeeded {
+            trace!(
+                "Check state: {:?} -> {:?}",
+                self.state,
+                CheckState::Succeeded
+            );
+            self.state = CheckState::Succeeded;
+        }
+    }
+
     /// The time of the last binding request attempt.
     ///
     /// `None` means there has been no attempts.
