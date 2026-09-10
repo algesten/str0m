@@ -1,6 +1,6 @@
 # str0m-wincrypto
 
-Windows CNG/SChannel crypto backend for [str0m](https://github.com/algesten/str0m).
+Windows CNG crypto backend with DTLS 1.2 and 1.3 provided by dimpl for [str0m](https://github.com/algesten/str0m).
 
 ## Usage
 
@@ -8,8 +8,11 @@ The primary way to use this backend is via the `wincrypto` feature flag in `str0
 
 ```toml
 [dependencies]
-str0m = { version = "0.14", default-features = false, features = ["wincrypto"] }
+str0m = { version = "0.23", default-features = false, features = ["wincrypto"] }
 ```
+
+The `wincrypto-dimpl` feature in str0m remains an alias for `wincrypto`.
+The `dimpl` feature in this crate is retained for compatibility; dimpl is always enabled.
 
 ## Advanced: Direct usage
 

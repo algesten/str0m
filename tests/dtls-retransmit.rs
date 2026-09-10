@@ -21,7 +21,7 @@
     feature = "aws-lc-rs",
     feature = "rust-crypto",
     feature = "openssl-dimpl",
-    feature = "wincrypto-dimpl",
+    feature = "wincrypto",
     feature = "apple-crypto",
 ))]
 use std::net::Ipv4Addr;

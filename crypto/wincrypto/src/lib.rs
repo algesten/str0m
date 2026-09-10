@@ -1,9 +1,5 @@
-//! Windows SChannel + CNG implementation of cryptographic functions.
-//! DTLS via Windows SChannel.
-
-#[cfg(not(feature = "dimpl"))]
-#[macro_use]
-extern crate tracing;
+//! Windows CNG implementation of cryptographic functions.
+//! DTLS 1.2 and 1.3 via dimpl.
 
 mod srtp;
 use srtp::WinCryptoSrtpProvider;
@@ -14,10 +10,7 @@ use sha1::WinCryptoSha1HmacProvider;
 mod sha256;
 use sha256::WinCryptoSha256Provider;
 
-#[cfg(feature = "dimpl")]
 mod dimpl_provider;
-#[cfg_attr(feature = "dimpl", path = "dtls_dimpl.rs")]
-#[cfg_attr(not(feature = "dimpl"), path = "dtls_schannel.rs")]
 mod dtls;
 use dtls::WinCryptoDtlsProvider;
 
@@ -27,10 +20,10 @@ pub use sys::WinCryptoError;
 
 mod sys;
 
-/// Create the default Windows CNG/SChannel crypto provider.
+/// Create the default Windows CNG crypto provider.
 ///
 /// This provider implements all cryptographic operations required for WebRTC:
-/// - DTLS 1.2 for secure key exchange (using Windows SChannel)
+/// - DTLS 1.2 and 1.3 for secure key exchange (using dimpl + Windows CNG)
 /// - SRTP for encrypted media (using Windows CNG)
 /// - SHA1-HMAC for STUN message integrity (using Windows CNG)
 /// - SHA-256 for certificate fingerprints (using Windows CNG)

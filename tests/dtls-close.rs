@@ -4,7 +4,7 @@
     feature = "rust-crypto",
     feature = "openssl",
     feature = "openssl-dimpl",
-    feature = "wincrypto-dimpl",
+    feature = "wincrypto",
     feature = "apple-crypto",
 ))]
 
