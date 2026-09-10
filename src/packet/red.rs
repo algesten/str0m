@@ -4,6 +4,10 @@
 //! block headers (4 bytes each, F=1: 7-bit PT, 14-bit timestamp offset, 10-bit length), then the
 //! primary block header (1 byte, F=0: 7-bit PT), then all block payloads in the same order.
 
+use std::collections::VecDeque;
+
+use crate::rtp_::Pt;
+
 use super::PacketError;
 
 const F_BIT: u8 = 0x80;
@@ -196,9 +200,259 @@ pub(crate) fn red_same_pt_blocks<'a>(
         .filter(move |b| b.pt == primary_pt && b.timestamp_offset > 0)
 }
 
+/// Send-side RFC 2198 RED state. `distances` lists how many packets back each redundant level
+/// carries (`[1]` = one level, the previous packet; `[1, 3, 5]` = three levels for higher loss),
+/// always sorted, distinct and >= 1. `history` keeps the most recent `max(distances)` payloads.
+///
+/// This is the send-side companion to [`RedDecoder`]: [`Payloader`][crate::packet::Payloader]
+/// stays codec- and RED-agnostic; the `Media` layer owns the `RedSender` and applies it through a
+/// [`RedSink`][crate::packet::RedSink].
+#[derive(Debug)]
+pub(crate) struct RedSender {
+    red_pt: Pt,
+    primary_pt: Pt,
+    distances: Box<[u32]>,
+    /// The most recent payloads as `(payload, rtp_time)`, oldest at the front, capped at the
+    /// deepest configured distance so it never grows without bound.
+    history: VecDeque<(Vec<u8>, u32)>,
+}
+
+impl RedSender {
+    /// Create a RED sender for `primary_pt`, wrapping into `red_pt`, with the given distance
+    /// pattern (must be sorted, distinct and >= 1).
+    pub(crate) fn new(red_pt: Pt, primary_pt: Pt, distances: &[u32]) -> Self {
+        RedSender {
+            red_pt,
+            primary_pt,
+            distances: distances.into(),
+            history: VecDeque::new(),
+        }
+    }
+
+    /// The RED payload type outgoing packets are sent on.
+    pub(crate) fn red_pt(&self) -> Pt {
+        self.red_pt
+    }
+
+    /// Keep the sender current with the negotiated RED PT, primary PT and distance pattern without
+    /// discarding a live talk-spurt's redundancy history. If the pattern changed, adopt it and trim
+    /// history to the new deepest distance. `distances` must be sorted, distinct and >= 1.
+    pub(crate) fn sync(&mut self, red_pt: Pt, primary_pt: Pt, distances: &[u32]) {
+        self.red_pt = red_pt;
+        self.primary_pt = primary_pt;
+        if *self.distances != *distances {
+            self.distances = distances.into();
+            self.trim_history();
+        }
+    }
+
+    /// Wrap the primary `payload` (at `rtp_time`) into a RED payload, prepending one redundant
+    /// block per configured distance that has a matching history entry and fits RFC 2198's field
+    /// limits (a block over the 10-bit, 1023-byte length field does not fit and is dropped, so RED
+    /// adds no protection for audio frames that large). The most recent (shallowest, most valuable)
+    /// levels are added first and the deepest are dropped once the encoded packet would exceed
+    /// `budget` bytes. That size guard keeps the RED packet within the send MTU, which both avoids
+    /// IP fragmentation (a fragmented RED packet loses all its redundancy if any fragment drops) and
+    /// prevents overflowing the fixed datagram buffer downstream. Kept blocks are emitted
+    /// oldest-first as RFC 2198 requires, then the primary. Updates history.
+    pub(crate) fn wrap(&mut self, payload: Vec<u8>, rtp_time: u32, budget: usize) -> Vec<u8> {
+        let primary_pt = *self.primary_pt;
+        let len = self.history.len();
+
+        // Even the mandatory 1-byte primary RED header must fit the budget. When it cannot (a
+        // primary that already fills the MTU), emit the payload unwrapped so RED never pushes the
+        // packet past `budget`. The `Media` layer reserves this header byte when packetizing for
+        // RED, so in normal operation the primary always leaves room and this only guards a
+        // pathological input.
+        if payload.len() + 1 > budget {
+            self.history.push_back((payload.clone(), rtp_time));
+            self.trim_history();
+            return payload;
+        }
+
+        // Room for redundancy after the primary payload and its 1-byte RED header. The guard above
+        // makes the subtraction safe. RFC 2198 headers: 1 byte primary, 4 bytes per redundant block.
+        let mut remaining = budget - payload.len() - 1;
+
+        // Add the most recent levels first (distance 1 is the most valuable). Collected here
+        // shallowest-first, then reversed to oldest-first for the wire.
+        let mut kept: Vec<RedundantBlock> = Vec::new();
+        for &d in self.distances.iter() {
+            let Some((prev, prev_time)) = len
+                .checked_sub(d as usize)
+                .and_then(|i| self.history.get(i))
+            else {
+                continue;
+            };
+            let block = RedundantBlock {
+                pt: primary_pt,
+                timestamp_offset: rtp_time.wrapping_sub(*prev_time),
+                payload: prev.clone(),
+            };
+            // A distance whose offset or length overflows RFC 2198's fields is skipped, not sent
+            // malformed; the primary still goes out, so this only drops redundancy.
+            if !block.fits() {
+                continue;
+            }
+            let cost = 4 + block.payload.len();
+            if cost > remaining {
+                // Out of budget: stop so the kept (shallowest) levels stay contiguous. The primary
+                // and its header are already guaranteed to fit, so the encoded RED stays within
+                // `budget`.
+                break;
+            }
+            remaining -= cost;
+            kept.push(block);
+        }
+        // RFC 2198 requires redundant blocks oldest-first (largest distance first), then primary.
+        kept.reverse();
+
+        let bytes = RedEncoder::encode(primary_pt, &payload, &kept);
+        self.history.push_back((payload, rtp_time));
+        self.trim_history();
+        bytes
+    }
+
+    /// Cap history at the deepest configured distance so it never grows without bound.
+    fn trim_history(&mut self) {
+        let max_distance = self.distances.last().copied().unwrap_or(1) as usize;
+        while self.history.len() > max_distance {
+            self.history.pop_front();
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    fn red_sender(distances: &[u32]) -> RedSender {
+        RedSender::new(Pt::new_with_value(63), Pt::new_with_value(111), distances)
+    }
+
+    // A budget large enough not to interfere with the small-payload wrap tests.
+    const WRAP_BUDGET: usize = 1200;
+
+    #[test]
+    fn red_sender_wrap_builds_redundancy_from_history() {
+        let mut red = red_sender(&[1]);
+
+        // First packet: primary-only RED (no history yet).
+        let first = red.wrap(vec![1, 2, 3], 1000, WRAP_BUDGET);
+        let blocks = RedDecoder::decode(&first).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].is_primary);
+        assert_eq!(blocks[0].payload, &[1, 2, 3]);
+
+        // Second packet: carries the first frame as redundancy.
+        let second = red.wrap(vec![4, 5], 1960, WRAP_BUDGET);
+        let blocks = RedDecoder::decode(&second).unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert!(!blocks[0].is_primary);
+        assert_eq!(blocks[0].pt, 111);
+        assert_eq!(blocks[0].timestamp_offset, 960); // 1960 - 1000
+        assert_eq!(blocks[0].payload, &[1, 2, 3]);
+        assert!(blocks[1].is_primary);
+        assert_eq!(blocks[1].payload, &[4, 5]);
+    }
+
+    #[test]
+    fn red_sender_wrap_multi_distance_emits_levels_oldest_first() {
+        // A [1, 3] pattern: once enough history exists, each packet carries the previous frame
+        // (distance 1) and the frame three back (distance 3), emitted oldest-first before primary.
+        let mut red = red_sender(&[1, 3]);
+
+        for i in 0..4u32 {
+            red.wrap(vec![i as u8], i * 960, WRAP_BUDGET);
+        }
+        let fifth = red.wrap(vec![42], 4 * 960, WRAP_BUDGET);
+        let blocks = RedDecoder::decode(&fifth).unwrap();
+
+        assert_eq!(blocks.len(), 3);
+        assert!(!blocks[0].is_primary);
+        assert_eq!(blocks[0].timestamp_offset, 3 * 960);
+        assert_eq!(blocks[0].payload, &[1]);
+        assert!(!blocks[1].is_primary);
+        assert_eq!(blocks[1].timestamp_offset, 960);
+        assert_eq!(blocks[1].payload, &[3]);
+        assert!(blocks[2].is_primary);
+        assert_eq!(blocks[2].payload, &[42]);
+    }
+
+    #[test]
+    fn red_sender_wrap_skips_redundancy_that_overflows_rfc_fields() {
+        let mut red = red_sender(&[1]);
+        red.wrap(vec![1], 0, WRAP_BUDGET);
+        // Offset 16384 overflows the 14-bit field, so no redundant block, just the primary.
+        let out = red.wrap(vec![2], 0x4000, WRAP_BUDGET);
+        let blocks = RedDecoder::decode(&out).unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].is_primary);
+    }
+
+    #[test]
+    fn red_sender_wrap_sheds_deepest_redundancy_to_fit_budget() {
+        let mut red = red_sender(&[1, 2]);
+        let budget = 300;
+        let frame = |b: u8| vec![b; 100];
+
+        red.wrap(frame(0xAA), 0, budget); // distance-2 source
+        red.wrap(frame(0xBB), 960, budget); // distance-1 source
+        let out = red.wrap(frame(0xCC), 1920, budget);
+
+        assert!(
+            out.len() <= budget,
+            "encoded RED {} > budget {budget}",
+            out.len()
+        );
+        let blocks = RedDecoder::decode(&out).unwrap();
+        assert_eq!(blocks.len(), 2, "distance 2 shed to fit budget");
+        assert!(!blocks[0].is_primary);
+        assert_eq!(
+            blocks[0].payload,
+            &frame(0xBB)[..],
+            "kept the shallowest (distance 1)"
+        );
+        assert!(blocks[1].is_primary);
+        assert_eq!(blocks[1].payload, &frame(0xCC)[..]);
+
+        // Ample budget keeps both levels, confirming the guard is what sheds.
+        let mut red = red_sender(&[1, 2]);
+        red.wrap(frame(0xAA), 0, WRAP_BUDGET);
+        red.wrap(frame(0xBB), 960, WRAP_BUDGET);
+        let out = red.wrap(frame(0xCC), 1920, WRAP_BUDGET);
+        assert_eq!(
+            RedDecoder::decode(&out).unwrap().len(),
+            3,
+            "all levels fit a large budget"
+        );
+    }
+
+    #[test]
+    fn red_sender_wrap_primary_header_does_not_exceed_budget() {
+        let mut red = red_sender(&[1]);
+        let out = red.wrap(vec![0xAA; WRAP_BUDGET], 960, WRAP_BUDGET);
+        assert!(
+            out.len() <= WRAP_BUDGET,
+            "RED payload {} > budget {WRAP_BUDGET}",
+            out.len()
+        );
+    }
+
+    #[test]
+    fn red_sender_sync_trims_history_on_pattern_change() {
+        let mut red = red_sender(&[1, 3]);
+        for i in 0..4u32 {
+            red.wrap(vec![i as u8], i * 960, WRAP_BUDGET);
+        }
+        // Shrinking the pattern trims history to the new deepest distance, so the next packet only
+        // has a distance-1 block available.
+        red.sync(Pt::new_with_value(63), Pt::new_with_value(111), &[1]);
+        let out = red.wrap(vec![42], 4 * 960, WRAP_BUDGET);
+        let blocks = RedDecoder::decode(&out).unwrap();
+        assert_eq!(blocks.len(), 2, "only distance 1 survives the trim");
+        assert_eq!(blocks[0].timestamp_offset, 960);
+    }
 
     #[test]
     fn primary_only_roundtrip() {

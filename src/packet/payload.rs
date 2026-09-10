@@ -1,176 +1,72 @@
-use std::collections::VecDeque;
+use std::time::Instant;
 
-use crate::format::Vp9PacketizerMode;
-use crate::format::{Codec, CodecSpec};
+use crate::format::{CodecSpec, Vp9PacketizerMode};
 use crate::media::ToPayload;
 use crate::rtp::vla::VideoLayersAllocation;
-use crate::rtp_::{Frequency, Pt};
+use crate::rtp_::{ExtensionValues, Frequency, Pt, SeqNo};
 use crate::streams::{RtpWrite, StreamTx};
 
 use super::PacketError;
-use super::{CodecPacketizer, Packetizer, RedEncoder, RedundantBlock};
+use super::red::RedSender;
+use super::{CodecPacketizer, Packetizer};
 
+/// Turns frames into RTP packets.
+///
+/// The payloader is deliberately codec- and feature-agnostic: it packetizes via its
+/// [`CodecPacketizer`] and emits [`OutgoingPacket`]s through a [`PacketSink`]. All codec-specific
+/// behaviour (marker/nackable policy, DONL) lives on the packetizer, and RFC 2198 RED wrapping is
+/// applied by the sink (see [`RedSink`]), owned a level up in `Media`.
 #[derive(Debug)]
 pub struct Payloader {
     pack: CodecPacketizer,
     clock_rate: Frequency,
-    allow_talkspurt_marker: bool,
-    red: Option<RedState>,
 }
 
-/// Send-side RFC 2198 RED state. `distances` lists how many packets back each redundant level
-/// carries (`[1]` = one level, the previous packet; `[1, 3, 5]` = three levels for higher loss),
-/// always sorted, distinct and >= 1. `history` keeps the most recent `max(distances)` payloads.
-#[derive(Debug)]
-struct RedState {
-    red_pt: Pt,
-    primary_pt: Pt,
-    distances: Box<[u32]>,
-    /// The most recent payloads as `(payload, rtp_time)`, oldest at the front, capped at the
-    /// deepest configured distance so it never grows without bound.
-    history: VecDeque<(Vec<u8>, u32)>,
+/// A packet ready to hand to a [`PacketSink`]: the RTP fields plus the primary payload as an owned
+/// `Vec`. The payload is only wrapped into an `Arc` once, when the sink builds the [`RtpWrite`], so
+/// a RED sink can transform the bytes first without an extra allocation.
+pub(crate) struct OutgoingPacket {
+    pub pt: Pt,
+    pub seq_no: SeqNo,
+    pub rtp_time: u32,
+    pub wallclock: Instant,
+    pub marker: bool,
+    pub nackable: bool,
+    pub ext_vals: ExtensionValues,
+    pub payload: Vec<u8>,
 }
 
-impl RedState {
-    /// Wrap the primary `payload` (at `rtp_time`) into a RED payload, prepending one redundant
-    /// block per configured distance that has a matching history entry and fits RFC 2198's field
-    /// limits (a block over the 10-bit, 1023-byte length field does not fit and is dropped, so RED
-    /// adds no protection for audio frames that large). The most recent (shallowest, most valuable)
-    /// levels are added first and the deepest are dropped once the encoded packet would exceed
-    /// `budget` bytes. That size guard keeps the RED packet within the send MTU, which both avoids
-    /// IP fragmentation (a fragmented RED packet loses all its redundancy if any fragment drops) and
-    /// prevents overflowing the fixed datagram buffer downstream. Kept blocks are emitted
-    /// oldest-first as RFC 2198 requires, then the primary. Updates history.
-    fn wrap(&mut self, payload: Vec<u8>, rtp_time: u32, budget: usize) -> Vec<u8> {
-        let primary_pt = *self.primary_pt;
-        let len = self.history.len();
-
-        // Even the mandatory 1-byte primary RED header must fit the budget. When it cannot (a
-        // primary that already fills the MTU), emit the payload unwrapped so RED never pushes the
-        // packet past `budget`. `push_sample` reserves this header byte when packetizing for RED,
-        // so in normal operation the primary always leaves room and this only guards a direct call
-        // or pathological input.
-        if payload.len() + 1 > budget {
-            self.history.push_back((payload.clone(), rtp_time));
-            self.trim_history();
-            return payload;
-        }
-
-        // Room for redundancy after the primary payload and its 1-byte RED header. The guard above
-        // makes the subtraction safe. RFC 2198 headers: 1 byte primary, 4 bytes per redundant block.
-        let mut remaining = budget - payload.len() - 1;
-
-        // Add the most recent levels first (distance 1 is the most valuable). Collected here
-        // shallowest-first, then reversed to oldest-first for the wire.
-        let mut kept: Vec<RedundantBlock> = Vec::new();
-        for &d in self.distances.iter() {
-            let Some((prev, prev_time)) = len
-                .checked_sub(d as usize)
-                .and_then(|i| self.history.get(i))
-            else {
-                continue;
-            };
-            let block = RedundantBlock {
-                pt: primary_pt,
-                timestamp_offset: rtp_time.wrapping_sub(*prev_time),
-                payload: prev.clone(),
-            };
-            // A distance whose offset or length overflows RFC 2198's fields is skipped, not sent
-            // malformed; the primary still goes out, so this only drops redundancy.
-            if !block.fits() {
-                continue;
-            }
-            let cost = 4 + block.payload.len();
-            if cost > remaining {
-                // Out of budget: stop so the kept (shallowest) levels stay contiguous. The primary
-                // and its header are already guaranteed to fit, so the encoded RED stays within
-                // `budget`.
-                break;
-            }
-            remaining -= cost;
-            kept.push(block);
-        }
-        // RFC 2198 requires redundant blocks oldest-first (largest distance first), then primary.
-        kept.reverse();
-
-        let bytes = RedEncoder::encode(primary_pt, &payload, &kept);
-        self.history.push_back((payload, rtp_time));
-        self.trim_history();
-        bytes
-    }
-
-    /// Cap history at the deepest configured distance so it never grows without bound.
-    fn trim_history(&mut self) {
-        let max_distance = self.distances.last().copied().unwrap_or(1) as usize;
-        while self.history.len() > max_distance {
-            self.history.pop_front();
-        }
-    }
+/// Where a [`Payloader`] sends its packetized output. Implemented by [`StreamTx`] (plain) and
+/// [`RedSink`] (RFC 2198 wrapping), so the payloader stays unaware of both the concrete stream and
+/// RED. Dispatch is static: [`Payloader::push_sample`] is monomorphised per sink, so the plain
+/// path carries no RED branch at all.
+pub(crate) trait PacketSink {
+    /// The next sequence number to assign on the underlying stream.
+    fn next_seq_no(&mut self) -> SeqNo;
+    /// The most recently written packet payload on the underlying stream, for marker decisions.
+    fn last_packet(&self) -> Option<&[u8]>;
+    /// Emit a packet.
+    fn send(&mut self, packet: OutgoingPacket);
 }
 
 impl Payloader {
     pub(crate) fn new(spec: CodecSpec, vp9_mode: Vp9PacketizerMode) -> Self {
         let mut pack = CodecPacketizer::new(spec.codec, vp9_mode);
-
-        // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
-        if let CodecPacketizer::H265(ref mut h265) = pack {
-            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
-                h265.with_donl(true);
-            }
-        }
-
-        // Enable DONL for H.266 when sprop-max-don-diff > 0 (RFC 9328 §7.2)
-        if let CodecPacketizer::H266(ref mut h266) = pack {
-            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
-                h266.with_donl(true);
-            }
-        }
+        // The packetizer applies its own codec-specific configuration (e.g. DONL); the payloader
+        // never names concrete packetizer variants.
+        pack.configure_for(&spec);
 
         Payloader {
             pack,
             clock_rate: spec.rtp_clock_rate(),
-            allow_talkspurt_marker: spec.codec != Codec::CN,
-            red: None,
         }
     }
 
-    /// Synchronise RED wrapping with the current RED PT and distance pattern: enable it, update
-    /// its PT/distances, or disable it, without discarding the codec packetizer. Called on every
-    /// payload so a remapped or dropped RED PT, a changed distance pattern, or a runtime on/off
-    /// toggle can't go stale in a cached payloader. `distances` must be sorted, distinct and >= 1.
-    pub(crate) fn set_red(&mut self, red_pt: Option<Pt>, primary_pt: Pt, distances: &[u32]) {
-        match (red_pt, &mut self.red) {
-            (Some(pt), Some(state)) => {
-                state.red_pt = pt;
-                state.primary_pt = primary_pt;
-                // Keep the redundancy history (a live talk-spurt) across a PT remap, but if the
-                // distance pattern changed, adopt it and trim history to the new deepest distance.
-                if *state.distances != *distances {
-                    state.distances = distances.into();
-                    let max_distance = distances.last().copied().unwrap_or(1) as usize;
-                    while state.history.len() > max_distance {
-                        state.history.pop_front();
-                    }
-                }
-            }
-            (Some(pt), None) => {
-                self.red = Some(RedState {
-                    red_pt: pt,
-                    primary_pt,
-                    distances: distances.into(),
-                    history: VecDeque::new(),
-                })
-            }
-            (None, _) => self.red = None,
-        }
-    }
-
-    pub(crate) fn push_sample(
+    pub(crate) fn push_sample<S: PacketSink>(
         &mut self,
         to_payload: ToPayload,
         mtu: usize,
-        is_audio: bool,
-        stream: &mut StreamTx,
+        sink: &mut S,
     ) -> Result<(), PacketError> {
         let ToPayload {
             pt,
@@ -182,28 +78,20 @@ impl Payloader {
             ..
         } = to_payload;
 
-        // When RED is on, reserve the 1-byte RED primary header so the wrapped packet still fits
-        // the MTU (the primary chunk plus that header must not exceed `mtu`).
-        let packetize_mtu = if self.red.is_some() {
-            mtu.saturating_sub(1)
-        } else {
-            mtu
-        };
-        let chunks = self.pack.packetize(packetize_mtu, data.as_ref())?;
+        let chunks = self.pack.packetize(mtu, data.as_ref())?;
         let len = chunks.len();
 
         for (idx, data) in chunks.into_iter().enumerate() {
             let last = idx == len - 1;
             let first = idx == 0;
 
-            let previous_data = stream.last_packet();
+            let previous_data = sink.last_packet();
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last)
-                || (is_audio && self.allow_talkspurt_marker && start_of_talk_spurt);
+                || (self.pack.marks_talkspurt() && start_of_talk_spurt);
 
-            let seq_no = stream.next_seq_no();
+            let seq_no = sink.next_seq_no();
 
-            // TODO: delegate to self.pack to decide whether this packet is nackable.
-            let nackable = !is_audio;
+            let nackable = self.pack.nackable();
 
             let mut pkt_ext_vals = ext_vals.clone();
 
@@ -220,162 +108,92 @@ impl Payloader {
 
             let rtp_time_u32 = rtp_time.rebase(self.clock_rate).numer() as u32;
 
-            // When RED is enabled, wrap the payload and swap to the RED PT. The primary
-            // stream's SSRC, sequence number and marker are preserved. `mtu` is the same
-            // aligned budget the chunk was packetized to, so RED redundancy is shed rather than
-            // pushing the packet over the MTU.
-            let (write_pt, write_payload) = match &mut self.red {
-                Some(red) => (red.red_pt, red.wrap(data, rtp_time_u32, mtu)),
-                None => (pt, data),
-            };
-
-            stream.write_rtp(
-                RtpWrite::new(write_pt, seq_no, rtp_time_u32, wallclock, write_payload)
-                    .marker(marker)
-                    .ext_vals(pkt_ext_vals)
-                    .nackable(nackable),
-            );
+            sink.send(OutgoingPacket {
+                pt,
+                seq_no,
+                rtp_time: rtp_time_u32,
+                wallclock,
+                marker,
+                nackable,
+                ext_vals: pkt_ext_vals,
+                payload: data,
+            });
         }
 
         Ok(())
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use crate::packet::RedDecoder;
+/// The plain sink: writes each packet straight to the stream on its own payload type.
+impl PacketSink for StreamTx {
+    fn next_seq_no(&mut self) -> SeqNo {
+        StreamTx::next_seq_no(self)
+    }
 
-    // A budget large enough not to interfere with the small-payload tests below.
-    const BUDGET: usize = 1200;
+    fn last_packet(&self) -> Option<&[u8]> {
+        StreamTx::last_packet(self)
+    }
 
-    fn red_state(distances: &[u32]) -> RedState {
-        RedState {
-            red_pt: Pt::new_with_value(63),
-            primary_pt: Pt::new_with_value(111),
-            distances: distances.into(),
-            history: VecDeque::new(),
+    fn send(&mut self, packet: OutgoingPacket) {
+        self.write_rtp(
+            RtpWrite::new(
+                packet.pt,
+                packet.seq_no,
+                packet.rtp_time,
+                packet.wallclock,
+                packet.payload,
+            )
+            .marker(packet.marker)
+            .ext_vals(packet.ext_vals)
+            .nackable(packet.nackable),
+        );
+    }
+}
+
+/// Decorates a [`StreamTx`] so a [`Payloader`]'s output is wrapped in RFC 2198 RED and sent on the
+/// RED payload type. Holds only borrows: the [`RedSender`] state (history, distances) is owned by
+/// `Media`, and the same primary SSRC, sequence number, marker and extensions are preserved.
+pub(crate) struct RedSink<'a> {
+    stream: &'a mut StreamTx,
+    red: &'a mut RedSender,
+    /// Full aligned MTU; the RED payload (primary + redundancy) is shed to fit within this.
+    budget: usize,
+}
+
+impl<'a> RedSink<'a> {
+    pub(crate) fn new(stream: &'a mut StreamTx, red: &'a mut RedSender, budget: usize) -> Self {
+        RedSink {
+            stream,
+            red,
+            budget,
         }
     }
+}
 
-    #[test]
-    fn red_wrap_builds_redundancy_from_history() {
-        let mut red = red_state(&[1]);
-
-        // First packet: primary-only RED (no history yet).
-        let first = red.wrap(vec![1, 2, 3], 1000, BUDGET);
-        let blocks = RedDecoder::decode(&first).unwrap();
-        assert_eq!(blocks.len(), 1);
-        assert!(blocks[0].is_primary);
-        assert_eq!(blocks[0].payload, &[1, 2, 3]);
-
-        // Second packet: carries the first frame as redundancy.
-        let second = red.wrap(vec![4, 5], 1960, BUDGET);
-        let blocks = RedDecoder::decode(&second).unwrap();
-        assert_eq!(blocks.len(), 2);
-        assert!(!blocks[0].is_primary);
-        assert_eq!(blocks[0].pt, 111);
-        assert_eq!(blocks[0].timestamp_offset, 960); // 1960 - 1000
-        assert_eq!(blocks[0].payload, &[1, 2, 3]);
-        assert!(blocks[1].is_primary);
-        assert_eq!(blocks[1].payload, &[4, 5]);
+impl PacketSink for RedSink<'_> {
+    fn next_seq_no(&mut self) -> SeqNo {
+        StreamTx::next_seq_no(self.stream)
     }
 
-    #[test]
-    fn red_wrap_multi_distance_emits_levels_oldest_first() {
-        // A [1, 3] pattern: once enough history exists, each packet carries the previous frame
-        // (distance 1) and the frame three back (distance 3), emitted oldest-first before primary.
-        let mut red = red_state(&[1, 3]);
-
-        // Feed frames 0..=3 at 960-tick spacing. Only from the 4th packet is distance 3 available.
-        for i in 0..4u32 {
-            red.wrap(vec![i as u8], i * 960, BUDGET);
-        }
-        let fifth = red.wrap(vec![42], 4 * 960, BUDGET);
-        let blocks = RedDecoder::decode(&fifth).unwrap();
-
-        // Oldest-first: distance 3 (frame at 960), distance 1 (frame at 3*960), then primary.
-        assert_eq!(blocks.len(), 3);
-        assert!(!blocks[0].is_primary);
-        assert_eq!(blocks[0].timestamp_offset, 3 * 960); // 4*960 - 1*960
-        assert_eq!(blocks[0].payload, &[1]);
-        assert!(!blocks[1].is_primary);
-        assert_eq!(blocks[1].timestamp_offset, 960); // 4*960 - 3*960
-        assert_eq!(blocks[1].payload, &[3]);
-        assert!(blocks[2].is_primary);
-        assert_eq!(blocks[2].payload, &[42]);
+    fn last_packet(&self) -> Option<&[u8]> {
+        StreamTx::last_packet(self.stream)
     }
 
-    #[test]
-    fn red_wrap_skips_redundancy_that_overflows_rfc_fields() {
-        // A distance whose timestamp offset exceeds RFC 2198's 14-bit field is dropped, not sent
-        // malformed; the primary and any in-range level still go out.
-        let mut red = red_state(&[1]);
-        red.wrap(vec![1], 0, BUDGET);
-        // Next frame is 0x4000 ticks later: offset 16384 overflows the 14-bit field, so no
-        // redundant block, just the primary.
-        let out = red.wrap(vec![2], 0x4000, BUDGET);
-        let blocks = RedDecoder::decode(&out).unwrap();
-        assert_eq!(blocks.len(), 1);
-        assert!(blocks[0].is_primary);
-    }
-
-    #[test]
-    fn red_wrap_sheds_deepest_redundancy_to_fit_budget() {
-        // Large frames whose redundancy cannot all fit the budget. Without this guard the encoded
-        // RED payload (primary + every redundant copy) overflows the fixed downstream datagram
-        // buffer and panics; with it, the deepest (oldest) levels are shed and the packet fits.
-        let mut red = red_state(&[1, 2]);
-        let budget = 300;
-        let frame = |b: u8| vec![b; 100];
-
-        red.wrap(frame(0xAA), 0, budget); // distance-2 source
-        red.wrap(frame(0xBB), 960, budget); // distance-1 source
-        let out = red.wrap(frame(0xCC), 1920, budget);
-
-        // Never exceeds the budget, which is the property that prevents the downstream overflow.
-        assert!(
-            out.len() <= budget,
-            "encoded RED {} > budget {budget}",
-            out.len()
-        );
-
-        let blocks = RedDecoder::decode(&out).unwrap();
-        // primary (0xCC) = 101 bytes; distance 1 (0xBB) = 104; together 205 <= 300, but adding
-        // distance 2 (0xAA, another 104) would be 309 > 300, so the deepest level is shed.
-        assert_eq!(blocks.len(), 2, "distance 2 shed to fit budget");
-        assert!(!blocks[0].is_primary);
-        assert_eq!(
-            blocks[0].payload,
-            &frame(0xBB)[..],
-            "kept the shallowest (distance 1)"
-        );
-        assert!(blocks[1].is_primary);
-        assert_eq!(blocks[1].payload, &frame(0xCC)[..]);
-
-        // With ample budget the same state keeps both levels, confirming the guard is what sheds.
-        let mut red = red_state(&[1, 2]);
-        red.wrap(frame(0xAA), 0, BUDGET);
-        red.wrap(frame(0xBB), 960, BUDGET);
-        let out = red.wrap(frame(0xCC), 1920, BUDGET);
-        assert_eq!(
-            RedDecoder::decode(&out).unwrap().len(),
-            3,
-            "all levels fit a large budget"
-        );
-    }
-
-    #[test]
-    fn red_primary_header_does_not_exceed_payload_budget() {
-        let mut red = red_state(&[1]);
-        let payload = vec![0xAA; BUDGET];
-
-        let out = red.wrap(payload, 960, BUDGET);
-
-        assert!(
-            out.len() <= BUDGET,
-            "RED payload is {} bytes for a {BUDGET}-byte budget",
-            out.len()
+    fn send(&mut self, packet: OutgoingPacket) {
+        // Wrap the primary Vec before it becomes an Arc, so RED adds no extra allocation. Swap to
+        // the RED payload type; everything else on the packet is preserved.
+        let payload = self.red.wrap(packet.payload, packet.rtp_time, self.budget);
+        self.stream.write_rtp(
+            RtpWrite::new(
+                self.red.red_pt(),
+                packet.seq_no,
+                packet.rtp_time,
+                packet.wallclock,
+                payload,
+            )
+            .marker(packet.marker)
+            .ext_vals(packet.ext_vals)
+            .nackable(packet.nackable),
         );
     }
 }

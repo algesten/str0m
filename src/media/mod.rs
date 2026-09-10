@@ -8,7 +8,8 @@ use crate::RtcError;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
 
-use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader, RtpMeta};
+use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader};
+use crate::packet::{RedSender, RedSink, RtpMeta};
 use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
 use crate::rtp_::SRTP_BLOCK_SIZE;
@@ -132,7 +133,7 @@ pub struct Media {
     depayloaders: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
 
     /// Payloaders for outoing RTP packets.
-    payloaders: HashMap<(Pt, Option<Rid>), Payloader>,
+    payloaders: HashMap<(Pt, Option<Rid>), PayloaderEntry>,
 
     /// Whether outgoing packets are wrapped in RFC 2198 RED right now. RED availability is fixed at
     /// negotiation (or set up via DirectAPI); this is the runtime send-side lever, toggled with no
@@ -199,6 +200,15 @@ pub(crate) struct ToPayload {
     pub start_of_talk_spurt: bool,
     pub data: Arc<[u8]>,
     pub ext_vals: ExtensionValues,
+}
+
+/// Per-(pt, rid) outgoing payloader entry stored in [`Media::payloaders`]: the codec-agnostic
+/// [`Payloader`] together with its optional RFC 2198 RED send state. Bundling them keeps a single
+/// map keyed by (pt, rid) rather than parallel maps on the same key.
+#[derive(Debug)]
+struct PayloaderEntry {
+    payloader: Payloader,
+    red: Option<RedSender>,
 }
 
 impl Media {
@@ -469,11 +479,14 @@ impl Media {
         rid: Option<Rid>,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
-    ) -> &mut Payloader {
+    ) -> &mut PayloaderEntry {
         self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
-            Payloader::new(params.spec, vp9_mode)
+            PayloaderEntry {
+                payloader: Payloader::new(params.spec, vp9_mode),
+                red: None,
+            }
         })
     }
 
@@ -509,8 +522,6 @@ impl Media {
 
         let ToPayload { pt, rid, .. } = &to_payload;
 
-        let is_audio = self.kind.is_audio();
-
         let midrid = MidRid(self.mid, *rid);
 
         let stream = streams.stream_tx_by_midrid(midrid);
@@ -521,28 +532,38 @@ impl Media {
 
         let pt = *pt;
 
-        // Keep the RED linkage current with the negotiated params so a remapped or dropped RED PT
-        // can't go stale in the cached payloader. The runtime send toggle gates wrapping here: when
-        // RED sending is off we pass `None`, so packets go out as the plain codec PT even though RED
-        // stays negotiated on the m-line and can be turned back on with no renegotiation.
-        let red = if self.red_send_enabled {
+        let rtp_size: usize = mtu - SRTP_OVERHEAD;
+        // align to SRTP block size to minimize padding needs
+        let aligned_mtu: usize = rtp_size - rtp_size % SRTP_BLOCK_SIZE;
+
+        // The RED PT to wrap into, if RED is negotiated for this codec and send-side wrapping is
+        // on. When off we send on the plain PT even though RED stays negotiated on the m-line (it
+        // can be toggled back on with no renegotiation).
+        let red_pt = if self.red_send_enabled {
             params.iter().find(|p| p.pt == pt).and_then(|p| p.red)
         } else {
             None
         };
 
-        let payloader = self.payloader_for(pt, *rid, params, vp9_mode);
-        payloader.set_red(red, pt, red_distances);
+        let PayloaderEntry { payloader, red } = self.payloader_for(pt, *rid, params, vp9_mode);
 
-        let rtp_size: usize = mtu - SRTP_OVERHEAD;
-        // align to SRTP block size to minimize padding needs
-        let aligned_mtu: usize = rtp_size - rtp_size % SRTP_BLOCK_SIZE;
+        let result = if let Some(red_pt) = red_pt {
+            // Keep the RED sender current with the negotiated PT/pattern without discarding a live
+            // talk-spurt's history. Reserve the 1-byte RED primary header so the wrapped packet
+            // still fits the MTU; the sink uses the full aligned MTU as its shed budget.
+            let red = red.get_or_insert_with(|| RedSender::new(red_pt, pt, red_distances));
+            red.sync(red_pt, pt, red_distances);
 
-        payloader
-            .push_sample(to_payload, aligned_mtu, is_audio, stream)
-            .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
+            let packetize_mtu = aligned_mtu.saturating_sub(1);
+            let mut sink = RedSink::new(stream, red, aligned_mtu);
+            payloader.push_sample(to_payload, packetize_mtu, &mut sink)
+        } else {
+            // Drop any stale sender so its history does not persist across a RED disable.
+            *red = None;
+            payloader.push_sample(to_payload, aligned_mtu, stream)
+        };
 
-        Ok(())
+        result.map_err(|e| RtcError::Packet(self.mid, pt, e))
     }
 
     pub(crate) fn set_remote_pts(&mut self, pts: Vec<Pt>) {
