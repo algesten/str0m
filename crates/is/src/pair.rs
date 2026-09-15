@@ -498,6 +498,12 @@ impl CandidatePair {
     pub(crate) fn copy_remote_binding_requests(&mut self, other: &CandidatePair) {
         self.remote_binding_requests = other.remote_binding_requests;
         self.remote_binding_request_time = other.remote_binding_request_time;
+
+        // ICE-lite pairs are validated by incoming requests. Preserve that
+        // validation when a higher-priority candidate replaces the pair.
+        if other.state == CheckState::Succeeded {
+            self.state = CheckState::Succeeded;
+        }
     }
 
     pub(crate) fn update_kinds(

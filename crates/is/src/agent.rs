@@ -2853,6 +2853,42 @@ mod test {
     }
 
     #[test]
+    fn ice_lite_validation_survives_trickle() {
+        let mut agent = new_test_agent();
+        agent.set_ice_lite(true);
+        agent.set_controlling(false);
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+        let remote_creds = IceCreds::new();
+        agent.set_remote_credentials(remote_creds.clone());
+        // Receive a check before the remote host candidate is signaled.
+        let remote = Candidate::host(ipv4_3(), "udp").unwrap();
+        let serialized = make_serialized_binding_request(
+            &agent.local_credentials,
+            &remote_creds,
+            true,
+            remote.prio() - 1,
+        );
+        assert!(agent.handle_packet(
+            Instant::now(),
+            StunPacket {
+                message: StunMessage::parse(&serialized).unwrap(),
+                source: ipv4_3(),
+                destination: ipv4_1(),
+                proto: Protocol::Udp,
+            }
+        ));
+        assert!(agent.has_viable_remote_candidate(ipv4_3()));
+        // The higher-priority signaled candidate replaces the peer-reflexive pair.
+        agent.add_remote_candidate(remote);
+        assert!(
+            agent.has_viable_remote_candidate(ipv4_3()),
+            "trickling the real candidate must retain validated ingress"
+        );
+    }
+
+    #[test]
     fn ice_lite_controlling_does_not_nominate_on_a_binding_request() {
         // The controlled case above is the supported one. A *controlling*
         // ice-lite agent must not be promoted the same way: there,
