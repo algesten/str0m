@@ -2,7 +2,6 @@ use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::Rtc;
 use crate::config::DtlsCert;
 use crate::crypto::CryptoProvider;
 use crate::crypto::dtls::DtlsVersion;
@@ -14,6 +13,16 @@ use crate::io::DATAGRAM_MTU_TARGET_MAX;
 use crate::io::DATAGRAM_MTU_TARGET_MIN;
 use crate::io::DATAGRAM_MTU_WARN;
 use crate::rtp_::{Bitrate, Extension, ExtensionMap};
+use crate::{Rtc, RtcError};
+
+pub(crate) const MAX_REORDERING_TIMEOUT_VIDEO: Duration = Duration::from_secs(600);
+
+pub(crate) fn validate_reordering_timeout_video(timeout: Option<Duration>) -> Result<(), RtcError> {
+    if let Some(timeout) = timeout.filter(|value| *value > MAX_REORDERING_TIMEOUT_VIDEO) {
+        return Err(RtcError::InvalidVideoReorderingTimeout(timeout));
+    }
+    Ok(())
+}
 
 /// Customized config for creating an [`Rtc`] instance.
 ///
@@ -46,6 +55,7 @@ pub struct RtcConfig {
     pub(crate) bwe_config: Option<BweConfig>,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
+    pub(crate) reordering_timeout_video: Option<Duration>,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
     pub(crate) rtp_mode: bool,
@@ -555,6 +565,62 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
+    /// Sets how long a complete video frame waits for missing earlier packets.
+    ///
+    /// `None` (default) keeps count-based waiting only. `Some(Duration::ZERO)`
+    /// skips missing earlier data on the next output poll once a complete frame
+    /// is available. With a positive timeout, waiting ends at the deadline or
+    /// the existing count limit, whichever comes first. The limit counts recognized
+    /// frame candidates, including the blocked one, not individual RTP packets.
+    ///
+    /// Frames are considered in sequence order. Each deadline is the frame's
+    /// earliest packet receipt time plus the timeout. Completing the frame or
+    /// receiving newer frames does not restart it. A frame that completes after
+    /// its deadline can proceed immediately.
+    ///
+    /// For example, after emitting frame 1, if frame 2 is missing, complete frame 3
+    /// waits on its own deadline. Once it proceeds, frames 4 and 5 can follow
+    /// without waiting for frame 2 again, unless there is another gap.
+    ///
+    /// Reordered or retransmitted packets can fill the gap before the deadline.
+    /// Frames without an earlier gap are not delayed. Expiry discards buffered
+    /// packets before the candidate; existing frame-assembly and codec dependency
+    /// checks still apply.
+    ///
+    /// Applies to all video streams in frame mode, not audio or
+    /// [`RTP mode`](RtcConfig::set_rtp_mode). Stream pauses and SSRC resets may
+    /// discard buffered data before the deadline. Use
+    /// [`Rtc::set_reordering_timeout_video`] to change the timeout during a call.
+    /// RTT-based adjustment is left to the application.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RtcError::InvalidVideoReorderingTimeout`] if the duration exceeds
+    /// 600 seconds. Values from zero through 600 seconds, and `None`, are valid.
+    pub fn set_reordering_timeout_video(
+        mut self,
+        timeout: Option<Duration>,
+    ) -> Result<Self, RtcError> {
+        validate_reordering_timeout_video(timeout)?;
+        self.reordering_timeout_video = timeout;
+        Ok(self)
+    }
+
+    /// Returns the configured video reordering timeout.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to None.
+    /// assert_eq!(config.reordering_timeout_video(), None);
+    /// ```
+    ///
+    /// `Some(Duration::ZERO)` is preserved distinctly from `None`.
+    pub fn reordering_timeout_video(&self) -> Option<Duration> {
+        self.reordering_timeout_video
+    }
+
     /// Sets the buffer size for outgoing audio packets.
     ///
     /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
@@ -790,6 +856,7 @@ impl Default for RtcConfig {
             bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
+            reordering_timeout_video: None,
             send_buffer_audio: 50,
             send_buffer_video: 1000,
             rtp_mode: false,

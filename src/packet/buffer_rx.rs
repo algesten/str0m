@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
@@ -222,75 +222,104 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
+    pub fn pop(
+        &mut self,
+        now: Instant,
+        reordering_timeout: Option<Duration>,
+    ) -> Option<Result<Depacketized, PacketError>> {
+        loop {
+            self.update_segments();
+
+            if self.segments.is_empty() {
+                self.discard_old_padding();
+                return None;
+            }
+
+            // println!(
+            //     "{:?} {:?}",
+            //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
+            //     self.segments
+            // );
+
+            let (start, stop) = *self.segments.first().expect("segment exists");
+
+            let seq = {
+                let last = self.queue.get(stop).expect("entry for stop index");
+                last.meta.seq_no
+            };
+
+            // depack ahead, even if we may not emit right away
+            let mut dep = match self.depacketize(start, stop, seq) {
+                Ok(d) => d,
+                Err(e) => {
+                    // this segment cannot be decoded correctly
+                    // remove from the queue and return the error
+                    self.last_emitted = Some((seq, CodecExtra::None));
+                    self.queue.drain(0..=stop);
+                    return Some(Err(e));
+                }
+            };
+
+            // If we have contiguity of seq numbers we emit right away,
+            // Otherwise, we wait for retransmissions up to `hold_back` frames
+            // and re-evaluate contiguity based on codec specific information
+
+            let more_than_hold_back = self.segments.len() >= self.hold_back;
+            let contiguous_seq = self.is_following_last(start);
+            let wait_for_contiguity = !contiguous_seq
+                && !more_than_hold_back
+                && !self.timeout_allows_progress(now, &dep, reordering_timeout);
+
+            if wait_for_contiguity {
+                // if we are not sending, cache the depacked
+                self.depack_cache = Some((start..stop, dep));
+                self.discard_old_padding();
+                return None;
+            }
+
+            let (can_emit, contiguous_codec) =
+                self.contiguity.check(&dep.codec_extra, contiguous_seq);
+            dep.contiguous = contiguous_codec;
+
+            let last = self
+                .queue
+                .get(stop)
+                .expect("entry for stop index")
+                .meta
+                .seq_no;
+
+            // We're not going to emit frames in the incorrect order, there's no point in keeping
+            // stuff before the emitted range.
+            self.queue.drain(0..=stop);
+
+            if !can_emit {
+                reordering_timeout?;
+                // Keep polling so a codec-rejected frame cannot block another
+                // frame whose deadline has passed.
+                continue;
+            }
+
+            self.last_emitted = Some((last, dep.codec_extra));
+
+            return Some(Ok(dep));
+        }
+    }
+
+    pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
+        let timeout = reordering_timeout?;
         self.update_segments();
 
-        if self.segments.is_empty() {
-            self.discard_old_padding();
-            return None;
-        }
+        let (start, stop) = self.segments.first().copied()?;
 
-        // println!(
-        //     "{:?} {:?}",
-        //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
-        //     self.segments
-        // );
-
-        let (start, stop) = *self.segments.first().expect("segment exists");
-
-        let seq = {
-            let last = self.queue.get(stop).expect("entry for stop index");
-            last.meta.seq_no
-        };
-
-        // depack ahead, even if we may not emit right away
-        let mut dep = match self.depacketize(start, stop, seq) {
-            Ok(d) => d,
-            Err(e) => {
-                // this segment cannot be decoded correctly
-                // remove from the queue and return the error
-                self.last_emitted = Some((seq, CodecExtra::None));
-                self.queue.drain(0..=stop);
-                return Some(Err(e));
-            }
-        };
-
-        // If we have contiguity of seq numbers we emit right away,
-        // Otherwise, we wait for retransmissions up to `hold_back` frames
-        // and re-evaluate contiguity based on codec specific information
-
-        let more_than_hold_back = self.segments.len() >= self.hold_back;
         let contiguous_seq = self.is_following_last(start);
-        let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
-
-        if wait_for_contiguity {
-            // if we are not sending, cache the depacked
-            self.depack_cache = Some((start..stop, dep));
-            self.discard_old_padding();
+        let more_than_hold_back = self.segments.len() >= self.hold_back;
+        if contiguous_seq || more_than_hold_back {
             return None;
         }
 
-        let (can_emit, contiguous_codec) = self.contiguity.check(&dep.codec_extra, contiguous_seq);
-        dep.contiguous = contiguous_codec;
-
-        let last = self
-            .queue
-            .get(stop)
-            .expect("entry for stop index")
-            .meta
-            .seq_no;
-
-        // We're not going to emit frames in the incorrect order, there's no point in keeping
-        // stuff before the emitted range.
-        self.queue.drain(0..=stop);
-
-        if !can_emit {
-            return None;
-        }
-
-        self.last_emitted = Some((last, dep.codec_extra));
-
-        Some(Ok(dep))
+        let anchor = self.candidate_first_network_time(start, stop);
+        // No representable input time can reach a deadline beyond Instant's range.
+        anchor.checked_add(timeout)
     }
 
     fn discard_old_padding(&mut self) {
@@ -335,6 +364,28 @@ impl DepacketizingBuffer {
         if self.queue.len() != original_len {
             self.depack_cache = None;
         }
+    }
+
+    fn candidate_first_network_time(&self, start: usize, stop: usize) -> Instant {
+        self.queue
+            .range(start..=stop)
+            .map(|entry| entry.meta.received)
+            .min()
+            .expect("a depacketized candidate to consist of at least one packet")
+    }
+
+    fn timeout_allows_progress(
+        &self,
+        now: Instant,
+        dep: &Depacketized,
+        reordering_timeout: Option<Duration>,
+    ) -> bool {
+        let Some(timeout) = reordering_timeout else {
+            return false;
+        };
+
+        now.checked_duration_since(dep.first_network_time())
+            .is_some_and(|age| age >= timeout)
     }
 
     fn depacketize(

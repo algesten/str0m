@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::RtcError;
 use crate::change::AddMedia;
@@ -337,9 +337,17 @@ impl Media {
     pub(crate) fn poll_sample(
         &mut self,
         params: &[PayloadParams],
+        now: Instant,
+        reordering_timeout: Option<Duration>,
     ) -> Result<Option<MediaData>, RtcError> {
+        let reordering_timeout = if self.kind.is_video() {
+            reordering_timeout
+        } else {
+            None
+        };
+
         for ((pt, rid), buf) in &mut self.depayloaders {
-            if let Some(r) = buf.pop() {
+            if let Some(r) = buf.pop(now, reordering_timeout) {
                 let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
@@ -506,6 +514,20 @@ impl Media {
         } else {
             None
         }
+    }
+
+    pub(crate) fn poll_receive_timeout(
+        &mut self,
+        reordering_timeout: Option<Duration>,
+    ) -> Option<Instant> {
+        if !self.kind.is_video() {
+            return None;
+        }
+
+        self.depayloaders
+            .values_mut()
+            .filter_map(|buf| buf.poll_timeout(reordering_timeout))
+            .min()
     }
 
     pub(crate) fn do_payload(

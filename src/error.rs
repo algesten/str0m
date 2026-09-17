@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
 
 // Re-export all error types for convenience
 pub use crate::crypto::DtlsError;
@@ -84,6 +85,9 @@ pub enum RtcError {
     /// The [`crate::media::Writer`] was used twice without doing [`crate::Rtc::poll_output`] in between. This
     /// is an incorrect usage pattern of the str0m API.
     WriteWithoutPoll,
+
+    /// The video reordering timeout exceeds the supported maximum of 600 seconds.
+    InvalidVideoReorderingTimeout(Duration),
 }
 
 impl fmt::Display for RtcError {
@@ -117,6 +121,12 @@ impl fmt::Display for RtcError {
             RtcError::WriteWithoutPoll => write!(
                 f,
                 "Consecutive calls to write() without poll_output() in between"
+            ),
+            RtcError::InvalidVideoReorderingTimeout(timeout) => write!(
+                f,
+                "Video reordering timeout {:?} exceeds the maximum of {:?}",
+                timeout,
+                crate::config_mod::MAX_REORDERING_TIMEOUT_VIDEO
             ),
         }
     }
