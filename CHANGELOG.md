@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Bound how long the depacketizing buffer waits for a packet that is never recovered #1042
   * Let `Rtc::accepts` recognize validated remote addresses in ICE-lite mode before nomination #1039
   * Remove SChannel and use only dimpl + CNG for Windows DTLS #1038
   * Move codec-specific packetization and RED send logic out of the payloader #1030
