@@ -681,7 +681,7 @@ use rtp::RawPacket;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use str0m_proto::Pii;
 use streams::RtpPacket;
 use streams::StreamPaused;
@@ -1164,6 +1164,9 @@ pub enum Reason {
     ///
     /// Written media data needs packetizing. This is not used in RTP mode.
     Packetize,
+
+    /// A complete video frame is waiting for missing earlier packets or its timeout.
+    ReceiveReorder,
 
     /// Pacer doing things.
     Pacer(PacerReason),
@@ -1786,7 +1789,7 @@ impl Rtc {
         }
 
         // Some polling needs to bubble up errors.
-        if let Some(ev) = self.session.poll_event_fallible()? {
+        if let Some(ev) = self.session.poll_event_fallible(self.last_now)? {
             return Ok(Output::Event(ev));
         }
 
@@ -2147,6 +2150,36 @@ impl Rtc {
     /// might be further updated by SDP negotiation.
     pub fn codec_config(&self) -> &CodecConfig {
         &self.session.codec_config
+    }
+
+    /// Returns the configured receive reordering timeout for video.
+    ///
+    /// See [`RtcConfig::set_reordering_timeout_video`] for details.
+    pub fn reordering_timeout_video(&self) -> Option<Duration> {
+        self.session.reordering_timeout_video()
+    }
+
+    /// Sets the receive reordering timeout for video.
+    ///
+    /// Affects buffered and future video frames across the session.
+    /// See [`RtcConfig::set_reordering_timeout_video`] for the waiting policy.
+    ///
+    /// Changing the timeout does not restart the wait. Each frame's new deadline is
+    /// its earliest packet receipt time plus the new timeout.
+    /// Shortening below a frame's age lets it proceed on the next output poll.
+    /// Lengthening can postpone a buffered frame past its old deadline, but cannot
+    /// restore discarded or emitted data. Call [`Rtc::poll_output`] again to process
+    /// ready frames and obtain the updated timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RtcError::InvalidVideoReorderingTimeout`] if the duration exceeds
+    /// 600 seconds, leaving the current policy unchanged.
+    pub fn set_reordering_timeout_video(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<(), RtcError> {
+        self.session.set_reordering_timeout_video(timeout)
     }
 }
 
