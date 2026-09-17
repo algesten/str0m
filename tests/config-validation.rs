@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::media::{Direction, MediaKind};
-use str0m::{Event, RtcConfig, RtcError};
+use str0m::{Event, Rtc, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -95,6 +95,95 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
         received_count
     );
 
+    Ok(())
+}
+
+/// Test timeout defaults, valid values, and independent connections built from cloned configs.
+#[test]
+fn config_reordering_timeout_custom() -> Result<(), RtcError> {
+    init_crypto_default();
+    let default_config = RtcConfig::new();
+    assert_eq!(default_config.reordering_timeout_video(), None);
+
+    for timeout in [
+        None,
+        Some(Duration::ZERO),
+        Some(Duration::from_millis(250)),
+        Some(Duration::from_secs(600)),
+    ] {
+        let config = RtcConfig::new().set_reordering_timeout_video(timeout)?;
+        assert_eq!(config.reordering_timeout_video(), timeout);
+        let now = Instant::now();
+        let mut cloned_rtc = config.clone().build(now);
+        let rtc = config.build(now);
+        assert_eq!(cloned_rtc.reordering_timeout_video(), timeout);
+        assert_eq!(rtc.reordering_timeout_video(), timeout);
+
+        let updated = if timeout.is_none() {
+            Some(Duration::ZERO)
+        } else {
+            None
+        };
+        cloned_rtc.set_reordering_timeout_video(updated)?;
+        assert_eq!(cloned_rtc.reordering_timeout_video(), updated);
+        assert_eq!(rtc.reordering_timeout_video(), timeout);
+    }
+    Ok(())
+}
+
+/// Test the builder rejects timeouts above 600 seconds before building a connection.
+#[test]
+fn config_rejects_invalid_reordering_timeout_immediately() {
+    for timeout in [
+        Duration::from_secs(600) + Duration::from_nanos(1),
+        Duration::from_secs(601),
+        Duration::MAX,
+    ] {
+        assert!(matches!(
+            RtcConfig::new().set_reordering_timeout_video(Some(timeout)),
+            Err(RtcError::InvalidVideoReorderingTimeout(value)) if value == timeout
+        ));
+    }
+}
+
+/// Test invalid live timeout updates return an error without changing the current policy.
+#[test]
+fn rtc_rejects_invalid_reordering_timeout_without_changing_policy() -> Result<(), RtcError> {
+    init_crypto_default();
+    let mut rtc = Rtc::new(Instant::now());
+    let valid = Some(Duration::from_millis(250));
+    rtc.set_reordering_timeout_video(valid)?;
+    for timeout in [
+        Duration::from_secs(600) + Duration::from_nanos(1),
+        Duration::from_secs(601),
+        Duration::MAX,
+    ] {
+        assert!(matches!(
+            rtc.set_reordering_timeout_video(Some(timeout)),
+            Err(RtcError::InvalidVideoReorderingTimeout(value)) if value == timeout
+        ));
+        assert_eq!(rtc.reordering_timeout_video(), valid);
+    }
+    Ok(())
+}
+
+/// Test the live timeout getter reflects each accepted setter value.
+#[test]
+fn rtc_reordering_timeout_live_setter_round_trip() -> Result<(), RtcError> {
+    init_crypto_default();
+    let timeout = Some(Duration::from_millis(250));
+    let config = RtcConfig::new().set_reordering_timeout_video(timeout)?;
+    let mut rtc = config.build(Instant::now());
+    assert_eq!(rtc.reordering_timeout_video(), timeout);
+    for value in [
+        Some(Duration::ZERO),
+        None,
+        timeout,
+        Some(Duration::from_secs(600)),
+    ] {
+        rtc.set_reordering_timeout_video(value)?;
+        assert_eq!(rtc.reordering_timeout_video(), value);
+    }
     Ok(())
 }
 
