@@ -4,7 +4,9 @@ use std::time::{Duration, Instant};
 
 use crate::config_mod::RtcpReportIntervals;
 use crate::media::KeyframeRequestKind;
-use crate::packet::MAX_RED_RECOVERY_DEPTH;
+use crate::packet::{
+    DEFAULT_MAX_REORDER_WAIT, MAX_MAX_REORDER_WAIT, MAX_RED_RECOVERY_DEPTH, MIN_MAX_REORDER_WAIT,
+};
 use crate::rtp_::MidRid;
 use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
 use crate::rtp_::{Fir, FirEntry, Frequency, MediaTime, Remb};
@@ -23,6 +25,15 @@ use super::register::ReceiverRegister;
 /// How many recent packets to remember for placing RED redundant blocks. Must cover the
 /// recovery depth plus some reordering slack.
 const RED_RECENT_PACKETS: usize = 32;
+
+/// RTT to assume when we have no measurement, but retransmissions are possible.
+const ASSUMED_RTT: Duration = Duration::from_millis(100);
+
+/// Number of jitter estimates to allow for in a derived reorder wait.
+const JITTER_FACTOR: u32 = 3;
+
+/// Headroom on a derived reorder wait.
+const REORDER_WAIT_FUDGE: u32 = 2;
 
 /// Incoming encoded stream.
 ///
@@ -782,6 +793,32 @@ impl StreamRx {
             ssrc: sender_ssrc,
             blocks: vec![block],
         }
+    }
+
+    /// How long a depacketizing buffer should wait for a missing packet on this stream
+    /// before declaring the loss unrecoverable.
+    ///
+    /// Derived from what we know about the path: one retransmission round trip (only if
+    /// we NACK at all) plus a few times the interarrival jitter, with headroom. Falls
+    /// back to a fixed default before we have measured anything.
+    pub(crate) fn reorder_max_wait(&self) -> Duration {
+        let jitter = self.register.as_ref().and_then(|r| r.jitter_duration());
+        let rtt = self.stats.rtt;
+
+        if jitter.is_none() && rtt.is_none() {
+            return DEFAULT_MAX_REORDER_WAIT;
+        }
+
+        let rtt = if self.nack_enabled() {
+            rtt.unwrap_or(ASSUMED_RTT)
+        } else {
+            // Nothing is going to resend the packet, jitter is all we wait for.
+            Duration::ZERO
+        };
+
+        let wait = (rtt + JITTER_FACTOR * jitter.unwrap_or_default()) * REORDER_WAIT_FUDGE;
+
+        wait.clamp(MIN_MAX_REORDER_WAIT, MAX_MAX_REORDER_WAIT)
     }
 
     pub(crate) fn nack_enabled(&self) -> bool {

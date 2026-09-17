@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::RtcError;
 use crate::change::AddMedia;
@@ -377,6 +377,7 @@ impl Media {
         packet: RtpPacket,
         reordering_size_audio: usize,
         reordering_size_video: usize,
+        max_reorder_wait: Duration,
         params: &[PayloadParams],
     ) {
         if !self.dir.is_receiving() {
@@ -441,6 +442,9 @@ impl Media {
         // The entry will be there by now.
         let buffer = self.depayloaders.get_mut(&key).unwrap();
 
+        // The estimates this is derived from move, so keep it up to date.
+        buffer.set_max_reorder_wait(max_reorder_wait);
+
         buffer.push(meta, packet.payload);
     }
 
@@ -498,6 +502,23 @@ impl Media {
         self.to_payload.push_back(to_payload);
 
         Ok(())
+    }
+
+    /// Move the depacketizing buffers forward in time.
+    ///
+    /// They need it to give up on unrecoverable loss while no packets are arriving.
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        for buffer in self.depayloaders.values_mut() {
+            buffer.handle_timeout(now);
+        }
+    }
+
+    /// Soonest a depacketizing buffer gives up waiting for a missing packet.
+    pub(crate) fn reorder_timeout(&self) -> Option<Instant> {
+        self.depayloaders
+            .values()
+            .filter_map(|b| b.poll_timeout())
+            .min()
     }
 
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {

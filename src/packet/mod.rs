@@ -72,6 +72,7 @@ mod comfort_noise;
 use comfort_noise::{ComfortNoiseDepacketizer, ComfortNoisePacketizer};
 
 mod buffer_rx;
+pub(crate) use buffer_rx::{DEFAULT_MAX_REORDER_WAIT, MAX_MAX_REORDER_WAIT, MIN_MAX_REORDER_WAIT};
 pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
 
 mod contiguity;

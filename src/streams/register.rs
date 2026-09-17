@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp_::{Nack, ReceptionReport, SeqNo};
 
@@ -239,6 +239,14 @@ impl ReceiverRegister {
         trace!("Reception fraction lost: {}", lost);
 
         lost
+    }
+
+    /// Interarrival jitter as a [`Duration`].
+    ///
+    /// `None` until we have timed at least one packet.
+    pub(crate) fn jitter_duration(&self) -> Option<Duration> {
+        self.time_point_prior?;
+        Some(Duration::from_micros(self.jitter.max(0.0) as u64))
     }
 
     /// Jitter in RTP timestamp units.

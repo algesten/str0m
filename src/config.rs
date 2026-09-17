@@ -46,6 +46,7 @@ pub struct RtcConfig {
     pub(crate) bwe_config: Option<BweConfig>,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
+    pub(crate) reordering_max_wait: Option<Duration>,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
     pub(crate) rtp_mode: bool,
@@ -555,6 +556,46 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
+    /// Sets the longest time to wait for a missing packet before giving up on it.
+    ///
+    /// Str0m tries to deliver the frames in order, which means a packet that is lost and
+    /// never retransmitted holds back every frame after it until
+    /// [`reordering_size_video`][RtcConfig::set_reordering_size_video()] (or
+    /// [`reordering_size_audio`][RtcConfig::set_reordering_size_audio()]) frames have
+    /// piled up behind it. For a low frame rate stream that can be many seconds.
+    ///
+    /// This is the upper bound on that wait. Once the bound passes, the frames behind the
+    /// gap are emitted (the first one with
+    /// [`contiguous: false`][crate::media::MediaData::contiguous]), whichever comes first
+    /// of the bound and the reordering size.
+    ///
+    /// `None` (the default) derives the bound from the receiving stream's round trip time
+    /// and jitter estimates, falling back to a fixed default until they are available.
+    ///
+    /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
+    /// packets can arrive out of order.
+    pub fn set_reordering_max_wait(mut self, max_wait: Option<Duration>) -> Self {
+        self.reordering_max_wait = max_wait;
+
+        self
+    }
+
+    /// Returns the setting for the longest wait for a missing packet.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to None - derived from RTT and jitter.
+    /// assert_eq!(config.reordering_max_wait(), None);
+    /// ```
+    ///
+    /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
+    /// packets can arrive out of order.
+    pub fn reordering_max_wait(&self) -> Option<Duration> {
+        self.reordering_max_wait
+    }
+
     /// Sets the buffer size for outgoing audio packets.
     ///
     /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
@@ -790,6 +831,7 @@ impl Default for RtcConfig {
             bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
+            reordering_max_wait: None,
             send_buffer_audio: 50,
             send_buffer_video: 1000,
             rtp_mode: false,

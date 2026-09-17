@@ -2,10 +2,12 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
+
+use crate::util::{already_happened, not_happening};
 
 use super::contiguity::Contiguity;
 use super::contiguity_vp8::Vp8Contiguity;
@@ -109,6 +111,17 @@ impl Depacketized {
     }
 }
 
+/// How long the depacketizing buffer waits for a gap in the sequence numbers to be
+/// filled before declaring the loss unrecoverable, when there is nothing to derive
+/// the wait from.
+pub(crate) const DEFAULT_MAX_REORDER_WAIT: Duration = Duration::from_millis(200);
+
+/// Lower bound for a derived maximum reorder wait.
+pub(crate) const MIN_MAX_REORDER_WAIT: Duration = Duration::from_millis(100);
+
+/// Upper bound for a derived maximum reorder wait.
+pub(crate) const MAX_MAX_REORDER_WAIT: Duration = Duration::from_secs(1);
+
 #[derive(Debug)]
 struct Entry {
     meta: RtpMeta,
@@ -120,6 +133,13 @@ struct Entry {
 #[derive(Debug)]
 pub struct DepacketizingBuffer {
     hold_back: usize,
+    /// Longest time we wait for a gap in the sequence numbers to be filled before
+    /// declaring the loss unrecoverable and emitting what we have.
+    max_wait: Duration,
+    /// Latest time we know of. Driven by incoming packets and `handle_timeout`.
+    last_now: Option<Instant>,
+    /// When we are holding a complete frame back, the time we give up waiting.
+    give_up_at: Option<Instant>,
     depack: CodecDepacketizer,
     queue: VecDeque<Entry>,
     segments: Vec<(usize, usize)>,
@@ -147,6 +167,9 @@ impl DepacketizingBuffer {
 
         DepacketizingBuffer {
             hold_back,
+            max_wait: DEFAULT_MAX_REORDER_WAIT,
+            last_now: None,
+            give_up_at: None,
             depack,
             queue: VecDeque::new(),
             segments: Vec::new(),
@@ -155,6 +178,32 @@ impl DepacketizingBuffer {
             depack_cache: None,
             contiguity,
         }
+    }
+
+    /// Set the longest time to wait for a missing packet before declaring the loss
+    /// unrecoverable.
+    ///
+    /// The estimate this is derived from moves, so it is updated for every packet.
+    pub(crate) fn set_max_reorder_wait(&mut self, max_wait: Duration) {
+        self.max_wait = max_wait;
+    }
+
+    /// Move the buffer clock forward.
+    ///
+    /// Incoming packets carry their receive time, but a stream that goes quiet after a
+    /// loss has none. Without this the buffer could not tell that the wait is over.
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        self.last_now = Some(match self.last_now {
+            Some(last) => last.max(now),
+            None => now,
+        });
+    }
+
+    /// When this buffer gives up on a gap it is currently waiting for.
+    ///
+    /// Set by [`DepacketizingBuffer::pop()`] deciding to hold a complete frame back.
+    pub(crate) fn poll_timeout(&self) -> Option<Instant> {
+        self.give_up_at
     }
 
     pub fn push(&mut self, meta: RtpMeta, data: impl Into<Arc<[u8]>>) {
@@ -177,6 +226,9 @@ impl DepacketizingBuffer {
                 return;
             }
         }
+
+        // Packets are the main driver of the buffer clock.
+        self.handle_timeout(meta.received);
 
         // Record that latest seen max time (used for extending time to u64).
         self.max_time = Some(if let Some(m) = self.max_time {
@@ -225,6 +277,9 @@ impl DepacketizingBuffer {
     pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
+        // Recalculated below if we end up waiting again.
+        self.give_up_at = None;
+
         if self.segments.is_empty() {
             self.discard_old_padding();
             return None;
@@ -263,11 +318,34 @@ impl DepacketizingBuffer {
         let contiguous_seq = self.is_following_last(start);
         let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
 
+        // A gap that is never filled would hold this frame, and everything after it,
+        // forever when fewer than `hold_back` frames follow. Wait for the missing
+        // packets, but only for so long.
+        let mut gave_up = false;
+
         if wait_for_contiguity {
-            // if we are not sending, cache the depacked
-            self.depack_cache = Some((start..stop, dep));
-            self.discard_old_padding();
-            return None;
+            let deadline = self.give_up_deadline(start, stop);
+            let expired = self.last_now.map(|now| now >= deadline).unwrap_or(false);
+
+            if !expired {
+                // if we are not sending, cache the depacked
+                self.give_up_at = Some(deadline);
+                self.depack_cache = Some((start..stop, dep));
+                self.discard_old_padding();
+                return None;
+            }
+
+            debug!(
+                "Giving up waiting for packets before {} after {:?}",
+                self.queue
+                    .get(start)
+                    .expect("entry for start index")
+                    .meta
+                    .seq_no,
+                self.max_wait
+            );
+
+            gave_up = true;
         }
 
         let (can_emit, contiguous_codec) = self.contiguity.check(&dep.codec_extra, contiguous_seq);
@@ -285,12 +363,36 @@ impl DepacketizingBuffer {
         self.queue.drain(0..=stop);
 
         if !can_emit {
+            if gave_up {
+                // The frame we gave up waiting for wasn't emittable. Ask for another
+                // poll right away, or whatever is behind it stays put until the next
+                // packet arrives.
+                self.give_up_at = Some(already_happened());
+            }
             return None;
         }
 
         self.last_emitted = Some((last, dep.codec_extra));
 
         Some(Ok(dep))
+    }
+
+    /// When we stop waiting for the gap in front of the segment `start..=stop`.
+    ///
+    /// The wait is measured from when the held frame arrived, using the receive time
+    /// already recorded for each packet, so it does not depend on when we are polled.
+    fn give_up_deadline(&self, start: usize, stop: usize) -> Instant {
+        let received = self
+            .queue
+            .range(start..=stop)
+            .map(|e| e.meta.received)
+            .min()
+            .expect("segment to have at least one packet");
+
+        // A configured wait can be arbitrarily large, and adding it must not panic.
+        received
+            .checked_add(self.max_wait)
+            .unwrap_or_else(not_happening)
     }
 
     fn discard_old_padding(&mut self) {

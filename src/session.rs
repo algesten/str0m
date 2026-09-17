@@ -71,6 +71,7 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
+    reordering_max_wait: Option<Duration>,
     intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
     pub send_buffer_video: usize,
@@ -183,6 +184,7 @@ impl Session {
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
+            reordering_max_wait: config.reordering_max_wait,
             intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
@@ -282,6 +284,11 @@ impl Session {
 
         // Payload any waiting frames
         self.do_payload()?;
+
+        // The depacketizing buffers need the time to give up on unrecoverable loss.
+        for media in &mut self.medias {
+            media.handle_timeout(now);
+        }
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
@@ -759,6 +766,12 @@ impl Session {
         // only the trimmed payload bytes out of the SRTP scratch buffer.
         let payload: Arc<[u8]> = Arc::from(data);
 
+        // How long a depacketizing buffer waits for a missing packet before declaring the
+        // loss unrecoverable. Configured, or derived from this stream's RTT and jitter.
+        let max_reorder_wait = self
+            .reordering_max_wait
+            .unwrap_or_else(|| stream.reorder_max_wait());
+
         let packet = stream.handle_rtp(now, header, payload, seq_no, receipt.time, rx_bytes);
 
         if self.rtp_mode {
@@ -777,6 +790,7 @@ impl Session {
                 packet,
                 self.reordering_size_audio,
                 self.reordering_size_video,
+                max_reorder_wait,
                 &self.codec_config,
             );
         }
@@ -793,6 +807,7 @@ impl Session {
                 rec_packet,
                 self.reordering_size_audio,
                 self.reordering_size_video,
+                max_reorder_wait,
                 &self.codec_config,
             );
         }
@@ -1163,6 +1178,7 @@ impl Session {
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let paused_at = self.paused_at();
         let send_stream_at = self.streams.send_stream();
+        let reorder_at = self.medias.iter().filter_map(|m| m.reorder_timeout()).min();
 
         // Gives us built-in reason
         let bwe_at = self
@@ -1179,6 +1195,7 @@ impl Session {
             .soonest((packetize_at, Reason::Packetize))
             .soonest((paused_at, Reason::PauseCheck))
             .soonest((send_stream_at, Reason::SendStream))
+            .soonest((reorder_at, Reason::ReorderWait))
             .soonest(bwe_at)
     }
 

@@ -1165,6 +1165,12 @@ pub enum Reason {
     /// Written media data needs packetizing. This is not used in RTP mode.
     Packetize,
 
+    /// A depacketizing buffer giving up on a packet that never arrived.
+    ///
+    /// Scheduled while a complete frame is held back waiting for a gap in the sequence
+    /// numbers to be filled. This is not used in RTP mode.
+    ReorderWait,
+
     /// Pacer doing things.
     Pacer(PacerReason),
 
