@@ -1165,6 +1165,9 @@ pub enum Reason {
     /// Written media data needs packetizing. This is not used in RTP mode.
     Packetize,
 
+    /// A complete frame has reached its maximum wait for missing packets.
+    ReorderWait,
+
     /// Pacer doing things.
     Pacer(PacerReason),
 
@@ -1786,7 +1789,7 @@ impl Rtc {
         }
 
         // Some polling needs to bubble up errors.
-        if let Some(ev) = self.session.poll_event_fallible()? {
+        if let Some(ev) = self.session.poll_event_fallible(self.last_now)? {
             return Ok(Output::Event(ev));
         }
 

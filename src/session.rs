@@ -71,6 +71,7 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
+    reordering_max_wait: Duration,
     intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
     pub send_buffer_video: usize,
@@ -183,6 +184,7 @@ impl Session {
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
+            reordering_max_wait: config.reordering_max_wait,
             intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
@@ -964,14 +966,14 @@ impl Session {
         None
     }
 
-    pub fn poll_event_fallible(&mut self) -> Result<Option<Event>, RtcError> {
+    pub fn poll_event_fallible(&mut self, now: Instant) -> Result<Option<Event>, RtcError> {
         // Not relevant in rtp_mode, where the packets are picked up by poll_event().
         if self.rtp_mode {
             return Ok(None);
         }
 
         for media in &mut self.medias {
-            if let Some(e) = media.poll_sample(&self.codec_config)? {
+            if let Some(e) = media.poll_sample(now, self.reordering_max_wait, &self.codec_config)? {
                 return Ok(Some(Event::MediaData(e)));
             }
         }
@@ -1163,6 +1165,7 @@ impl Session {
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let paused_at = self.paused_at();
         let send_stream_at = self.streams.send_stream();
+        let reorder_at = self.medias.iter().filter_map(|m| m.reorder_timeout()).min();
 
         // Gives us built-in reason
         let bwe_at = self
@@ -1179,6 +1182,7 @@ impl Session {
             .soonest((packetize_at, Reason::Packetize))
             .soonest((paused_at, Reason::PauseCheck))
             .soonest((send_stream_at, Reason::SendStream))
+            .soonest((reorder_at, Reason::ReorderWait))
             .soonest(bwe_at)
     }
 

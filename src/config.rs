@@ -46,6 +46,7 @@ pub struct RtcConfig {
     pub(crate) bwe_config: Option<BweConfig>,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
+    pub(crate) reordering_max_wait: Duration,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
     pub(crate) rtp_mode: bool,
@@ -555,6 +556,25 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
+    /// Sets the maximum time a complete frame waits for missing earlier packets.
+    ///
+    /// Defaults to 200 ms. The wait starts at the earliest packet receive time of
+    /// the held frame. Frames are released when either this duration expires or
+    /// the audio/video reordering size is reached, subject to codec dependencies.
+    /// The first emitted frame after an unrecovered gap may be non-contiguous.
+    ///
+    /// A zero duration skips the wait for missing packets. This setting has no
+    /// effect in [RTP mode][Self::set_rtp_mode()].
+    pub fn set_reordering_max_wait(mut self, max_wait: Duration) -> Self {
+        self.reordering_max_wait = max_wait;
+        self
+    }
+
+    /// Returns the maximum wait for missing packets, which defaults to 200 ms.
+    pub fn reordering_max_wait(&self) -> Duration {
+        self.reordering_max_wait
+    }
+
     /// Sets the buffer size for outgoing audio packets.
     ///
     /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
@@ -790,6 +810,7 @@ impl Default for RtcConfig {
             bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
+            reordering_max_wait: Duration::from_millis(200),
             send_buffer_audio: 50,
             send_buffer_video: 1000,
             rtp_mode: false,

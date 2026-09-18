@@ -4,7 +4,7 @@ use str0m::Rtc;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
 use str0m::rtp::RtpWrite;
-use str0m::{Candidate, Event, RtcError};
+use str0m::{Candidate, Event, Input, Output, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -106,11 +106,80 @@ pub fn vp9_not_contiguous() -> Result<(), RtcError> {
     Ok(())
 }
 
+#[test]
+fn reorder_duration_flushes_idle_receiver() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+    assert_eq!(
+        Rtc::builder().reordering_max_wait(),
+        Duration::from_millis(200)
+    );
+
+    for configured in [None, Some(Duration::from_millis(600))] {
+        let mut server = Server::with_vp8_input().skip_packet(14337);
+        server.reordering_max_wait = configured;
+        // Leave only two usable frames behind the loss, below the five-frame limit.
+        server.stop_after = Some(14340);
+        let mut r = server.get_receiver()?;
+        let quiet_at = r.last;
+        let wait = configured.unwrap_or(Duration::from_millis(200));
+        let media_count = |r: &TestRtc| {
+            r.events
+                .iter()
+                .filter(|(_, e)| matches!(e, Event::MediaData(_)))
+                .count()
+        };
+        assert_eq!(media_count(&r), 77);
+
+        // Drive only the receiver's own requested wake-ups, with no more packets.
+        // Even the explicit 600 ms case must still wait past the 200 ms default.
+        idle_until(&mut r, quiet_at + wait * 2 / 3)?;
+        assert_eq!(media_count(&r), 77);
+        idle_until(&mut r, quiet_at + wait + Duration::from_millis(20))?;
+        let frames: Vec<_> = r
+            .events
+            .iter()
+            .filter_map(|(t, e)| match e {
+                Event::MediaData(d) => Some((*t, d)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frames.len(), 79);
+        for ((emitted_at, frame), (seq, contiguous)) in
+            frames[77..].iter().zip([(14339, false), (14340, true)])
+        {
+            assert_eq!(*frame.seq_range.start(), seq.into());
+            assert_eq!(frame.contiguous, contiguous);
+            assert!(*emitted_at <= quiet_at + wait);
+        }
+    }
+    Ok(())
+}
+
+fn idle_until(r: &mut TestRtc, limit: Instant) -> Result<(), RtcError> {
+    loop {
+        match r.rtc.poll_output()? {
+            Output::Timeout(t) => {
+                assert!(t >= r.last, "timeout must not go backwards");
+                if t > limit {
+                    return Ok(());
+                }
+                r.last = t;
+                r.rtc.handle_input(Input::Timeout(t))?;
+            }
+            Output::Event(e) => r.events.push((r.last, e)),
+            Output::Transmit(_) => {}
+        }
+    }
+}
+
 struct Server {
     codec: Codec,
     input_data: common::PcapData,
     skip_packet: Option<u16>,
     timeout: Option<Duration>,
+    reordering_max_wait: Option<Duration>,
+    stop_after: Option<u16>,
 }
 
 impl Server {
@@ -128,6 +197,8 @@ impl Server {
             input_data,
             skip_packet: None,
             timeout: None,
+            reordering_max_wait: None,
+            stop_after: None,
         }
     }
 
@@ -142,13 +213,26 @@ impl Server {
     }
 
     fn get_output(self) -> Result<Vec<MediaData>, RtcError> {
+        Ok(self
+            .get_receiver()?
+            .events
+            .into_iter()
+            .filter_map(|(_, e)| match e {
+                Event::MediaData(d) => Some(d),
+                _ => None,
+            })
+            .collect())
+    }
+
+    fn get_receiver(self) -> Result<TestRtc, RtcError> {
         let mut l = TestRtc::new(Peer::Left);
 
-        // We need to lower the default reordering buffer size, or we won't make it
-        // past the dropped packet.
-        let rtc_r = Rtc::builder()
-            .set_reordering_size_video(5)
-            .build(Instant::now());
+        let mut config = Rtc::builder().set_reordering_size_video(5);
+        if let Some(wait) = self.reordering_max_wait {
+            config = config.set_reordering_max_wait(wait);
+            assert_eq!(config.reordering_max_wait(), wait);
+        }
+        let rtc_r = config.build(Instant::now());
 
         let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
@@ -190,7 +274,13 @@ impl Server {
         let pt = params.pt();
 
         for (relative, header, payload) in self.input_data {
-            // Drop a random packet in the middle.
+            if self
+                .stop_after
+                .is_some_and(|seq| header.sequence_number > seq)
+            {
+                break;
+            }
+            // Drop a packet in the middle.
             if Some(header.sequence_number) == self.skip_packet {
                 continue;
             }
@@ -229,18 +319,6 @@ impl Server {
         // Drain any remaining packets from the pacer
         progress(&mut l, &mut r)?;
 
-        let events = r
-            .events
-            .into_iter()
-            .filter_map(|(_, e)| {
-                if let Event::MediaData(d) = e {
-                    Some(d)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(events)
+        Ok(r)
     }
 }

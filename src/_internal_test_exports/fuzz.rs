@@ -117,7 +117,10 @@ pub fn depack(data: &[u8]) -> Option<()> {
             let data = rng.slice(len)?.to_vec();
             depack.push(meta, data);
         } else {
-            depack.pop();
+            depack.pop(
+                start + Duration::from_millis(rng.u64(10000)?),
+                Duration::from_millis(200),
+            );
         }
     }
 }
