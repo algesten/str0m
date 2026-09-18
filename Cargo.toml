@@ -47,7 +47,7 @@ str0m-aws-lc-rs = { version = "0.6.0", path = "crypto/aws-lc-rs" }
 str0m-rust-crypto = { version = "0.6.0", path = "crypto/rust-crypto" }
 str0m-openssl = { version = "0.6.0", path = "crypto/openssl" }
 str0m-apple-crypto = { version = "0.6.0", path = "crypto/apple-crypto" }
-str0m-wincrypto = { version = "0.8.0", path = "crypto/wincrypto" }
+str0m-wincrypto = { version = "0.8.1", path = "crypto/wincrypto" }
 _str0m_test = { path = "crates/_str0m_test" }
 
 # Core dependencies
