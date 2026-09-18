@@ -342,7 +342,7 @@ pub fn video_reorder_timeout_permanent_loss() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
     for cadence in [Duration::from_millis(200), Duration::from_secs(1)] {
         let mut t = VideoTest::new(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout))?,
+            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
             false,
         )?;
         t.send_vp8_frame(47_000)?;
@@ -378,7 +378,7 @@ fn video_reorder_timeout_temporal_dependencies() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
     for codec in [Codec::Vp8, Codec::Vp9] {
         let mut t = VideoTest::with_codec(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout))?,
+            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
             false,
             codec,
         )?;
@@ -480,7 +480,7 @@ fn video_reorder_timeout_h264_fragments() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
     for completion_delay in [Duration::from_millis(100), Duration::from_millis(300)] {
         let mut t = VideoTest::with_codec(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout))?,
+            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
             false,
             Codec::H264,
         )?;
@@ -531,7 +531,7 @@ fn video_reorder_timeout_h264_fragments() -> Result<(), RtcError> {
 fn video_reorder_timeout_h264_same_timestamp_gap() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
     let mut t = VideoTest::with_codec(
-        Rtc::builder().set_reordering_timeout_video(Some(timeout))?,
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
         false,
         Codec::H264,
     )?;
@@ -571,7 +571,7 @@ fn video_reorder_timeout_h264_same_timestamp_gap() -> Result<(), RtcError> {
 fn video_reorder_timeout_rtx_recovers() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
     let mut t = VideoTest::new(
-        Rtc::builder().set_reordering_timeout_video(Some(timeout))?,
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
         true,
     )?;
     t.send_vp8_frame(47_000)?;
@@ -624,7 +624,7 @@ fn video_reorder_timeout_rtx_recovers() -> Result<(), RtcError> {
 fn video_reorder_timeout_rtx_after_release() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
     let mut t = VideoTest::new(
-        Rtc::builder().set_reordering_timeout_video(Some(timeout))?,
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
         true,
     )?;
     t.defer_rtx = true;
@@ -709,73 +709,11 @@ fn video_reorder_timeout_rtx_after_release() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test live timeout changes affect buffered frames without restoring consumed data.
-#[test]
-fn video_reorder_timeout_live_updates() -> Result<(), RtcError> {
-    for final_policy in [
-        None,
-        Some(Duration::ZERO),
-        Some(Duration::from_millis(200)),
-        Some(Duration::from_millis(500)),
-    ] {
-        let mut t = VideoTest::new(
-            Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(200)))?,
-            false,
-        )?;
-        t.send_vp8_frame(47_000)?;
-        t.advance_to(t.now + Duration::from_millis(100))?;
-        t.send_vp8_frame(47_002)?;
-        let anchor = t.now;
-        t.receiver
-            .handle_input(Input::Timeout(anchor + Duration::from_millis(300)))?;
-        t.sender
-            .handle_input(Input::Timeout(anchor + Duration::from_millis(300)))?;
-        t.now = anchor + Duration::from_millis(300);
-        // Change the timeout after the old deadline, before polling releases the frame.
-        t.receiver
-            .set_reordering_timeout_video(Some(Duration::from_millis(500)))?;
-        t.receiver.set_reordering_timeout_video(final_policy)?;
-        t.flush()?;
-        if final_policy == Some(Duration::ZERO) || final_policy == Some(Duration::from_millis(200))
-        {
-            assert_eq!(
-                t.received_frames(),
-                [(47_000, 47_000, true), (47_002, 47_002, false)]
-            );
-            t.receiver
-                .set_reordering_timeout_video(Some(Duration::from_secs(1)))?;
-            t.flush()?;
-            assert_eq!(
-                t.received_frames().len(),
-                2,
-                "extension cannot resurrect consumed data"
-            );
-        } else {
-            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-            t.advance_to(anchor + Duration::from_millis(499))?;
-            assert_eq!(t.received_frames().len(), 1);
-            if final_policy.is_some() {
-                assert_eq!(t.receiver.last, anchor + Duration::from_millis(500));
-                t.tick(t.receiver.last)?;
-                assert_eq!(t.received_frames().len(), 2);
-            } else {
-                t.advance_to(anchor + Duration::from_millis(600))?;
-                assert_eq!(t.received_frames().len(), 1);
-                t.receiver
-                    .set_reordering_timeout_video(Some(Duration::ZERO))?;
-                t.flush()?;
-                assert_eq!(t.received_frames().len(), 2);
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Test None keeps waiting while zero releases a later VP8 frame only once complete.
 #[test]
 fn video_reorder_timeout_none_zero_and_partial_frames() -> Result<(), RtcError> {
     for policy in [None, Some(Duration::ZERO)] {
-        let mut t = VideoTest::new(Rtc::builder().set_reordering_timeout_video(policy)?, false)?;
+        let mut t = VideoTest::new(Rtc::builder().set_reordering_timeout_video(policy), false)?;
         t.send_vp8_frame(47_000)?;
         t.advance_to(t.now + Duration::from_millis(100))?;
         t.write(1337.into(), 47_001, 100, &[0x10, 0, 0], false)?;
@@ -799,7 +737,7 @@ fn video_reorder_timeout_none_zero_and_partial_frames() -> Result<(), RtcError> 
 #[test]
 fn video_reorder_timeout_earliest_across_media() -> Result<(), RtcError> {
     let mut t = VideoTest::new(
-        Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(250)))?,
+        Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(250))),
         false,
     )?;
     t.add_video("other".into(), 2337.into(), false);
@@ -834,7 +772,7 @@ fn video_reorder_timeout_pause_discards_pending_frame() -> Result<(), RtcError> 
             Duration::from_secs(2)
         };
         let mut t = VideoTest::new(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout))?,
+            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
             false,
         )?;
         t.send_vp8_frame(47_000)?;
@@ -853,9 +791,7 @@ fn video_reorder_timeout_pause_discards_pending_frame() -> Result<(), RtcError> 
                 .any(|(_, event)| matches!(event, Event::StreamPaused(_)))
         );
         assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-        t.receiver
-            .set_reordering_timeout_video(Some(Duration::ZERO))?;
-        t.flush()?;
+        t.advance_to(paused + timeout)?;
         assert_eq!(
             t.received_frames().len(),
             1,
@@ -873,7 +809,7 @@ fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
     let mut t = VideoTest::new(
         Rtc::builder()
             .set_rtp_mode(true)
-            .set_reordering_timeout_video(Some(Duration::ZERO))?,
+            .set_reordering_timeout_video(Some(Duration::ZERO)),
         false,
     )?;
     t.send_vp8_frame(47_000)?;
@@ -897,7 +833,7 @@ fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
 #[test]
 fn video_reorder_timeout_does_not_change_audio() -> Result<(), RtcError> {
     let mut t = VideoTest::new(
-        Rtc::builder().set_reordering_timeout_video(Some(Duration::ZERO))?,
+        Rtc::builder().set_reordering_timeout_video(Some(Duration::ZERO)),
         false,
     )?;
     let mid = "audio".into();

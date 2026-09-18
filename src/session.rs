@@ -231,19 +231,6 @@ impl Session {
         }
     }
 
-    pub(crate) fn set_reordering_timeout_video(
-        &mut self,
-        timeout: Option<Duration>,
-    ) -> Result<(), RtcError> {
-        crate::config_mod::validate_reordering_timeout_video(timeout)?;
-        self.reordering_timeout_video = timeout;
-        Ok(())
-    }
-
-    pub(crate) fn reordering_timeout_video(&self) -> Option<Duration> {
-        self.reordering_timeout_video
-    }
-
     fn mtu(&self) -> usize {
         *self.mtu.start()
     }
