@@ -213,15 +213,21 @@ impl Server {
     }
 
     fn get_output(self) -> Result<Vec<MediaData>, RtcError> {
-        Ok(self
-            .get_receiver()?
+        let r = self.get_receiver()?;
+
+        let events = r
             .events
             .into_iter()
-            .filter_map(|(_, e)| match e {
-                Event::MediaData(d) => Some(d),
-                _ => None,
+            .filter_map(|(_, e)| {
+                if let Event::MediaData(d) = e {
+                    Some(d)
+                } else {
+                    None
+                }
             })
-            .collect())
+            .collect();
+
+        Ok(events)
     }
 
     fn get_receiver(self) -> Result<TestRtc, RtcError> {
@@ -280,7 +286,7 @@ impl Server {
             {
                 break;
             }
-            // Drop a packet in the middle.
+            // Drop a random packet in the middle.
             if Some(header.sequence_number) == self.skip_packet {
                 continue;
             }

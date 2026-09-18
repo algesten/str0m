@@ -234,90 +234,100 @@ impl DepacketizingBuffer {
         now: Instant,
         max_wait: Duration,
     ) -> Option<Result<Depacketized, PacketError>> {
-        self.give_up_at = None;
         loop {
-            self.update_segments();
+            let queued = self.queue.len();
+            let result = self.pop_frame(now, max_wait);
+            if result.is_some() || self.queue.len() == queued {
+                return result;
+            }
+            // A discarded frame must not leave later frames waiting for new input.
+        }
+    }
 
-            if self.segments.is_empty() {
+    fn pop_frame(
+        &mut self,
+        now: Instant,
+        max_wait: Duration,
+    ) -> Option<Result<Depacketized, PacketError>> {
+        self.give_up_at = None;
+        self.update_segments();
+
+        if self.segments.is_empty() {
+            self.discard_old_padding();
+            return None;
+        }
+
+        // println!(
+        //     "{:?} {:?}",
+        //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
+        //     self.segments
+        // );
+
+        let (start, stop) = *self.segments.first().expect("segment exists");
+
+        let seq = {
+            let last = self.queue.get(stop).expect("entry for stop index");
+            last.meta.seq_no
+        };
+
+        // depack ahead, even if we may not emit right away
+        let mut dep = match self.depacketize(start, stop, seq) {
+            Ok(d) => d,
+            Err(e) => {
+                // this segment cannot be decoded correctly
+                // remove from the queue and return the error
+                self.last_emitted = Some((seq, CodecExtra::None));
+                self.queue.drain(0..=stop);
+                return Some(Err(e));
+            }
+        };
+
+        // If we have contiguity of seq numbers we emit right away,
+        // Otherwise, wait up to `hold_back` frames or `max_wait`
+        // and re-evaluate contiguity based on codec specific information
+
+        let more_than_hold_back = self.segments.len() >= self.hold_back;
+        let contiguous_seq = self.is_following_last(start);
+        let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
+
+        if wait_for_contiguity {
+            let received = dep
+                .meta
+                .iter()
+                .map(|m| m.received)
+                .min()
+                .expect("frame has packets");
+            // An unrepresentable deadline is effectively an unlimited wait.
+            let deadline = received.checked_add(max_wait);
+            if deadline.is_none_or(|deadline| now < deadline) {
+                self.give_up_at = deadline;
+                self.depack_cache = Some((start..stop, dep));
                 self.discard_old_padding();
                 return None;
             }
-
-            // println!(
-            //     "{:?} {:?}",
-            //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
-            //     self.segments
-            // );
-
-            let (start, stop) = *self.segments.first().expect("segment exists");
-
-            let seq = {
-                let last = self.queue.get(stop).expect("entry for stop index");
-                last.meta.seq_no
-            };
-
-            // depack ahead, even if we may not emit right away
-            let mut dep = match self.depacketize(start, stop, seq) {
-                Ok(d) => d,
-                Err(e) => {
-                    // this segment cannot be decoded correctly
-                    // remove from the queue and return the error
-                    self.last_emitted = Some((seq, CodecExtra::None));
-                    self.queue.drain(0..=stop);
-                    return Some(Err(e));
-                }
-            };
-
-            // If we have contiguity of seq numbers we emit right away,
-            // Otherwise, wait up to `hold_back` frames or `max_wait`
-            // and re-evaluate contiguity based on codec specific information
-
-            let more_than_hold_back = self.segments.len() >= self.hold_back;
-            let contiguous_seq = self.is_following_last(start);
-            let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
-
-            if wait_for_contiguity {
-                let received = dep
-                    .meta
-                    .iter()
-                    .map(|m| m.received)
-                    .min()
-                    .expect("frame has packets");
-                // An unrepresentable deadline is effectively an unlimited wait.
-                let deadline = received.checked_add(max_wait);
-                if deadline.is_none_or(|deadline| now < deadline) {
-                    self.give_up_at = deadline;
-                    self.depack_cache = Some((start..stop, dep));
-                    self.discard_old_padding();
-                    return None;
-                }
-            }
-
-            let (can_emit, contiguous_codec) =
-                self.contiguity.check(&dep.codec_extra, contiguous_seq);
-            dep.contiguous = contiguous_codec;
-
-            let last = self
-                .queue
-                .get(stop)
-                .expect("entry for stop index")
-                .meta
-                .seq_no;
-
-            // We're not going to emit frames in the incorrect order, there's no point in keeping
-            // stuff before the emitted range.
-            self.queue.drain(0..=stop);
-
-            if !can_emit {
-                // The queue was drained through this frame. Check what follows without
-                // requiring another packet or timeout to make progress.
-                continue;
-            }
-
-            self.last_emitted = Some((last, dep.codec_extra));
-
-            return Some(Ok(dep));
         }
+
+        let (can_emit, contiguous_codec) = self.contiguity.check(&dep.codec_extra, contiguous_seq);
+        dep.contiguous = contiguous_codec;
+
+        let last = self
+            .queue
+            .get(stop)
+            .expect("entry for stop index")
+            .meta
+            .seq_no;
+
+        // We're not going to emit frames in the incorrect order, there's no point in keeping
+        // stuff before the emitted range.
+        self.queue.drain(0..=stop);
+
+        if !can_emit {
+            return None;
+        }
+
+        self.last_emitted = Some((last, dep.codec_extra));
+
+        Some(Ok(dep))
     }
 
     fn discard_old_padding(&mut self) {
@@ -1256,8 +1266,10 @@ mod test {
             buffer.push(meta, data);
         }
 
-        let res0before = buffer.pop(Instant::now(), Duration::MAX).unwrap().unwrap(); // Pop PID: 23860, `contiguous_seq == true`.
-        let res1before = buffer.pop(Instant::now(), Duration::MAX).unwrap().unwrap(); // Pop PID: 23861, `contiguous_seq == true`.
+        // Pop PID: 23860, `contiguous_seq == true`.
+        let res0before = buffer.pop(Instant::now(), Duration::MAX).unwrap().unwrap();
+        // Pop PID: 23861, `contiguous_seq == true`.
+        let res1before = buffer.pop(Instant::now(), Duration::MAX).unwrap().unwrap();
 
         let mut buffer =
             DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 30);
