@@ -2,6 +2,7 @@ use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::Rtc;
 use crate::config::DtlsCert;
 use crate::crypto::CryptoProvider;
 use crate::crypto::dtls::DtlsVersion;
@@ -13,16 +14,6 @@ use crate::io::DATAGRAM_MTU_TARGET_MAX;
 use crate::io::DATAGRAM_MTU_TARGET_MIN;
 use crate::io::DATAGRAM_MTU_WARN;
 use crate::rtp_::{Bitrate, Extension, ExtensionMap};
-use crate::{Rtc, RtcError};
-
-pub(crate) const MAX_REORDERING_TIMEOUT_VIDEO: Duration = Duration::from_secs(600);
-
-pub(crate) fn validate_reordering_timeout_video(timeout: Option<Duration>) -> Result<(), RtcError> {
-    if let Some(timeout) = timeout.filter(|value| *value > MAX_REORDERING_TIMEOUT_VIDEO) {
-        return Err(RtcError::InvalidVideoReorderingTimeout(timeout));
-    }
-    Ok(())
-}
 
 /// Customized config for creating an [`Rtc`] instance.
 ///
@@ -589,21 +580,10 @@ impl RtcConfig {
     ///
     /// Applies to all video streams in frame mode, not audio or
     /// [`RTP mode`](RtcConfig::set_rtp_mode). Stream pauses and SSRC resets may
-    /// discard buffered data before the deadline. Use
-    /// [`Rtc::set_reordering_timeout_video`] to change the timeout during a call.
-    /// RTT-based adjustment is left to the application.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RtcError::InvalidVideoReorderingTimeout`] if the duration exceeds
-    /// 600 seconds. Values from zero through 600 seconds, and `None`, are valid.
-    pub fn set_reordering_timeout_video(
-        mut self,
-        timeout: Option<Duration>,
-    ) -> Result<Self, RtcError> {
-        validate_reordering_timeout_video(timeout)?;
+    /// discard buffered data before the deadline.
+    pub fn set_reordering_timeout_video(mut self, timeout: Option<Duration>) -> Self {
         self.reordering_timeout_video = timeout;
-        Ok(self)
+        self
     }
 
     /// Returns the configured video reordering timeout.

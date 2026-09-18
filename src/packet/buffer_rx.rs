@@ -228,81 +228,90 @@ impl DepacketizingBuffer {
         reordering_timeout: Option<Duration>,
     ) -> Option<Result<Depacketized, PacketError>> {
         loop {
-            self.update_segments();
-
-            if self.segments.is_empty() {
-                self.discard_old_padding();
-                return None;
+            let queued = self.queue.len();
+            let result = self.pop_frame(now, reordering_timeout);
+            if result.is_some() || reordering_timeout.is_none() || self.queue.len() == queued {
+                return result;
             }
-
-            // println!(
-            //     "{:?} {:?}",
-            //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
-            //     self.segments
-            // );
-
-            let (start, stop) = *self.segments.first().expect("segment exists");
-
-            let seq = {
-                let last = self.queue.get(stop).expect("entry for stop index");
-                last.meta.seq_no
-            };
-
-            // depack ahead, even if we may not emit right away
-            let mut dep = match self.depacketize(start, stop, seq) {
-                Ok(d) => d,
-                Err(e) => {
-                    // this segment cannot be decoded correctly
-                    // remove from the queue and return the error
-                    self.last_emitted = Some((seq, CodecExtra::None));
-                    self.queue.drain(0..=stop);
-                    return Some(Err(e));
-                }
-            };
-
-            // If we have contiguity of seq numbers we emit right away,
-            // Otherwise, we wait for retransmissions up to `hold_back` frames
-            // and re-evaluate contiguity based on codec specific information
-
-            let more_than_hold_back = self.segments.len() >= self.hold_back;
-            let contiguous_seq = self.is_following_last(start);
-            let wait_for_contiguity = !contiguous_seq
-                && !more_than_hold_back
-                && !self.timeout_allows_progress(now, &dep, reordering_timeout);
-
-            if wait_for_contiguity {
-                // if we are not sending, cache the depacked
-                self.depack_cache = Some((start..stop, dep));
-                self.discard_old_padding();
-                return None;
-            }
-
-            let (can_emit, contiguous_codec) =
-                self.contiguity.check(&dep.codec_extra, contiguous_seq);
-            dep.contiguous = contiguous_codec;
-
-            let last = self
-                .queue
-                .get(stop)
-                .expect("entry for stop index")
-                .meta
-                .seq_no;
-
-            // We're not going to emit frames in the incorrect order, there's no point in keeping
-            // stuff before the emitted range.
-            self.queue.drain(0..=stop);
-
-            if !can_emit {
-                reordering_timeout?;
-                // Keep polling so a codec-rejected frame cannot block another
-                // frame whose deadline has passed.
-                continue;
-            }
-
-            self.last_emitted = Some((last, dep.codec_extra));
-
-            return Some(Ok(dep));
+            // A discarded frame must not leave later frames waiting for new input.
         }
+    }
+
+    fn pop_frame(
+        &mut self,
+        now: Instant,
+        reordering_timeout: Option<Duration>,
+    ) -> Option<Result<Depacketized, PacketError>> {
+        self.update_segments();
+
+        if self.segments.is_empty() {
+            self.discard_old_padding();
+            return None;
+        }
+
+        // println!(
+        //     "{:?} {:?}",
+        //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
+        //     self.segments
+        // );
+
+        let (start, stop) = *self.segments.first().expect("segment exists");
+
+        let seq = {
+            let last = self.queue.get(stop).expect("entry for stop index");
+            last.meta.seq_no
+        };
+
+        // depack ahead, even if we may not emit right away
+        let mut dep = match self.depacketize(start, stop, seq) {
+            Ok(d) => d,
+            Err(e) => {
+                // this segment cannot be decoded correctly
+                // remove from the queue and return the error
+                self.last_emitted = Some((seq, CodecExtra::None));
+                self.queue.drain(0..=stop);
+                return Some(Err(e));
+            }
+        };
+
+        // If we have contiguity of seq numbers we emit right away,
+        // Otherwise, we wait for retransmissions up to `hold_back` frames
+        // and re-evaluate contiguity based on codec specific information
+
+        let more_than_hold_back = self.segments.len() >= self.hold_back;
+        let contiguous_seq = self.is_following_last(start);
+        let wait_for_contiguity = !contiguous_seq
+            && !more_than_hold_back
+            && !self.timeout_allows_progress(now, &dep, reordering_timeout);
+
+        if wait_for_contiguity {
+            // if we are not sending, cache the depacked
+            self.depack_cache = Some((start..stop, dep));
+            self.discard_old_padding();
+            return None;
+        }
+
+        let (can_emit, contiguous_codec) = self.contiguity.check(&dep.codec_extra, contiguous_seq);
+        dep.contiguous = contiguous_codec;
+
+        let last = self
+            .queue
+            .get(stop)
+            .expect("entry for stop index")
+            .meta
+            .seq_no;
+
+        // We're not going to emit frames in the incorrect order, there's no point in keeping
+        // stuff before the emitted range.
+        self.queue.drain(0..=stop);
+
+        if !can_emit {
+            return None;
+        }
+
+        self.last_emitted = Some((last, dep.codec_extra));
+
+        Some(Ok(dep))
     }
 
     pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
@@ -1108,53 +1117,14 @@ mod test {
         }
     }
 
-    /// Test changing the timeout recalculates deadlines without restarting the wait.
-    #[test]
-    fn timeout_live_updates_keep_original_anchor() {
-        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
-        let mut buf = DepacketizingBuffer::new(depack, 3);
-        let base = Instant::now();
-
-        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
-        let dep = buf
-            .pop(base, None)
-            .expect("frame emitted")
-            .expect("valid frame");
-        assert_eq!(**dep.seq_range().start(), 1);
-
-        buf.push(test_meta(base, 3, 3, 100), [1]);
-        buf.push(test_meta(base, 4, 3, 200), [9]);
-
-        let now = base + Duration::from_millis(400);
-        assert_eq!(
-            buf.poll_timeout(Some(Duration::from_millis(200))),
-            Some(base + Duration::from_millis(300))
-        );
-        assert_eq!(
-            buf.poll_timeout(Some(Duration::from_millis(500))),
-            Some(base + Duration::from_millis(600))
-        );
-        assert!(buf.pop(now, Some(Duration::from_millis(500))).is_none());
-
-        let dep = buf
-            .pop(now, Some(Duration::from_millis(200)))
-            .expect("frame emitted")
-            .expect("valid frame");
-        assert_eq!(**dep.seq_range().start(), 3);
-        assert_eq!(**dep.seq_range().end(), 4);
-        assert!(!dep.contiguous);
-        assert!(buf.pop(now, Some(Duration::from_millis(500))).is_none());
-        assert_eq!(buf.poll_timeout(Some(Duration::from_millis(500))), None);
-    }
-
-    /// Test removing an active timeout cancels its deadline but keeps count-based release.
+    /// Test a disabled timeout keeps count-based release.
     #[test]
     fn timeout_disabled_preserves_count_release() {
         let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
         let mut buf = DepacketizingBuffer::new(depack, 3);
         let base = Instant::now();
 
-        let timeout = Some(Duration::from_millis(250));
+        let timeout = None;
         buf.push(test_meta(base, 1, 1, 0), [1, 9]);
         buf.pop(base, timeout).unwrap().unwrap();
         buf.push(test_meta(base, 3, 3, 100), [1, 9]);
@@ -1162,7 +1132,6 @@ mod test {
             buf.pop(base + Duration::from_millis(100), timeout)
                 .is_none()
         );
-        assert!(buf.poll_timeout(timeout).is_some());
         assert_eq!(buf.poll_timeout(None), None);
         assert!(buf.pop(base + Duration::from_secs(1), None).is_none());
         for seq in 4..=5 {
