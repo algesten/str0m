@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 
 use crate::RtcError;
@@ -8,7 +9,9 @@ use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 
-use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
+use super::ToPayload;
+use super::dtmf::{DtmfTone, default_volume};
+use super::{Dtmf, ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid};
 
 /// Writer of frame level data.
 ///
@@ -176,6 +179,79 @@ impl<'a> Writer<'a> {
         };
 
         media.set_to_payload(to_payload)?;
+
+        Ok(())
+    }
+
+    /// Send a DTMF telephone-event tone (RFC 4733).
+    ///
+    /// This queues a DTMF tone that str0m transmits as a series of
+    /// `telephone-event` RTP packets spanning `duration`, following the RFC 4733
+    /// timing rules: the marker bit on the first packet, a shared RTP timestamp
+    /// and growing duration within each segment, and repeated final segment
+    /// reports. Tones exceeding the 16-bit duration field are split into
+    /// contiguous segments.
+    ///
+    /// `pt` must be a negotiated `telephone-event` payload type. Enable telephone
+    /// events with
+    /// [`CodecConfig::enable_telephone_event`][crate::format::CodecConfig::enable_telephone_event].
+    ///
+    /// `wallclock` and `rtp_time` mark the start of the tone, exactly like
+    /// [`Writer::write`]. Additional tones are sent in call order. A queued
+    /// start that overlaps the preceding tone is moved to that tone's end;
+    /// caller-supplied gaps are preserved.
+    ///
+    /// This operation fails with [`RtcError::UnknownPt`] if `pt` is not a
+    /// negotiated telephone-event payload type, with [`RtcError::UnknownRid`]
+    /// if the selected RID was not negotiated, or with
+    /// [`RtcError::UnsupportedDtmfEvent`] if the remote endpoint did not
+    /// advertise support for the requested event.
+    pub fn write_dtmf(
+        self,
+        pt: Pt,
+        wallclock: Instant,
+        rtp_time: MediaTime,
+        event: Dtmf,
+        duration: Duration,
+    ) -> Result<(), RtcError> {
+        let Some(clock_rate) = self
+            .session
+            .codec_config
+            .params()
+            .iter()
+            .find(|p| p.pt() == pt && p.spec().codec.is_telephone_event())
+            .map(|params| params.spec().rtp_clock_rate())
+        else {
+            return Err(RtcError::UnknownPt(pt));
+        };
+
+        let rid = self.rid;
+        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
+        if !media.is_direct_api() && !media.remote_pts().contains(&pt) {
+            return Err(RtcError::UnknownPt(pt));
+        }
+        if let Some(rid) = rid {
+            if !media.rids_tx().contains(rid) {
+                return Err(RtcError::UnknownRid(rid));
+            }
+        }
+
+        let volume = default_volume(event);
+        let event_code = event.event_code();
+        if !media.supports_telephone_event(pt, event_code) {
+            return Err(RtcError::UnsupportedDtmfEvent(event_code));
+        }
+
+        media.queue_dtmf(DtmfTone {
+            pt,
+            rid,
+            rtp_time,
+            wallclock,
+            event: event_code,
+            volume,
+            duration,
+            clock_rate,
+        });
 
         Ok(())
     }

@@ -5,6 +5,7 @@
   * Move codec-specific packetization and RED send logic out of the payloader #1030
   * Match the transport protocol when invalidating local and remote ICE candidates #1035
   * Preserve the RFC 6464 audio-level voice activity bit when serializing #1032
+  * Add support for telephone events (DTMF, RFC 4733) #1012
   * Add RFC 2198 RED (redundant audio) support for all audio codecs (breaking) #982
 
 # 0.23.1
