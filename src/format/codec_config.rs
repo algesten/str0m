@@ -66,6 +66,9 @@ pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(62);
 pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(61);
 pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(60);
 
+/// Default payload type for telephone-event (RFC 4733) at 8000 Hz.
+pub(crate) const PT_TELEPHONE_EVENT: Pt = Pt::new_with_value(126);
+
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
@@ -127,6 +130,9 @@ impl CodecConfig {
     ) {
         let (fb_transport_cc, fb_fir, fb_nack, fb_pli, fb_remb) = if codec.is_video() {
             (true, true, true, true, true)
+        } else if codec.is_telephone_event() {
+            // telephone-event carries no media and uses no feedback mechanics.
+            (false, false, false, false, false)
         } else {
             (true, false, false, false, false)
         };
@@ -345,6 +351,31 @@ impl CodecConfig {
         self.red_distances = sane.into_boxed_slice();
     }
 
+    /// Add a default telephone-event (RFC 4733) payload type at 8000 Hz.
+    ///
+    /// The telephone-event payload carries DTMF digits and other telephony
+    /// signals. It is negotiated inside an audio m-line alongside a real audio
+    /// codec (such as Opus or PCMU). Disabled by default.
+    ///
+    /// Use [`Writer::write_dtmf`][crate::media::Writer::write_dtmf] to send DTMF
+    /// tones, and observe [`Event::DtmfEvent`][crate::Event::DtmfEvent] for
+    /// received tones.
+    pub fn enable_telephone_event(&mut self, enabled: bool) {
+        self.params
+            .retain(|c| c.spec.codec != Codec::TelephoneEvent);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            PT_TELEPHONE_EVENT,
+            None,
+            Codec::TelephoneEvent,
+            Frequency::EIGHT_KHZ,
+            None,
+            FormatParams::default(),
+        )
+    }
+
     /// Add a default VP8 payload type.
     pub fn enable_vp8(&mut self, enabled: bool) {
         self.params.retain(|c| c.spec.codec != Codec::Vp8);
@@ -537,7 +568,7 @@ impl CodecConfig {
             if kind == MediaKind::Video {
                 params.spec.codec.is_video()
             } else {
-                params.spec.codec.is_audio()
+                params.spec.codec.is_audio() || params.spec.codec.is_telephone_event()
             }
         })
     }

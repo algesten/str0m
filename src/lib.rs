@@ -834,7 +834,7 @@ pub mod media;
 use media::AppSpecificFeedback;
 use media::SenderFeedback;
 use media::{Direction, Media, Mid, Pt, Rid, Writer};
-use media::{KeyframeRequest, KeyframeRequestKind};
+use media::{DtmfEvent, KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
 
 pub mod change;
@@ -966,6 +966,13 @@ pub enum Event {
 
     /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
+
+    /// An incoming telephone event (DTMF), per RFC 4733.
+    ///
+    /// Emitted once when a tone ends (or times out), with its final duration.
+    /// No separate start event is emitted. Enable telephone events with
+    /// [`CodecConfig::enable_telephone_event`][crate::format::CodecConfig::enable_telephone_event].
+    DtmfEvent(DtmfEvent),
 
     /// Changes to the media may be emitted.
     ///

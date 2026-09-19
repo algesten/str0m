@@ -22,8 +22,10 @@ mod codec;
 mod codec_config;
 mod format_params;
 mod payload_params;
+mod telephone_event;
 
 pub use codec::{Codec, CodecSpec};
 pub use codec_config::CodecConfig;
 pub use format_params::FormatParams;
 pub use payload_params::PayloadParams;
+pub use telephone_event::TelephoneEvents;
