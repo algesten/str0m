@@ -124,6 +124,12 @@ impl DtmfSender {
                     previous.end_rtp_time().rebase(clock_rate) + MediaTime::new(gap, clock_rate);
                 rtp_time = rtp_time.max(earliest_rtp_time);
             }
+        } else if let Some(not_before) = self.next_tone_at {
+            if not_before > start {
+                let delay = samples_from_duration(not_before - start, clock_rate);
+                rtp_time += MediaTime::new(delay, clock_rate);
+                start = not_before;
+            }
         }
 
         self.queue.push_back(QueuedTone {
