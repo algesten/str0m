@@ -8,10 +8,9 @@ use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 
+use super::ToPayload;
 use super::dtmf_sender::DtmfTone;
-use super::{
-    Dtmf, ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload,
-};
+use super::{Dtmf, ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid};
 
 /// Writer of frame level data and DTMF tones.
 ///

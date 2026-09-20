@@ -5,11 +5,15 @@
   * Move codec-specific packetization and RED send logic out of the payloader #1030
   * Match the transport protocol when invalidating local and remote ICE candidates #1035
   * Preserve the RFC 6464 audio-level voice activity bit when serializing #1032
-  * Add telephone-event (DTMF, RFC 4733) payloads paired with each audio RTP clock, per-stream tone sending in RTP and sample modes with per-tone volume, burst final reports and 70 ms tone gaps, and per-report media events with codec metadata #1012
-  * Fix `DirectApi::reset_stream_tx` leaving the transmit stream keyed by its old SSRC, and reject resets onto an SSRC already in use #1012
+  * Add telephone-event (DTMF, RFC 4733) payloads paired with each audio RTP clock #1012
+  * Add tone sending in RTP and sample modes, with per-tone volume, burst final reports and 70 ms gaps #1012
+  * Add per-report telephone-event media events with codec metadata #1012
+  * Fix `DirectApi::reset_stream_tx` keeping the old SSRC key, and reject resets onto an SSRC in use #1012
   * Omit the RTP header extension block (and clear the X bit) when no extensions are negotiated #1012
-  * Stop RTCP jitter from spiking when a stream's RTP clock rate changes, and count same-timestamp telephone-event reports towards jitter per RFC 4733 #1012
-  * `Rtc::writer` no longer panics in RTP mode; the panic moved to `Writer::write`, so `Writer::write_dtmf` and keyframe requests now work in both modes #1012
+  * Stop RTCP jitter from spiking when a stream's RTP clock rate changes #1012
+  * Count same-timestamp telephone-event reports towards RTCP jitter, per RFC 4733 #1012
+  * `Rtc::writer` no longer panics in RTP mode; the panic moved to `Writer::write` #1012
+  * `Writer::write_dtmf` and keyframe requests now work in both RTP and sample modes #1012
   * Make `CodecSpec::rtp_clock_rate` and `StreamTx::next_seq_no` public #1012
   * Fix `Session::poll_timeout` ignoring later medias' packetization deadlines #1012
   * Add RFC 2198 RED (redundant audio) support for all audio codecs (breaking) #982

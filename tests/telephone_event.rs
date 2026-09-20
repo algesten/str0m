@@ -6,21 +6,16 @@ use std::time::{Duration, Instant};
 
 use str0m::change::SdpOffer;
 use str0m::format::{Codec, CodecExtra, CodecSpec, PayloadParams};
-use str0m::media::{
-    Direction, Dtmf, Frequency, MediaData, MediaKind, MediaTime, Mid, Pt, Rid,
-    TelephoneEventPayload,
-};
+use str0m::media::TelephoneEventPayload;
+use str0m::media::{Direction, Dtmf, Frequency, MediaData, MediaKind, MediaTime, Mid, Pt, Rid};
 use str0m::rtp::rtcp::Rtcp;
-use str0m::rtp::{
-    Extension, ExtensionValues, RawPacket, RedEncoder, RedundantBlock, RtpPacket, RtpWrite, SeqNo,
-    Ssrc,
-};
+use str0m::rtp::{Extension, ExtensionValues, RawPacket, RedEncoder, RedundantBlock, RtpPacket};
+use str0m::rtp::{RtpWrite, SeqNo, Ssrc};
 use str0m::{Event, Input, Output, Reason, Rtc, RtcConfig, RtcError};
 
 mod common;
-use common::{
-    Peer, TestRtc, connect_l_r_with_rtc, init_crypto_default, init_log, negotiate, progress,
-};
+use common::progress;
+use common::{Peer, TestRtc, connect_l_r_with_rtc, init_crypto_default, init_log, negotiate};
 
 fn configure(config: RtcConfig, clock_rate: Frequency) -> RtcConfig {
     let mut config = config.clear_codecs();
