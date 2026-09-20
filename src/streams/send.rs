@@ -632,6 +632,7 @@ impl StreamTx {
 
         buf.resize(DATAGRAM_MAX_PACKET_SIZE, 0);
 
+        header.has_extension = exts.iter().next().is_some();
         let header_len = header.write_to(buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
         header.header_len = header_len;

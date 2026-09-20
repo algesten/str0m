@@ -89,6 +89,25 @@ impl ReceiverRegister {
     }
 
     pub fn update(&mut self, seq: SeqNo, arrival: Instant, rtp_time: u32, clock_rate: u32) -> bool {
+        let new = self.record_packet(seq);
+        self.update_time(arrival, rtp_time, clock_rate);
+        new
+    }
+
+    pub fn update_telephone_event(
+        &mut self,
+        seq: SeqNo,
+        arrival: Instant,
+        rtp_time: u32,
+        clock_rate: u32,
+    ) -> bool {
+        let new = self.record_packet(seq);
+        // RFC 4733 requires same-timestamp event updates to contribute to jitter.
+        self.update_time_with_repetitions(arrival, rtp_time, clock_rate, true);
+        new
+    }
+
+    fn record_packet(&mut self, seq: SeqNo) -> bool {
         if self.first.is_none() {
             self.first = Some(seq);
         }
@@ -98,8 +117,6 @@ impl ReceiverRegister {
         if new {
             self.count += 1;
         }
-
-        self.update_time(arrival, rtp_time, clock_rate);
 
         new
     }
@@ -145,6 +162,16 @@ impl ReceiverRegister {
     }
 
     fn update_time(&mut self, arrival: Instant, rtp_time: u32, clock_rate: u32) {
+        self.update_time_with_repetitions(arrival, rtp_time, clock_rate, false);
+    }
+
+    fn update_time_with_repetitions(
+        &mut self,
+        arrival: Instant,
+        rtp_time: u32,
+        clock_rate: u32,
+        include_same_timestamp: bool,
+    ) {
         let tp = TimePoint {
             arrival,
             rtp_time,
@@ -152,7 +179,11 @@ impl ReceiverRegister {
         };
 
         if let Some(prior) = self.time_point_prior {
-            if tp.is_same(prior) {
+            if prior.clock_rate != clock_rate {
+                self.time_point_prior = Some(tp);
+                return;
+            }
+            if !include_same_timestamp && tp.is_same(prior) {
                 // rtp_time didn't move forward. this is quite normal
                 // when multiple rtp packets are needed for one keyframe.
 
@@ -275,6 +306,34 @@ mod test {
     use std::time::{Duration, Instant};
 
     use crate::streams::register::{ReceiverRegister, expected, packets_lost};
+
+    #[test]
+    fn telephone_event_reports_with_equal_timestamps_contribute_to_jitter() {
+        let start = Instant::now();
+        let mut register = ReceiverRegister::new(None);
+        register.update_telephone_event(1.into(), start, 1000, 8000);
+        register.update_telephone_event(2.into(), start + Duration::from_millis(20), 1000, 8000);
+        assert_eq!(register.reception_report().unwrap().jitter, 10);
+        let previous = register.jitter;
+        register.update_telephone_event(3.into(), start + Duration::from_millis(20), 1000, 8000);
+        assert!(
+            register.jitter < previous,
+            "a burst repetition must also update the estimate"
+        );
+    }
+
+    #[test]
+    fn switching_rtp_clocks_does_not_add_an_artificial_jitter_spike() {
+        let start = Instant::now();
+        let mut register = ReceiverRegister::new(None);
+        register.update_telephone_event(1.into(), start, 1000, 8000);
+        register.jitter = 1000.0;
+        register.update_telephone_event(2.into(), start + Duration::from_millis(20), 48000, 48000);
+        assert_eq!(register.jitter, 1000.0);
+        assert_eq!(register.reception_report().unwrap().jitter, 48);
+        register.update_telephone_event(3.into(), start + Duration::from_millis(40), 48960, 48000);
+        assert_eq!(register.reception_report().unwrap().jitter, 45);
+    }
 
     #[test]
     fn jitter_at_0() {

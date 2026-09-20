@@ -28,15 +28,12 @@ impl TelephoneEvents {
     }
 
     /// Creates a set containing all event codes in the inclusive range.
+    ///
+    /// A reversed range produces an empty set.
     pub fn from_range(start: u8, end: u8) -> Self {
         let mut s = Self::empty();
-        let mut e = start;
-        loop {
+        for e in start..=end {
             s.insert(e);
-            if e >= end {
-                break;
-            }
-            e += 1;
         }
         s
     }
@@ -65,16 +62,23 @@ impl TelephoneEvents {
     /// Returns `None` if the value is malformed or empty.
     pub fn parse(s: &str) -> Option<Self> {
         let mut set = Self::empty();
+        let parse_code = |value: &str| {
+            let value = value.trim();
+            if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            value.parse::<u8>().ok()
+        };
 
         for part in s.split(',') {
             let part = part.trim();
             if part.is_empty() {
-                continue;
+                return None;
             }
 
             if let Some((a, b)) = part.split_once('-') {
-                let a: u8 = a.trim().parse().ok()?;
-                let b: u8 = b.trim().parse().ok()?;
+                let a = parse_code(a)?;
+                let b = parse_code(b)?;
                 if a > b {
                     return None;
                 }
@@ -82,7 +86,7 @@ impl TelephoneEvents {
                     set.insert(e);
                 }
             } else {
-                let e: u8 = part.parse().ok()?;
+                let e = parse_code(part)?;
                 set.insert(e);
             }
         }
@@ -172,10 +176,20 @@ mod test {
 
     #[test]
     fn parse_rejects_bad_input() {
-        assert!(TelephoneEvents::parse("").is_none());
-        assert!(TelephoneEvents::parse("15-0").is_none());
-        assert!(TelephoneEvents::parse("abc").is_none());
-        assert!(TelephoneEvents::parse("300").is_none());
+        for value in [
+            "", "15-0", "abc", "300", ",0-9", "0-9,", "0-9,,12", "+12", "0-+15",
+        ] {
+            assert!(TelephoneEvents::parse(value).is_none(), "{value}");
+        }
+    }
+
+    #[test]
+    fn ranges_handle_empty_and_full_boundaries() {
+        assert!(TelephoneEvents::from_range(15, 0).is_empty());
+        assert_eq!(TelephoneEvents::from_range(255, 255).to_string(), "255");
+        let all = TelephoneEvents::from_range(0, 255);
+        assert!((0..=255).all(|event| all.contains(event)));
+        assert_eq!(TelephoneEvents::parse("255,0-254"), Some(all));
     }
 
     #[test]

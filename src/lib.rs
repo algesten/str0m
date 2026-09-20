@@ -834,7 +834,7 @@ pub mod media;
 use media::AppSpecificFeedback;
 use media::SenderFeedback;
 use media::{Direction, Media, Mid, Pt, Rid, Writer};
-use media::{DtmfEvent, KeyframeRequest, KeyframeRequestKind};
+use media::{KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
 
 pub mod change;
@@ -966,13 +966,6 @@ pub enum Event {
 
     /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
-
-    /// An incoming telephone event (DTMF), per RFC 4733.
-    ///
-    /// Emitted once when a tone ends (or times out), with its final duration.
-    /// No separate start event is emitted. Enable telephone events with
-    /// [`CodecConfig::enable_telephone_event`][crate::format::CodecConfig::enable_telephone_event].
-    DtmfEvent(DtmfEvent),
 
     /// Changes to the media may be emitted.
     ///
@@ -1435,9 +1428,9 @@ impl Rtc {
         DirectApi::new(self)
     }
 
-    /// Send outgoing media data (frames) or request keyframes.
+    /// Send outgoing media data (frames), DTMF tones, or request keyframes.
     ///
-    /// Returns `None` if the direction isn't sending (`sendrecv` or `sendonly`).
+    /// Returns `None` if the media is unknown or the session is no longer alive.
     ///
     /// ```no_run
     /// # use std::time::Instant;
@@ -1461,14 +1454,11 @@ impl Rtc {
     /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
     /// ```
     ///
-    /// This is a frame level API: For RTP level see [`DirectApi::stream_tx()`]
-    /// and [`DirectApi::stream_rx()`].
+    /// DTMF tone sending and feedback are available in both RTP and sample modes.
+    /// Writing media frames requires sample mode. For raw RTP packets see
+    /// [`DirectApi::stream_tx()`] and [`DirectApi::stream_rx()`].
     ///
     pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
-        if self.session.rtp_mode {
-            panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
-        }
-
         if self.state != RtcState::Alive {
             return None;
         }

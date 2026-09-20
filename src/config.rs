@@ -301,15 +301,53 @@ impl RtcConfig {
         self
     }
 
-    /// Enable the telephone-event (DTMF) payload type.
+    /// Enable telephone-event (DTMF) payload types paired with the audio codecs.
     ///
     /// This enables sending and receiving telephone events (DTMF tones and other
     /// telephony signals) per RFC 4733, negotiated inside audio m-lines. Disabled
-    /// by default.
+    /// by default. A separate payload type is offered for each distinct audio
+    /// RTP clock: 48000 Hz for Opus, and 8000 Hz shared by PCMU, PCMA, and G722.
+    /// The clock follows [`CodecSpec::rtp_clock_rate`][crate::format::CodecSpec::rtp_clock_rate],
+    /// including G722's 8000 Hz wire clock despite its 16000 Hz sampling rate.
+    /// For peers that only support 8000 Hz telephone events, such as MSRTC's
+    /// MediaManager profile, enable and select a matching 8000 Hz RTP audio codec.
     ///
-    /// Send tones with [`Writer::write_dtmf`][crate::media::Writer::write_dtmf]
-    /// and observe received tones via
-    /// [`Event::DtmfEvent`][crate::Event::DtmfEvent].
+    /// For libwebrtc versions with mixed-clock DTMF selection or G722 playout
+    /// scaling bugs, retain the default Opus-only audio configuration. It offers
+    /// only 48000 Hz telephone events. Adding 8000 Hz audio codecs also offers
+    /// 8000 Hz telephone events, which affected peers may incorrectly select for
+    /// Opus. Do not compensate by changing the clock or duration on the wire.
+    ///
+    /// Telephone events can coexist with RED-protected audio, but their own
+    /// payloads are sent without RED wrapping.
+    ///
+    /// On streams that support telephone events, automatic RED recovery skips
+    /// spans with multiple missing RTP packets because lost audio and event
+    /// packets cannot be distinguished from timestamps alone.
+    ///
+    /// Send tones with [`Writer::write_dtmf`][crate::media::Writer::write_dtmf],
+    /// or send individual reports through the RTP API. In RTP mode they are
+    /// received as [`Event::RtpPacket`][crate::Event::RtpPacket]. The public
+    /// [`TelephoneEventPayload`][crate::media::TelephoneEventPayload] helper
+    /// parses and encodes the wire payload.
+    ///
+    /// The sample API emits one [`MediaData`][crate::media::MediaData] per report,
+    /// with [`CodecExtra::TelephoneEvent`][crate::format::CodecExtra::TelephoneEvent]
+    /// metadata. Packed packets are split into individual reports; updates and
+    /// repeated final reports are not combined into complete tones.
+    /// Both back-to-back final reports and spaced repetitions are accepted.
+    ///
+    /// ```
+    /// use str0m::Rtc;
+    ///
+    /// // The default audio codec is Opus: telephone-event/48000 only.
+    /// let config = Rtc::builder().enable_telephone_event(true);
+    ///
+    /// // For peers that handle multiple event clocks correctly:
+    /// let multi_rate = Rtc::builder()
+    ///     .enable_pcmu(true, false)
+    ///     .enable_telephone_event(true);
+    /// ```
     pub fn enable_telephone_event(mut self, enabled: bool) -> Self {
         self.codec_config.enable_telephone_event(enabled);
         self
@@ -391,6 +429,8 @@ impl RtcConfig {
     }
 
     /// Clear out the standard extension mappings.
+    ///
+    /// RTP packets sent without any negotiated extensions omit the extension block.
     pub fn clear_extension_map(mut self) -> Self {
         self.exts.clear();
 
@@ -772,7 +812,8 @@ impl RtcConfig {
     }
 
     /// Create a [`Rtc`] from the configuration.
-    pub fn build(self, start: Instant) -> Rtc {
+    pub fn build(mut self, start: Instant) -> Rtc {
+        self.codec_config.sync_telephone_events();
         Rtc::new_from_config(self, start).expect("Failed to create Rtc from config")
     }
 }

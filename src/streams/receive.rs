@@ -1,8 +1,9 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::config_mod::RtcpReportIntervals;
+use crate::format::PayloadParams;
 use crate::media::KeyframeRequestKind;
 use crate::packet::MAX_RED_RECOVERY_DEPTH;
 use crate::rtp_::MidRid;
@@ -23,6 +24,12 @@ use super::register::ReceiverRegister;
 /// How many recent packets to remember for placing RED redundant blocks. Must cover the
 /// recovery depth plus some reordering slack.
 const RED_RECENT_PACKETS: usize = 32;
+
+#[derive(Debug)]
+struct EventTimeReference {
+    seq_no: Option<SeqNo>,
+    timestamp: u64,
+}
 
 /// Incoming encoded stream.
 ///
@@ -79,13 +86,19 @@ pub struct StreamRx {
     /// Set on first ever RTXpacket.
     register_rtx: Option<ReceiverRegister>,
 
-    /// The most recent main-stream packets as `(seq_no, extended rtp time)`, used to place
-    /// RFC 2198 RED redundant blocks (which carry a timestamp, not a seq no) at the right
-    /// sequence number. Bounded by `RED_RECENT_PACKETS`.
-    red_recent: VecDeque<(SeqNo, u64)>,
+    /// Recent audio packets as `(seq_no, primary pt, extended rtp time)`, used to place
+    /// RFC 2198 RED blocks. Telephone events share sequence numbers, not audio timestamps.
+    /// Bounded by `RED_RECENT_PACKETS`.
+    red_recent: VecDeque<(SeqNo, Pt, MediaTime)>,
 
     /// Last observed media time in an RTP packet.
     last_time: Option<MediaTime>,
+
+    /// Timestamp extension reference for ordinary media.
+    last_media_time: Option<MediaTime>,
+
+    /// Telephone-event references by clock rate, bounded by configured payload types.
+    event_times: HashMap<u32, EventTimeReference>,
 
     /// If we have a pending keyframe request to send.
     pending_request_keyframe: Option<KeyframeRequestKind>,
@@ -171,6 +184,8 @@ impl StreamRx {
             register_rtx: None,
             red_recent: VecDeque::new(),
             last_time: None,
+            last_media_time: None,
+            event_times: HashMap::new(),
             pending_request_keyframe: None,
             pending_request_remb: None,
             fir_seq_no: 0,
@@ -397,11 +412,22 @@ impl StreamRx {
         register_ref.unwrap().accepts(seq_no)
     }
 
-    fn remember_recent(&mut self, seq_no: SeqNo, time: u64) {
-        self.red_recent.push_back((seq_no, time));
+    fn remember_recent(&mut self, seq_no: SeqNo, pt: Pt, time: MediaTime) {
+        self.red_recent.push_back((seq_no, pt, time));
         while self.red_recent.len() > RED_RECENT_PACKETS {
             self.red_recent.pop_front();
         }
+    }
+
+    fn red_history(
+        &self,
+        pt: Pt,
+        clock_rate: Frequency,
+    ) -> impl Iterator<Item = (SeqNo, u64)> + '_ {
+        self.red_recent
+            .iter()
+            .filter(move |(_, p, t)| *p == pt && t.frequency() == clock_rate)
+            .map(|(s, _, t)| (*s, t.numer()))
     }
 
     /// Work out which (still missing) sequence number a RED redundant block belongs to.
@@ -409,13 +435,16 @@ impl StreamRx {
     /// RFC 2198 blocks carry a timestamp offset, not a sequence number, and the frame duration
     /// is neither signalled nor constant (Opus 10/20/40/60 ms, DTX, CN interleaved on the same
     /// SSRC). Rather than guess a duration from the offsets, bracket the block's time between the
-    /// nearest received packets `L` (latest with time before) and `U` (earliest with time after)
-    /// and look at the missing sequence numbers between them:
+    /// nearest received audio packets of the same PT/clock, `L` (latest with time before) and
+    /// `U` (earliest with time after), and look at the missing sequence numbers between them.
+    /// Received telephone-event packets occupy sequence numbers but are not time bounds:
     ///
     /// * exactly one missing: that is the block, whatever the durations were — this case is
     ///   exact;
-    /// * several missing: only if `L..U` is uniformly spaced and the block time lands exactly on
-    ///   one of the missing slots; otherwise give up. This case *assumes* a constant frame
+    /// * several missing with telephone-event enabled: give up, even if no event has arrived.
+    ///   Lost events cannot be distinguished from lost audio using RED timestamps;
+    /// * several missing without telephone-event: only if `L..U` is uniformly spaced and the
+    ///   block time lands exactly on one of the missing slots. This case *assumes* a constant frame
     ///   duration across the gap, which holds for the fixed-ptime senders seen in practice
     ///   (WebRTC uses 20 ms). Under variable Opus ptime the derived slot can be a neighbouring
     ///   lost sequence number rather than the block's true one, so recovered audio may land one
@@ -426,22 +455,26 @@ impl StreamRx {
     /// correctly received frame — the worst case above only reorders audio among frames that
     /// were all lost anyway. `carrier` is the packet the block arrived in; recovery is limited
     /// to `MAX_RED_RECOVERY_DEPTH` packets behind it.
-    pub(crate) fn red_locate_seq(&self, carrier: SeqNo, block_time: u64) -> Option<SeqNo> {
+    pub(crate) fn red_locate_seq(
+        &self,
+        carrier: SeqNo,
+        pt: Pt,
+        block_time: MediaTime,
+        has_telephone_event: bool,
+    ) -> Option<SeqNo> {
         let register = self.register.as_ref()?;
+        let history = || self.red_history(pt, block_time.frequency());
+        let block_time = block_time.numer();
 
         // A packet (received or already recovered) at exactly this time: nothing to recover.
-        if self.red_recent.iter().any(|(_, t)| *t == block_time) {
+        if history().any(|(_, t)| t == block_time) {
             return None;
         }
 
-        let below = self
-            .red_recent
-            .iter()
+        let below = history()
             .filter(|(_, t)| *t < block_time)
             .max_by_key(|(s, _)| *s)?;
-        let above = self
-            .red_recent
-            .iter()
+        let above = history()
             .filter(|(_, t)| *t > block_time)
             .min_by_key(|(s, _)| *s)?;
 
@@ -454,7 +487,8 @@ impl StreamRx {
         let depth_ok = (*carrier)
             .checked_sub(l_seq)
             .is_some_and(|d| d <= MAX_RED_RECOVERY_DEPTH + 1);
-        if u_seq <= l_seq + 1 || !depth_ok {
+        let span_seq = u_seq.checked_sub(l_seq)?;
+        if span_seq <= 1 || u_seq > *carrier || !depth_ok {
             return None;
         }
 
@@ -467,15 +501,18 @@ impl StreamRx {
             // Exactly one hole between two received packets that bracket the block in time.
             first
         } else {
-            // Several holes: only a uniformly spaced span lets us tell which one.
-            let span_seq = u_seq - l_seq;
+            if has_telephone_event {
+                trace!("Skip ambiguous RED recovery across multiple audio/event losses");
+                return None;
+            }
+            // Audio-only legacy best effort: assume uniform spacing across the gap.
             let span_time = u_time - l_time;
             if span_time % span_seq != 0 {
                 return None;
             }
             let d = span_time / span_seq;
             let back = block_time - l_time;
-            if back % d != 0 {
+            if d == 0 || back % d != 0 {
                 return None;
             }
             let seq: SeqNo = (l_seq + back / d).into();
@@ -494,18 +531,18 @@ impl StreamRx {
     /// Record that `seq_no` was rebuilt from RED redundancy. It was never on the wire, so it is
     /// not counted as received (reception reports still show the loss), but it must neither be
     /// NACKed nor recovered again.
-    pub(crate) fn mark_red_recovered(&mut self, seq_no: SeqNo, time: u64) {
+    pub(crate) fn mark_red_recovered(&mut self, seq_no: SeqNo, pt: Pt, time: MediaTime) {
         if let Some(register) = &mut self.register {
             register.mark_recovered(seq_no);
         }
-        self.remember_recent(seq_no, time);
+        self.remember_recent(seq_no, pt, time);
     }
 
     pub(crate) fn update_register(
         &mut self,
         now: Instant,
         header: &RtpHeader,
-        clock_rate: Frequency,
+        params: &PayloadParams,
         is_repair: bool,
         seq_no: SeqNo,
     ) -> RegisterUpdateReceipt {
@@ -527,15 +564,29 @@ impl StreamRx {
         // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
         let register = register_ref.as_mut().unwrap();
 
-        let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
+        let clock_rate = params.spec().rtp_clock_rate();
+        let is_event = params.spec().codec.is_telephone_event();
+        let is_new_packet = if is_event {
+            register.update_telephone_event(seq_no, now, header.timestamp, clock_rate.get())
+        } else {
+            register.update(seq_no, now, header.timestamp, clock_rate.get())
+        };
 
-        // Get the previous time for comparison
-        let previous_time = self.last_time.map(|t| t.numer());
+        // Events can hold a tone's timestamp while audio advances, even at another clock rate.
+        let previous_time = if is_event {
+            self.event_times
+                .get(&clock_rate.get())
+                .map(|reference| reference.timestamp)
+        } else {
+            self.last_media_time
+                .filter(|time| time.frequency() == clock_rate)
+                .map(|time| time.numer())
+        };
 
         // Calculate the extended timestamp
         let mut time_u32 = extend_u32(previous_time, header.timestamp);
 
-        if was_paused && Some(time_u32) < previous_time {
+        if was_paused && !is_event && Some(time_u32) < previous_time {
             // In 32-bit RTP timestamps, adding 2^31 (MAX/2) flips to the other half of timestamp space
             // This forces extend_u32 to produce a value in the next cycle
             const HALF_CYCLE: u32 = 1u32 << 31;
@@ -557,8 +608,23 @@ impl StreamRx {
 
         if !is_repair {
             self.last_time = Some(time);
-            if is_new_packet {
-                self.remember_recent(seq_no, time.numer());
+            if is_event {
+                let reference =
+                    self.event_times
+                        .entry(clock_rate.get())
+                        .or_insert(EventTimeReference {
+                            seq_no: None,
+                            timestamp: time_u32,
+                        });
+                if reference.seq_no.is_none_or(|previous| seq_no > previous) {
+                    reference.seq_no = Some(seq_no);
+                    reference.timestamp = time_u32;
+                }
+            } else {
+                self.last_media_time = Some(time);
+            }
+            if is_new_packet && params.spec().codec.is_audio() {
+                self.remember_recent(seq_no, params.pt(), time);
             }
         }
 
@@ -892,6 +958,8 @@ impl StreamRx {
         self.register = None;
         self.red_recent.clear();
         self.last_time = None;
+        self.last_media_time = None;
+        self.event_times.clear();
         self.last_clock_rate = None;
         self.sender_info = None;
         self.last_receiver_report = already_happened();
@@ -941,6 +1009,9 @@ impl StreamRx {
         self.register = None;
         self.register_rtx = None;
         self.red_recent.clear();
+        for reference in self.event_times.values_mut() {
+            reference.seq_no = None;
+        }
         self.reset_roc = Some(roc);
     }
 
@@ -1004,6 +1075,46 @@ pub(crate) struct RegisterUpdateReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::format::{Codec, CodecSpec};
+
+    fn params(codec: Codec, pt: u8, clock_rate: Frequency) -> PayloadParams {
+        PayloadParams::new(
+            pt.into(),
+            None,
+            CodecSpec {
+                codec,
+                clock_rate,
+                channels: None,
+                format: Default::default(),
+            },
+        )
+    }
+
+    fn locate_seq(stream: &StreamRx, carrier: u64, time: u64) -> Option<SeqNo> {
+        stream.red_locate_seq(
+            carrier.into(),
+            111.into(),
+            MediaTime::new(time, Frequency::FORTY_EIGHT_KHZ),
+            false,
+        )
+    }
+
+    fn receive_packet(
+        stream: &mut StreamRx,
+        params: &PayloadParams,
+        seq: u16,
+        timestamp: u32,
+    ) -> RegisterUpdateReceipt {
+        let header = RtpHeader {
+            payload_type: params.pt(),
+            sequence_number: seq,
+            timestamp,
+            ssrc: stream.ssrc(),
+            ..Default::default()
+        };
+        let seq_no = stream.extend_seq(&header, false, |_| None);
+        stream.update_register(already_happened(), &header, params, false, seq_no)
+    }
 
     #[test]
     fn paused_timestamp_repair_moves_time_forward() {
@@ -1011,6 +1122,7 @@ mod tests {
         let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
         let previous_time = 1;
         stream.last_time = Some(MediaTime::new(previous_time, Frequency::NINETY_KHZ));
+        stream.last_media_time = stream.last_time;
         stream.paused = true;
 
         let header = RtpHeader {
@@ -1022,7 +1134,8 @@ mod tests {
         };
 
         let seq_no = stream.extend_seq(&header, false, |_| None);
-        let receipt = stream.update_register(now, &header, Frequency::NINETY_KHZ, false, seq_no);
+        let params = params(Codec::Vp8, 96, Frequency::NINETY_KHZ);
+        let receipt = stream.update_register(now, &header, &params, false, seq_no);
 
         assert!(
             receipt.time.numer() > previous_time,
@@ -1031,22 +1144,150 @@ mod tests {
         assert!(!stream.paused);
     }
 
-    /// Feed packets `(seq, rtp_time)` into a fresh stream, as received on the wire.
-    fn stream_with(packets: &[(u16, u32)]) -> StreamRx {
-        let now = already_happened();
+    #[test]
+    fn delayed_event_after_pause_keeps_its_original_timestamp() {
         let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
-        for (seq, ts) in packets {
+        let event = params(Codec::TelephoneEvent, 126, Frequency::EIGHT_KHZ);
+        receive_packet(&mut stream, &event, 100, 10000);
+        receive_packet(&mut stream, &event, 102, 20000);
+        stream.paused = true;
+        let late = receive_packet(&mut stream, &event, 101, 10000);
+        assert_eq!(late.time, MediaTime::new(10000, Frequency::EIGHT_KHZ));
+        let reference = stream.event_times.get(&8000).unwrap();
+        assert_eq!(reference.seq_no, Some(102.into()));
+        assert_eq!(reference.timestamp, 20000);
+    }
+
+    #[test]
+    fn event_reports_with_a_fixed_timestamp_update_rtcp_jitter() {
+        let start = Instant::now();
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let event = params(Codec::TelephoneEvent, 126, Frequency::EIGHT_KHZ);
+        for index in 0..2 {
             let header = RtpHeader {
-                payload_type: Pt::new_with_value(111),
-                sequence_number: *seq,
-                timestamp: *ts,
-                ssrc: 7.into(),
+                payload_type: event.pt(),
+                sequence_number: 100 + index,
+                timestamp: 10000,
+                ssrc: stream.ssrc(),
                 ..Default::default()
             };
-            let seq_no = stream.extend_seq(&header, false, |_| None);
-            stream.update_register(now, &header, Frequency::FORTY_EIGHT_KHZ, false, seq_no);
+            let seq = stream.extend_seq(&header, false, |_| None);
+            stream.update_register(
+                start + Duration::from_millis(index as u64 * 20),
+                &header,
+                &event,
+                false,
+                seq,
+            );
+        }
+        assert_eq!(
+            stream
+                .register
+                .as_mut()
+                .unwrap()
+                .reception_report()
+                .unwrap()
+                .jitter,
+            10
+        );
+    }
+
+    #[test]
+    fn event_clock_references_survive_switches_and_sequence_resets() {
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let narrow = params(Codec::TelephoneEvent, 126, Frequency::EIGHT_KHZ);
+        let wide = params(Codec::TelephoneEvent, 110, Frequency::FORTY_EIGHT_KHZ);
+        receive_packet(&mut stream, &narrow, 100, u32::MAX - 159);
+        receive_packet(&mut stream, &narrow, 101, 0);
+        receive_packet(&mut stream, &wide, 102, 48000);
+        let next = receive_packet(&mut stream, &narrow, 103, 160);
+        assert_eq!(next.time.numer(), (1_u64 << 32) + 160);
+        stream.reset_roc(0);
+        let next = receive_packet(&mut stream, &narrow, 1, 320);
+        assert_eq!(next.time.numer(), (1_u64 << 32) + 320);
+        assert_eq!(
+            stream.event_times.get(&8000).unwrap().seq_no,
+            Some(1.into())
+        );
+        assert!(stream.change_ssrc(8.into()));
+        assert!(stream.event_times.is_empty());
+        let restarted = receive_packet(&mut stream, &narrow, 1, 0);
+        assert_eq!(restarted.time.numer(), 0);
+    }
+
+    /// Feed packets `(seq, rtp_time)` into a fresh stream, as received on the wire.
+    fn stream_with(packets: &[(u16, u32)]) -> StreamRx {
+        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let params = params(Codec::Opus, 111, Frequency::FORTY_EIGHT_KHZ);
+        for (seq, ts) in packets {
+            receive_packet(&mut stream, &params, *seq, *ts);
         }
         stream
+    }
+
+    #[test]
+    fn red_history_excludes_events_and_other_payload_clocks() {
+        let mut stream = stream_with(&[(10, 0)]);
+        let event_params = params(Codec::TelephoneEvent, 126, Frequency::EIGHT_KHZ);
+        receive_packet(&mut stream, &event_params, 12, 960);
+        assert_eq!(stream.red_recent.len(), 1);
+        assert_eq!(stream.register.as_ref().unwrap().max_seq(), Some(12.into()));
+
+        let audio_params = params(Codec::Opus, 111, Frequency::FORTY_EIGHT_KHZ);
+        receive_packet(&mut stream, &audio_params, 13, 1920);
+        // Equal timestamp numerators in another PT or clock domain are not duplicates.
+        stream.remember_recent(
+            9.into(),
+            0.into(),
+            MediaTime::new(960, Frequency::EIGHT_KHZ),
+        );
+        stream.remember_recent(
+            8.into(),
+            111.into(),
+            MediaTime::new(960, Frequency::EIGHT_KHZ),
+        );
+        assert_eq!(
+            stream.red_locate_seq(
+                13.into(),
+                111.into(),
+                MediaTime::new(960, Frequency::FORTY_EIGHT_KHZ),
+                true,
+            ),
+            Some(11.into())
+        );
+    }
+
+    #[test]
+    fn red_locate_seq_does_not_interpolate_when_events_can_be_lost() {
+        let stream = stream_with(&[(10, 0), (14, 3840)]);
+        for time in [960, 1920, 2880] {
+            assert_eq!(
+                stream.red_locate_seq(
+                    14.into(),
+                    111.into(),
+                    MediaTime::new(time, Frequency::FORTY_EIGHT_KHZ),
+                    true,
+                ),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn red_timestamp_extension_survives_sequence_reset() {
+        let mut stream = stream_with(&[(10, u32::MAX - 959), (11, 0)]);
+        let audio_params = params(Codec::Opus, 111, Frequency::FORTY_EIGHT_KHZ);
+        stream.reset_roc(1);
+        assert!(stream.red_recent.is_empty());
+        let receipt = receive_packet(&mut stream, &audio_params, 12, 960);
+        assert_eq!(receipt.time.numer(), (1_u64 << 32) + 960);
+
+        let event_params = params(Codec::TelephoneEvent, 126, Frequency::EIGHT_KHZ);
+        receive_packet(&mut stream, &event_params, 13, 8000);
+        assert!(stream.change_ssrc(8.into()));
+        assert!(stream.red_recent.is_empty());
+        assert!(stream.last_media_time.is_none());
+        assert!(stream.event_times.is_empty());
     }
 
     #[test]
@@ -1055,24 +1296,24 @@ mod tests {
         let stream = stream_with(&[(10, 0), (11, 960), (12, 1920), (14, 4800)]);
 
         // Block at the time of seq 13 (1920 + 1920): the only hole between 12 and 14.
-        assert_eq!(stream.red_locate_seq(14.into(), 3840), Some(13.into()));
+        assert_eq!(locate_seq(&stream, 14, 3840), Some(13.into()));
     }
 
     #[test]
     fn red_locate_seq_several_holes_need_uniform_spacing() {
-        // Seq 11, 12, 13 lost; 10 and 14 bracket them 4 frames apart: unambiguous.
+        // Audio-only, fixed-ptime assumption: 10 and 14 bracket three lost frames.
         let stream = stream_with(&[(10, 0), (14, 3840)]);
-        assert_eq!(stream.red_locate_seq(14.into(), 960), Some(11.into()));
-        assert_eq!(stream.red_locate_seq(14.into(), 1920), Some(12.into()));
-        assert_eq!(stream.red_locate_seq(14.into(), 2880), Some(13.into()));
+        assert_eq!(locate_seq(&stream, 14, 960), Some(11.into()));
+        assert_eq!(locate_seq(&stream, 14, 1920), Some(12.into()));
+        assert_eq!(locate_seq(&stream, 14, 2880), Some(13.into()));
         // Not on a slot: skip rather than guess.
-        assert_eq!(stream.red_locate_seq(14.into(), 1000), None);
+        assert_eq!(locate_seq(&stream, 14, 1000), None);
 
         // Same holes, but one of the lost frames was longer (span not a multiple): every block
         // is skipped, none is misplaced.
         let stream = stream_with(&[(10, 0), (14, 4800)]);
         for t in [960, 1920, 2880, 3840] {
-            assert_eq!(stream.red_locate_seq(14.into(), t), None, "time {t}");
+            assert_eq!(locate_seq(&stream, 14, t), None, "time {t}");
         }
     }
 
@@ -1081,12 +1322,16 @@ mod tests {
         let mut stream = stream_with(&[(10, 0), (14, 3840)]);
 
         // A block for a frame we already have is not a recovery.
-        assert_eq!(stream.red_locate_seq(14.into(), 0), None);
+        assert_eq!(locate_seq(&stream, 14, 0), None);
 
         // Once recovered, the seq is neither a hole nor NACKed, and a later block for the same
         // frame is rejected instead of being pushed into a neighbouring hole.
-        stream.mark_red_recovered(12.into(), 1920);
-        assert_eq!(stream.red_locate_seq(14.into(), 1920), None);
+        stream.mark_red_recovered(
+            12.into(),
+            111.into(),
+            MediaTime::new(1920, Frequency::FORTY_EIGHT_KHZ),
+        );
+        assert_eq!(locate_seq(&stream, 14, 1920), None);
         assert!(!stream.is_new_packet(false, 12.into()));
         let nacked: Vec<SeqNo> = stream
             .register
@@ -1105,8 +1350,8 @@ mod tests {
         assert_eq!(nacked, vec![11.into(), 13.into()]);
 
         // The remaining holes are still found (11 and 13 are single-hole brackets now).
-        assert_eq!(stream.red_locate_seq(14.into(), 960), Some(11.into()));
-        assert_eq!(stream.red_locate_seq(14.into(), 2880), Some(13.into()));
+        assert_eq!(locate_seq(&stream, 14, 960), Some(11.into()));
+        assert_eq!(locate_seq(&stream, 14, 2880), Some(13.into()));
     }
 
     #[test]
@@ -1115,8 +1360,8 @@ mod tests {
         // Seq 11 lost, then 12..=30 received at 20 ms.
         packets.extend((12..=30u16).map(|s| (s, (s as u32 - 10) * 960)));
         let stream = stream_with(&packets);
-        assert_eq!(stream.red_locate_seq(30.into(), 960), None);
-        assert_eq!(stream.red_locate_seq(19.into(), 960), Some(11.into()));
+        assert_eq!(locate_seq(&stream, 30, 960), None);
+        assert_eq!(locate_seq(&stream, 19, 960), Some(11.into()));
     }
 
     #[test]

@@ -58,6 +58,9 @@ impl RtpHeader {
         }
 
         let ext_start = 12 + csrc_len;
+        if !self.has_extension {
+            return ext_start;
+        }
         let exts_form = exts.form(&self.ext_vals);
         buf[ext_start..ext_start + 2].copy_from_slice(&exts_form.serialize());
 
@@ -336,6 +339,37 @@ mod test {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn header_without_extensions_does_not_insert_an_extension_block() {
+        for csrc_count in [0, 2] {
+            let mut csrc = [0; 15];
+            csrc[0] = 0x01020304;
+            csrc[1] = 0x05060708;
+            let header = RtpHeader {
+                has_extension: false,
+                payload_type: 101.into(),
+                sequence_number: 100,
+                timestamp: 10000,
+                ssrc: 7.into(),
+                csrc_count,
+                csrc,
+                ..Default::default()
+            };
+            let exts = ExtensionMap::empty();
+            let expected_len = 12 + 4 * csrc_count;
+            let mut buf = vec![0; expected_len + 4];
+            let header_len = header.write_to(&mut buf, &exts);
+            assert_eq!(header_len, expected_len);
+            buf[header_len..].copy_from_slice(&[0x05, 0x8a, 0x03, 0x20]);
+            let parsed = RtpHeader::parse(&buf, &exts).unwrap();
+            assert!(!parsed.has_extension);
+            assert_eq!(parsed.header_len, expected_len);
+            assert_eq!(parsed.csrc_count, csrc_count);
+            assert_eq!(&parsed.csrc[..csrc_count], &csrc[..csrc_count]);
+            assert_eq!(&buf[parsed.header_len..], &[0x05, 0x8a, 0x03, 0x20]);
+        }
+    }
 
     #[test]
     fn extend_u16_wrap_around() {

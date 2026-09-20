@@ -342,6 +342,33 @@ impl Streams {
         self.streams_tx.remove(&ssrc).is_some()
     }
 
+    pub(crate) fn reset_stream_tx(
+        &mut self,
+        midrid: MidRid,
+        new_ssrc: Ssrc,
+        new_rtx: Option<Ssrc>,
+    ) -> Option<&mut StreamTx> {
+        let stream = self.stream_tx_by_midrid(midrid)?;
+        if stream.ssrc() == new_ssrc || (stream.rtx().is_some() && stream.rtx() == new_rtx) {
+            return None;
+        }
+        let old_ssrc = stream.ssrc();
+        let occupied = self
+            .streams_tx
+            .values()
+            .flat_map(|stream| [Some(stream.ssrc()), stream.rtx()])
+            .flatten()
+            .any(|ssrc| ssrc == new_ssrc || Some(ssrc) == new_rtx);
+        if occupied || new_rtx == Some(new_ssrc) {
+            warn!("Cannot reset transmit stream to reused or overlapping SSRCs");
+            return None;
+        }
+        let mut stream = self.streams_tx.remove(&old_ssrc).expect("stream exists");
+        stream.reset_ssrc(new_ssrc, new_rtx);
+        self.streams_tx.insert(new_ssrc, stream);
+        self.streams_tx.get_mut(&new_ssrc)
+    }
+
     pub(crate) fn local_sender_ssrcs(&self) -> Vec<Ssrc> {
         self.streams_tx
             .values()

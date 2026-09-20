@@ -1,6 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::RtcError;
 use crate::format::PayloadParams;
@@ -9,15 +8,17 @@ use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 
-use super::ToPayload;
-use super::dtmf::{DtmfTone, default_volume};
-use super::{Dtmf, ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid};
+use super::dtmf_sender::DtmfTone;
+use super::{
+    Dtmf, ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload,
+};
 
-/// Writer of frame level data.
+/// Writer of frame level data and DTMF tones.
 ///
 /// Obtained via [`Rtc::writer`][crate::Rtc::writer].
 ///
-/// This is the Frame Level API. For RTP level see
+/// Frame writing is limited to sample mode; tone sending and feedback also work
+/// in RTP mode. For individual RTP packets see
 /// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
 pub struct Writer<'a> {
     session: &'a mut Session,
@@ -43,15 +44,16 @@ impl<'a> Writer<'a> {
 
     /// Get the configured payload parameters for the `mid` this writer is for.
     ///
-    /// For the [`Writer::write()`] call, the `pt` must be set correctly.
+    /// SDP media use the negotiated payloads; Direct API media use the configured
+    /// codecs for their media kind. Use an audio/video PT for [`Self::write`] or
+    /// a telephone-event PT for [`Self::write_dtmf`].
     pub fn payload_params(&self) -> impl Iterator<Item = &PayloadParams> {
         // This unwrap is OK due to the invariant of self.mid being resolvable
         let media = self.session.media_by_mid(self.mid).unwrap();
         self.session
             .codec_config
-            .params()
-            .iter()
-            .filter(|p| media.remote_pts().contains(&p.pt))
+            .all_for_kind(media.kind())
+            .filter(move |p| media.is_direct_api() || media.remote_pts().contains(&p.pt))
     }
 
     /// Match the given parameters to the configured parameters for this [`Media`].
@@ -126,6 +128,8 @@ impl<'a> Writer<'a> {
     ///
     /// This operation fails if the PT doesn't match a negotiated codec, or the RID (`None` or a value)
     /// does not match anything negotiated.
+    /// Raw telephone-event payloads return [`RtcError::UnknownPt`] here.
+    /// Use [`Self::write_dtmf`] to send a tone, or the RTP API for individual reports.
     ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
@@ -144,10 +148,20 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: impl Into<Arc<[u8]>>,
     ) -> Result<(), RtcError> {
+        assert!(
+            !self.session.rtp_mode,
+            "In rtp_mode use direct_api().stream_tx().write_rtp() for media packets"
+        );
+
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
-        if !self.session.codec_config.has_pt(pt) {
+        if !self
+            .session
+            .codec_config
+            .iter()
+            .any(|p| p.pt() == pt && !p.spec().codec.is_telephone_event())
+        {
             return Err(RtcError::UnknownPt(pt));
         }
 
@@ -185,27 +199,58 @@ impl<'a> Writer<'a> {
 
     /// Send a DTMF telephone-event tone (RFC 4733).
     ///
-    /// This queues a DTMF tone that str0m transmits as a series of
-    /// `telephone-event` RTP packets spanning `duration`, following the RFC 4733
-    /// timing rules: the marker bit on the first packet, a shared RTP timestamp
-    /// and growing duration within each segment, and repeated final segment
-    /// reports. Tones exceeding the 16-bit duration field are split into
-    /// contiguous segments.
+    /// Available in both RTP and sample modes.
     ///
-    /// `pt` must be a negotiated `telephone-event` payload type. Enable telephone
-    /// events with
-    /// [`CodecConfig::enable_telephone_event`][crate::format::CodecConfig::enable_telephone_event].
+    /// Queues duration updates at 20 ms intervals and sends the three final reports
+    /// as one burst, matching MSRTC/libwebrtc sender scheduling rather than RFC 4733's
+    /// recommended interval spacing. Only the first packet has the RTP marker bit. Long tones are
+    /// split into contiguous segments when the 16-bit duration field is exhausted.
+    /// Durations shorter than one tick of the negotiated clock use one tick.
     ///
-    /// `wallclock` and `rtp_time` mark the start of the tone, exactly like
-    /// [`Writer::write`]. Additional tones are sent in call order. A queued
-    /// start that overlaps the preceding tone is moved to that tone's end;
-    /// caller-supplied gaps are preserved.
+    /// `volume` is the RFC 4733 level in -dBm0, from 0 (loudest) to 63 (quietest).
+    /// Values above 63 return [`RtcError::InvalidDtmfVolume`]. The legacy
+    /// hook-flash event has no tone level and is always sent with volume zero.
+    /// This is separate from the RTP header extension set by [`Self::audio_level`].
     ///
-    /// This operation fails with [`RtcError::UnknownPt`] if `pt` is not a
-    /// negotiated telephone-event payload type, with [`RtcError::UnknownRid`]
-    /// if the selected RID was not negotiated, or with
-    /// [`RtcError::UnsupportedDtmfEvent`] if the remote endpoint did not
-    /// advertise support for the requested event.
+    /// `wallclock` and `rtp_time` mark the start of the tone, as in [`Self::write`].
+    /// Tones are sent in call order per transmit stream, with at least 70 ms
+    /// between tones. Different RIDs have independent queues. Starts that
+    /// are too close are delayed, along with their RTP timestamps; larger
+    /// caller-supplied gaps are preserved. No tone gap is inserted between
+    /// continuation segments. The selected RID and
+    /// header extensions apply to the generated reports.
+    ///
+    /// Active and queued tones are cancelled when the media stops sending.
+    /// Enabling sending again does not resume them. Tones also stop if renegotiation
+    /// removes their payload type or event from the peer's supported set.
+    /// Removing or resetting a transmit stream, or withdrawing its RID, cancels
+    /// its pending tones.
+    ///
+    /// This API supports RFC 4733 long-event segments. Peers such as MSRTC's native
+    /// receiver may treat those segments as separate digits; use single-segment
+    /// durations when targeting such peers.
+    ///
+    /// `pt` must be a negotiated telephone-event payload type. Enable support with
+    /// [`RtcConfig::enable_telephone_event`][crate::RtcConfig::enable_telephone_event].
+    /// Select the payload whose clock matches the audio codec's
+    /// [`CodecSpec::rtp_clock_rate`][crate::format::CodecSpec::rtp_clock_rate].
+    /// An unknown or unnegotiated PT returns [`RtcError::UnknownPt`], an unsupported
+    /// event returns [`RtcError::UnsupportedDtmfEvent`], and an unknown RID returns
+    /// [`RtcError::UnknownRid`]. A non-sending media direction returns
+    /// [`RtcError::NotSendingDirection`], and a missing transmit stream returns
+    /// [`RtcError::NoSenderSource`].
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use str0m::{Rtc, RtcError};
+    /// use str0m::media::{Dtmf, MediaTime, Mid, Pt};
+    ///
+    /// fn send_digit(rtc: &mut Rtc, mid: Mid, pt: Pt, now: Instant) -> Result<(), RtcError> {
+    ///     rtc.writer(mid).unwrap().write_dtmf(
+    ///         pt, now, MediaTime::ZERO, Dtmf::D5, Duration::from_millis(100), 10,
+    ///     )
+    /// }
+    /// ```
     pub fn write_dtmf(
         self,
         pt: Pt,
@@ -213,34 +258,44 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         event: Dtmf,
         duration: Duration,
+        volume: u8,
     ) -> Result<(), RtcError> {
+        if volume > 63 {
+            return Err(RtcError::InvalidDtmfVolume(volume));
+        }
+
         let Some(clock_rate) = self
             .session
             .codec_config
-            .params()
             .iter()
             .find(|p| p.pt() == pt && p.spec().codec.is_telephone_event())
-            .map(|params| params.spec().rtp_clock_rate())
+            .map(|p| p.spec().rtp_clock_rate())
         else {
             return Err(RtcError::UnknownPt(pt));
         };
 
-        let rid = self.rid;
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
-        if !media.is_direct_api() && !media.remote_pts().contains(&pt) {
+        if !media.direction().is_sending() {
+            return Err(RtcError::NotSendingDirection(media.direction()));
+        }
+        if !media.has_telephone_event(pt) {
             return Err(RtcError::UnknownPt(pt));
         }
-        if let Some(rid) = rid {
+        if let Some(rid) = self.rid {
             if !media.rids_tx().contains(rid) {
                 return Err(RtcError::UnknownRid(rid));
             }
         }
-
-        let volume = default_volume(event);
         let event_code = event.event_code();
         if !media.supports_telephone_event(pt, event_code) {
             return Err(RtcError::UnsupportedDtmfEvent(event_code));
         }
+        let stream = self
+            .session
+            .streams
+            .stream_tx_by_midrid(MidRid(self.mid, self.rid))
+            .ok_or(RtcError::NoSenderSource)?;
+        let rid = stream.rid();
 
         media.queue_dtmf(DtmfTone {
             pt,
@@ -248,11 +303,11 @@ impl<'a> Writer<'a> {
             rtp_time,
             wallclock,
             event: event_code,
-            volume,
+            volume: if event == Dtmf::Flash { 0 } else { volume },
             duration,
             clock_rate,
+            ext_vals: self.ext_vals,
         });
-
         Ok(())
     }
 

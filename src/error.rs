@@ -43,6 +43,9 @@ pub enum RtcError {
     /// The DTMF event was not advertised by the remote peer.
     UnsupportedDtmfEvent(u8),
 
+    /// The DTMF volume is outside the RFC 4733 range of 0-63.
+    InvalidDtmfVolume(u8),
+
     /// The Rid attempted to write is not known.
     UnknownRid(Rid),
 
@@ -101,6 +104,9 @@ impl fmt::Display for RtcError {
             RtcError::UnknownPt(pt) => write!(f, "PT is unknown {}", pt),
             RtcError::UnsupportedDtmfEvent(event) => {
                 write!(f, "DTMF event is not negotiated: {}", event)
+            }
+            RtcError::InvalidDtmfVolume(volume) => {
+                write!(f, "DTMF volume must be between 0 and 63: {}", volume)
             }
             RtcError::UnknownRid(rid) => write!(f, "RID is unknown {}", rid),
             RtcError::NoSenderSource => write!(f, "No sender source"),

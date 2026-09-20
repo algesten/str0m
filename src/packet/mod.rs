@@ -72,7 +72,7 @@ mod comfort_noise;
 use comfort_noise::{ComfortNoiseDepacketizer, ComfortNoisePacketizer};
 
 mod telephone_event;
-pub use telephone_event::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
+use telephone_event::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
 
 mod buffer_rx;
 pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
@@ -135,10 +135,9 @@ pub trait Packetizer: fmt::Debug {
     }
 }
 
-/// Codec specific information
+/// Codec-specific information.
 ///
-/// Contains additional codec specific information which are deemed useful for
-/// managing and repackaging the frame
+/// Additional information for interpreting or repackaging a depacketized sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodecExtra {
@@ -156,6 +155,10 @@ pub enum CodecExtra {
     H265(H265CodecExtra),
     /// Codec extra parameters for H266 (VVC). Prototype.
     H266(H266CodecExtra),
+    /// One telephone-event report, without aggregating updates or repeated end reports.
+    ///
+    /// Packed RTP payloads produce one media sample per report.
+    TelephoneEvent(crate::media::TelephoneEventPayload),
 }
 
 /// Depacketizes an RTP payload.
@@ -306,12 +309,11 @@ pub(crate) enum CodecPacketizer {
     H266(H266Packetizer),
     Opus(OpusPacketizer),
     ComfortNoise(ComfortNoisePacketizer),
+    TelephoneEvent(TelephoneEventPacketizer),
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
     Av1(Av1Packetizer),
     Null(NullPacketizer),
-    #[allow(unused)]
-    TelephoneEvent(TelephoneEventPacketizer),
     #[allow(unused)]
     Boxed(Box<dyn Packetizer + Send + Sync + UnwindSafe>),
 }
@@ -324,11 +326,11 @@ pub(crate) enum CodecDepacketizer {
     H266(H266Depacketizer),
     Opus(OpusDepacketizer),
     ComfortNoise(ComfortNoiseDepacketizer),
+    TelephoneEvent(TelephoneEventDepacketizer),
     Vp8(Vp8Depacketizer),
     Vp9(Vp9Depacketizer),
     Av1(Av1Depacketizer),
     Null(NullDepacketizer),
-    TelephoneEvent(TelephoneEventDepacketizer),
     #[allow(unused)]
     Boxed(Box<dyn Depacketizer + Send + Sync + UnwindSafe>),
 }
@@ -414,11 +416,11 @@ impl Packetizer for CodecPacketizer {
             H266(v) => v.packetize(mtu, b),
             Opus(v) => v.packetize(mtu, b),
             ComfortNoise(v) => v.packetize(mtu, b),
+            TelephoneEvent(v) => v.packetize(mtu, b),
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
             Av1(v) => v.packetize(mtu, b),
             Null(v) => v.packetize(mtu, b),
-            TelephoneEvent(v) => v.packetize(mtu, b),
             Boxed(v) => v.packetize(mtu, b),
         }
     }
@@ -429,6 +431,7 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::G722(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Opus(v) => v.is_marker(data, previous, last),
             CodecPacketizer::ComfortNoise(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::TelephoneEvent(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H264(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H265(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H266(v) => v.is_marker(data, previous, last),
@@ -436,7 +439,6 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::Vp9(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Av1(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Null(v) => v.is_marker(data, previous, last),
-            CodecPacketizer::TelephoneEvent(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Boxed(v) => v.is_marker(data, previous, last),
         }
     }
@@ -451,11 +453,11 @@ impl Packetizer for CodecPacketizer {
             H266(v) => v.marks_talkspurt(),
             Opus(v) => v.marks_talkspurt(),
             ComfortNoise(v) => v.marks_talkspurt(),
+            TelephoneEvent(v) => v.marks_talkspurt(),
             Vp8(v) => v.marks_talkspurt(),
             Vp9(v) => v.marks_talkspurt(),
             Av1(v) => v.marks_talkspurt(),
             Null(v) => v.marks_talkspurt(),
-            TelephoneEvent(v) => v.marks_talkspurt(),
             Boxed(v) => v.marks_talkspurt(),
         }
     }
@@ -470,11 +472,11 @@ impl Packetizer for CodecPacketizer {
             H266(v) => v.nackable(),
             Opus(v) => v.nackable(),
             ComfortNoise(v) => v.nackable(),
+            TelephoneEvent(v) => v.nackable(),
             Vp8(v) => v.nackable(),
             Vp9(v) => v.nackable(),
             Av1(v) => v.nackable(),
             Null(v) => v.nackable(),
-            TelephoneEvent(v) => v.nackable(),
             Boxed(v) => v.nackable(),
         }
     }
@@ -489,12 +491,12 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.out_size_hint(packets_size),
             Opus(v) => v.out_size_hint(packets_size),
             ComfortNoise(v) => v.out_size_hint(packets_size),
+            TelephoneEvent(v) => v.out_size_hint(packets_size),
             G711(v) => v.out_size_hint(packets_size),
             Vp8(v) => v.out_size_hint(packets_size),
             Vp9(v) => v.out_size_hint(packets_size),
             Av1(v) => v.out_size_hint(packets_size),
             Null(v) => v.out_size_hint(packets_size),
-            TelephoneEvent(v) => v.out_size_hint(packets_size),
             Boxed(v) => v.out_size_hint(packets_size),
         }
     }
@@ -512,12 +514,12 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.depacketize(packet, out, extra),
             Opus(v) => v.depacketize(packet, out, extra),
             ComfortNoise(v) => v.depacketize(packet, out, extra),
+            TelephoneEvent(v) => v.depacketize(packet, out, extra),
             G711(v) => v.depacketize(packet, out, extra),
             Vp8(v) => v.depacketize(packet, out, extra),
             Vp9(v) => v.depacketize(packet, out, extra),
             Av1(v) => v.depacketize(packet, out, extra),
             Null(v) => v.depacketize(packet, out, extra),
-            TelephoneEvent(v) => v.depacketize(packet, out, extra),
             Boxed(v) => v.depacketize(packet, out, extra),
         }
     }
@@ -530,12 +532,12 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.is_partition_head(packet),
             Opus(v) => v.is_partition_head(packet),
             ComfortNoise(v) => v.is_partition_head(packet),
+            TelephoneEvent(v) => v.is_partition_head(packet),
             G711(v) => v.is_partition_head(packet),
             Vp8(v) => v.is_partition_head(packet),
             Vp9(v) => v.is_partition_head(packet),
             Av1(v) => v.is_partition_head(packet),
             Null(v) => v.is_partition_head(packet),
-            TelephoneEvent(v) => v.is_partition_head(packet),
             Boxed(v) => v.is_partition_head(packet),
         }
     }
@@ -548,12 +550,12 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.is_partition_tail(marker, packet),
             Opus(v) => v.is_partition_tail(marker, packet),
             ComfortNoise(v) => v.is_partition_tail(marker, packet),
+            TelephoneEvent(v) => v.is_partition_tail(marker, packet),
             G711(v) => v.is_partition_tail(marker, packet),
             Vp8(v) => v.is_partition_tail(marker, packet),
             Vp9(v) => v.is_partition_tail(marker, packet),
             Av1(v) => v.is_partition_tail(marker, packet),
             Null(v) => v.is_partition_tail(marker, packet),
-            TelephoneEvent(v) => v.is_partition_tail(marker, packet),
             Boxed(v) => v.is_partition_tail(marker, packet),
         }
     }

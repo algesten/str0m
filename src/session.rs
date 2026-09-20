@@ -584,6 +584,18 @@ impl Session {
         };
         let clock_rate = params.spec().rtp_clock_rate();
         let pt = params.pt();
+        if params.spec().codec.is_telephone_event()
+            && !self
+                .medias
+                .iter()
+                .any(|media| media.mid() == mid && media.receives_telephone_event(pt))
+        {
+            debug!(
+                "Drop unnegotiated telephone-event PT {} for mid {}",
+                pt, mid
+            );
+            return;
+        }
         let is_red = params.red() == Some(header.payload_type);
         let is_repair = !is_red && pt != header.payload_type;
 
@@ -651,7 +663,7 @@ impl Session {
         update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
         // Register reception in nack registers.
-        let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
+        let receipt_outer = stream.update_register(now, &header, params, is_repair, seq_no);
 
         // RED-recovered packets (frame mode) are collected here and delivered after the
         // primary, filling single-packet losses from the next packet's redundancy.
@@ -686,7 +698,7 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no);
+            let receipt = stream.update_register(now, &header, params, false, seq_no);
             (receipt, data)
         } else if is_red && !self.rtp_mode {
             // Frame mode: RED rides the main SSRC/seq. Decode to the primary (Opus) payload
@@ -694,6 +706,18 @@ impl Session {
             let Some(un) = un_red(&mut header, data, pt) else {
                 return;
             };
+            // A missing packet may be a telephone event even before any event is received.
+            // The media's telephone-event mappings also cover Direct API configuration.
+            let has_telephone_event =
+                self.medias
+                    .iter()
+                    .find(|m| m.mid() == mid)
+                    .is_some_and(|media| {
+                        self.codec_config.iter().any(|p| {
+                            p.spec().codec.is_telephone_event()
+                                && media.receives_telephone_event(p.pt())
+                        })
+                    });
             // Each redundant block carries an earlier frame. Place it at the sequence number it
             // belongs to (derived from its timestamp and the packets received around it, see
             // `StreamRx::red_locate_seq`) and, if that is still missing, deliver it as a
@@ -713,16 +737,18 @@ impl Session {
                 // `None` when the block can't be tied to a currently-missing seq no (see
                 // `red_locate_seq` for the exact vs. best-effort cases), or when that seq no
                 // was already received or recovered. Recovery only ever fills a hole.
-                let Some(rec_seq) = stream.red_locate_seq(seq_no, numer) else {
+                let rec_time = MediaTime::new(numer, clock_rate);
+                let Some(rec_seq) =
+                    stream.red_locate_seq(seq_no, pt, rec_time, has_telephone_event)
+                else {
                     continue;
                 };
                 // Mark it so the seq is neither NACKed nor recovered again from a later packet.
                 // It is not counted as received (it was lost on the wire), so reception reports
                 // still carry the real loss. `red_locate_seq` now rejects this seq, which also
                 // dedups a malformed packet repeating the same offset.
-                stream.mark_red_recovered(rec_seq, numer);
+                stream.mark_red_recovered(rec_seq, pt, rec_time);
 
-                let rec_time = MediaTime::new(numer, clock_rate);
                 let mut rec_header = header.clone();
                 rec_header.sequence_number = *rec_seq as u16;
                 // RFC 2198: the marker bit is not carried for redundant blocks. Clearing it also
@@ -971,21 +997,7 @@ impl Session {
         }
 
         for media in &mut self.medias {
-            // Emit any completed incoming DTMF (telephone-event) tones first.
-            if let Some(dtmf) = media.poll_dtmf() {
-                return Ok(Some(Event::DtmfEvent(dtmf)));
-            }
-
-            while let Some(e) = media.poll_sample(&self.codec_config)? {
-                if e.params.spec().codec.is_telephone_event() {
-                    // Aggregate telephone-event packets into DtmfEvent rather
-                    // than surfacing them as raw MediaData.
-                    media.feed_dtmf(&e);
-                    if let Some(dtmf) = media.poll_dtmf() {
-                        return Ok(Some(Event::DtmfEvent(dtmf)));
-                    }
-                    continue;
-                }
+            if let Some(e) = media.poll_sample(&self.codec_config)? {
                 return Ok(Some(Event::MediaData(e)));
             }
         }

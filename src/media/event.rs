@@ -210,7 +210,7 @@ impl Simulcast {
     }
 }
 
-/// Video or audio data from the remote peer.
+/// A video frame, audio sample, or telephone-event report from the remote peer.
 ///
 /// This is obtained via [`Event::MediaData`][crate::Event::MediaData].
 #[derive(PartialEq, Eq)]
@@ -238,6 +238,8 @@ pub struct MediaData {
     /// depends on whether this is an audio or video packet.
     ///
     /// For audio the timebase is often 48kHz for video it is 90kHz.
+    /// Telephone-event reports use their negotiated clock rate. For packed
+    /// reports, each report starts after the preceding reports' durations.
     pub time: MediaTime,
 
     /// The time of the [`Input::Receive`][crate::Input::Receive] of the first packet
@@ -246,7 +248,9 @@ pub struct MediaData {
     /// In simple SFU setups this can be used as wallclock for [`Writer::write`][crate::media::Writer].
     pub network_time: Instant,
 
-    /// The (RTP) sequence numbers that made up this data.
+    /// The original RTP sequence numbers that made up this data.
+    ///
+    /// Telephone-event reports from the same packed RTP packet share this range.
     pub seq_range: RangeInclusive<SeqNo>,
 
     /// Whether the data is contiguous from the one just previously emitted. If this is false,
@@ -262,13 +266,20 @@ pub struct MediaData {
     /// transmission units into smaller parts.
     ///
     /// This data is a full depayloaded Frame.
+    /// For telephone events, it is one four-byte report, including for packed RTP payloads.
     pub data: Arc<[u8]>,
 
     /// RTP header extensions for this media data. This is taken from the
     /// first RTP header.
     pub ext_vals: ExtensionValues,
 
-    /// Additional codec specific information
+    /// Additional codec specific information.
+    ///
+    /// Telephone-event reports carry [`CodecExtra::TelephoneEvent`] with their
+    /// event code, end flag, volume, and duration. Updates and repeated final
+    /// reports are emitted individually, without tone aggregation.
+    /// A report is not a completed keypress: missing starts/ends do not produce
+    /// synthetic reports, and peer timing anomalies are not silently normalized.
     pub codec_extra: CodecExtra,
 
     /// Sender information from the most recent Sender Report(SR).
@@ -287,7 +298,7 @@ impl MediaData {
     /// Return true if MediaData is keyframe independently of Codec
     pub fn is_keyframe(&self) -> bool {
         match self.codec_extra {
-            CodecExtra::None => false,
+            CodecExtra::None | CodecExtra::TelephoneEvent(_) => false,
             CodecExtra::H264(h264_extra) => h264_extra.is_keyframe,
             CodecExtra::H265(h265_extra) => h265_extra.is_keyframe,
             CodecExtra::H266(h266_extra) => h266_extra.is_keyframe,
@@ -364,6 +375,7 @@ impl fmt::Debug for MediaData {
             .field("pt", &self.pt)
             .field("rid", &self.rid)
             .field("time", &self.time)
+            .field("seq_range", &self.seq_range)
             .field("len", &self.data.len())
             .finish()
     }

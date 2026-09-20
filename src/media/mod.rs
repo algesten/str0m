@@ -27,8 +27,10 @@ mod event;
 pub use event::*;
 
 mod dtmf;
-pub use dtmf::{Dtmf, DtmfEvent, TelephoneEventPayload};
-pub(crate) use dtmf::{DtmfReceiver, DtmfSender, DtmfTone};
+pub use dtmf::{Dtmf, TelephoneEventPayload};
+
+mod dtmf_sender;
+use dtmf_sender::{DtmfSender, DtmfTone};
 
 mod writer;
 pub use writer::Writer;
@@ -111,6 +113,10 @@ pub struct Media {
     /// Telephone events the remote peer accepts, keyed by negotiated PT.
     remote_telephone_events: HashMap<Pt, crate::format::TelephoneEvents>,
 
+    /// Previously negotiated telephone PTs remain receivable for in-flight RTP
+    /// across re-offers (RFC 3264 Section 8.3.2). Bounded by the 128 RTP PT values.
+    telephone_pts_rx: Vec<Pt>,
+
     /// Set when this m-line has been stopped via
     /// [`SdpApi::stop_media`](crate::change::SdpApi::stop_media) or
     /// rejected by the remote peer. Independent of `remote_pts` so that
@@ -153,11 +159,7 @@ pub struct Media {
     /// Frames to payload. Should typically only be 0 or 1.
     to_payload: VecDeque<ToPayload>,
 
-    /// Generator for outgoing DTMF (telephone-event) tones.
-    dtmf_sender: DtmfSender,
-
-    /// Aggregator for incoming DTMF (telephone-event) tones.
-    dtmf_receiver: DtmfReceiver,
+    dtmf_senders: HashMap<Option<Rid>, DtmfSender>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -401,23 +403,18 @@ impl Media {
 
         let pt = packet.header.payload_type;
 
+        // The session only passes packets with a configured payload type.
+        let params = params.iter().find(|p| p.pt == pt).unwrap();
+        let codec = params.spec.codec;
+
         let key = (pt, rid);
 
         let exists = self.depayloaders.contains_key(&key);
 
         if !exists {
-            // This unwrap is ok, because the handle_input doesn't accept the RtpPacket for
-            // depayloading unless we have matched the PT to one in the session.
-            let params = params.iter().find(|p| p.pt == pt).unwrap();
-
-            let codec = params.spec.codec;
-
             // How many packets to hold back in the jitter buffer.
             let hold_back = if codec.is_telephone_event() {
-                // Telephone events are self-describing (RFC 4733) and resent for
-                // robustness. They also share the stream's sequence numbers with
-                // the audio codec, so their own sequence has gaps. Deliver them
-                // immediately rather than waiting to fill those gaps.
+                // Reports are self-contained and share sequence numbers with audio.
                 0
             } else if codec.is_audio() {
                 reordering_size_audio
@@ -477,6 +474,10 @@ impl Media {
     pub(crate) fn set_direction(&mut self, new_dir: Direction) {
         self.need_changed_event = self.dir != new_dir;
         self.dir = new_dir;
+        if !new_dir.is_sending() {
+            self.to_payload.clear();
+            self.dtmf_senders.clear();
+        }
     }
 
     /// Toggle RFC 2198 RED wrapping for outgoing packets. Takes effect on the next payloaded
@@ -522,40 +523,28 @@ impl Media {
         Ok(())
     }
 
-    /// Queue a DTMF (telephone-event) tone for sending.
-    pub(crate) fn queue_dtmf(&mut self, tone: DtmfTone) {
-        self.dtmf_sender.push(tone);
+    fn queue_dtmf(&mut self, tone: DtmfTone) {
+        self.dtmf_senders.entry(tone.rid).or_default().push(tone);
     }
 
-    /// Feed a depacketized telephone-event sample into the receive aggregator.
-    pub(crate) fn feed_dtmf(&mut self, data: &MediaData) {
-        let Some(payloads) = TelephoneEventPayload::parse_all(&data.data) else {
-            return;
-        };
-
-        let mut time = data.time;
-        for payload in payloads {
-            self.dtmf_receiver
-                .feed(self.mid, time, data.network_time, payload);
-            time += MediaTime::new(payload.duration as u64, time.frequency());
+    pub(crate) fn cancel_dtmf(&mut self, rid: Option<Rid>) {
+        if self.dtmf_senders.remove(&rid).is_some() {
+            debug!(
+                "Mid ({}) cancelled DTMF for {:?} after transmit stream change",
+                self.mid, rid
+            );
         }
     }
 
-    /// Pop the next completed incoming DTMF event, if any.
-    pub(crate) fn poll_dtmf(&mut self) -> Option<DtmfEvent> {
-        self.dtmf_receiver.poll()
-    }
-
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
-        let queued_payload = (!self.to_payload.is_empty()).then_some(already_happened());
-        [
-            queued_payload,
-            self.dtmf_sender.poll_timeout(),
-            self.dtmf_receiver.poll_timeout(),
-        ]
-        .into_iter()
-        .flatten()
-        .min()
+        if !self.to_payload.is_empty() {
+            Some(already_happened())
+        } else {
+            self.dtmf_senders
+                .values()
+                .filter_map(|sender| sender.poll_timeout())
+                .min()
+        }
     }
 
     pub(crate) fn do_payload(
@@ -567,17 +556,36 @@ impl Media {
         mtu: usize,
         red_distances: &[u32],
     ) -> Result<(), RtcError> {
-        self.dtmf_receiver.handle_timeout(self.mid, now);
-
-        // Generate any due DTMF (telephone-event) packet before payloading.
-        if let Some(tp) = self.dtmf_sender.poll(now) {
-            self.to_payload.push_back(tp);
+        if let Some(payload) = self.to_payload.pop_front() {
+            self.payload_one(payload, streams, params, vp9_mode, mtu, red_distances)?;
         }
 
-        let Some(to_payload) = self.to_payload.pop_front() else {
-            return Ok(());
-        };
+        let due: Vec<_> = self
+            .dtmf_senders
+            .iter()
+            .filter(|(_, sender)| sender.poll_timeout().is_some_and(|time| time <= now))
+            .map(|(rid, _)| *rid)
+            .collect();
+        for rid in due {
+            let sender = self.dtmf_senders.get_mut(&rid).expect("sender exists");
+            if let Some(packets) = sender.poll(now) {
+                for payload in packets {
+                    self.payload_one(payload, streams, params, vp9_mode, mtu, red_distances)?;
+                }
+            }
+        }
+        Ok(())
+    }
 
+    fn payload_one(
+        &mut self,
+        to_payload: ToPayload,
+        streams: &mut Streams,
+        params: &[PayloadParams],
+        vp9_mode: Vp9PacketizerMode,
+        mtu: usize,
+        red_distances: &[u32],
+    ) -> Result<(), RtcError> {
         let ToPayload { pt, rid, .. } = &to_payload;
 
         let midrid = MidRid(self.mid, *rid);
@@ -639,14 +647,61 @@ impl Media {
     pub(crate) fn set_remote_telephone_events(
         &mut self,
         events: HashMap<Pt, crate::format::TelephoneEvents>,
+        negotiated_pts: &[Pt],
     ) {
+        // Telephone-event capabilities can change without stopping the media.
+        // Leave ordinary codec ordering to set_remote_pts.
+        self.remote_pts
+            .retain(|pt| !self.remote_telephone_events.contains_key(pt) || events.contains_key(pt));
+        for pt in negotiated_pts {
+            if events.contains_key(pt) {
+                if !self.remote_pts.contains(pt) {
+                    self.remote_pts.push(*pt);
+                }
+                if !self.telephone_pts_rx.contains(pt) {
+                    self.telephone_pts_rx.push(*pt);
+                }
+            }
+        }
+        let cancelled: usize = self
+            .dtmf_senders
+            .values_mut()
+            .map(|sender| {
+                sender.retain(|pt, event| {
+                    events
+                        .get(&pt)
+                        .is_some_and(|supported| supported.contains(event))
+                })
+            })
+            .sum();
+        if cancelled > 0 {
+            debug!(
+                "Mid ({}) cancelled {} DTMF tones after renegotiation",
+                self.mid, cancelled
+            );
+        }
         self.remote_telephone_events = events;
     }
 
-    pub(crate) fn supports_telephone_event(&self, pt: Pt, event: u8) -> bool {
+    /// Whether the remote peer accepts an RFC 4733 event on this payload type.
+    ///
+    /// Use this before sending a [`TelephoneEventPayload`] via the RTP API.
+    /// [`Writer::write_dtmf`] performs this check automatically.
+    /// SDP negotiation supplies the remote event range; media declared through
+    /// the Direct API assume events 0-16 for configured telephone-event payloads.
+    /// Returns `false` if the payload type or event was not negotiated.
+    pub fn supports_telephone_event(&self, pt: Pt, event: u8) -> bool {
         self.remote_telephone_events
             .get(&pt)
             .is_some_and(|events| events.contains(event))
+    }
+
+    pub(crate) fn has_telephone_event(&self, pt: Pt) -> bool {
+        self.remote_telephone_events.contains_key(&pt)
+    }
+
+    pub(crate) fn receives_telephone_event(&self, pt: Pt) -> bool {
+        self.telephone_pts_rx.contains(&pt)
     }
 
     pub(crate) fn set_remote_extmap(&mut self, exts: ExtensionMap) {
@@ -693,9 +748,6 @@ impl Media {
     pub(crate) fn reset_depayloader(&mut self, payload_type: Pt, rid: Option<Rid>) {
         // Simply remove the depayloader, it will be re-created on the next RTP packet.
         self.depayloaders.remove(&(payload_type, rid));
-        // This path is used when the main SSRC changes. Reset DTMF even when
-        // ordinary audio was the first packet observed on the replacement source.
-        self.dtmf_receiver.reset(self.mid);
     }
 
     pub(crate) fn reset_depayloaders_for_rid(&mut self, rid: Option<Rid>) {
@@ -708,6 +760,15 @@ impl Media {
     }
 
     pub(crate) fn set_rid_tx(&mut self, rids: Rids) {
+        let before = self.dtmf_senders.len();
+        self.dtmf_senders
+            .retain(|rid, _| rid.is_none_or(|rid| rids.contains(rid)));
+        if self.dtmf_senders.len() != before {
+            debug!(
+                "Mid ({}) cancelled DTMF for withdrawn transmit RIDs",
+                self.mid
+            );
+        }
         self.rids_tx = rids;
     }
 
@@ -727,6 +788,7 @@ impl Default for Media {
             kind: MediaKind::Video,
             remote_pts: vec![],
             remote_telephone_events: HashMap::new(),
+            telephone_pts_rx: vec![],
             stopped: false,
             remote_exts: ExtensionMap::empty(),
             remote_created: false,
@@ -738,8 +800,7 @@ impl Default for Media {
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: VecDeque::default(),
-            dtmf_sender: DtmfSender::default(),
-            dtmf_receiver: DtmfReceiver::default(),
+            dtmf_senders: HashMap::new(),
             need_open_event: true,
             need_changed_event: false,
             red_send_enabled: true,
@@ -807,15 +868,90 @@ impl Media {
         exts: ExtensionMap,
         remote_telephone_events: HashMap<Pt, crate::format::TelephoneEvents>,
     ) -> Media {
+        let telephone_pts_rx = remote_telephone_events.keys().copied().collect();
         Media {
             mid,
             index,
             kind,
             dir: Direction::SendRecv,
             remote_telephone_events,
+            telephone_pts_rx,
             remote_exts: exts,
             direct_api: true,
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::format::TelephoneEvents;
+    use std::time::Duration;
+
+    #[test]
+    fn withdrawing_a_rid_cancels_only_its_pending_tones() {
+        let mut media = Media::default();
+        let first: Rid = "first".into();
+        let second: Rid = "second".into();
+        let start = Instant::now();
+        media.set_rid_tx(Rids::Specific(vec![first, second]));
+        for (rid, offset) in [(first, 0), (second, 100)] {
+            media.queue_dtmf(DtmfTone {
+                pt: 126.into(),
+                rid: Some(rid),
+                rtp_time: MediaTime::ZERO,
+                wallclock: start + Duration::from_millis(offset),
+                event: 5,
+                volume: 10,
+                duration: Duration::from_millis(100),
+                clock_rate: Frequency::EIGHT_KHZ,
+                ext_vals: ExtensionValues::default(),
+            });
+        }
+        media.set_rid_tx(Rids::Specific(vec![second]));
+        assert!(!media.dtmf_senders.contains_key(&Some(first)));
+        assert!(media.dtmf_senders.contains_key(&Some(second)));
+        assert_eq!(
+            media.poll_timeout(),
+            Some(start + Duration::from_millis(120))
+        );
+    }
+
+    #[test]
+    fn telephone_payloads_can_be_added_and_withdrawn_during_renegotiation() {
+        let mut media = Media::default();
+        let narrow: Pt = 126.into();
+        let wide: Pt = 121.into();
+        let original = vec![0.into(), 111.into(), narrow];
+        media.set_remote_pts(original.clone());
+        media.set_remote_telephone_events(
+            HashMap::from([(narrow, TelephoneEvents::dtmf())]),
+            &original,
+        );
+
+        let added = vec![0.into(), 111.into(), narrow, wide];
+        media.set_remote_pts(added.clone());
+        media.set_remote_telephone_events(
+            HashMap::from([
+                (narrow, TelephoneEvents::dtmf()),
+                (wide, TelephoneEvents::dtmf()),
+            ]),
+            &added,
+        );
+        assert_eq!(media.remote_pts(), added);
+
+        let removed = vec![0.into(), 111.into(), wide];
+        media.set_remote_pts(removed.clone());
+        media.set_remote_telephone_events(
+            HashMap::from([(wide, TelephoneEvents::dtmf())]),
+            &removed,
+        );
+        assert_eq!(media.remote_pts(), removed);
+        assert!(!media.has_telephone_event(narrow));
+        assert!(media.has_telephone_event(wide));
+        assert!(media.receives_telephone_event(narrow));
+        assert!(media.receives_telephone_event(wide));
+        assert!(!media.receives_telephone_event(127.into()));
     }
 }

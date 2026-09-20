@@ -522,6 +522,45 @@ impl MediaLine {
                     self.mid()
                 ));
             }
+
+            let is_telephone_event = self.attrs.iter().any(|attr| {
+                matches!(attr, RtpMap { pt, value } if pt == m && value.codec.is_telephone_event())
+            });
+            if is_telephone_event {
+                let mut fmtps = self.attrs.iter().filter_map(|attr| match attr {
+                    Fmtp { pt, values } if pt == m => Some(values),
+                    _ => None,
+                });
+                if let Some(values) = fmtps.next() {
+                    let valid = matches!(
+                        values.as_slice(),
+                        [FormatParam::TelephoneEvents(events)] if !events.is_empty()
+                    );
+                    if !valid || fmtps.next().is_some() {
+                        return Some(format!(
+                            "Invalid telephone-event fmtp for PT {} on mid {}",
+                            m,
+                            self.mid()
+                        ));
+                    }
+                }
+                let malformed = self.attrs.iter().any(|attr| {
+                    let Unused(line) = attr else {
+                        return false;
+                    };
+                    line.strip_prefix("fmtp:")
+                        .and_then(|value| value.split_whitespace().next())
+                        .and_then(|value| value.parse::<u8>().ok())
+                        == Some(**m)
+                });
+                if malformed {
+                    return Some(format!(
+                        "Malformed telephone-event fmtp for PT {} on mid {}",
+                        m,
+                        self.mid()
+                    ));
+                }
+            }
         }
         None
     }

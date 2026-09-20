@@ -126,6 +126,8 @@ pub struct DepacketizingBuffer {
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
+    // Remaining reports from one packed telephone-event RTP packet.
+    pending_reports: VecDeque<Depacketized>,
     contiguity: Contiguity,
 }
 
@@ -141,8 +143,8 @@ impl DepacketizingBuffer {
             | CodecDepacketizer::Boxed(_)
             | CodecDepacketizer::Opus(_)
             | CodecDepacketizer::ComfortNoise(_)
-            | CodecDepacketizer::G711(_)
             | CodecDepacketizer::TelephoneEvent(_)
+            | CodecDepacketizer::G711(_)
             | CodecDepacketizer::Null(_) => Contiguity::None,
         };
 
@@ -154,6 +156,7 @@ impl DepacketizingBuffer {
             last_emitted: None,
             max_time: None,
             depack_cache: None,
+            pending_reports: VecDeque::new(),
             contiguity,
         }
     }
@@ -224,6 +227,10 @@ impl DepacketizingBuffer {
     }
 
     pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
+        if let Some(report) = self.pending_reports.pop_front() {
+            return Some(Ok(report));
+        }
+
         self.update_segments();
 
         if self.segments.is_empty() {
@@ -290,6 +297,13 @@ impl DepacketizingBuffer {
         }
 
         self.last_emitted = Some((last, dep.codec_extra));
+
+        if let CodecDepacketizer::TelephoneEvent(depacketizer) = &self.depack {
+            if dep.data.len() > 4 {
+                depacketizer.split_reports(dep, &mut self.pending_reports);
+                return self.pending_reports.pop_front().map(Ok);
+            }
+        }
 
         Some(Ok(dep))
     }

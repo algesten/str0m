@@ -1282,6 +1282,7 @@ fn update_media(
         }
         media.mark_stopped();
         media.set_direction(Direction::Inactive);
+        streams.reset_buffers_tx(media.mid());
         return;
     }
 
@@ -1302,7 +1303,11 @@ fn update_media(
             media.mid()
         );
     } else {
+        let stops_sending = media.direction().is_sending() && !new_dir.is_sending();
         media.set_direction(new_dir);
+        if stops_sending {
+            streams.reset_buffers_tx(media.mid());
+        }
     }
 
     if new_dir.is_sending() {
@@ -1329,22 +1334,36 @@ fn update_media(
 
     // Narrowing/ordering of of PT
     let mut remote_telephone_events = HashMap::new();
-    let pts: Vec<Pt> = m
+    let matched: Vec<_> = m
         .rtp_params()
         .into_iter()
-        .filter_map(|p| {
-            let pt = config.sdp_match_remote(p, m.direction())?;
+        .filter_map(|p| config.sdp_match_remote(p, m.direction()).map(|pt| (p, pt)))
+        .collect();
+    let pts: Vec<Pt> = matched
+        .iter()
+        .filter_map(|(p, pt)| {
             if p.spec().codec.is_telephone_event() {
+                let paired = matched.iter().any(|(audio, _)| {
+                    audio.spec().codec.is_audio()
+                        && audio.spec().rtp_clock_rate() == p.spec().rtp_clock_rate()
+                });
+                if !paired {
+                    debug!(
+                        "Skip telephone-event PT {} without a matching audio RTP clock",
+                        pt
+                    );
+                    return None;
+                }
                 let events = m
                     .telephone_events(p.pt())
                     .unwrap_or_else(|| crate::format::TelephoneEvents::from_range(0, 15));
-                remote_telephone_events.insert(pt, events);
+                remote_telephone_events.insert(*pt, events);
             }
-            Some(pt)
+            Some(*pt)
         })
         .collect();
-    media.set_remote_pts(pts);
-    media.set_remote_telephone_events(remote_telephone_events);
+    media.set_remote_pts(pts.clone());
+    media.set_remote_telephone_events(remote_telephone_events, &pts);
 
     let mut remote_extmap = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {

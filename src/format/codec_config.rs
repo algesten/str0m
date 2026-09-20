@@ -66,13 +66,14 @@ pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(62);
 pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(61);
 pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(60);
 
-/// Default payload type for telephone-event (RFC 4733) at 8000 Hz.
+/// Default payload type for telephone-event (RFC 4733).
 pub(crate) const PT_TELEPHONE_EVENT: Pt = Pt::new_with_value(126);
 
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
     params: Vec<PayloadParams>,
+    telephone_event_enabled: bool,
     /// RFC 2198 RED send-side redundancy pattern: how many packets back each redundant level
     /// carries. Empty means the default single level `[1]` (see [`Self::red_distances`]).
     red_distances: Box<[u32]>,
@@ -116,6 +117,7 @@ impl CodecConfig {
     /// Clear all configured configs.
     pub fn clear(&mut self) {
         self.params.clear();
+        self.telephone_event_enabled = false;
     }
 
     /// Manually configure a payload type.
@@ -156,6 +158,9 @@ impl CodecConfig {
         };
 
         self.params.push(p);
+        if !codec.is_telephone_event() {
+            self.sync_telephone_events();
+        }
     }
 
     fn add_static_config(&mut self, pt: Pt) {
@@ -227,6 +232,7 @@ impl CodecConfig {
     pub fn enable_pcmu(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::PCMU);
         if !enabled {
+            self.sync_telephone_events();
             return;
         }
         self.add_static_config(PT_PCMU);
@@ -241,6 +247,7 @@ impl CodecConfig {
     pub fn enable_pcma(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::PCMA);
         if !enabled {
+            self.sync_telephone_events();
             return;
         }
         self.add_static_config(PT_PCMA);
@@ -260,6 +267,7 @@ impl CodecConfig {
     pub fn enable_g722(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::G722);
         if !enabled {
+            self.sync_telephone_events();
             return;
         }
         self.add_static_config(PT_G722);
@@ -275,6 +283,7 @@ impl CodecConfig {
     pub fn enable_comfort_noise(&mut self, enabled: bool) {
         self.params.retain(|c| c.spec.codec != Codec::CN);
         if !enabled {
+            self.sync_telephone_events();
             return;
         }
         self.add_static_config(PT_COMFORT_NOISE);
@@ -286,6 +295,7 @@ impl CodecConfig {
     pub fn enable_opus(&mut self, enabled: bool, use_red: bool) {
         self.params.retain(|c| c.spec.codec != Codec::Opus);
         if !enabled {
+            self.sync_telephone_events();
             return;
         }
         self.add_config(
@@ -312,6 +322,7 @@ impl CodecConfig {
         if let Some(p) = self.params.iter_mut().find(|p| p.spec.codec == codec) {
             p.red = Some(red_pt);
         }
+        self.sync_telephone_events();
     }
 
     /// The RFC 2198 RED send-side redundancy pattern: how many packets back each redundant level
@@ -351,29 +362,98 @@ impl CodecConfig {
         self.red_distances = sane.into_boxed_slice();
     }
 
-    /// Add a default telephone-event (RFC 4733) payload type at 8000 Hz.
+    /// Enable telephone-event (RFC 4733) payloads paired with the audio codecs.
     ///
     /// The telephone-event payload carries DTMF digits and other telephony
     /// signals. It is negotiated inside an audio m-line alongside a real audio
-    /// codec (such as Opus or PCMU). Disabled by default.
+    /// codec (such as Opus or PCMU). Disabled by default. One payload type is
+    /// configured for each distinct audio RTP clock: Opus uses 48000 Hz, while
+    /// PCMU, PCMA, and G722 share an 8000 Hz telephone-event payload.
     ///
-    /// Use [`Writer::write_dtmf`][crate::media::Writer::write_dtmf] to send DTMF
-    /// tones, and observe [`Event::DtmfEvent`][crate::Event::DtmfEvent] for
-    /// received tones.
+    /// Pairing follows [`CodecSpec::rtp_clock_rate`], not the codec's nominal
+    /// sampling rate. Payloads are updated as audio codecs are enabled or disabled.
+    /// This option can be set before or after configuring the audio codecs.
+    ///
+    /// Send tones with [`Writer::write_dtmf`][crate::media::Writer::write_dtmf].
+    /// Individual reports can also be sent and received through the RTP API using
+    /// [`TelephoneEventPayload`][crate::media::TelephoneEventPayload].
+    /// The sample API receives each report as [`MediaData`][crate::media::MediaData]
+    /// with [`CodecExtra::TelephoneEvent`][crate::format::CodecExtra::TelephoneEvent]
+    /// metadata, without aggregating reports into complete tones.
     pub fn enable_telephone_event(&mut self, enabled: bool) {
-        self.params
-            .retain(|c| c.spec.codec != Codec::TelephoneEvent);
-        if !enabled {
+        self.telephone_event_enabled = enabled;
+        if enabled {
+            self.sync_telephone_events();
+        } else {
+            self.params.retain(|p| !p.spec.codec.is_telephone_event());
+        }
+    }
+
+    pub(crate) fn sync_telephone_events(&mut self) {
+        if !self.telephone_event_enabled {
             return;
         }
-        self.add_config(
-            PT_TELEPHONE_EVENT,
-            None,
-            Codec::TelephoneEvent,
-            Frequency::EIGHT_KHZ,
-            None,
-            FormatParams::default(),
-        )
+
+        let mut rates = Vec::new();
+        let mut claimed = [false; 128];
+        for p in self
+            .params
+            .iter()
+            .filter(|p| !p.spec.codec.is_telephone_event())
+        {
+            for pt in [Some(p.pt), p.resend, p.red].into_iter().flatten() {
+                claimed[*pt as usize] = true;
+            }
+            let rate = p.spec.rtp_clock_rate();
+            if p.spec.codec.is_audio() && !rates.contains(&rate) {
+                rates.push(rate);
+            }
+        }
+
+        // Keep existing assignments unless their audio clock disappeared or a
+        // newly configured primary/RTX/RED payload now occupies that PT.
+        self.params.retain(|p| {
+            if !p.spec.codec.is_telephone_event() {
+                return true;
+            }
+            let Some(index) = rates.iter().position(|rate| *rate == p.spec.clock_rate) else {
+                return false;
+            };
+            let pts = [Some(p.pt), p.resend, p.red];
+            if pts.iter().flatten().any(|pt| claimed.is_claimed(*pt)) {
+                return false;
+            }
+            for pt in pts.into_iter().flatten() {
+                claimed.assert_claim_once(pt);
+            }
+            rates.remove(index);
+            true
+        });
+
+        for clock_rate in rates {
+            let pt = if !claimed.is_claimed(PT_TELEPHONE_EVENT) {
+                Some(PT_TELEPHONE_EVENT)
+            } else {
+                // The first report has M=1: avoid the RTP/RTCP overlap at PT 64-95.
+                claimed.find_unclaimed(&[96..=127, 35..=63], &HashSet::new())
+            };
+            let Some(pt) = pt else {
+                warn!(
+                    "No free RTP payload type for telephone-event/{}",
+                    clock_rate.get()
+                );
+                continue;
+            };
+            claimed.assert_claim_once(pt);
+            self.add_config(
+                pt,
+                None,
+                Codec::TelephoneEvent,
+                clock_rate,
+                None,
+                FormatParams::default(),
+            );
+        }
     }
 
     /// Add a default VP8 payload type.
@@ -676,10 +756,6 @@ impl CodecConfig {
             }
         }
     }
-
-    pub(crate) fn has_pt(&self, pt: Pt) -> bool {
-        self.params.iter().any(|p| p.pt() == pt)
-    }
 }
 
 impl Deref for CodecConfig {
@@ -731,6 +807,156 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    fn telephone_event_rates(config: &CodecConfig) -> Vec<u32> {
+        let mut rates: Vec<_> = config
+            .iter()
+            .filter(|p| p.spec().codec.is_telephone_event())
+            .map(|p| p.spec().clock_rate.get())
+            .collect();
+        rates.sort_unstable();
+        rates
+    }
+
+    fn assert_unique_pts(config: &CodecConfig) {
+        let mut used = HashSet::new();
+        for pt in config
+            .iter()
+            .flat_map(|p| [Some(p.pt()), p.resend(), p.red()])
+            .flatten()
+        {
+            assert!(used.insert(pt), "duplicate PT {pt}");
+        }
+    }
+
+    #[test]
+    fn telephone_event_pairs_with_distinct_audio_rtp_clocks() {
+        for enable_first in [false, true] {
+            let mut config = CodecConfig::empty();
+            if enable_first {
+                config.enable_telephone_event(true);
+                assert!(config.is_empty());
+            }
+            config.enable_opus(true, true);
+            config.enable_pcmu(true, true);
+            config.enable_pcma(true, true);
+            config.enable_g722(true, true);
+            config.enable_comfort_noise(true);
+            config.enable_vp8(true);
+            if !enable_first {
+                config.enable_telephone_event(true);
+            }
+            assert_eq!(telephone_event_rates(&config), [8000, 48000]);
+            assert_unique_pts(&config);
+            let g722 = config.find(|p| p.spec().codec == Codec::G722).unwrap();
+            assert_eq!(g722.spec().clock_rate, Frequency::SIXTEEN_KHZ);
+            assert_eq!(g722.spec().rtp_clock_rate(), Frequency::EIGHT_KHZ);
+            for p in config
+                .iter()
+                .filter(|p| p.spec().codec.is_telephone_event())
+            {
+                assert!(p.resend().is_none());
+                assert!(p.red().is_none());
+                assert!(!p.fb_nack && !p.fb_transport_cc);
+            }
+        }
+    }
+
+    #[test]
+    fn telephone_event_tracks_audio_configuration_changes() {
+        let mut config = CodecConfig::new_with_defaults();
+        config.enable_telephone_event(true);
+        assert_eq!(telephone_event_rates(&config), [48000]);
+        let opus_pt = config
+            .find(|p| p.spec().codec.is_telephone_event())
+            .unwrap()
+            .pt();
+        config.enable_pcmu(true, false);
+        assert_eq!(telephone_event_rates(&config), [8000, 48000]);
+        config.enable_pcmu(false, false);
+        assert_eq!(telephone_event_rates(&config), [48000]);
+        assert_eq!(
+            config
+                .find(|p| p.spec().codec.is_telephone_event())
+                .unwrap()
+                .pt(),
+            opus_pt
+        );
+        config.enable_opus(false, false);
+        assert!(telephone_event_rates(&config).is_empty());
+        config.enable_g722(true, false);
+        assert_eq!(telephone_event_rates(&config), [8000]);
+        config.enable_telephone_event(false);
+        assert!(telephone_event_rates(&config).is_empty());
+        config.enable_telephone_event(true);
+        assert_eq!(telephone_event_rates(&config), [8000]);
+        config.clear();
+        config.enable_opus(true, false);
+        assert!(telephone_event_rates(&config).is_empty());
+    }
+
+    #[test]
+    fn telephone_event_handles_custom_audio_clocks_and_late_pt_collisions() {
+        let mut config = CodecConfig::empty();
+        config.enable_telephone_event(true);
+        config.add_config(
+            126.into(),
+            None,
+            Codec::CN,
+            Frequency::SIXTEEN_KHZ,
+            None,
+            FormatParams::default(),
+        );
+        assert_eq!(telephone_event_rates(&config), [16000]);
+        assert_unique_pts(&config);
+        config.enable_vp8(true);
+        config.enable_vp9(true);
+        assert_eq!(telephone_event_rates(&config), [16000]);
+        assert_unique_pts(&config);
+        let vp8 = config.find(|p| p.spec().codec == Codec::Vp8).unwrap();
+        assert_eq!(vp8.pt(), PT_VP8);
+        assert_eq!(vp8.resend(), Some(PT_VP8_RTX));
+    }
+
+    #[test]
+    fn telephone_event_respects_existing_secondary_payload_types() {
+        let mut config = CodecConfig::empty();
+        config.enable_opus(true, true);
+        config.enable_pcmu(true, true);
+        config.add_config(
+            126.into(),
+            Some(96.into()),
+            Codec::TelephoneEvent,
+            Frequency::FORTY_EIGHT_KHZ,
+            None,
+            FormatParams::default(),
+        );
+        config.enable_telephone_event(true);
+        assert_eq!(telephone_event_rates(&config), [8000, 48000]);
+        assert_unique_pts(&config);
+    }
+
+    #[test]
+    fn telephone_event_fallback_pt_avoids_rtcp_overlap() {
+        let mut config = CodecConfig::empty();
+        for pt in 96..=127 {
+            config.add_config(
+                pt.into(),
+                None,
+                Codec::Vp8,
+                Frequency::NINETY_KHZ,
+                None,
+                FormatParams::default(),
+            );
+        }
+        config.enable_pcmu(true, true);
+        config.enable_telephone_event(true);
+        let phone = config
+            .find(|p| p.spec().codec.is_telephone_event())
+            .unwrap();
+        assert!(*phone.pt() < 64);
+        assert_unique_pts(&config);
+    }
 
     #[test]
     fn static_payload_types_have_canonical_codec_definitions() {
