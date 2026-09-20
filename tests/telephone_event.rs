@@ -5,7 +5,6 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::change::SdpOffer;
-use str0m::error::PacketError;
 use str0m::format::{Codec, CodecExtra, CodecSpec, PayloadParams};
 use str0m::media::{
     Direction, Dtmf, Frequency, MediaData, MediaKind, MediaTime, Mid, Pt, Rid,
@@ -746,17 +745,22 @@ fn sample_api_splits_packed_reports() -> Result<(), RtcError> {
 }
 
 #[test]
-fn sample_api_rejects_malformed_reports() -> Result<(), RtcError> {
-    let (mut l, mut r, mid, ssrc) = connect(false, Frequency::EIGHT_KHZ, false);
+fn sample_api_drops_malformed_reports_without_failing_the_session() -> Result<(), RtcError> {
+    // A report is self-contained, so a malformed one is dropped like a lost packet. Any
+    // peer could otherwise end the session with a few stray bytes.
+    let (mut l, mut r, _mid, ssrc) = connect(false, Frequency::EIGHT_KHZ, false);
     let pt = te_pt(&l.rtc);
-    let packet = RtpWrite::new(pt, 100.into(), 4000, l.last, vec![1, 0x8a, 0, 160, 2]);
-    let result = send_packet(&mut l, &mut r, ssrc, packet)
-        .and_then(|_| run_for(&mut l, &mut r, Duration::from_millis(20)));
-    assert!(matches!(
-        result,
-        Err(RtcError::Packet(error_mid, error_pt, PacketError::ErrTelephoneEventCorruptedPacket))
-            if error_mid == mid && error_pt == pt
-    ));
+    for (seq, payload) in [
+        (100u64, vec![1u8, 0x8a, 0, 160, 2]),
+        (101, vec![]),
+        (102, vec![1, 2, 3]),
+        (103, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]),
+    ] {
+        let packet = RtpWrite::new(pt, seq.into(), 4000, l.last, payload);
+        send_packet(&mut l, &mut r, ssrc, packet)?;
+        run_for(&mut l, &mut r, Duration::from_millis(20))?;
+    }
+    assert!(r.rtc.is_alive());
     assert!(telephone_samples(&r).is_empty());
 
     let report = TelephoneEventPayload {
@@ -765,7 +769,8 @@ fn sample_api_rejects_malformed_reports() -> Result<(), RtcError> {
         volume: 10,
         duration: 160,
     };
-    let packet = RtpWrite::new(pt, 101.into(), 4000, l.last, report.to_bytes().to_vec());
+    // Reception recovers immediately: the next well-formed report is delivered.
+    let packet = RtpWrite::new(pt, 104.into(), 4000, l.last, report.to_bytes().to_vec());
     send_packet(&mut l, &mut r, ssrc, packet)?;
     run_for(&mut l, &mut r, Duration::from_millis(20))?;
     let samples = telephone_samples(&r);
@@ -2344,8 +2349,17 @@ fn rtp_mode_still_rejects_frame_writes() {
         .unwrap();
 }
 
+/// Answer `sdp` and report whether the telephone-event payload survived negotiation.
+fn negotiate_event_fmtp(sdp: &str) -> Result<(bool, String), RtcError> {
+    let mut answerer =
+        TestRtc::new_with_config(Peer::Right, |c| configure(c, Frequency::EIGHT_KHZ));
+    let offer = SdpOffer::from_sdp_string(sdp)?;
+    let answer = answerer.sdp_api().accept_offer(offer)?.to_sdp_string();
+    Ok((answer.contains("telephone-event/"), answer))
+}
+
 #[test]
-fn malformed_event_fmtp_is_not_treated_as_an_absent_event_list() {
+fn malformed_event_fmtp_drops_only_the_event_payload() -> Result<(), RtcError> {
     init_crypto_default();
     let mut rtc = TestRtc::new_with_config(Peer::Left, |c| configure(c, Frequency::EIGHT_KHZ));
     let mut change = rtc.sdp_api();
@@ -2354,6 +2368,9 @@ fn malformed_event_fmtp_is_not_treated_as_an_absent_event_list() {
     let sdp = offer.to_sdp_string();
     let original = "a=fmtp:126 0-16\r\n";
     assert!(sdp.contains(original));
+
+    // A malformed event list must not fail the whole session, and must not be mistaken
+    // for an absent one (which RFC 4733 Section 2.5.1.1 reads as DTMF 0-15).
     for value in [
         "",
         " ",
@@ -2367,18 +2384,41 @@ fn malformed_event_fmtp_is_not_treated_as_an_absent_event_list() {
         "events=0-15",
     ] {
         let malformed = sdp.replace(original, &format!("a=fmtp:126 {value}\r\n"));
-        assert!(
-            SdpOffer::from_sdp_string(&malformed).is_err(),
-            "accepted invalid list {value:?}"
-        );
+        let (kept, answer) = negotiate_event_fmtp(&malformed)?;
+        assert!(!kept, "kept event payload for invalid list {value:?}");
+        // Only the event payload is dropped: the rest of the m-line negotiates.
+        assert!(answer.contains("PCMU/8000"), "answer was:\n{answer}");
     }
-    assert!(SdpOffer::from_sdp_string(&sdp.replace(original, "a=fmtp:126\r\n")).is_err());
+    assert!(!negotiate_event_fmtp(&sdp.replace(original, "a=fmtp:126\r\n"))?.0);
+
+    // RFC 4733 Section 2.4.1 defines exactly one event list per payload type.
     let duplicate = sdp.replace(original, "a=fmtp:126 0-9\r\na=fmtp:126 10-15\r\n");
-    assert!(SdpOffer::from_sdp_string(&duplicate).is_err());
-    assert!(SdpOffer::from_sdp_string(&sdp.replace(original, "")).is_ok());
-    assert!(
-        SdpOffer::from_sdp_string(&sdp.replace(original, "a=fmtp:126 15,0-9,10-14\r\n")).is_ok()
-    );
+    assert!(!negotiate_event_fmtp(&duplicate)?.0);
+
+    // An absent fmtp is valid, and so is an unsorted list.
+    assert!(negotiate_event_fmtp(&sdp.replace(original, ""))?.0);
+    assert!(negotiate_event_fmtp(&sdp.replace(original, "a=fmtp:126 15,0-9,10-14\r\n"))?.0);
+    Ok(())
+}
+
+#[test]
+fn absent_event_fmtp_defaults_to_dtmf_0_to_15() -> Result<(), RtcError> {
+    // RFC 4733 Section 2.5.1.1: assume DTMF events 0-15 but no other events.
+    init_crypto_default();
+    let mut l = TestRtc::new_with_config(Peer::Left, |c| configure(c, Frequency::EIGHT_KHZ));
+    let mut r = TestRtc::new_with_config(Peer::Right, |c| configure(c, Frequency::EIGHT_KHZ));
+    let mut change = l.sdp_api();
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let sdp = offer.to_sdp_string().replace("a=fmtp:126 0-16\r\n", "");
+    let answer = r.sdp_api().accept_offer(SdpOffer::from_sdp_string(&sdp)?)?;
+    l.sdp_api().accept_answer(pending, answer)?;
+
+    let media = r.media(mid).unwrap();
+    assert!(media.supports_telephone_event(126.into(), 0));
+    assert!(media.supports_telephone_event(126.into(), 15));
+    assert!(!media.supports_telephone_event(126.into(), Dtmf::Flash.event_code()));
+    Ok(())
 }
 
 #[test]
@@ -3201,4 +3241,123 @@ fn red_audio_timestamp_rollover_is_independent_of_event_timestamps() {
     t.assert_event_reports(&[102]);
     assert!(!t.nacked(101));
     t.assert_loss(1, 119);
+}
+
+#[test]
+fn rtp_mode_tones_continue_the_application_sequence_series() -> Result<(), RtcError> {
+    // RFC 4733 Section 2.5.1.2: events share the sequence number base of the audio.
+    init_crypto_default();
+    let (mut l, mut r, mid, ssrc) = connect_with_modes(true, true, Frequency::EIGHT_KHZ, false);
+    let now = l.last;
+
+    for i in 0..3u64 {
+        let packet = RtpWrite::new(
+            0.into(),
+            (1000 + i).into(),
+            (i * 160) as u32,
+            now,
+            vec![0u8; 160],
+        );
+        send_packet(&mut l, &mut r, ssrc, packet)?;
+    }
+
+    let pt = te_pt(&l.rtc);
+    let tone_at = l.last;
+    l.writer(mid).unwrap().write_dtmf(
+        pt,
+        tone_at,
+        MediaTime::new(480, Frequency::EIGHT_KHZ),
+        Dtmf::D5,
+        Duration::from_millis(100),
+        10,
+    )?;
+    run_for(&mut l, &mut r, Duration::from_millis(250))?;
+
+    let seqs: Vec<u64> = r
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::RtpPacket(packet) => Some(*packet.seq_no),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(seqs, (1000..=1009).collect::<Vec<_>>());
+
+    // The application must be able to keep allocating from the same cursor.
+    assert_eq!(
+        *l.direct_api().stream_tx(&ssrc).unwrap().next_seq_no(),
+        1010
+    );
+    Ok(())
+}
+
+#[test]
+fn rid_less_writes_pick_the_same_stream_every_time() -> Result<(), RtcError> {
+    // MidRid::special_equals lets a None rid match any rid, and transmit streams live in a
+    // HashMap, so the stream must be chosen deterministically rather than by iteration order.
+    for _ in 0..8 {
+        let (mut l, mut r, mid, default_ssrc) =
+            connect_with_modes(true, true, Frequency::EIGHT_KHZ, false);
+        let pt = te_pt(&l.rtc);
+        assert!(l.direct_api().remove_stream_tx(default_ssrc));
+        assert!(r.direct_api().remove_stream_rx(default_ssrc));
+        for (rid, ssrc) in [("a", 7u32), ("b", 3), ("c", 5)] {
+            let rid: Rid = rid.into();
+            l.direct_api()
+                .declare_stream_tx(ssrc.into(), None, mid, Some(rid));
+            r.direct_api()
+                .expect_stream_rx(ssrc.into(), None, mid, Some(rid));
+        }
+
+        let now = l.last;
+        l.writer(mid).unwrap().write_dtmf(
+            pt,
+            now,
+            MediaTime::ZERO,
+            Dtmf::D5,
+            Duration::from_millis(100),
+            10,
+        )?;
+        run_for(&mut l, &mut r, Duration::from_millis(250))?;
+
+        let ssrcs: HashSet<Ssrc> = telephone_packets(&r, pt)
+            .into_iter()
+            .map(|p| p.header.ssrc)
+            .collect();
+        // The lowest SSRC of the mid, regardless of insertion or hash order.
+        assert_eq!(ssrcs, HashSet::from([Ssrc::from(3)]));
+    }
+    Ok(())
+}
+
+#[test]
+fn reset_stream_tx_rekeys_the_stream_and_rejects_reused_ssrcs() {
+    init_crypto_default();
+    let mut l = TestRtc::new_with_config(Peer::Left, |c| configure(c, Frequency::EIGHT_KHZ));
+    let mid: Mid = "aud".into();
+    l.direct_api().declare_media(mid, MediaKind::Audio);
+    l.direct_api().declare_stream_tx(1.into(), None, mid, None);
+    l.direct_api().declare_stream_tx(2.into(), None, mid, None);
+
+    // A reset must re-key the stream map, or lookups disagree with the wire SSRC.
+    assert!(
+        l.direct_api()
+            .reset_stream_tx(mid, None, 9.into(), None)
+            .is_some()
+    );
+    assert!(l.direct_api().stream_tx(&9.into()).is_some());
+    assert_eq!(
+        l.direct_api().stream_tx(&9.into()).unwrap().ssrc(),
+        Ssrc::from(9)
+    );
+
+    // The old key is gone, and an SSRC already in use is refused.
+    assert!(l.direct_api().stream_tx(&1.into()).is_none());
+    assert!(
+        l.direct_api()
+            .reset_stream_tx(mid, None, 2.into(), None)
+            .is_none()
+    );
+    assert!(l.direct_api().stream_tx(&2.into()).is_some());
 }

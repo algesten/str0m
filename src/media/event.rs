@@ -280,6 +280,7 @@ pub struct MediaData {
     /// reports are emitted individually, without tone aggregation.
     /// A report is not a completed keypress: missing starts/ends do not produce
     /// synthetic reports, and peer timing anomalies are not silently normalized.
+    /// Malformed report payloads are dropped like lost packets.
     pub codec_extra: CodecExtra,
 
     /// Sender information from the most recent Sender Report(SR).

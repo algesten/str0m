@@ -201,11 +201,21 @@ impl<'a> Writer<'a> {
     ///
     /// Available in both RTP and sample modes.
     ///
+    /// The reports are sent on the transmit stream that carries the audio, sharing its SSRC
+    /// and sequence number series as RFC 4733 Section 2.5.1.2 requires. In RTP mode str0m
+    /// allocates those sequence numbers from the same cursor that
+    /// [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] advances, so a stream
+    /// that mixes application RTP with tones must take its own sequence numbers from
+    /// [`StreamTx::next_seq_no`][crate::rtp::StreamTx::next_seq_no] rather than a
+    /// private counter.
+    ///
     /// Queues duration updates at 20 ms intervals and sends the three final reports
     /// as one burst, matching MSRTC/libwebrtc sender scheduling rather than RFC 4733's
     /// recommended interval spacing. Only the first packet has the RTP marker bit. Long tones are
     /// split into contiguous segments when the 16-bit duration field is exhausted.
-    /// Durations shorter than one tick of the negotiated clock use one tick.
+    /// Durations shorter than one tick of the negotiated clock use one tick, since RFC 4733
+    /// Section 2.3.5 reserves a zero duration for state events. Durations longer than one
+    /// hour are clamped.
     ///
     /// `volume` is the RFC 4733 level in -dBm0, from 0 (loudest) to 63 (quietest).
     /// Values above 63 return [`RtcError::InvalidDtmfVolume`]. The legacy
@@ -290,6 +300,8 @@ impl<'a> Writer<'a> {
         if !media.supports_telephone_event(pt, event_code) {
             return Err(RtcError::UnsupportedDtmfEvent(event_code));
         }
+        // A tone is queued against the concrete rid of the stream that carries it, which
+        // `stream_tx_by_midrid` resolves deterministically when the caller named no rid.
         let stream = self
             .session
             .streams

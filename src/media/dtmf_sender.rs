@@ -11,6 +11,13 @@ const PACKET_INTERVAL: Duration = Duration::from_millis(20);
 const MIN_TONE_GAP: Duration = Duration::from_millis(70);
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
+/// Longest tone the sender will schedule.
+///
+/// RFC 4733 puts no upper bound on an event, but the duration drives 64-bit sample and RTP
+/// timestamp arithmetic. Clamping keeps an absurd caller value (such as [`Duration::MAX`])
+/// from overflowing it. An hour is far beyond any real telephony signal.
+const MAX_TONE_DURATION: Duration = Duration::from_secs(60 * 60);
+
 fn samples_from_duration(duration: Duration, clock_rate: Frequency) -> u64 {
     ((duration.as_nanos() * clock_rate.get() as u128) / NANOS_PER_SECOND).min(u64::MAX as u128)
         as u64
@@ -22,6 +29,14 @@ fn duration_from_samples(samples: u64, clock_rate: Frequency) -> Duration {
         (nanos / NANOS_PER_SECOND) as u64,
         (nanos % NANOS_PER_SECOND) as u32,
     )
+}
+
+/// Advance an RTP timestamp, saturating instead of overflowing.
+///
+/// `MediaTime`'s `Add` panics on overflow in debug builds, and the caller chooses both the
+/// starting timestamp and the tone duration.
+fn advance(time: MediaTime, samples: u64) -> MediaTime {
+    MediaTime::new(time.numer().saturating_add(samples), time.frequency())
 }
 
 #[derive(Debug)]
@@ -57,7 +72,7 @@ impl QueuedTone {
     }
 
     fn end_rtp_time(&self) -> MediaTime {
-        self.rtp_time + MediaTime::new(self.total_samples, self.clock_rate)
+        advance(self.rtp_time, self.total_samples)
     }
 
     fn first_report_at(&self, not_before: Option<Instant>) -> Instant {
@@ -70,7 +85,7 @@ impl QueuedTone {
         if let Some(time) = not_before {
             if time > self.start {
                 let delay = samples_from_duration(time - self.start, self.clock_rate);
-                self.rtp_time += MediaTime::new(delay, self.clock_rate);
+                self.rtp_time = advance(self.rtp_time, delay);
                 self.start = time;
             }
         }
@@ -106,30 +121,51 @@ impl DtmfSender {
             ext_vals,
         } = tone;
         let mut rtp_time = rtp_time.rebase(clock_rate);
+        let duration = if duration > MAX_TONE_DURATION {
+            warn!(
+                "DTMF tone duration {:?} clamped to {:?}",
+                duration, MAX_TONE_DURATION
+            );
+            MAX_TONE_DURATION
+        } else {
+            duration
+        };
+        // RFC 4733 Section 2.3.5 reserves duration zero for state events, so a tone
+        // shorter than one tick of the clock still reports one tick.
         let total_samples = samples_from_duration(duration, clock_rate).max(1);
         let mut start = wallclock;
-        let previous = self
+
+        let previous_end = self
             .queue
             .back()
-            .or_else(|| self.active.as_ref().map(|active| &active.tone));
-        if let Some(previous) = previous {
-            if let Some(previous_end) = previous.end_at() {
-                // Preserve larger caller-supplied gaps and separate repeated digits.
-                start = start.max(previous_end + MIN_TONE_GAP);
-                let gap = samples_from_duration(
-                    start.saturating_duration_since(previous_end),
-                    clock_rate,
-                );
-                let earliest_rtp_time =
-                    previous.end_rtp_time().rebase(clock_rate) + MediaTime::new(gap, clock_rate);
-                rtp_time = rtp_time.max(earliest_rtp_time);
-            }
-        } else if let Some(not_before) = self.next_tone_at {
+            .or_else(|| self.active.as_ref().map(|active| &active.tone))
+            .and_then(|previous| {
+                Some((
+                    previous.end_at()?,
+                    previous.end_rtp_time().rebase(clock_rate),
+                ))
+            });
+
+        // The caller gives a (wallclock, rtp_time) pair. Delaying the tone must advance
+        // both, or the reports would claim an RTP time that does not correspond to when
+        // they are sent, which skews the RTCP sender report NTP/RTP mapping.
+        let not_before = match previous_end {
+            Some((end, _)) => end.checked_add(MIN_TONE_GAP),
+            None => self.next_tone_at,
+        };
+        if let Some(not_before) = not_before {
             if not_before > start {
                 let delay = samples_from_duration(not_before - start, clock_rate);
-                rtp_time += MediaTime::new(delay, clock_rate);
+                rtp_time = advance(rtp_time, delay);
                 start = not_before;
             }
+        }
+
+        // A caller timeline running ahead of wallclock is preserved, but never so far back
+        // that this tone would overlap the previous one on the RTP timeline.
+        if let Some((end, end_rtp_time)) = previous_end {
+            let gap = samples_from_duration(start.saturating_duration_since(end), clock_rate);
+            rtp_time = rtp_time.max(advance(end_rtp_time, gap));
         }
 
         self.queue.push_back(QueuedTone {
@@ -208,6 +244,7 @@ impl DtmfSender {
             duration: duration as u16,
         };
         let segment_offset = MediaTime::new(active.segment_start, active.tone.clock_rate);
+        let segment_rtp_time = advance(active.tone.rtp_time, active.segment_start);
         let data: Arc<[u8]> = Arc::from(report.to_bytes().as_slice());
         let repeats = if segment_complete {
             END_PACKET_REPEATS
@@ -220,7 +257,7 @@ impl DtmfSender {
                 pt: active.tone.pt,
                 rid: active.tone.rid,
                 wallclock: active.tone.start + segment_offset,
-                rtp_time: active.tone.rtp_time + segment_offset,
+                rtp_time: segment_rtp_time,
                 start_of_talk_spurt: active.first && repeat == 0,
                 data: data.clone(),
                 ext_vals: active.tone.ext_vals.clone(),
@@ -389,6 +426,95 @@ mod test {
                 assert_eq!(packet.rtp_time.numer(), rtp_time);
             }
         }
+    }
+
+    #[test]
+    fn delaying_a_tone_advances_its_wallclock_and_rtp_time_together() {
+        // A report's (wallclock, rtp_time) pair feeds the RTCP sender report NTP/RTP
+        // mapping, so a queueing delay must move both by the same amount.
+        let start = Instant::now();
+        let clock = Frequency::EIGHT_KHZ;
+        let mut sender = DtmfSender::default();
+        for _ in 0..3 {
+            sender.push(tone(start, Duration::from_millis(100), clock));
+        }
+        let packets = drain(&mut sender, start);
+
+        let first = &packets[0].1;
+        for (_, packet) in &packets {
+            let wall_delta = packet.wallclock.saturating_duration_since(first.wallclock);
+            let rtp_delta = packet.rtp_time.numer() - first.rtp_time.numer();
+            assert_eq!(
+                rtp_delta,
+                samples_from_duration(wall_delta, clock),
+                "wallclock and RTP time drifted apart"
+            );
+        }
+
+        // A caller timeline ahead of the overlap floor is kept, shifted by the delay:
+        // the tone is pushed for `start` but can only begin 100 ms + 70 ms later.
+        let mut sender = DtmfSender::default();
+        let mut first = tone(start, Duration::from_millis(100), clock);
+        first.rtp_time = MediaTime::new(8000, clock);
+        sender.push(first);
+        let mut second = tone(start, Duration::from_millis(100), clock);
+        second.rtp_time = MediaTime::new(80_000, clock);
+        second.event = 6;
+        sender.push(second);
+        let packets = drain(&mut sender, start);
+        let (_, ahead) = packets
+            .iter()
+            .find(|(_, packet)| packet.data[0] == 6)
+            .unwrap();
+        assert_eq!(ahead.wallclock, start + Duration::from_millis(170));
+        assert_eq!(ahead.rtp_time.numer(), 80_000 + 1360);
+    }
+
+    #[test]
+    fn extreme_durations_and_timestamps_do_not_overflow() {
+        // `write_dtmf` takes both values from the application, and `MediaTime`'s `Add`
+        // panics on overflow in debug builds.
+        for clock in [Frequency::EIGHT_KHZ, Frequency::FORTY_EIGHT_KHZ] {
+            for duration in [Duration::ZERO, Duration::MAX] {
+                for rtp in [0, u64::MAX - 5] {
+                    let start = Instant::now();
+                    let mut sender = DtmfSender::default();
+                    for (event, duration) in [(5, duration), (6, Duration::from_millis(50))] {
+                        let mut tone = tone(start, duration, clock);
+                        tone.event = event;
+                        tone.rtp_time = MediaTime::new(rtp, clock);
+                        sender.push(tone);
+                    }
+
+                    let mut now = start;
+                    for _ in 0..40 {
+                        let Some(deadline) = sender.poll_timeout() else {
+                            break;
+                        };
+                        now = now.max(deadline);
+                        for packet in &sender.poll(now).expect("packet is due") {
+                            let report = TelephoneEventPayload::parse(&packet.data).unwrap();
+                            // RFC 4733 Section 2.3.5 reserves duration zero for states.
+                            assert_ne!(report.duration, 0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_over_long_tone_is_clamped_rather_than_rejected() {
+        let start = Instant::now();
+        let clock = Frequency::EIGHT_KHZ;
+        let mut sender = DtmfSender::default();
+        sender.push(tone(start, Duration::MAX, clock));
+        let active = sender.queue.front().unwrap();
+        assert_eq!(
+            active.total_samples,
+            samples_from_duration(MAX_TONE_DURATION, clock)
+        );
+        assert!(active.end_at().is_some());
     }
 
     #[test]

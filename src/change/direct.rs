@@ -214,6 +214,13 @@ impl<'a> DirectApi<'a> {
     ///
     /// All streams belong to a media identified by a `mid`. This creates the media without
     /// doing any SDP dance.
+    ///
+    /// Configured telephone-event payload types are assumed to accept the same event set
+    /// str0m offers in SDP, events 0-16 (DTMF plus hook flash). RFC 4733 Section 2.5.1.1's
+    /// narrower 0-15 default applies to a peer that signals no `a=fmtp` list, which cannot
+    /// happen without SDP. Narrow it with
+    /// [`CodecConfig::enable_telephone_event`][crate::format::CodecConfig::enable_telephone_event]
+    /// plus an explicit payload configuration if the peer supports less.
     pub fn declare_media(&mut self, mid: Mid, kind: MediaKind) -> &mut Media {
         let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
 

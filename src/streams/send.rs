@@ -105,6 +105,13 @@ pub struct StreamTx {
     /// If we are doing seq_no ourselves (when writing frame mode).
     seq_no: SeqNo,
 
+    /// Set once the application supplied a sequence number via [`StreamTx::write_rtp`].
+    ///
+    /// RFC 4733 §2.5.1.2 requires telephone events to share the sequence number base of
+    /// the audio they accompany. In RTP mode the application owns the numbering, so the
+    /// internal counter follows it instead of its own random start.
+    seq_no_from_write_rtp: bool,
+
     /// If we are using RTX, this is the seq no counter.
     seq_no_rtx: SeqNo,
 
@@ -313,6 +320,7 @@ impl StreamTx {
             cname: None,
             clock_rate: None,
             seq_no: SeqNo::default(),
+            seq_no_from_write_rtp: false,
             seq_no_rtx: SeqNo::default(),
             last_sent_seq_no: SeqNo::default(),
             last_used: already_happened(),
@@ -445,6 +453,15 @@ impl StreamTx {
         // This 1 in clock frequency will be fixed in poll_output.
         let media_time = MediaTime::from_secs(time as u64);
         self.rtp_and_wallclock = Some((time, wallclock));
+
+        // Follow the application's numbering so packets str0m generates internally for this
+        // stream (telephone events, see RFC 4733 §2.5.1.2) continue the same series instead
+        // of an unrelated random one.
+        let next_seq_no: SeqNo = (*seq_no + 1).into();
+        if !self.seq_no_from_write_rtp || next_seq_no > self.seq_no {
+            self.seq_no = next_seq_no;
+        }
+        self.seq_no_from_write_rtp = true;
 
         let header = RtpHeader {
             csrc_count,
@@ -1064,7 +1081,18 @@ impl StreamTx {
         Some(rtp_time.rebase(clock_rate))
     }
 
-    pub(crate) fn next_seq_no(&mut self) -> SeqNo {
+    /// Allocate the next sequence number for this stream.
+    ///
+    /// In RTP mode the application normally supplies sequence numbers to
+    /// [`StreamTx::write_rtp`]. str0m keeps its own cursor in step with those writes so
+    /// that packets it generates for this stream — currently only telephone events from
+    /// [`Writer::write_dtmf`][crate::media::Writer::write_dtmf], which RFC 4733 §2.5.1.2
+    /// requires to share the audio sequence number base — continue the same series.
+    ///
+    /// If a stream both receives `write_rtp` calls and sends telephone events, allocate the
+    /// application's sequence numbers here instead of from a private counter. Otherwise the
+    /// application will re-use a number that str0m already spent on a telephone event.
+    pub fn next_seq_no(&mut self) -> SeqNo {
         self.seq_no.inc()
     }
 
@@ -1230,6 +1258,7 @@ impl StreamTx {
 
         // Reset sequence numbers
         self.seq_no = SeqNo::default();
+        self.seq_no_from_write_rtp = false;
         self.seq_no_rtx = SeqNo::default();
 
         // Reset timing related fields

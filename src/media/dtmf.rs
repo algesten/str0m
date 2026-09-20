@@ -8,7 +8,11 @@
 //! codec metadata, leaving receive-side aggregation to the application.
 
 /// A DTMF keypad symbol or supported legacy telephone event carried by RFC 4733.
+///
+/// RFC 4733 defines further event codes beyond the ones listed here, so this enum may
+/// gain variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 #[allow(missing_docs)]
 pub enum Dtmf {
     D0,

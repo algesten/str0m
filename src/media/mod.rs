@@ -403,15 +403,17 @@ impl Media {
 
         let pt = packet.header.payload_type;
 
-        // The session only passes packets with a configured payload type.
-        let params = params.iter().find(|p| p.pt == pt).unwrap();
-        let codec = params.spec.codec;
-
         let key = (pt, rid);
 
         let exists = self.depayloaders.contains_key(&key);
 
         if !exists {
+            // This unwrap is ok, because the handle_input doesn't accept the RtpPacket for
+            // depayloading unless we have matched the PT to one in the session.
+            let params = params.iter().find(|p| p.pt == pt).unwrap();
+
+            let codec = params.spec.codec;
+
             // How many packets to hold back in the jitter buffer.
             let hold_back = if codec.is_telephone_event() {
                 // Reports are self-contained and share sequence numbers with audio.
@@ -650,9 +652,14 @@ impl Media {
         negotiated_pts: &[Pt],
     ) {
         // Telephone-event capabilities can change without stopping the media.
-        // Leave ordinary codec ordering to set_remote_pts.
-        self.remote_pts
-            .retain(|pt| !self.remote_telephone_events.contains_key(pt) || events.contains_key(pt));
+        // `set_remote_pts` only applies once, so withdrawn event payloads are pruned here.
+        // A PT the remote still offers is kept even if it used to be an event payload and
+        // has since been remapped to an ordinary codec.
+        self.remote_pts.retain(|pt| {
+            !self.remote_telephone_events.contains_key(pt)
+                || events.contains_key(pt)
+                || negotiated_pts.contains(pt)
+        });
         for pt in negotiated_pts {
             if events.contains_key(pt) {
                 if !self.remote_pts.contains(pt) {
@@ -687,8 +694,12 @@ impl Media {
     ///
     /// Use this before sending a [`TelephoneEventPayload`] via the RTP API.
     /// [`Writer::write_dtmf`] performs this check automatically.
-    /// SDP negotiation supplies the remote event range; media declared through
-    /// the Direct API assume events 0-16 for configured telephone-event payloads.
+    ///
+    /// SDP negotiation supplies the remote event range, defaulting to DTMF events 0-15
+    /// when the peer sends no `a=fmtp` list (RFC 4733 Section 2.5.1.1). Media declared
+    /// through the Direct API have no such signalling, so they assume the same set str0m
+    /// itself offers in SDP: events 0-16, i.e. DTMF plus hook flash.
+    ///
     /// Returns `false` if the payload type or event was not negotiated.
     pub fn supports_telephone_event(&self, pt: Pt, event: u8) -> bool {
         self.remote_telephone_events
@@ -702,6 +713,11 @@ impl Media {
 
     pub(crate) fn receives_telephone_event(&self, pt: Pt) -> bool {
         self.telephone_pts_rx.contains(&pt)
+    }
+
+    /// Whether any telephone-event payload type is receivable on this media.
+    pub(crate) fn receives_any_telephone_event(&self) -> bool {
+        !self.telephone_pts_rx.is_empty()
     }
 
     pub(crate) fn set_remote_extmap(&mut self, exts: ExtensionMap) {

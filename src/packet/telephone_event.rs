@@ -66,6 +66,10 @@ impl Depacketizer for TelephoneEventDepacketizer {
 }
 
 impl TelephoneEventDepacketizer {
+    /// Split a packed RTP payload (RFC 4733 Section 2.5.1.5) into one report each.
+    ///
+    /// The packet timestamp marks the start of the first event; each following event starts
+    /// after the preceding durations.
     pub(super) fn split_reports(&self, packet: Depacketized, out: &mut VecDeque<Depacketized>) {
         let mut time = packet.time;
         for (index, bytes) in packet.data.chunks_exact(4).enumerate() {
@@ -78,7 +82,12 @@ impl TelephoneEventDepacketizer {
                 data: bytes.to_vec(),
                 codec_extra: CodecExtra::TelephoneEvent(report),
             });
-            time += MediaTime::new(report.duration as u64, time.frequency());
+            // Saturating: durations come from the peer and `MediaTime`'s `Add` panics on
+            // overflow in debug builds.
+            time = MediaTime::new(
+                time.numer().saturating_add(report.duration as u64),
+                time.frequency(),
+            );
         }
     }
 }

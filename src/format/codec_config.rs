@@ -420,11 +420,18 @@ impl CodecConfig {
                 return false;
             };
             let pts = [Some(p.pt), p.resend, p.red];
-            if pts.iter().flatten().any(|pt| claimed.is_claimed(*pt)) {
-                return false;
+            // Not `assert_claim_once`: a hand-rolled `add_config` may repeat a PT, either
+            // against another payload or within this entry (e.g. `resend == pt`). Either
+            // way the entry is dropped and reassigned below rather than panicking.
+            let mut entry = [false; 128];
+            for pt in pts.into_iter().flatten() {
+                if claimed.is_claimed(pt) || entry.is_claimed(pt) {
+                    return false;
+                }
+                entry[*pt as usize] = true;
             }
             for pt in pts.into_iter().flatten() {
-                claimed.assert_claim_once(pt);
+                claimed[*pt as usize] = true;
             }
             rates.remove(index);
             true
@@ -444,7 +451,7 @@ impl CodecConfig {
                 );
                 continue;
             };
-            claimed.assert_claim_once(pt);
+            claimed[*pt as usize] = true;
             self.add_config(
                 pt,
                 None,
@@ -934,6 +941,28 @@ mod test {
         config.enable_telephone_event(true);
         assert_eq!(telephone_event_rates(&config), [8000, 48000]);
         assert_unique_pts(&config);
+    }
+
+    #[test]
+    fn telephone_event_with_a_self_referential_secondary_pt_is_replaced() {
+        let mut config = CodecConfig::empty();
+        config.enable_opus(true, false);
+        // A hand-rolled entry repeating its own PT must be dropped, not panic.
+        config.add_config(
+            126.into(),
+            Some(126.into()),
+            Codec::TelephoneEvent,
+            Frequency::FORTY_EIGHT_KHZ,
+            None,
+            FormatParams::default(),
+        );
+        config.enable_telephone_event(true);
+        assert_eq!(telephone_event_rates(&config), [48000]);
+        assert_unique_pts(&config);
+        let phone = config
+            .find(|p| p.spec().codec.is_telephone_event())
+            .unwrap();
+        assert!(phone.resend().is_none());
     }
 
     #[test]

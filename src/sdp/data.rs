@@ -241,6 +241,19 @@ fn is_dir(a: &MediaAttribute) -> bool {
     matches!(a, SendRecv | SendOnly | RecvOnly | Inactive)
 }
 
+/// The RFC 4733 `a=fmtp` event list for a telephone-event payload type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TelephoneEventFmtp {
+    /// No `a=fmtp` line for this payload type.
+    ///
+    /// RFC 4733 Section 2.5.1.1: assume DTMF events 0-15 and no others.
+    Missing,
+    /// An `a=fmtp` line exists but is not a usable event list.
+    Invalid,
+    /// The event codes the peer accepts.
+    Events(crate::format::TelephoneEvents),
+}
+
 /// An m-line
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MediaLine {
@@ -437,26 +450,46 @@ impl MediaLine {
         params
     }
 
-    pub(crate) fn telephone_events(&self, pt: Pt) -> Option<crate::format::TelephoneEvents> {
-        self.attrs.iter().find_map(|attr| {
-            let MediaAttribute::Fmtp {
+    /// The RFC 4733 `a=fmtp` event list for a telephone-event payload type.
+    pub(crate) fn telephone_events(&self, pt: Pt) -> TelephoneEventFmtp {
+        let mut fmtps = self.attrs.iter().filter_map(|attr| match attr {
+            MediaAttribute::Fmtp {
                 pt: fmtp_pt,
                 values,
-            } = attr
-            else {
-                return None;
+            } if *fmtp_pt == pt => Some(values),
+            _ => None,
+        });
+
+        let Some(values) = fmtps.next() else {
+            // An `a=fmtp` line the parser could not interpret at all lands in `Unused`. It is
+            // still an fmtp for this PT, so it must not be mistaken for an absent one.
+            let unparsed = self.attrs.iter().any(|attr| {
+                let MediaAttribute::Unused(line) = attr else {
+                    return false;
+                };
+                line.strip_prefix("fmtp:")
+                    .and_then(|value| value.split_whitespace().next())
+                    .and_then(|value| value.parse::<u8>().ok())
+                    == Some(*pt)
+            });
+            return if unparsed {
+                TelephoneEventFmtp::Invalid
+            } else {
+                TelephoneEventFmtp::Missing
             };
-            if *fmtp_pt != pt {
-                return None;
+        };
+
+        if fmtps.next().is_some() {
+            // RFC 4733 Section 2.4.1 defines exactly one event list per payload type.
+            return TelephoneEventFmtp::Invalid;
+        }
+
+        match values.as_slice() {
+            [FormatParam::TelephoneEvents(events)] if !events.is_empty() => {
+                TelephoneEventFmtp::Events(*events)
             }
-            values.iter().find_map(|value| {
-                if let FormatParam::TelephoneEvents(events) = value {
-                    Some(*events)
-                } else {
-                    None
-                }
-            })
-        })
+            _ => TelephoneEventFmtp::Invalid,
+        }
     }
 
     pub fn check_consistent(&self) -> Option<String> {
@@ -523,44 +556,9 @@ impl MediaLine {
                 ));
             }
 
-            let is_telephone_event = self.attrs.iter().any(|attr| {
-                matches!(attr, RtpMap { pt, value } if pt == m && value.codec.is_telephone_event())
-            });
-            if is_telephone_event {
-                let mut fmtps = self.attrs.iter().filter_map(|attr| match attr {
-                    Fmtp { pt, values } if pt == m => Some(values),
-                    _ => None,
-                });
-                if let Some(values) = fmtps.next() {
-                    let valid = matches!(
-                        values.as_slice(),
-                        [FormatParam::TelephoneEvents(events)] if !events.is_empty()
-                    );
-                    if !valid || fmtps.next().is_some() {
-                        return Some(format!(
-                            "Invalid telephone-event fmtp for PT {} on mid {}",
-                            m,
-                            self.mid()
-                        ));
-                    }
-                }
-                let malformed = self.attrs.iter().any(|attr| {
-                    let Unused(line) = attr else {
-                        return false;
-                    };
-                    line.strip_prefix("fmtp:")
-                        .and_then(|value| value.split_whitespace().next())
-                        .and_then(|value| value.parse::<u8>().ok())
-                        == Some(**m)
-                });
-                if malformed {
-                    return Some(format!(
-                        "Malformed telephone-event fmtp for PT {} on mid {}",
-                        m,
-                        self.mid()
-                    ));
-                }
-            }
+            // A malformed telephone-event `a=fmtp` is deliberately not fatal here. It only
+            // affects one optional payload type, so `update_media` drops that payload and
+            // keeps the rest of the m-line (and the session) usable.
         }
         None
     }

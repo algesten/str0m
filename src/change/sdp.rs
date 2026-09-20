@@ -19,7 +19,7 @@ use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sctp::RtcSctp;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
-use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
+use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups, TelephoneEventFmtp};
 use crate::session::Session;
 use crate::{Candidate, IceCreds};
 use str0m_proto::Id;
@@ -1354,9 +1354,20 @@ fn update_media(
                     );
                     return None;
                 }
-                let events = m
-                    .telephone_events(p.pt())
-                    .unwrap_or_else(|| crate::format::TelephoneEvents::from_range(0, 15));
+                let events = match m.telephone_events(p.pt()) {
+                    TelephoneEventFmtp::Events(events) => events,
+                    // RFC 4733 Section 2.5.1.1: without an "events" parameter assume
+                    // support for DTMF events 0-15 but for no other events.
+                    TelephoneEventFmtp::Missing => {
+                        crate::format::TelephoneEvents::from_range(0, 15)
+                    }
+                    // Only this payload type is unusable. Dropping it keeps the rest of
+                    // the m-line negotiable instead of failing the whole session.
+                    TelephoneEventFmtp::Invalid => {
+                        debug!("Skip telephone-event PT {} with malformed fmtp", pt);
+                        return None;
+                    }
+                };
                 remote_telephone_events.insert(*pt, events);
             }
             Some(*pt)

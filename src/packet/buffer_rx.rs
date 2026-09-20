@@ -227,85 +227,98 @@ impl DepacketizingBuffer {
     }
 
     pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
-        if let Some(report) = self.pending_reports.pop_front() {
-            return Some(Ok(report));
-        }
-
-        self.update_segments();
-
-        if self.segments.is_empty() {
-            self.discard_old_padding();
-            return None;
-        }
-
-        // println!(
-        //     "{:?} {:?}",
-        //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
-        //     self.segments
-        // );
-
-        let (start, stop) = *self.segments.first().expect("segment exists");
-
-        let seq = {
-            let last = self.queue.get(stop).expect("entry for stop index");
-            last.meta.seq_no
-        };
-
-        // depack ahead, even if we may not emit right away
-        let mut dep = match self.depacketize(start, stop, seq) {
-            Ok(d) => d,
-            Err(e) => {
-                // this segment cannot be decoded correctly
-                // remove from the queue and return the error
-                self.last_emitted = Some((seq, CodecExtra::None));
-                self.queue.drain(0..=stop);
-                return Some(Err(e));
+        loop {
+            if let Some(report) = self.pending_reports.pop_front() {
+                return Some(Ok(report));
             }
-        };
 
-        // If we have contiguity of seq numbers we emit right away,
-        // Otherwise, we wait for retransmissions up to `hold_back` frames
-        // and re-evaluate contiguity based on codec specific information
+            self.update_segments();
 
-        let more_than_hold_back = self.segments.len() >= self.hold_back;
-        let contiguous_seq = self.is_following_last(start);
-        let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
-
-        if wait_for_contiguity {
-            // if we are not sending, cache the depacked
-            self.depack_cache = Some((start..stop, dep));
-            self.discard_old_padding();
-            return None;
-        }
-
-        let (can_emit, contiguous_codec) = self.contiguity.check(&dep.codec_extra, contiguous_seq);
-        dep.contiguous = contiguous_codec;
-
-        let last = self
-            .queue
-            .get(stop)
-            .expect("entry for stop index")
-            .meta
-            .seq_no;
-
-        // We're not going to emit frames in the incorrect order, there's no point in keeping
-        // stuff before the emitted range.
-        self.queue.drain(0..=stop);
-
-        if !can_emit {
-            return None;
-        }
-
-        self.last_emitted = Some((last, dep.codec_extra));
-
-        if let CodecDepacketizer::TelephoneEvent(depacketizer) = &self.depack {
-            if dep.data.len() > 4 {
-                depacketizer.split_reports(dep, &mut self.pending_reports);
-                return self.pending_reports.pop_front().map(Ok);
+            if self.segments.is_empty() {
+                self.discard_old_padding();
+                return None;
             }
-        }
 
-        Some(Ok(dep))
+            // println!(
+            //     "{:?} {:?}",
+            //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
+            //     self.segments
+            // );
+
+            let (start, stop) = *self.segments.first().expect("segment exists");
+
+            let seq = {
+                let last = self.queue.get(stop).expect("entry for stop index");
+                last.meta.seq_no
+            };
+
+            // depack ahead, even if we may not emit right away
+            let mut dep = match self.depacketize(start, stop, seq) {
+                Ok(d) => d,
+                Err(e) => {
+                    // this segment cannot be decoded correctly
+                    // remove from the queue and return the error
+                    self.last_emitted = Some((seq, CodecExtra::None));
+                    self.queue.drain(0..=stop);
+
+                    if matches!(self.depack, CodecDepacketizer::TelephoneEvent(_)) {
+                        // A telephone-event report is self-contained and carries no decoder
+                        // state, so a malformed one from the peer is dropped like a lost
+                        // packet. Failing the session would let any peer end it with four
+                        // stray bytes.
+                        trace!("Discarding malformed telephone-event payload: {}", e);
+                        continue;
+                    }
+
+                    return Some(Err(e));
+                }
+            };
+
+            // If we have contiguity of seq numbers we emit right away,
+            // Otherwise, we wait for retransmissions up to `hold_back` frames
+            // and re-evaluate contiguity based on codec specific information
+
+            let more_than_hold_back = self.segments.len() >= self.hold_back;
+            let contiguous_seq = self.is_following_last(start);
+            let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
+
+            if wait_for_contiguity {
+                // if we are not sending, cache the depacked
+                self.depack_cache = Some((start..stop, dep));
+                self.discard_old_padding();
+                return None;
+            }
+
+            let (can_emit, contiguous_codec) =
+                self.contiguity.check(&dep.codec_extra, contiguous_seq);
+            dep.contiguous = contiguous_codec;
+
+            let last = self
+                .queue
+                .get(stop)
+                .expect("entry for stop index")
+                .meta
+                .seq_no;
+
+            // We're not going to emit frames in the incorrect order, there's no point in keeping
+            // stuff before the emitted range.
+            self.queue.drain(0..=stop);
+
+            if !can_emit {
+                return None;
+            }
+
+            self.last_emitted = Some((last, dep.codec_extra));
+
+            if let CodecDepacketizer::TelephoneEvent(depacketizer) = &self.depack {
+                if dep.data.len() > 4 {
+                    depacketizer.split_reports(dep, &mut self.pending_reports);
+                    return self.pending_reports.pop_front().map(Ok);
+                }
+            }
+
+            return Some(Ok(dep));
+        }
     }
 
     fn discard_old_padding(&mut self) {

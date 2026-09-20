@@ -336,6 +336,8 @@ impl RtcConfig {
     /// metadata. Packed packets are split into individual reports; updates and
     /// repeated final reports are not combined into complete tones.
     /// Both back-to-back final reports and spaced repetitions are accepted.
+    /// A report whose payload is not a whole number of four-byte reports is discarded
+    /// like a lost packet, rather than failing the session.
     ///
     /// ```
     /// use str0m::Rtc;

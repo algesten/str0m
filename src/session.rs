@@ -708,16 +708,11 @@ impl Session {
             };
             // A missing packet may be a telephone event even before any event is received.
             // The media's telephone-event mappings also cover Direct API configuration.
-            let has_telephone_event =
-                self.medias
-                    .iter()
-                    .find(|m| m.mid() == mid)
-                    .is_some_and(|media| {
-                        self.codec_config.iter().any(|p| {
-                            p.spec().codec.is_telephone_event()
-                                && media.receives_telephone_event(p.pt())
-                        })
-                    });
+            let has_telephone_event = self
+                .medias
+                .iter()
+                .find(|m| m.mid() == mid)
+                .is_some_and(|media| media.receives_any_telephone_event());
             // Each redundant block carries an earlier frame. Place it at the sequence number it
             // belongs to (derived from its timestamp and the packets received around it, see
             // `StreamRx::red_locate_seq`) and, if that is still missing, deliver it as a

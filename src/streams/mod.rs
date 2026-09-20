@@ -342,6 +342,10 @@ impl Streams {
         self.streams_tx.remove(&ssrc).is_some()
     }
 
+    /// Move an existing transmit stream to a new SSRC (and optionally a new RTX SSRC).
+    ///
+    /// `streams_tx` is keyed by the main SSRC, so the entry is re-keyed rather than mutated
+    /// in place; otherwise lookups by SSRC would disagree with what goes on the wire.
     pub(crate) fn reset_stream_tx(
         &mut self,
         midrid: MidRid,
@@ -363,7 +367,11 @@ impl Streams {
             warn!("Cannot reset transmit stream to reused or overlapping SSRCs");
             return None;
         }
-        let mut stream = self.streams_tx.remove(&old_ssrc).expect("stream exists");
+        let Some(mut stream) = self.streams_tx.remove(&old_ssrc) else {
+            // stream_tx_by_midrid found it, so the map must be keyed by its SSRC.
+            warn!("Transmit stream for {:?} is not keyed by its SSRC", midrid);
+            return None;
+        };
         stream.reset_ssrc(new_ssrc, new_rtx);
         self.streams_tx.insert(new_ssrc, stream);
         self.streams_tx.get_mut(&new_ssrc)
@@ -626,8 +634,21 @@ impl Streams {
         }
     }
 
+    /// Look up a transmit stream by mid/rid.
+    ///
+    /// [`MidRid::special_equals`] lets a `None` rid match any rid, and `streams_tx` is a
+    /// `HashMap`, so picking the first match would be an arbitrary choice on a simulcast
+    /// mid. Selecting the lowest SSRC keeps repeated calls (and different runs) consistent,
+    /// which also keeps media frames and telephone events on the same stream as RFC 4733
+    /// Section 2.5.1.2 requires.
     pub(crate) fn stream_tx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamTx> {
-        self.streams_tx.values_mut().find(|s| s.is_midrid(midrid))
+        let ssrc = self
+            .streams_tx
+            .values()
+            .filter(|s| s.is_midrid(midrid))
+            .map(|s| s.ssrc())
+            .min()?;
+        self.streams_tx.get_mut(&ssrc)
     }
 
     pub(crate) fn stream_rx_by_midrid(
