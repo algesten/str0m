@@ -1029,7 +1029,8 @@ impl Session {
         let video_timeout = self.reordering_timeout_video;
 
         for media in &mut self.medias {
-            if let Some(e) = media.poll_sample(&self.codec_config, now, video_timeout)? {
+            let timeout = video_timeout.filter(|_| media.kind().is_video());
+            if let Some(e) = media.poll_sample(&self.codec_config, now, timeout)? {
                 return Ok(Some(Event::MediaData(e)));
             }
         }
@@ -1217,6 +1218,7 @@ impl Session {
         let receive_at = video_timeout.and_then(|timeout| {
             self.medias
                 .iter_mut()
+                .filter(|m| m.kind().is_video())
                 .filter_map(|m| m.poll_receive_timeout(Some(timeout)))
                 .min()
         });

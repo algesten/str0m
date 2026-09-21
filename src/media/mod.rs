@@ -338,12 +338,6 @@ impl Media {
         now: Instant,
         reordering_timeout: Option<Duration>,
     ) -> Result<Option<MediaData>, RtcError> {
-        let reordering_timeout = if self.kind.is_video() {
-            reordering_timeout
-        } else {
-            None
-        };
-
         for ((pt, rid), buf) in &mut self.depayloaders {
             if let Some(r) = buf.pop(now, reordering_timeout) {
                 let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
@@ -518,10 +512,6 @@ impl Media {
         &mut self,
         reordering_timeout: Option<Duration>,
     ) -> Option<Instant> {
-        if !self.kind.is_video() {
-            return None;
-        }
-
         self.depayloaders
             .values_mut()
             .filter_map(|buf| buf.poll_timeout(reordering_timeout))

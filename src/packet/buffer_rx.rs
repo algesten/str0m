@@ -122,7 +122,7 @@ pub struct DepacketizingBuffer {
     hold_back: usize,
     depack: CodecDepacketizer,
     queue: VecDeque<Entry>,
-    segments: Vec<(usize, usize)>,
+    segments: Vec<(usize, usize, Instant)>,
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
@@ -255,7 +255,7 @@ impl DepacketizingBuffer {
         //     self.segments
         // );
 
-        let (start, stop) = *self.segments.first().expect("segment exists");
+        let (start, stop, first_received) = *self.segments.first().expect("segment exists");
 
         let seq = {
             let last = self.queue.get(stop).expect("entry for stop index");
@@ -282,7 +282,7 @@ impl DepacketizingBuffer {
         let contiguous_seq = self.is_following_last(start);
         let wait_for_contiguity = !contiguous_seq
             && !more_than_hold_back
-            && !self.timeout_allows_progress(now, &dep, reordering_timeout);
+            && !self.timeout_allows_progress(now, first_received, reordering_timeout);
 
         if wait_for_contiguity {
             // if we are not sending, cache the depacked
@@ -318,7 +318,7 @@ impl DepacketizingBuffer {
         let timeout = reordering_timeout?;
         self.update_segments();
 
-        let (start, stop) = self.segments.first().copied()?;
+        let (start, _, first_received) = self.segments.first().copied()?;
 
         let contiguous_seq = self.is_following_last(start);
         let more_than_hold_back = self.segments.len() >= self.hold_back;
@@ -326,9 +326,8 @@ impl DepacketizingBuffer {
             return None;
         }
 
-        let anchor = self.candidate_first_network_time(start, stop);
         // No representable input time can reach a deadline beyond Instant's range.
-        anchor.checked_add(timeout)
+        first_received.checked_add(timeout)
     }
 
     fn discard_old_padding(&mut self) {
@@ -375,25 +374,17 @@ impl DepacketizingBuffer {
         }
     }
 
-    fn candidate_first_network_time(&self, start: usize, stop: usize) -> Instant {
-        self.queue
-            .range(start..=stop)
-            .map(|entry| entry.meta.received)
-            .min()
-            .expect("a depacketized candidate to consist of at least one packet")
-    }
-
     fn timeout_allows_progress(
         &self,
         now: Instant,
-        dep: &Depacketized,
+        first_received: Instant,
         reordering_timeout: Option<Duration>,
     ) -> bool {
         let Some(timeout) = reordering_timeout else {
             return false;
         };
 
-        now.checked_duration_since(dep.first_network_time())
+        now.checked_duration_since(first_received)
             .is_some_and(|age| age >= timeout)
     }
 
@@ -444,6 +435,7 @@ impl DepacketizingBuffer {
             index: i64,
             time: MediaTime,
             offset: i64,
+            first_received: Instant,
         }
 
         let mut start: Option<Start> = None;
@@ -461,7 +453,8 @@ impl DepacketizingBuffer {
                 // We found a segment that ended because the timestamp changed without
                 // a gap in the sequence number. The marker bit in the RTP packet is
                 // just indicative, this is the robust fallback.
-                let segment = (start.unwrap().index as usize, index as usize - 1);
+                let s = start.unwrap();
+                let segment = (s.index as usize, index as usize - 1, s.first_received);
                 self.segments.push(segment);
                 start = None;
             }
@@ -477,13 +470,19 @@ impl DepacketizingBuffer {
                     index,
                     time: entry.meta.time,
                     offset: iseq.saturating_sub(index),
+                    first_received: entry.meta.received,
                 });
+            }
+
+            if let Some(s) = start.as_mut() {
+                s.first_received = s.first_received.min(entry.meta.received);
             }
 
             if start.is_some() && entry.tail {
                 // We found a contiguous sequence of packets ending with something from
                 // the packet (like the RTP marker bit) indicating it's the tail.
-                let segment = (start.unwrap().index as usize, index as usize);
+                let s = start.unwrap();
+                let segment = (s.index as usize, index as usize, s.first_received);
                 self.segments.push(segment);
                 start = None;
             }
@@ -1115,6 +1114,82 @@ mod test {
             assert!(!dep.contiguous);
             assert_eq!(buf.poll_timeout(timeout), None);
         }
+    }
+
+    /// Test reordered packet receipts use the segment minimum, excluding earlier incomplete data.
+    #[test]
+    fn timeout_uses_earliest_receipt_with_reordered_packets() {
+        for received_ms in [[100, 200, 150], [200, 100, 150], [200, 150, 100]] {
+            let base = Instant::now();
+            let timeout = Some(Duration::from_millis(250));
+            let mut buf =
+                DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+            buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+            buf.pop(base, timeout).unwrap().unwrap();
+            buf.push(test_meta(base, 2, 2, 25), [1]);
+
+            let mut packets = [
+                (test_meta(base, 4, 3, received_ms[0]), [1]),
+                (test_meta(base, 5, 3, received_ms[1]), [2]),
+                (test_meta(base, 6, 3, received_ms[2]), [9]),
+            ];
+            packets.sort_by_key(|(meta, _)| meta.received);
+            for (meta, data) in packets {
+                buf.push(meta, data);
+            }
+
+            let deadline = base + Duration::from_millis(350);
+            assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+            assert!(
+                buf.pop(deadline - Duration::from_nanos(1), timeout)
+                    .is_none()
+            );
+            let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+            assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (4, 6));
+            assert_eq!(dep.data, [1, 2, 9]);
+            assert_eq!(dep.first_network_time(), base + Duration::from_millis(100));
+            assert!(!dep.contiguous);
+            assert_eq!(buf.poll_timeout(timeout), None);
+        }
+    }
+
+    /// Test a timestamp boundary excludes the next frame's earlier receipt from the segment minimum.
+    #[test]
+    fn timeout_segment_receipt_excludes_next_timestamp() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+
+        buf.push(test_meta(base, 5, 4, 50), [1, 9]);
+        assert_eq!(
+            buf.poll_timeout(timeout),
+            Some(base + Duration::from_millis(300))
+        );
+        buf.push(test_meta(base, 3, 3, 100), [1]);
+        buf.push(test_meta(base, 4, 3, 150), [2]);
+
+        let deadline = base + Duration::from_millis(350);
+        assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+        assert!(
+            buf.pop(deadline - Duration::from_nanos(1), timeout)
+                .is_none()
+        );
+        let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+        assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (3, 4));
+        assert_eq!(dep.data, [1, 2]);
+        assert_eq!(dep.first_network_time(), base + Duration::from_millis(100));
+        assert!(!dep.contiguous);
+
+        let next = buf.pop(deadline, timeout).unwrap().unwrap();
+        assert_eq!(
+            (**next.seq_range().start(), **next.seq_range().end()),
+            (5, 5)
+        );
+        assert_eq!(next.first_network_time(), base + Duration::from_millis(50));
+        assert!(next.contiguous);
+        assert_eq!(buf.poll_timeout(timeout), None);
     }
 
     /// Test a disabled timeout keeps count-based release.
