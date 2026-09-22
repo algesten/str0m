@@ -7,21 +7,24 @@ use std::time::Instant;
 use crate::config_mod::RtcpReportIntervals;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::media::{KeyframeRequest, Media, SenderFeedback};
+use crate::media::{KeyframeRequest, MID_PROBE, Media, SenderFeedback};
+use crate::pacer::QueueState;
 use crate::packet::Vp8Patch;
+use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Bitrate, Pt};
 use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
+use crate::session::PacketReceipt;
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
 pub use self::send::{RtpWrite, StreamTx, StreamTxQueueInfo};
 
 mod probe;
-pub(crate) use probe::ProbeTx;
+use probe::ProbeTx;
 mod receive;
 pub(crate) mod register;
 pub(crate) mod register_nack;
@@ -32,6 +35,47 @@ mod send_queue;
 mod send_stats;
 
 pub(crate) use send::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
+
+/// A packet source selected by the pacer. Probe sources are kept out of the
+/// application-visible media streams and their RTCP/statistics lifecycle.
+pub(crate) enum SendStream<'a> {
+    Media(&'a mut StreamTx),
+    Probe {
+        stream: &'a mut ProbeTx,
+        mid: Mid,
+        pt: Pt,
+    },
+}
+
+impl SendStream<'_> {
+    pub(crate) fn mid(&self) -> Mid {
+        match self {
+            Self::Media(stream) => stream.mid(),
+            Self::Probe { mid, .. } => *mid,
+        }
+    }
+
+    pub(crate) fn generate_padding(&mut self, padding: usize) {
+        match self {
+            Self::Media(stream) => stream.generate_padding(padding),
+            Self::Probe { stream, .. } => stream.generate_padding(padding),
+        }
+    }
+
+    pub(crate) fn poll_packet(
+        &mut self,
+        now: Instant,
+        exts: &ExtensionMap,
+        twcc: Option<&mut u64>,
+        params: &[PayloadParams],
+        buf: &mut Vec<u8>,
+    ) -> Option<PacketReceipt> {
+        match self {
+            Self::Media(stream) => stream.poll_packet(now, exts, twcc, params, buf),
+            Self::Probe { stream, mid, pt } => stream.poll_packet(now, *mid, *pt, exts, twcc?, buf),
+        }
+    }
+}
 
 pub(crate) struct StreamTimeoutConfig<'a> {
     pub(crate) codecs: &'a CodecConfig,
@@ -137,6 +181,10 @@ pub(crate) struct Streams {
     /// All outgoing encoded streams.
     streams_tx: HashMap<Ssrc, StreamTx>,
 
+    /// Non-media padding source. Its sequence counter survives media changes.
+    probe_tx: ProbeTx,
+    probe_media: Option<(Mid, Pt)>,
+
     /// Local SSRC used before we got any StreamTx. This is used for RTCP if we don't
     /// have any reasonable value to use.
     default_ssrc_tx: Ssrc,
@@ -178,6 +226,8 @@ impl Streams {
             rx_lookup: Default::default(),
             last_rx_lookup_cleanup: already_happened(),
             streams_tx: Default::default(),
+            probe_tx: ProbeTx::default(),
+            probe_media: None,
             default_ssrc_tx: 0.into(), // this will be changed
             mids_to_report: Vec::with_capacity(10),
             any_nack_active: None,
@@ -598,6 +648,47 @@ impl Streams {
                 self.default_ssrc_tx = self.new_ssrc();
             }
             self.default_ssrc_tx
+        }
+    }
+
+    /// Bind the probe source only while a cluster is authorized. Changing the
+    /// binding drops queued padding but preserves the SSRC's SRTP sequence.
+    pub(crate) fn set_probe_media(&mut self, media: Option<(Mid, Pt)>) {
+        if media.is_none() || media != self.probe_media {
+            self.probe_tx.clear();
+        }
+        self.probe_media = media;
+    }
+
+    pub(crate) fn send_queue_states(&mut self, now: Instant) -> impl Iterator<Item = QueueState> {
+        // Prefer media/RTX padding, as PacketRouter does. The fallback is only
+        // exposed while the session has authorized a probe cluster.
+        let media_padding = self
+            .streams_tx
+            .values_mut()
+            .any(|s| s.queue_state(now).use_for_padding);
+        let probe_queue = self.probe_media.map(|_| QueueState {
+            midrid: MidRid(MID_PROBE, None),
+            unpaced: false,
+            use_for_padding: !media_padding,
+            snapshot: self.probe_tx.queue_state(now),
+        });
+        self.streams_tx
+            .values_mut()
+            .map(move |s| s.queue_state(now))
+            .chain(probe_queue)
+    }
+
+    pub(crate) fn send_stream_by_midrid(&mut self, midrid: MidRid) -> Option<SendStream<'_>> {
+        if midrid == MidRid(MID_PROBE, None) {
+            let (mid, pt) = self.probe_media?;
+            Some(SendStream::Probe {
+                stream: &mut self.probe_tx,
+                mid,
+                pt,
+            })
+        } else {
+            self.stream_tx_by_midrid(midrid).map(SendStream::Media)
         }
     }
 

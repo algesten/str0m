@@ -6,7 +6,7 @@ use crate::rtp_::{RtpHeader, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
 
 /// Padding-only SSRC 0, with its own extended SRTP sequence number.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct ProbeTx {
     seq_no: u64,
     padding: usize,
@@ -90,6 +90,50 @@ impl ProbeTx {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn probe_stream_rebinding_preserves_srtp_sequence_and_discards_pending_padding() {
+        use crate::media::MID_PROBE;
+        use crate::rtp_::MidRid;
+        use crate::streams::Streams;
+
+        let now = Instant::now();
+        let mut streams = Streams::new(false, 1200);
+        let queue = MidRid(MID_PROBE, None);
+        let mut twcc = 0;
+        let mut buf = vec![];
+        let exts = ExtensionMap::standard();
+        streams.set_probe_media(Some(("aud".into(), 111.into())));
+        let mut stream = streams.send_stream_by_midrid(queue).unwrap();
+        stream.generate_padding(480);
+        let first = stream
+            .poll_packet(now, &exts, Some(&mut twcc), &[], &mut buf)
+            .unwrap();
+        assert_eq!(*first.seq_no, 0);
+        assert_eq!(first.header.ext_vals.mid, Some("aud".into()));
+
+        // Ending a cluster must drop any unsent padding and remove its source
+        // from selection, without resetting the SRTP index for the next cluster.
+        streams.set_probe_media(None);
+        assert!(streams.send_stream_by_midrid(queue).is_none());
+        assert_eq!(streams.send_queue_states(now).count(), 0);
+        streams.set_probe_media(Some(("vid".into(), 96.into())));
+        assert_eq!(streams.streams_tx().count(), 0);
+        let mut stream = streams.send_stream_by_midrid(queue).unwrap();
+        assert!(
+            stream
+                .poll_packet(now, &exts, Some(&mut twcc), &[], &mut buf)
+                .is_none()
+        );
+        stream.generate_padding(240);
+        let second = stream
+            .poll_packet(now, &exts, Some(&mut twcc), &[], &mut buf)
+            .unwrap();
+        assert_eq!(*second.seq_no, 1);
+        assert_eq!(second.header.ext_vals.transport_cc, Some(1));
+        assert_eq!(second.header.ext_vals.mid, Some("vid".into()));
+        assert_eq!(second.header.payload_type, 96.into());
+    }
 
     #[test]
     fn padding_accounting_and_sequence_rollover() {

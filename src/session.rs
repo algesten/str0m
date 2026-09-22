@@ -18,8 +18,8 @@ use crate::media::AppSpecificFeedback;
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
+use crate::pacer::PacerControl;
 use crate::pacer::{Pacer, PacerImpl};
-use crate::pacer::{PacerControl, QueueState};
 use crate::packet::{RedBlock, RedDecoder, red_same_pt_blocks};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
@@ -108,9 +108,6 @@ pub(crate) struct Session {
 
     // Next packet for RtpPacket event.
     pending_packet: Option<RtpPacket>,
-
-    // Session-owned padding source, independent of media/RTX streams.
-    probe_tx: crate::streams::ProbeTx,
 
     // Total RTP payload bytes for media, including retransmissions.
     media_bytes_rx: u64,
@@ -207,7 +204,6 @@ impl Session {
             pacer_control: PacerControl::new(),
             poll_packet_buf: vec![0; 2000],
             pending_packet: None,
-            probe_tx: crate::streams::ProbeTx::default(),
             media_bytes_rx: 0,
             media_bytes_tx: 0,
             ice_lite: config.ice_lite,
@@ -393,7 +389,7 @@ impl Session {
         // Check if active probe just completed
         if let Some(cluster_id) = self.pacer.check_probe_complete(now) {
             bwe.end_probe(now, cluster_id);
-            self.probe_tx.clear();
+            self.streams.set_probe_media(None);
         }
     }
 
@@ -404,41 +400,20 @@ impl Session {
             return;
         }
 
-        // Only expose the fallback during a congestion-controller-authorized
-        // cluster. It must never become a source of continuous padding.
-        let probing = self.pacer.active_cluster().is_some() && self.probe_media().is_some();
-        if !probing {
-            self.probe_tx.clear();
-        }
-        // Prefer useful RTX padding when available, as PacketRouter does.
-        let media_padding = self
-            .streams
-            .streams_tx()
-            .any(|s| s.queue_state(now).use_for_padding);
-        let probe_queue = probing.then(|| QueueState {
-            midrid: MidRid(MID_PROBE, None),
-            unpaced: false,
-            use_for_padding: !media_padding,
-            snapshot: self.probe_tx.queue_state(now),
-        });
-        let iter = self
-            .streams
-            .streams_tx()
-            .map(|m| m.queue_state(now))
-            .chain(probe_queue);
+        let probe_media = self
+            .pacer
+            .active_cluster()
+            .and_then(|_| self.probe_media().map(|(media, pt)| (media.mid(), pt)));
+        self.streams.set_probe_media(probe_media);
+        let iter = self.streams.send_queue_states(now);
 
         let Some(padding_request) = self.pacer.handle_timeout(now, iter) else {
             return;
         };
 
-        if padding_request.midrid.mid() == MID_PROBE {
-            self.probe_tx.generate_padding(padding_request.padding);
-            return;
-        }
-
-        let stream = self
+        let mut stream = self
             .streams
-            .stream_tx_by_midrid(padding_request.midrid)
+            .send_stream_by_midrid(padding_request.midrid)
             .expect("pacer to use an existing stream");
 
         stream.generate_padding(padding_request.padding);
@@ -1127,43 +1102,28 @@ impl Session {
     }
 
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
-        self.srtp_tx.as_ref()?;
+        let srtp_tx = self.srtp_tx.as_mut()?;
 
-        // Capture cluster membership before register_send() can complete it.
+        // Figure out which, if any, queue to poll
+        // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
         let (midrid, cluster_id) = self.pacer.poll_queue()?;
-        let twcc_seq = self.twcc;
-        let (receipt, twcc_enabled) = if midrid.mid() == MID_PROBE {
-            // A stale poll must not leak padding beyond the authorized cluster.
-            cluster_id?;
-            let (media, pt) = self.probe_media()?;
-            let mid = media.mid();
-            let exts = media.remote_extmap().clone();
-            let receipt = self.probe_tx.poll_packet(
-                now,
-                mid,
-                pt,
-                &exts,
-                &mut self.twcc,
-                &mut self.poll_packet_buf,
-            )?;
-            (receipt, true)
-        } else {
-            let media = self.medias.iter().find(|m| m.mid() == midrid.mid())?;
-            let stream = self.streams.stream_tx_by_midrid(midrid)?;
-            let exts = media.remote_extmap();
-            let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
-            let twcc = twcc_enabled.then_some(&mut self.twcc);
-            let receipt = stream.poll_packet(
-                now,
-                exts,
-                twcc,
-                &self.codec_config,
-                &mut self.poll_packet_buf,
-            )?;
-            (receipt, twcc_enabled)
+        let mut stream = self.streams.send_stream_by_midrid(midrid)?;
+        let Some(media) = self.medias.iter().find(|m| m.mid() == stream.mid()) else {
+            trace!("Pacer pointed to mid {} which has no media", midrid.mid());
+            return None;
         };
         let buf = &mut self.poll_packet_buf;
-        let srtp_tx = self.srtp_tx.as_mut()?;
+        let twcc_seq = self.twcc;
+
+        let params = &self.codec_config;
+        let exts = media.remote_extmap();
+
+        // TWCC might not be enabled for this m-line. Firefox do use TWCC, but not
+        // for audio. This is indiciated via the SDP.
+        let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
+        let twcc = twcc_enabled.then_some(&mut self.twcc);
+
+        let receipt = stream.poll_packet(now, exts, twcc, params, buf)?;
 
         let PacketReceipt {
             header,
