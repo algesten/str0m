@@ -391,7 +391,7 @@ impl Session {
 
         let stream = self
             .streams
-            .send_stream_by_midrid(padding_request.midrid)
+            .stream_tx_by_midrid(padding_request.midrid)
             .expect("pacer to use an existing stream");
 
         stream.generate_padding(padding_request.padding);
@@ -1108,7 +1108,7 @@ impl Session {
         // Figure out which, if any, queue to poll
         // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
         let (midrid, cluster_id) = self.pacer.poll_queue()?;
-        let stream = self.streams.send_stream_by_midrid(midrid)?;
+        let stream = self.streams.stream_tx_by_midrid(midrid)?;
         let Some(media) = self.medias.iter().find(|m| m.mid() == stream.mid()) else {
             trace!("Pacer pointed to mid {} which has no media", midrid.mid());
             return None;

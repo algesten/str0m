@@ -1414,7 +1414,7 @@ mod test {
         let exts = ExtensionMap::standard();
         let codecs = CodecConfig::new_with_defaults();
         streams.set_probe_media(Some(("aud".into(), 111.into())));
-        let stream = streams.send_stream_by_midrid(queue).unwrap();
+        let stream = streams.stream_tx_by_midrid(queue).unwrap();
         stream.generate_padding(480);
         let first = stream
             .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
@@ -1425,11 +1425,11 @@ mod test {
         // Ending a cluster must drop any unsent padding and remove its source
         // from selection, without resetting the SRTP index for the next cluster.
         streams.set_probe_media(None);
-        assert!(streams.send_stream_by_midrid(queue).is_none());
+        assert!(streams.stream_tx_by_midrid(queue).is_none());
         assert_eq!(streams.send_queue_states(now).count(), 0);
         streams.set_probe_media(Some(("vid".into(), 96.into())));
         assert_eq!(streams.streams_tx().count(), 0);
-        let stream = streams.send_stream_by_midrid(queue).unwrap();
+        let stream = streams.stream_tx_by_midrid(queue).unwrap();
         assert!(
             stream
                 .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)

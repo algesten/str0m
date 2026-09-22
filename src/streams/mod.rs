@@ -637,16 +637,11 @@ impl Streams {
             .chain(probe_queue)
     }
 
-    pub(crate) fn send_stream_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamTx> {
+    pub(crate) fn stream_tx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamTx> {
         if midrid == MidRid(MID_PROBE, None) {
             self.probe_media?;
-            Some(&mut self.probe_tx)
-        } else {
-            self.stream_tx_by_midrid(midrid)
+            return Some(&mut self.probe_tx);
         }
-    }
-
-    pub(crate) fn stream_tx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamTx> {
         self.streams_tx.values_mut().find(|s| s.is_midrid(midrid))
     }
 
