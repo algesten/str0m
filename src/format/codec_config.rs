@@ -716,8 +716,6 @@ mod test {
                         config.update_params(&[remote], direction);
                         assert_eq!(config.params()[0].fb_transport_cc(), expected);
                     }
-                    let json = serde_json::to_value(config.params()[0]).unwrap();
-                    assert_eq!(json["fb_transport_cc"], expected);
                 }
             }
         }

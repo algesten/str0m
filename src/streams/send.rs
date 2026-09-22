@@ -345,7 +345,6 @@ impl StreamTx {
             false,
             mtu_warn,
         );
-        stream.seq_no = 0.into();
         stream.unpaced = Some(false);
         stream
     }
@@ -1438,7 +1437,6 @@ mod test {
         let first = stream
             .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
             .unwrap();
-        assert_eq!(*first.seq_no, 0);
         assert_eq!(first.header.ext_vals.mid, Some("aud".into()));
 
         // Ending a cluster must drop any unsent padding and remove its source
@@ -1458,7 +1456,7 @@ mod test {
         let second = stream
             .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
             .unwrap();
-        assert_eq!(*second.seq_no, 1);
+        assert_eq!(*second.seq_no, *first.seq_no + 1);
         assert_eq!(second.header.ext_vals.transport_cc, Some(1));
         assert_eq!(second.header.ext_vals.mid, Some("vid".into()));
         assert_eq!(second.header.payload_type, 96.into());
