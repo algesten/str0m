@@ -609,9 +609,10 @@ impl Streams {
     /// Bind the probe source only while a cluster is authorized. Changing the
     /// binding drops queued padding but preserves the SSRC's SRTP sequence.
     pub(crate) fn set_probe_media(&mut self, media: Option<(Mid, Pt)>) {
-        if media.is_none() || media != self.probe_media {
-            self.probe_tx.reset_buffers();
+        if media == self.probe_media {
+            return;
         }
+        self.probe_tx.reset_buffers();
         if let Some((mid, pt)) = media {
             self.probe_tx.set_probe_media(mid, pt);
         }
