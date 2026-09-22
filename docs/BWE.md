@@ -639,12 +639,12 @@ finishes sending. Queue management is handled in `src/pacer/queue.rs`.
 
 #### Probe Padding Sources
 
-**Location:** `src/streams/mod.rs`, `src/streams/probe.rs`
+**Location:** `src/streams/mod.rs`, `src/streams/send.rs`
 **WebRTC:** `modules/pacing/packet_router.cc`,
 `modules/rtp_rtcp/source/rtp_sender.cc`
 
 The stream collection prefers existing media/RTX padding sources, following WebRTC's
-`PacketRouter::GeneratePadding`. When none is available, a dedicated source
+`PacketRouter::GeneratePadding`. When none is available, an internal `StreamTx`
 provides padding-only RTP on SSRC 0 during an authorized probe cluster. This
 allows probing before media starts, with audio-only media, and after video
 send streams are removed. It requires neither an initialized video/RTX stream
