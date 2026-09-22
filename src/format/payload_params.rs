@@ -92,10 +92,10 @@ pub struct PayloadParams {
     #[serde(rename = "fb_transport_cc")]
     pub(crate) fb_transport_cc_local: bool,
 
-    /// Negotiated TWCC feedback capability. None uses the local setting before
-    /// SDP negotiation or when using the Direct API.
+    /// Remote TWCC feedback capability, combined across m-lines. None means
+    /// no SDP negotiation, including when using the Direct API.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) fb_transport_cc_effective: Option<bool>,
+    pub(crate) fb_transport_cc_remote: Option<bool>,
 
     /// Whether the payload uses NACK to request resends.
     pub(crate) fb_nack: bool,
@@ -171,7 +171,7 @@ impl PayloadParams {
 
             // Both audio and video use TWCC
             fb_transport_cc_local: true,
-            fb_transport_cc_effective: None,
+            fb_transport_cc_remote: None,
 
             // Only true for video.
             fb_fir: is_video,
@@ -203,7 +203,7 @@ impl PayloadParams {
                 format: FormatParams::default(),
             },
             fb_transport_cc_local: true,
-            fb_transport_cc_effective: None,
+            fb_transport_cc_remote: None,
             fb_nack: false,
             fb_pli: false,
             fb_fir: false,
@@ -229,16 +229,14 @@ impl PayloadParams {
         self.spec
     }
 
-    /// Sets the local TWCC feedback capability and clears its negotiated result.
+    /// Sets the local TWCC feedback capability.
     pub fn set_fb_transport_cc(&mut self, fb_transport_cc: bool) {
         self.fb_transport_cc_local = fb_transport_cc;
-        self.fb_transport_cc_effective = None;
     }
 
     /// Effective TWCC feedback capability, or the local setting before negotiation.
     pub fn fb_transport_cc(&self) -> bool {
-        self.fb_transport_cc_effective
-            .unwrap_or(self.fb_transport_cc_local)
+        self.fb_transport_cc_local && self.fb_transport_cc_remote.unwrap_or(true)
     }
 
     /// Sets whether the payload uses NACK to request resends.
@@ -629,10 +627,8 @@ impl PayloadParams {
 
         // TWCC is shared per PT across m-lines. Preserve the local capability
         // while combining support from each newly negotiated media section.
-        self.fb_transport_cc_effective = Some(
-            self.fb_transport_cc_local
-                && (self.fb_transport_cc_effective.unwrap_or(false) || first.fb_transport_cc()),
-        );
+        self.fb_transport_cc_remote =
+            Some(self.fb_transport_cc_remote.unwrap_or(false) || first.fb_transport_cc());
 
         // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.
         if self.spec.codec == Codec::H265 && first.spec.codec == Codec::H265 {
