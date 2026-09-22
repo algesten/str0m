@@ -122,7 +122,12 @@ pub struct DepacketizingBuffer {
     hold_back: usize,
     depack: CodecDepacketizer,
     queue: VecDeque<Entry>,
-    segments: Vec<(usize, usize, Instant)>,
+    // Segment indices are relative to the queue at the last rebuild.
+    segments: VecDeque<(usize, usize, Instant)>,
+    segments_dirty: bool,
+    segments_offset: usize,
+    #[cfg(test)]
+    segment_rebuilds: usize,
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
@@ -149,7 +154,11 @@ impl DepacketizingBuffer {
             hold_back,
             depack,
             queue: VecDeque::new(),
-            segments: Vec::new(),
+            segments: VecDeque::new(),
+            segments_dirty: false,
+            segments_offset: 0,
+            #[cfg(test)]
+            segment_rebuilds: 0,
             last_emitted: None,
             max_time: None,
             depack_cache: None,
@@ -210,6 +219,7 @@ impl DepacketizingBuffer {
                     tail,
                 };
                 self.queue.insert(i, entry);
+                self.segments_dirty = true;
 
                 // The depack cache is keyed by queue index. Inserting at or before the cached
                 // segment shifts it, so the cache would answer for the wrong packets.
@@ -255,7 +265,7 @@ impl DepacketizingBuffer {
         //     self.segments
         // );
 
-        let (start, stop, first_received) = *self.segments.first().expect("segment exists");
+        let (start, stop, first_received) = self.first_segment().expect("segment exists");
 
         let seq = {
             let last = self.queue.get(stop).expect("entry for stop index");
@@ -269,7 +279,7 @@ impl DepacketizingBuffer {
                 // this segment cannot be decoded correctly
                 // remove from the queue and return the error
                 self.last_emitted = Some((seq, CodecExtra::None));
-                self.queue.drain(0..=stop);
+                self.consume_segment(stop);
                 return Some(Err(e));
             }
         };
@@ -303,7 +313,7 @@ impl DepacketizingBuffer {
 
         // We're not going to emit frames in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
-        self.queue.drain(0..=stop);
+        self.consume_segment(stop);
 
         if !can_emit {
             return None;
@@ -318,7 +328,7 @@ impl DepacketizingBuffer {
         let timeout = reordering_timeout?;
         self.update_segments();
 
-        let (start, _, first_received) = self.segments.first().copied()?;
+        let (start, _, first_received) = self.first_segment()?;
 
         let contiguous_seq = self.is_following_last(start);
         let more_than_hold_back = self.segments.len() >= self.hold_back;
@@ -370,6 +380,7 @@ impl DepacketizingBuffer {
         });
 
         if self.queue.len() != original_len {
+            self.segments_dirty = true;
             self.depack_cache = None;
         }
     }
@@ -427,7 +438,34 @@ impl DepacketizingBuffer {
         })
     }
 
-    fn update_segments(&mut self) -> Option<(usize, usize)> {
+    fn first_segment(&self) -> Option<(usize, usize, Instant)> {
+        self.segments.front().map(|&(start, stop, received)| {
+            (
+                start - self.segments_offset,
+                stop - self.segments_offset,
+                received,
+            )
+        })
+    }
+
+    fn consume_segment(&mut self, stop: usize) {
+        // Removing the first segment leaves later boundaries intact. Advance the
+        // index origin instead of rescanning packets or shifting every segment.
+        self.queue.drain(0..=stop);
+        self.segments.pop_front();
+        self.segments_offset += stop + 1;
+    }
+
+    fn update_segments(&mut self) {
+        if !self.segments_dirty {
+            return;
+        }
+        self.segments_dirty = false;
+        self.segments_offset = 0;
+        #[cfg(test)]
+        {
+            self.segment_rebuilds += 1;
+        }
         self.segments.clear();
 
         #[derive(Clone, Copy)]
@@ -455,7 +493,7 @@ impl DepacketizingBuffer {
                 // just indicative, this is the robust fallback.
                 let s = start.unwrap();
                 let segment = (s.index as usize, index as usize - 1, s.first_received);
-                self.segments.push(segment);
+                self.segments.push_back(segment);
                 start = None;
             }
 
@@ -483,12 +521,10 @@ impl DepacketizingBuffer {
                 // the packet (like the RTP marker bit) indicating it's the tail.
                 let s = start.unwrap();
                 let segment = (s.index as usize, index as usize, s.first_received);
-                self.segments.push(segment);
+                self.segments.push_back(segment);
                 start = None;
             }
         }
-
-        None
     }
 
     fn is_following_last(&self, start: usize) -> bool {
@@ -961,6 +997,55 @@ mod test {
         }
     }
 
+    /// Repeated output/deadline polls share a scan; consuming frames retains the suffix.
+    #[test]
+    fn segment_cache_reuses_scans_until_packet_insertion() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 300);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        for seq in 3..103 {
+            buf.push(test_meta(base, seq, seq, 100), [1, 9]);
+        }
+        let deadline = base + Duration::from_millis(350);
+        assert!(
+            buf.pop(base + Duration::from_millis(100), timeout)
+                .is_none()
+        );
+        let scans = buf.segment_rebuilds;
+        for _ in 0..10 {
+            assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+            assert!(
+                buf.pop(base + Duration::from_millis(100), timeout)
+                    .is_none()
+            );
+        }
+        assert_eq!(buf.segment_rebuilds, scans);
+        for seq in 3..103 {
+            let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+            assert_eq!(**dep.seq_range().start(), seq);
+            assert_eq!(dep.contiguous, seq != 3);
+            assert_eq!(buf.poll_timeout(timeout), None);
+        }
+        assert_eq!(buf.segment_rebuilds, scans);
+        assert!(buf.pop(deadline, timeout).is_none());
+
+        // An out-of-order insertion must replace a cached blocked candidate.
+        buf.push(test_meta(base, 104, 104, 400), [1, 9]);
+        assert!(buf.pop(deadline, timeout).is_none());
+        buf.push(test_meta(base, 103, 103, 400), [1, 9]);
+        for seq in [103, 104] {
+            let dep = buf
+                .pop(base + Duration::from_millis(400), timeout)
+                .unwrap()
+                .unwrap();
+            assert_eq!(**dep.seq_range().start(), seq);
+            assert!(dep.contiguous);
+        }
+        assert_eq!(buf.segment_rebuilds, scans + 2);
+    }
+
     /// Test disabled-timeout polling preserves padding cleanup after frame emission or an error.
     #[test]
     fn timeout_none_preserves_padding_cleanup_after_emit_and_error() {
@@ -1298,11 +1383,17 @@ mod test {
                 assert_eq!(*buf.last_emitted.unwrap().0, 1);
                 continue;
             }
+            buf.update_segments();
+            let scans = buf.segment_rebuilds;
             let dep = buf
                 .pop(due, timeout)
                 .expect("drain past codec-rejected frame")
                 .unwrap();
             assert_eq!(**dep.seq_range().start(), 4);
+            assert_eq!(
+                buf.segment_rebuilds, scans,
+                "codec rejection must reuse segments"
+            );
             assert!(buf.queue.is_empty());
             assert_eq!(buf.poll_timeout(timeout), None);
         }
