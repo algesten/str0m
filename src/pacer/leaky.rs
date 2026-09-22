@@ -191,12 +191,6 @@ impl LeakyBucketPacer {
         self.probe_queue.push_back(ProbeClusterState::new(config));
     }
 
-    pub(crate) fn stop_probing(&mut self) {
-        self.probe_queue.clear();
-        self.completed_probe = None;
-        self.next_poll_queue = None;
-    }
-
     /// Get the cluster ID of the active probe, if any.
     pub(crate) fn active_cluster(&self) -> Option<TwccClusterId> {
         self.probe_queue.front().map(|p| p.config().cluster())
@@ -521,9 +515,6 @@ mod test {
                 .handle_timeout(deadline, std::iter::once(queue))
                 .is_some()
         );
-        pacer.stop_probing();
-        assert!(pacer.active_cluster().is_none());
-        assert!(pacer.poll_queue().is_none());
     }
 
     #[test]

@@ -345,9 +345,6 @@ impl Session {
 
     fn handle_timeout_bwe(&mut self, now: Instant) {
         let do_probe = self.srtp_tx.is_some() && self.probe_media().is_some();
-        if !do_probe {
-            self.pacer.stop_probing();
-        }
         let Some(bwe) = self.bwe.as_mut() else {
             return;
         };

@@ -40,12 +40,6 @@ impl PacerImpl {
         }
     }
 
-    pub fn stop_probing(&mut self) {
-        if let PacerImpl::LeakyBucket(v) = self {
-            v.stop_probing();
-        }
-    }
-
     pub fn active_cluster(&self) -> Option<TwccClusterId> {
         match self {
             PacerImpl::Null(_) => None,
