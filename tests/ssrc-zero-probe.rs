@@ -127,7 +127,7 @@ fn idle_capacity_collapse_and_recovery() -> Result<(), RtcError> {
 }
 
 #[test]
-fn sdp_without_transport_feedback_does_not_probe() -> Result<(), RtcError> {
+fn sdp_without_transport_sequence_extension_does_not_probe() -> Result<(), RtcError> {
     let (mut l, mut r) = peers(false);
     let mut change = l.sdp_api();
     change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
@@ -136,7 +136,7 @@ fn sdp_without_transport_feedback_does_not_probe() -> Result<(), RtcError> {
     let sdp = answer
         .to_sdp_string()
         .lines()
-        .filter(|s| !s.contains("transport-cc"))
+        .filter(|s| !s.contains("transport-wide-cc"))
         .collect::<Vec<_>>()
         .join("\r\n")
         + "\r\n";
@@ -234,42 +234,38 @@ fn video_padding_before_srtp_does_not_spin() -> Result<(), RtcError> {
 
 #[test]
 fn video_without_twcc_does_not_hide_audio_probe_source() -> Result<(), RtcError> {
-    for remove_extension in [false, true] {
-        let (mut l, mut r) = peers(false);
-        let mut change = l.sdp_api();
-        change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        let (offer, pending) = change.apply().unwrap();
-        let answer = r.sdp_api().accept_offer(offer)?;
-        let mut video = false;
-        let sdp = answer
-            .to_sdp_string()
-            .lines()
-            .filter(|line| {
-                if line.starts_with("m=") {
-                    video = line.starts_with("m=video");
-                }
-                // Keep RTX negotiated for video, but negotiate TWCC feedback only on audio.
-                !(video
-                    && (line.contains("transport-cc")
-                        || (remove_extension && line.contains("transport-wide-cc"))))
-            })
-            .collect::<Vec<_>>()
-            .join("\r\n")
-            + "\r\n";
-        l.sdp_api().accept_answer(
-            pending,
-            str0m::change::SdpAnswer::from_sdp_string(&sdp).unwrap(),
-        )?;
-        run(&mut l, &mut r, Duration::from_secs(2))?;
-        assert!(
-            l.events.iter().any(|(_, event)| matches!(event,
-                Event::EgressBitrateEstimate(BweKind::Twcc(rate)) if *rate > Bitrate::kbps(300)
-            )),
-            "video RTX without TWCC must not prevent capacity discovery on audio"
-        );
-        assert_feedback_and_no_media(&l, &r);
-    }
+    let (mut l, mut r) = peers(false);
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+    change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.sdp_api().accept_offer(offer)?;
+    let mut video = false;
+    let sdp = answer
+        .to_sdp_string()
+        .lines()
+        .filter(|line| {
+            if line.starts_with("m=") {
+                video = line.starts_with("m=video");
+            }
+            // Keep RTX negotiated for video, but the TWCC extension only on audio.
+            !(video && line.contains("transport-wide-cc"))
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        + "\r\n";
+    l.sdp_api().accept_answer(
+        pending,
+        str0m::change::SdpAnswer::from_sdp_string(&sdp).unwrap(),
+    )?;
+    run(&mut l, &mut r, Duration::from_secs(2))?;
+    assert!(
+        l.events.iter().any(|(_, event)| matches!(event,
+            Event::EgressBitrateEstimate(BweKind::Twcc(rate)) if *rate > Bitrate::kbps(300)
+        )),
+        "video RTX without TWCC must not prevent capacity discovery on audio"
+    );
+    assert_feedback_and_no_media(&l, &r);
     Ok(())
 }
 

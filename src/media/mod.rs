@@ -116,9 +116,6 @@ pub struct Media {
     /// These are 1-indexed to be exactly like in the SDP.
     remote_exts: ExtensionMap,
 
-    /// Remote PTs with transport-cc feedback. None for the out-of-band Direct API.
-    pub(crate) remote_transport_cc: Option<Vec<Pt>>,
-
     /// [`true`] if this media was created by the remote peer, [`false`] if it was created by us.
     remote_created: bool,
 
@@ -651,7 +648,6 @@ impl Default for Media {
             remote_pts: vec![],
             stopped: false,
             remote_exts: ExtensionMap::empty(),
-            remote_transport_cc: Some(vec![]),
             remote_created: false,
             dir: Direction::SendRecv,
             simulcast: None,
@@ -732,7 +728,6 @@ impl Media {
             kind,
             dir: Direction::SendRecv,
             remote_exts: exts,
-            remote_transport_cc: None,
             ..Default::default()
         }
     }

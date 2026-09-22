@@ -428,10 +428,6 @@ impl Session {
             .find(|p| {
                 padding_pt.is_none_or(|pt| p.pt() == pt)
                     && p.fb_transport_cc()
-                    && media
-                        .remote_transport_cc
-                        .as_ref()
-                        .is_none_or(|pts| pts.contains(&p.pt()))
                     && p.spec().codec.is_audio() == media.kind().is_audio()
                     && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
             })
