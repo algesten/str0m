@@ -77,8 +77,4 @@ impl Pacer for NullPacer {
         let e = self.last_sends.entry(from).or_insert(now);
         *e = now;
     }
-
-    fn has_padding_queue(&self) -> bool {
-        false
-    }
 }

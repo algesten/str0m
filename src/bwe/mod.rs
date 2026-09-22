@@ -41,6 +41,8 @@ use macros::log_loss;
 use smoother::EstimateSmoother;
 
 pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
+#[cfg(test)]
+pub(crate) use probe::ProbeKind;
 pub(crate) use probe::{BandwidthLimitedCause, ProbeEstimator};
 pub(crate) use probe::{ProbeClusterState, ProbeControl};
 
@@ -295,6 +297,12 @@ impl SendSideBandwidthEstimator {
 
         // Update probe control with desired bitrate.
         self.probe_control.set_desired_bitrate(desired_bitrate);
+
+        // Empty media queues are application-limited too. Advance the budget
+        // without charging probe/padding bytes, including before the first media.
+        if do_probe {
+            self.alr_detector.handle_timeout(now);
+        }
 
         // Get ALR state and forward to both probe control and loss controller
         let alr_start_time = self.alr_detector.alr_start_time();

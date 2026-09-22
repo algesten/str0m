@@ -1355,6 +1355,15 @@ fn update_media(
         remote_extmap.set(id, in_session.clone());
     }
     media.set_remote_extmap(remote_extmap);
+    media.remote_transport_cc = Some(
+        m.attrs
+            .iter()
+            .filter_map(|attr| match attr {
+                MediaAttribute::RtcpFb { pt, value } if value == "transport-cc" => Some(*pt),
+                _ => None,
+            })
+            .collect(),
+    );
 
     // SSRC changes
     // This will always be for ReceiverSource since any incoming a=ssrc line will be

@@ -43,6 +43,48 @@ help the system ramp up quickly when conditions improve. They're used:
 - When application demand exceeds current estimate (exploring headroom)
 - During ALR to rediscover capacity
 
+### Probing Before Media Starts
+
+With BWE enabled and TWCC negotiated, an established connection can discover
+capacity before sending its first media packet. Set the desired bitrate with
+`rtc.bwe().set_desired_bitrate(...)`, drive the normal sans-I/O input/output
+loop, and use `Event::EgressBitrateEstimate` to decide when to start video.
+An initialized video/RTX stream or video padding payload type is not required.
+This also works with audio-only media and after video send streams are removed.
+
+The session prefers existing media/RTX padding sources, following WebRTC's
+`PacketRouter::GeneratePadding`. When none is available, `src/streams/probe.rs`
+provides padding-only RTP on SSRC 0 during an authorized probe cluster. It uses
+a negotiated media payload type, MID and transport sequence extension so browser
+receivers can route the packet to their congestion controller. A sending media
+section with TWCC support must remain negotiated; the Direct API uses the
+configured codecs and extension map of its declared media.
+
+SSRC 0 has its own extended RTP sequence counter for SRTP, but shares the
+session's TWCC sequence space. Probe packets use the usual SRTP protection,
+probe cluster correlation, and pacer byte accounting. Requested bursts are split
+into padding packets of at most 240 bytes, with actual padding bytes charged to
+the pacer and recorded for TWCC, matching str0m's existing accounting convention.
+They do not count as application media bytes or get delivered as media at the
+receiver. SSRC 0 is handled before MID/PT media mapping on reception.
+
+The fallback is available only during congestion-controller-authorized clusters;
+it does not enable continuous padding. Startup, ALR, congestion and recovery
+policies still decide when and how much to probe. At low rates, clusters continue
+until both the byte target and minimum packet count are met. Idle media queues do
+not suppress probe deadlines, even when the regular padding rate is zero.
+
+All scheduling remains sans-I/O: the application supplies `Input::Timeout` at the
+deadlines returned by `Output::Timeout`. There are no internal timers or threads.
+These timeout inputs also advance ALR's unused media budget, allowing discovery
+and recovery while media is paused or has never started.
+
+The send path follows `modules/pacing/pacing_controller.cc`,
+`modules/pacing/bitrate_prober.cc`, `modules/pacing/packet_router.cc` and
+`modules/rtp_rtcp/source/rtp_sender.cc` in the local WebRTC reference at
+`956083e9a9f487b9c2d0cdb96c64ba23cfc1ac76`. The dedicated SSRC 0 fallback is a
+str0m integration choice; that checkout generates padding through RTP modules.
+
 ### Application Limited Region (ALR)
 
 ALR occurs when your application sends **less than 65% of available
@@ -543,7 +585,10 @@ entry/exit, disrupting probe scheduling and loss estimation.
 
 The SendSideBandwidthEstimator calls `on_media_sent()` for each media
 packet (excluding padding and probes), passing the packet size and
-timestamp. It also calls `set_estimated_bitrate()` whenever the bandwidth
+timestamp. While probing is available, application-supplied timeout inputs
+advance the same budget with zero media bytes after a 500ms idle interval, so
+complete silence can enter ALR without changing packet-driven updates during media.
+It also calls `set_estimated_bitrate()` whenever the bandwidth
 estimate changes, which adjusts the target rate to 65% of the new
 estimate. The ALR start time flows to both ProbeControl and LossController
 via `alr_start_time()`, providing context for probe gating decisions and

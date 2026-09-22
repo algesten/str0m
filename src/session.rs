@@ -18,8 +18,8 @@ use crate::media::AppSpecificFeedback;
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
-use crate::pacer::PacerControl;
 use crate::pacer::{Pacer, PacerImpl};
+use crate::pacer::{PacerControl, QueueState};
 use crate::packet::{RedBlock, RedDecoder, red_same_pt_blocks};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
@@ -109,8 +109,8 @@ pub(crate) struct Session {
     // Next packet for RtpPacket event.
     pending_packet: Option<RtpPacket>,
 
-    // Whether we sent a single outgoing RTP packet.
-    packet_first_sent: bool,
+    // Session-owned padding source, independent of media/RTX streams.
+    probe_tx: crate::streams::ProbeTx,
 
     // Total RTP payload bytes for media, including retransmissions.
     media_bytes_rx: u64,
@@ -207,7 +207,7 @@ impl Session {
             pacer_control: PacerControl::new(),
             poll_packet_buf: vec![0; 2000],
             pending_packet: None,
-            packet_first_sent: false,
+            probe_tx: crate::streams::ProbeTx::default(),
             media_bytes_rx: 0,
             media_bytes_tx: 0,
             ice_lite: config.ice_lite,
@@ -335,6 +335,7 @@ impl Session {
             self.last_nack = now;
         }
 
+        self.handle_timeout_bwe(now);
         self.update_queue_state(now);
 
         if let Some(twcc_at) = self.twcc_at() {
@@ -343,19 +344,40 @@ impl Session {
             }
         }
 
-        self.handle_timeout_bwe(now);
-
         Ok(())
     }
 
+    // Use a negotiated PT and MID so browser transports can route the packet to
+    // their receive-side congestion controller before discarding the empty payload.
+    fn probe_media(&self) -> Option<(&Media, Pt)> {
+        self.medias.iter().find_map(|media| {
+            if media.stopped() || !media.direction().is_sending() {
+                return None;
+            }
+            media
+                .remote_extmap()
+                .id_of(Extension::TransportSequenceNumber)?;
+            let params = self.codec_config.params().iter().find(|p| {
+                p.fb_transport_cc()
+                    && media
+                        .remote_transport_cc
+                        .as_ref()
+                        .is_none_or(|pts| pts.contains(&p.pt()))
+                    && p.spec().codec.is_audio() == media.kind().is_audio()
+                    && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
+            })?;
+            Some((media, params.pt()))
+        })
+    }
+
     fn handle_timeout_bwe(&mut self, now: Instant) {
+        let do_probe = self.srtp_tx.is_some() && self.probe_media().is_some();
+        if !do_probe {
+            self.pacer.stop_probing();
+        }
         let Some(bwe) = self.bwe.as_mut() else {
             return;
         };
-
-        // We can only run probes after first packet is sent and there
-        // are any queues that can handle padding requests.
-        let do_probe = self.packet_first_sent && self.pacer.has_padding_queue();
 
         if let Some(probe_config) = bwe.handle_timeout(now, do_probe) {
             // Only start the probe in the pacer if the estimator accepted it.
@@ -371,15 +393,42 @@ impl Session {
         // Check if active probe just completed
         if let Some(cluster_id) = self.pacer.check_probe_complete(now) {
             bwe.end_probe(now, cluster_id);
+            self.probe_tx.clear();
         }
     }
 
     fn update_queue_state(&mut self, now: Instant) {
-        let iter = self.streams.streams_tx().map(|m| m.queue_state(now));
+        // Only expose the fallback during a congestion-controller-authorized
+        // cluster. It must never become a source of continuous padding.
+        let probing = self.pacer.active_cluster().is_some() && self.probe_media().is_some();
+        if !probing {
+            self.probe_tx.clear();
+        }
+        // Prefer useful RTX padding when available, as PacketRouter does.
+        let media_padding = self
+            .streams
+            .streams_tx()
+            .any(|s| s.queue_state(now).use_for_padding);
+        let probe_queue = probing.then(|| QueueState {
+            midrid: MidRid(MID_PROBE, None),
+            unpaced: false,
+            use_for_padding: !media_padding,
+            snapshot: self.probe_tx.queue_state(now),
+        });
+        let iter = self
+            .streams
+            .streams_tx()
+            .map(|m| m.queue_state(now))
+            .chain(probe_queue);
 
         let Some(padding_request) = self.pacer.handle_timeout(now, iter) else {
             return;
         };
+
+        if padding_request.midrid.mid() == MID_PROBE {
+            self.probe_tx.generate_padding(padding_request.padding);
+            return;
+        }
 
         let stream = self
             .streams
@@ -450,6 +499,12 @@ impl Session {
     fn mid_and_ssrc_for_header(&mut self, now: Instant, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
         let ssrc_header = header.ssrc;
 
+        // SSRC 0 is used for non-media BWE probes from libwebrtc.
+        // These probes need TWCC feedback but don't carry actual media.
+        if ssrc_header.is_probe() {
+            return self.ensure_probe_stream(header.payload_type);
+        }
+
         if let Some(r) = self.streams.mid_ssrc_rx_by_ssrc_or_rtx(now, ssrc_header) {
             return Some(r);
         }
@@ -460,12 +515,6 @@ impl Session {
         // The dynamic mapping might have added an entry by now.
         if let Some(r) = self.streams.mid_ssrc_rx_by_ssrc_or_rtx(now, ssrc_header) {
             return Some(r);
-        }
-
-        // SSRC 0 is used for non-media BWE probes from libwebrtc.
-        // These probes need TWCC feedback but don't carry actual media.
-        if ssrc_header.is_probe() {
-            return self.ensure_probe_stream(header.payload_type);
         }
 
         None
@@ -1072,30 +1121,43 @@ impl Session {
     }
 
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
-        let srtp_tx = self.srtp_tx.as_mut()?;
+        self.srtp_tx.as_ref()?;
 
-        // Figure out which, if any, queue to poll
-        // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
+        // Capture cluster membership before register_send() can complete it.
         let (midrid, cluster_id) = self.pacer.poll_queue()?;
-        let Some(media) = self.medias.iter().find(|m| m.mid() == midrid.mid()) else {
-            trace!("Pacer pointed to mid {} which has no media", midrid.mid());
-            return None;
-        };
-
-        let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;
-
-        let stream = self.streams.stream_tx_by_midrid(midrid)?;
-
-        let params = &self.codec_config;
-        let exts = media.remote_extmap();
-
-        // TWCC might not be enabled for this m-line. Firefox do use TWCC, but not
-        // for audio. This is indiciated via the SDP.
-        let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
-        let twcc = twcc_enabled.then_some(&mut self.twcc);
-
-        let receipt = stream.poll_packet(now, exts, twcc, params, buf)?;
+        let (receipt, twcc_enabled) = if midrid.mid() == MID_PROBE {
+            // A stale poll must not leak padding beyond the authorized cluster.
+            cluster_id?;
+            let (media, pt) = self.probe_media()?;
+            let mid = media.mid();
+            let exts = media.remote_extmap().clone();
+            let receipt = self.probe_tx.poll_packet(
+                now,
+                mid,
+                pt,
+                &exts,
+                &mut self.twcc,
+                &mut self.poll_packet_buf,
+            )?;
+            (receipt, true)
+        } else {
+            let media = self.medias.iter().find(|m| m.mid() == midrid.mid())?;
+            let stream = self.streams.stream_tx_by_midrid(midrid)?;
+            let exts = media.remote_extmap();
+            let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
+            let twcc = twcc_enabled.then_some(&mut self.twcc);
+            let receipt = stream.poll_packet(
+                now,
+                exts,
+                twcc,
+                &self.codec_config,
+                &mut self.poll_packet_buf,
+            )?;
+            (receipt, twcc_enabled)
+        };
+        let buf = &mut self.poll_packet_buf;
+        let srtp_tx = self.srtp_tx.as_mut()?;
 
         let PacketReceipt {
             header,
@@ -1138,10 +1200,6 @@ impl Session {
 
         if !is_padding && !header.ssrc.is_probe() {
             self.media_bytes_tx += payload_size as u64;
-        }
-
-        if !self.packet_first_sent {
-            self.packet_first_sent = true;
         }
 
         Some(protected.into())
