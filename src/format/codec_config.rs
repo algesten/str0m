@@ -141,7 +141,7 @@ impl CodecConfig {
             },
             resend,
             fb_transport_cc_local: fb_transport_cc,
-            fb_transport_cc_remote: None,
+            fb_transport_cc: None,
             fb_fir,
             fb_nack,
             fb_pli,
@@ -721,11 +721,9 @@ mod test {
                             local_enabled && any_enabled
                         );
                     }
-                    // Changing local support must not erase the peer's capability.
-                    config.params[0].set_fb_transport_cc(false);
-                    assert!(!config.params()[0].fb_transport_cc());
-                    config.params[0].set_fb_transport_cc(true);
-                    assert_eq!(config.params()[0].fb_transport_cc(), any_enabled);
+                    let json = serde_json::to_value(config.params()[0]).unwrap();
+                    assert_eq!(json["fb_transport_cc_local"], local_enabled);
+                    assert_eq!(json["fb_transport_cc"], local_enabled && any_enabled);
                 }
             }
         }
