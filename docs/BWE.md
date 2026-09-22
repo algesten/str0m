@@ -7,7 +7,7 @@ BWE system.
 
 ### WebRTC revision
 
-The baseline WebRTC revision for the BWE implementation is:
+This git revision we have aligned the str0m impl to.
 
 **Revision**: 2bc24d44be71c186ee0756725abaed7015fbc8bc
 
@@ -689,13 +689,19 @@ encoder bitrate fluctuations would constantly hit the pacing limit, causing
 unnecessary queuing delays. This rate controls how the pacer smooths media
 transmission timing.
 
-The regular padding rate is 50 kbps (`PADDING_TARGET`) while media is active
-and zero during overuse or when no media is active. This padding maintains NAT
-bindings and RTX state; authorized probe clusters use their own target rates
-and can operate even when the regular padding rate is zero.
+The padding rate determines how much additional traffic to inject to
+maintain NAT bindings and keep RTX state warm. Padding is enabled while media
+is active. It's disabled during
+overuse conditions to avoid worsening congestion by adding unnecessary
+traffic. When active, the padding target is 50 kbps (`PADDING_TARGET`),
+sufficient to keep middleboxes alive without adding significant overhead.
+Authorized probe clusters use their own target rates, including when the regular
+padding rate is zero.
 
-This differs from WebRTC's use of per-stream allocation information for padding
-rates. str0m uses a fixed target independent of simulcast layer bitrates.
+This differs from WebRTC, which bases padding decisions on the minimum
+simulcast layer bitrate (typically 30 kbps). str0m uses a fixed 50 kbps
+target instead, taking a simulcast-agnostic approach that works for any
+stream configuration.
 
 The calculated pacing_rate and padding_rate flow to the Pacer, controlling
 transmission smoothing and padding generation respectively.
@@ -731,8 +737,7 @@ transmission smoothing and padding generation respectively.
    - **str0m**: Fixed 50 kbps regular padding target while media is active,
      disabled during overuse
    - **Reason**: Simulcast-agnostic design
-   - **Impact**: Regular padding does not depend on per-stream bitrate
-     allocations; idle capacity discovery uses probe clusters
+   - **Impact**: Slightly higher padding in audio-only scenarios
 
 4. **Bitrate Constraints:**
    - **WebRTC**: Separate `max_bitrate` (hard cap) and

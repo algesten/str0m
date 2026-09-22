@@ -32,11 +32,12 @@ pub use writer::Writer;
 pub use crate::packet::MediaKind;
 pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid};
 
-/// Internal Mid used for SSRC 0 non-media BWE probe bookkeeping.
+/// Mid used for SSRC 0 non-media BWE probes.
 ///
-/// These padding-only packets carry `transport_cc` for TWCC feedback and are
-/// handled separately from media. Outgoing probes use a negotiated media Mid
-/// on the wire and do not require an initialized video/RTX stream.
+/// Outgoing probes use a negotiated media Mid on the wire and do not require
+/// an initialized video/RTX stream.
+///
+/// These probes carry `transport_cc` for TWCC feedback but no real media.
 pub(crate) const MID_PROBE: Mid = Mid::from_array(*b"~]probe\0\0\0\0\0\0\0\0\0");
 
 #[derive(Debug)]

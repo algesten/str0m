@@ -40,7 +40,7 @@ impl<'a> Bwe<'a> {
         self.0.session.set_bwe_desired_bitrate(desired_bitrate);
     }
 
-    /// Reset the BWE with a new initial bitrate.
+    /// Reset the BWE with a new init_bitrate
     ///
     /// This discards the current estimator state and starts estimation again
     /// from `init_bitrate`. Normal transitions from audio-only to video sending
