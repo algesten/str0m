@@ -140,8 +140,7 @@ impl CodecConfig {
                 format,
             },
             resend,
-            fb_transport_cc_local: fb_transport_cc,
-            fb_transport_cc: None,
+            fb_transport_cc,
             fb_fir,
             fb_nack,
             fb_pli,
@@ -703,7 +702,7 @@ mod test {
     use crate::format::{CodecSpec, FormatParams};
 
     #[test]
-    fn transport_cc_combines_sections_and_preserves_local_capability() {
+    fn transport_cc_uses_first_section_and_preserves_local_capability() {
         for direction in [Direction::SendOnly, Direction::RecvOnly] {
             for local_enabled in [false, true] {
                 for sections in [[false, false], [false, true], [true, false]] {
@@ -711,19 +710,14 @@ mod test {
                     config.enable_vp8(true);
                     config.params[0].set_fb_transport_cc(local_enabled);
                     let mut remote = config.params[0];
-                    let mut any_enabled = false;
+                    let expected = local_enabled && sections[0];
                     for enabled in sections {
                         remote.set_fb_transport_cc(enabled);
                         config.update_params(&[remote], direction);
-                        any_enabled |= enabled;
-                        assert_eq!(
-                            config.params()[0].fb_transport_cc(),
-                            local_enabled && any_enabled
-                        );
+                        assert_eq!(config.params()[0].fb_transport_cc(), expected);
                     }
                     let json = serde_json::to_value(config.params()[0]).unwrap();
-                    assert_eq!(json["fb_transport_cc_local"], local_enabled);
-                    assert_eq!(json["fb_transport_cc"], local_enabled && any_enabled);
+                    assert_eq!(json["fb_transport_cc"], expected);
                 }
             }
         }

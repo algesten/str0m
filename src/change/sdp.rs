@@ -2194,9 +2194,10 @@ mod test {
     }
 
     #[test]
-    fn twcc_negotiation_is_per_pt_across_media_sections() {
+    fn twcc_negotiation_uses_first_media_section_for_each_pt() {
         crate::init_crypto_default();
         for enabled_audio in [1, 2] {
+            let expected_audio = enabled_audio == 1;
             let now = Instant::now();
             let mut local = Rtc::builder().build(now);
             let mut remote = Rtc::builder().build(now);
@@ -2220,9 +2221,13 @@ mod test {
                 + "\r\n";
             let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
             let answer = remote.sdp_api().accept_offer(offer).unwrap();
-            // Both audio sections advertise the same session-wide result.
+            // Both audio sections use the first section's negotiated result.
             for m in &answer.media_lines[..2] {
-                assert!(m.rtp_params().iter().all(|p| p.fb_transport_cc()));
+                assert!(
+                    m.rtp_params()
+                        .iter()
+                        .all(|p| p.fb_transport_cc() == expected_audio)
+                );
             }
             assert!(
                 answer.media_lines[2]
@@ -2237,7 +2242,7 @@ mod test {
                         .params()
                         .iter()
                         .filter(|p| p.spec().codec.is_audio())
-                        .all(|p| p.fb_transport_cc())
+                        .all(|p| p.fb_transport_cc() == expected_audio)
                 );
                 assert!(
                     rtc.codec_config()
@@ -2258,7 +2263,11 @@ mod test {
             let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
             let answer = remote.sdp_api().accept_offer(offer).unwrap();
             for m in &answer.media_lines[..2] {
-                assert!(m.rtp_params().iter().all(|p| p.fb_transport_cc()));
+                assert!(
+                    m.rtp_params()
+                        .iter()
+                        .all(|p| p.fb_transport_cc() == expected_audio)
+                );
             }
         }
     }
