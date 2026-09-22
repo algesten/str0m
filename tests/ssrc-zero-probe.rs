@@ -8,74 +8,6 @@ use str0m::{Event, Rtc, RtcError};
 mod common;
 use common::{TestRtc, connect_l_r_with_rtc, init_crypto_default, progress};
 
-fn peers(feedback: bool) -> (TestRtc, TestRtc) {
-    common::init_log();
-    init_crypto_default();
-    let now = Instant::now();
-    let l = Rtc::builder()
-        .set_rtp_mode(true)
-        .enable_raw_packets(true)
-        .enable_bwe(Some(Bitrate::kbps(300)))
-        .build(now);
-    let r = Rtc::builder()
-        .set_rtp_mode(true)
-        .enable_raw_packets(true)
-        .build(now);
-    let (mut l, mut r) = connect_l_r_with_rtc(l, r);
-    l.set_forced_time_advance(Duration::from_micros(100));
-    r.set_forced_time_advance(Duration::from_micros(100));
-    l.bwe().set_desired_bitrate(Bitrate::mbps(2));
-    if feedback {
-        r.direct_api().enable_twcc_feedback();
-    }
-    (l, r)
-}
-
-fn run(l: &mut TestRtc, r: &mut TestRtc, duration: Duration) -> Result<(), RtcError> {
-    let end = l.last + duration;
-    let mut iterations = 0;
-    while l.last < end {
-        progress(l, r)?;
-        iterations += 1;
-        assert!(
-            iterations < 100_000,
-            "empty queues must not spin on an expired timeout"
-        );
-    }
-    Ok(())
-}
-
-fn probes(rtc: &TestRtc) -> usize {
-    rtc.events
-        .iter()
-        .filter(|(_, event)| {
-            matches!(event,
-                Event::RawPacket(p) if matches!(p.as_ref(), RawPacket::RtpTx(h, _) if *h.ssrc == 0)
-            )
-        })
-        .count()
-}
-
-fn assert_feedback_and_no_media(l: &TestRtc, r: &TestRtc) {
-    assert!(probes(l) >= 5, "SSRC 0 probe cluster was not sent");
-    assert!(
-        l.events.iter().any(|(_, event)| matches!(event,
-            Event::EgressBitrateEstimate(BweKind::Twcc(rate)) if *rate > Bitrate::kbps(300)
-        )),
-        "probe feedback should measure capacity above the initial estimate"
-    );
-    assert!(r.events.iter().any(|(_, event)| matches!(event,
-        Event::RawPacket(p) if matches!(p.as_ref(), RawPacket::RtpRx(h, payload)
-            if *h.ssrc == 0 && h.has_padding && h.ext_vals.transport_cc.is_some() && payload.is_empty())
-    )), "receiver must decrypt and strip probe padding");
-    assert!(
-        !r.events
-            .iter()
-            .any(|(_, event)| matches!(event, Event::RtpPacket(_) | Event::MediaData(_))),
-        "probes must not be delivered as media"
-    );
-}
-
 #[test]
 fn direct_audio_only_before_media() -> Result<(), RtcError> {
     let (mut l, mut r) = peers(true);
@@ -298,4 +230,72 @@ fn video_padding_before_srtp_does_not_spin() -> Result<(), RtcError> {
         }
     }
     panic!("padding before SRTP readiness kept requesting immediate timeouts");
+}
+
+fn peers(feedback: bool) -> (TestRtc, TestRtc) {
+    common::init_log();
+    init_crypto_default();
+    let now = Instant::now();
+    let l = Rtc::builder()
+        .set_rtp_mode(true)
+        .enable_raw_packets(true)
+        .enable_bwe(Some(Bitrate::kbps(300)))
+        .build(now);
+    let r = Rtc::builder()
+        .set_rtp_mode(true)
+        .enable_raw_packets(true)
+        .build(now);
+    let (mut l, mut r) = connect_l_r_with_rtc(l, r);
+    l.set_forced_time_advance(Duration::from_micros(100));
+    r.set_forced_time_advance(Duration::from_micros(100));
+    l.bwe().set_desired_bitrate(Bitrate::mbps(2));
+    if feedback {
+        r.direct_api().enable_twcc_feedback();
+    }
+    (l, r)
+}
+
+fn run(l: &mut TestRtc, r: &mut TestRtc, duration: Duration) -> Result<(), RtcError> {
+    let end = l.last + duration;
+    let mut iterations = 0;
+    while l.last < end {
+        progress(l, r)?;
+        iterations += 1;
+        assert!(
+            iterations < 100_000,
+            "empty queues must not spin on an expired timeout"
+        );
+    }
+    Ok(())
+}
+
+fn probes(rtc: &TestRtc) -> usize {
+    rtc.events
+        .iter()
+        .filter(|(_, event)| {
+            matches!(event,
+                Event::RawPacket(p) if matches!(p.as_ref(), RawPacket::RtpTx(h, _) if *h.ssrc == 0)
+            )
+        })
+        .count()
+}
+
+fn assert_feedback_and_no_media(l: &TestRtc, r: &TestRtc) {
+    assert!(probes(l) >= 5, "SSRC 0 probe cluster was not sent");
+    assert!(
+        l.events.iter().any(|(_, event)| matches!(event,
+            Event::EgressBitrateEstimate(BweKind::Twcc(rate)) if *rate > Bitrate::kbps(300)
+        )),
+        "probe feedback should measure capacity above the initial estimate"
+    );
+    assert!(r.events.iter().any(|(_, event)| matches!(event,
+        Event::RawPacket(p) if matches!(p.as_ref(), RawPacket::RtpRx(h, payload)
+            if *h.ssrc == 0 && h.has_padding && h.ext_vals.transport_cc.is_some() && payload.is_empty())
+    )), "receiver must decrypt and strip probe padding");
+    assert!(
+        !r.events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::RtpPacket(_) | Event::MediaData(_))),
+        "probes must not be delivered as media"
+    );
 }

@@ -343,29 +343,6 @@ impl Session {
         Ok(())
     }
 
-    // Use a negotiated PT and MID so browser transports can route the packet to
-    // their receive-side congestion controller before discarding the empty payload.
-    fn probe_media(&self) -> Option<(&Media, Pt)> {
-        self.medias.iter().find_map(|media| {
-            if media.stopped() || !media.direction().is_sending() {
-                return None;
-            }
-            media
-                .remote_extmap()
-                .id_of(Extension::TransportSequenceNumber)?;
-            let params = self.codec_config.params().iter().find(|p| {
-                p.fb_transport_cc()
-                    && media
-                        .remote_transport_cc
-                        .as_ref()
-                        .is_none_or(|pts| pts.contains(&p.pt()))
-                    && p.spec().codec.is_audio() == media.kind().is_audio()
-                    && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
-            })?;
-            Some((media, params.pt()))
-        })
-    }
-
     fn handle_timeout_bwe(&mut self, now: Instant) {
         let do_probe = self.srtp_tx.is_some() && self.probe_media().is_some();
         if !do_probe {
@@ -391,6 +368,29 @@ impl Session {
             bwe.end_probe(now, cluster_id);
             self.streams.set_probe_media(None);
         }
+    }
+
+    // Use a negotiated PT and MID so browser transports can route the packet to
+    // their receive-side congestion controller before discarding the empty payload.
+    fn probe_media(&self) -> Option<(&Media, Pt)> {
+        self.medias.iter().find_map(|media| {
+            if media.stopped() || !media.direction().is_sending() {
+                return None;
+            }
+            media
+                .remote_extmap()
+                .id_of(Extension::TransportSequenceNumber)?;
+            let params = self.codec_config.params().iter().find(|p| {
+                p.fb_transport_cc()
+                    && media
+                        .remote_transport_cc
+                        .as_ref()
+                        .is_none_or(|pts| pts.contains(&p.pt()))
+                    && p.spec().codec.is_audio() == media.kind().is_audio()
+                    && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
+            })?;
+            Some((media, params.pt()))
+        })
     }
 
     fn update_queue_state(&mut self, now: Instant) {
