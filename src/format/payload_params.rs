@@ -617,6 +617,11 @@ impl PayloadParams {
             return;
         };
 
+        // The first negotiated m-line determines TWCC support for this PT.
+        if !self.locked {
+            self.fb_transport_cc &= first.fb_transport_cc();
+        }
+
         // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.
         if self.spec.codec == Codec::H265 && first.spec.codec == Codec::H265 {
             if let Some(remote_ptl) = first.spec.format.h265_profile_tier_level {

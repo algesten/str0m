@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::budget::IntervalBudget;
 use crate::rtp_::{Bitrate, DataSize};
@@ -67,6 +67,19 @@ impl AlrDetector {
             bandwidth_usage_ratio: 0.65,
             start_budget_level_ratio: 0.80,
             stop_budget_level_ratio: 0.50,
+        }
+    }
+
+    /// Advance the budget through complete media silence. Keep WebRTC's
+    /// packet-driven updates while media is flowing: frequent zero-byte updates
+    /// would round away fractional byte credit and change ALR transitions.
+    pub fn handle_timeout(&mut self, now: Instant) {
+        const IDLE_INTERVAL: Duration = Duration::from_millis(500);
+        if self
+            .last_send_time
+            .is_none_or(|last| now.saturating_duration_since(last) >= IDLE_INTERVAL)
+        {
+            self.on_bytes_sent(DataSize::ZERO, now);
         }
     }
 
@@ -142,7 +155,41 @@ impl AlrDetector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+
+    #[test]
+    fn timeout_detects_complete_silence() {
+        let now = Instant::now();
+        let mut detector = AlrDetector::new();
+        detector.set_estimated_bitrate(Bitrate::mbps(1));
+        detector.handle_timeout(now);
+        detector.handle_timeout(now + Duration::from_millis(500));
+        assert!(detector.alr_start_time().is_some());
+    }
+
+    #[test]
+    fn frequent_timeouts_preserve_media_budget() {
+        let now = Instant::now();
+        let mut with_timeouts = AlrDetector::new();
+        let mut packet_driven = AlrDetector::new();
+        for detector in [&mut with_timeouts, &mut packet_driven] {
+            detector.set_estimated_bitrate(Bitrate::kbps(250));
+            detector.on_bytes_sent(DataSize::ZERO, now);
+        }
+        for tick in 1..10_000 {
+            let now = now + Duration::from_micros(tick * 100);
+            with_timeouts.handle_timeout(now);
+            if tick % 50 == 0 {
+                for detector in [&mut with_timeouts, &mut packet_driven] {
+                    detector.on_bytes_sent(DataSize::bytes(100), now);
+                }
+                assert_eq!(with_timeouts.budget_ratio(), packet_driven.budget_ratio());
+                assert_eq!(
+                    with_timeouts.alr_start_time(),
+                    packet_driven.alr_start_time()
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_alr_not_detected_initially() {

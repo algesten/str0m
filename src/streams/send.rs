@@ -102,7 +102,7 @@ pub struct StreamTx {
     /// The last main payload clock rate that was sent.
     clock_rate: Option<Frequency>,
 
-    /// If we are doing seq_no ourselves (when writing frame mode).
+    /// If we are doing seq_no ourselves (frame mode or SSRC 0 probing).
     seq_no: SeqNo,
 
     /// If we are using RTX, this is the seq no counter.
@@ -337,6 +337,24 @@ impl StreamTx {
         }
     }
 
+    pub(crate) fn new_probe(mtu_warn: usize) -> Self {
+        let mut stream = Self::new(
+            0.into(),
+            None,
+            MidRid(crate::media::MID_PROBE, None),
+            false,
+            mtu_warn,
+        );
+        stream.unpaced = Some(false);
+        stream
+    }
+
+    pub(crate) fn set_probe_media(&mut self, mid: Mid, pt: Pt) {
+        debug_assert!(self.ssrc.is_probe());
+        self.midrid = MidRid(mid, None);
+        self.pt_for_padding = Some(pt);
+    }
+
     /// The (primary) SSRC of this encoded stream.
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc
@@ -482,7 +500,7 @@ impl StreamTx {
     }
 
     fn padding_enabled(&self) -> bool {
-        self.rtx.is_some() && self.pt_for_padding.is_some()
+        (self.ssrc.is_probe() || self.rtx.is_some()) && self.pt_for_padding.is_some()
     }
 
     pub(crate) fn poll_packet(
@@ -495,6 +513,10 @@ impl StreamTx {
     ) -> Option<PacketReceipt> {
         let mid = self.midrid.mid();
         let rid = self.midrid.rid();
+        let is_probe = self.ssrc.is_probe();
+        if is_probe && twcc.is_none() {
+            return None;
+        }
         let ssrc_rtx = self.rtx;
         let remote_acked_ssrc = self.remote_acked_ssrc;
         let remote_acked_rtx_ssrc = self.remote_acked_rtx_ssrc;
@@ -587,6 +609,15 @@ impl StreamTx {
                 header_ref.ext_vals.rid_repair = None;
 
                 header_ref.clone()
+            }
+            NextPacketKind::Blank(_) if is_probe => {
+                // Non-media probes use their negotiated main PT and own sequence
+                // counter, rather than rewriting the header for an RTX stream.
+                let mut header = header_ref.clone();
+                header.has_padding = true;
+                header.ssrc = 0.into();
+                header.sequence_number = *next.seq_no as u16;
+                header
             }
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
                 // * For the Resend case, we will not have accepted/cached the packet unless
@@ -705,7 +736,7 @@ impl StreamTx {
 
         // Padding comes in two forms, "spurious resends" of sent packets where
         // the remote side didn't ask for a resend. The other variant are blank
-        // packets, containing nothing but zeroes. Such packets must be sent from
+        // packets, containing nothing but zeroes. On media streams these use
         // _some_ RTX PT. A good pick is the RTX for the PT last used to send
         // regular media data.
         //
@@ -857,7 +888,7 @@ impl StreamTx {
 
         #[allow(clippy::unnecessary_operation)]
         'outer: {
-            if self.padding > MIN_SPURIOUS_PADDING_SIZE {
+            if !self.ssrc.is_probe() && self.padding > MIN_SPURIOUS_PADDING_SIZE {
                 // Find a historic packet that is smaller than this max size. The max size
                 // is a headroom since we can accept slightly larger padding than asked for.
                 let max_size = (self.padding * 2).min(self.mtu_warn - MAX_RTP_OVERHEAD);
@@ -880,7 +911,11 @@ impl StreamTx {
             }
         };
 
-        let seq_no = self.seq_no_rtx.inc();
+        let seq_no = if self.ssrc.is_probe() {
+            self.seq_no.inc()
+        } else {
+            self.seq_no_rtx.inc()
+        };
 
         let pkt = &mut self.blank_packet;
         pkt.seq_no = seq_no;
@@ -892,7 +927,12 @@ impl StreamTx {
             .clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
         assert!(len <= 255); // should fit in a byte
 
-        self.padding = self.padding.saturating_sub(len);
+        let charged_len = if self.ssrc.is_probe() {
+            len.div_ceil(SRTP_BLOCK_SIZE) * SRTP_BLOCK_SIZE
+        } else {
+            len
+        };
+        self.padding = self.padding.saturating_sub(charged_len);
 
         Some(NextPacket {
             kind: NextPacketKind::Blank(len as u8),
@@ -1085,8 +1125,7 @@ impl StreamTx {
         // apply any pacing until we know what kind of content we are sending.
         let unpaced = self.unpaced.unwrap_or(true);
 
-        // It's only possible to use this sender for padding if RTX is enabled and
-        // we know a PT to use for it.
+        // Padding needs a known PT and either RTX or the non-media probe SSRC.
         let use_for_padding = self.padding_enabled();
 
         let mut snapshot = self.send_queue.snapshot(now);
@@ -1140,6 +1179,18 @@ impl StreamTx {
             return None;
         }
 
+        if self.ssrc.is_probe() {
+            return Some(QueueSnapshot {
+                created_at: now,
+                byte_size: self.padding,
+                packet_count: self.padding.div_ceil(MAX_BLANK_PADDING_PAYLOAD_SIZE) as u32,
+                first_unsent: Some(now),
+                last_emitted: (self.last_used != already_happened()).then_some(self.last_used),
+                priority: QueuePriority::Padding,
+                ..Default::default()
+            });
+        }
+
         // TODO: Be more scientific about these factors.
         const AVERAGE_PADDING_PACKET_SIZE: usize = 800;
         const FAKE_PADDING_DURATION_MILLIS: usize = 5;
@@ -1156,6 +1207,10 @@ impl StreamTx {
             priority: QueuePriority::Padding,
             ..Default::default()
         })
+    }
+
+    pub(crate) fn padding_pt(&self) -> Option<Pt> {
+        self.pt_for_padding
     }
 
     pub(crate) fn generate_padding(&mut self, padding: usize) {
@@ -1281,6 +1336,131 @@ struct Resend {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn regular_padding_does_not_search_probe_negotiation() {
+        let mut streams = crate::streams::Streams::new(false, 1200);
+        let stream =
+            streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
+        stream.pt_for_padding = Some(96.into());
+        let queues: Vec<_> = streams
+            .send_queue_states(Instant::now(), |_, _| {
+                panic!("ordinary padding must not check probe negotiation")
+            })
+            .collect();
+        assert_eq!(queues.len(), 1);
+        assert!(queues[0].use_for_padding);
+    }
+
+    #[test]
+    fn probe_absolute_send_time_follows_negotiated_extensions() {
+        let now = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        for negotiated in [false, true] {
+            let mut exts = ExtensionMap::empty();
+            exts.set(1, Extension::RtpMid);
+            exts.set(3, Extension::TransportSequenceNumber);
+            if negotiated {
+                exts.set(2, Extension::AbsoluteSendTime);
+            }
+            let mut stream = StreamTx::new_probe(1200);
+            stream.set_probe_media("aud".into(), 111.into());
+            stream.generate_padding(240);
+            let mut twcc = 42;
+            let mut buf = vec![];
+            let receipt = stream
+                .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
+                .unwrap();
+            assert_eq!(
+                receipt.header.ext_vals.abs_send_time,
+                negotiated.then_some(now)
+            );
+            let header = RtpHeader::parse(&buf, &exts).unwrap();
+            assert_eq!(header.ext_vals.abs_send_time.is_some(), negotiated);
+            assert_eq!(header.ext_vals.transport_cc, Some(42));
+            assert!(header.ssrc.is_probe());
+            assert!(header.has_padding);
+        }
+    }
+
+    #[test]
+    fn padding_accounting_and_sequence_rollover() {
+        let now = Instant::now();
+        let mut sender = StreamTx::new_probe(1200);
+        sender.set_probe_media("aud".into(), 111.into());
+        sender.seq_no = 65_535.into();
+        let codecs = CodecConfig::new_with_defaults();
+        let mut twcc = 131_071;
+        let mut buf = vec![];
+        let exts = ExtensionMap::standard();
+        sender.generate_padding(241);
+        let first = sender
+            .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
+            .unwrap();
+        assert_eq!(first.payload_size, 240);
+        assert!(first.header.has_padding);
+        assert_eq!(first.header.ext_vals.abs_send_time, Some(now));
+        assert_eq!(*first.seq_no, 65_535);
+        let second = sender
+            .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
+            .unwrap();
+        assert_eq!(*second.seq_no, 65_536);
+        assert_eq!(second.header.sequence_number, 0);
+        assert_eq!(second.header.ext_vals.transport_cc, Some(0));
+        assert_eq!(second.payload_size, SRTP_BLOCK_SIZE);
+        assert_eq!(buf.len(), second.header.header_len + second.payload_size);
+        assert!(
+            RtpHeader::unpad_payload(&buf[second.header.header_len..])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(sender.queue_state(now).snapshot.packet_count, 0);
+        assert_eq!(twcc, 131_073);
+    }
+
+    #[test]
+    fn probe_stream_rebinding_preserves_srtp_sequence_and_discards_pending_padding() {
+        use crate::media::MID_PROBE;
+        use crate::rtp_::MidRid;
+        use crate::streams::Streams;
+
+        let now = Instant::now();
+        let mut streams = Streams::new(false, 1200);
+        let queue = MidRid(MID_PROBE, None);
+        let mut twcc = 0;
+        let mut buf = vec![];
+        let exts = ExtensionMap::standard();
+        let codecs = CodecConfig::new_with_defaults();
+        streams.set_probe_media(Some(("aud".into(), 111.into())));
+        let stream = streams.stream_tx_by_midrid(queue).unwrap();
+        stream.generate_padding(480);
+        let first = stream
+            .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
+            .unwrap();
+        assert_eq!(first.header.ext_vals.mid, Some("aud".into()));
+
+        // Ending a cluster must drop any unsent padding and remove its source
+        // from selection, without resetting the SRTP index for the next cluster.
+        streams.set_probe_media(None);
+        assert!(streams.stream_tx_by_midrid(queue).is_none());
+        assert_eq!(streams.send_queue_states(now, |_, _| true).count(), 0);
+        streams.set_probe_media(Some(("vid".into(), 96.into())));
+        assert_eq!(streams.streams_tx().count(), 0);
+        let stream = streams.stream_tx_by_midrid(queue).unwrap();
+        assert!(
+            stream
+                .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
+                .is_none()
+        );
+        stream.generate_padding(240);
+        let second = stream
+            .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
+            .unwrap();
+        assert_eq!(*second.seq_no, *first.seq_no + 1);
+        assert_eq!(second.header.ext_vals.transport_cc, Some(1));
+        assert_eq!(second.header.ext_vals.mid, Some("vid".into()));
+        assert_eq!(second.header.payload_type, 96.into());
+    }
 
     #[test]
     fn queue_info_is_cached_on_queue_state_update() {

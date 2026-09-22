@@ -34,10 +34,8 @@ pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt,
 
 /// Mid used for SSRC 0 non-media BWE probes.
 ///
-/// libwebrtc sends bandwidth estimation probes on SSRC 0 when:
-/// - Video m-line with RTX is negotiated
-/// - `allow_probe_without_media` is enabled (Chrome default)
-/// - No video media packets have been sent yet
+/// Outgoing probes use a negotiated media Mid on the wire and do not require
+/// an initialized video/RTX stream.
 ///
 /// These probes carry `transport_cc` for TWCC feedback but no real media.
 pub(crate) const MID_PROBE: Mid = Mid::from_array(*b"~]probe\0\0\0\0\0\0\0\0\0");

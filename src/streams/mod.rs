@@ -7,7 +7,8 @@ use std::time::Instant;
 use crate::config_mod::RtcpReportIntervals;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::media::{KeyframeRequest, Media, SenderFeedback};
+use crate::media::{KeyframeRequest, MID_PROBE, Media, SenderFeedback};
+use crate::pacer::QueueState;
 use crate::packet::Vp8Patch;
 use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
@@ -135,6 +136,10 @@ pub(crate) struct Streams {
     /// All outgoing encoded streams.
     streams_tx: HashMap<Ssrc, StreamTx>,
 
+    /// Non-media padding source. Its sequence counter survives media changes.
+    probe_tx: StreamTx,
+    probe_media: Option<(Mid, Pt)>,
+
     /// Local SSRC used before we got any StreamTx. This is used for RTCP if we don't
     /// have any reasonable value to use.
     default_ssrc_tx: Ssrc,
@@ -176,6 +181,8 @@ impl Streams {
             rx_lookup: Default::default(),
             last_rx_lookup_cleanup: already_happened(),
             streams_tx: Default::default(),
+            probe_tx: StreamTx::new_probe(mtu_warn),
+            probe_media: None,
             default_ssrc_tx: 0.into(), // this will be changed
             mids_to_report: Vec::with_capacity(10),
             any_nack_active: None,
@@ -599,7 +606,57 @@ impl Streams {
         }
     }
 
+    /// Bind the probe source only while a cluster is authorized. Changing the
+    /// binding drops queued padding but preserves the SSRC's SRTP sequence.
+    pub(crate) fn set_probe_media(&mut self, media: Option<(Mid, Pt)>) {
+        if media == self.probe_media {
+            return;
+        }
+        self.probe_tx.reset_buffers();
+        if let Some((mid, pt)) = media {
+            self.probe_tx.set_probe_media(mid, pt);
+        }
+        self.probe_media = media;
+    }
+
+    pub(crate) fn send_queue_states(
+        &mut self,
+        now: Instant,
+        mut can_probe: impl FnMut(Mid, Pt) -> bool,
+    ) -> impl Iterator<Item = QueueState> {
+        // Snapshot each stream once, preferring media/RTX padding over the
+        // fallback. No extra stream or retransmission-queue scan is needed.
+        let mut media_padding = false;
+        let mut probe_queue = self.probe_media.map(|_| {
+            let mut queue = self.probe_tx.queue_state(now);
+            queue.midrid = MidRid(MID_PROBE, None);
+            queue
+        });
+        let mut streams = self.streams_tx.values_mut();
+        std::iter::from_fn(move || {
+            if let Some(stream) = streams.next() {
+                let mut queue = stream.queue_state(now);
+                if probe_queue.is_some() && queue.use_for_padding {
+                    // Only negotiated feedback sources can provide probe padding.
+                    // Ordinary padding keeps its existing eligibility.
+                    queue.use_for_padding = stream
+                        .padding_pt()
+                        .is_some_and(|pt| can_probe(stream.mid(), pt));
+                }
+                media_padding |= queue.use_for_padding;
+                return Some(queue);
+            }
+            let mut queue = probe_queue.take()?;
+            queue.use_for_padding = !media_padding;
+            Some(queue)
+        })
+    }
+
     pub(crate) fn stream_tx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamTx> {
+        if midrid == MidRid(MID_PROBE, None) {
+            self.probe_media?;
+            return Some(&mut self.probe_tx);
+        }
         self.streams_tx.values_mut().find(|s| s.is_midrid(midrid))
     }
 

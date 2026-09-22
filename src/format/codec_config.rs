@@ -702,6 +702,26 @@ mod test {
     use crate::format::{CodecSpec, FormatParams};
 
     #[test]
+    fn transport_cc_uses_first_section_and_preserves_local_capability() {
+        for direction in [Direction::SendOnly, Direction::RecvOnly] {
+            for local_enabled in [false, true] {
+                for sections in [[false, false], [false, true], [true, false]] {
+                    let mut config = CodecConfig::empty();
+                    config.enable_vp8(true);
+                    config.params[0].set_fb_transport_cc(local_enabled);
+                    let mut remote = config.params[0];
+                    let expected = local_enabled && sections[0];
+                    for enabled in sections {
+                        remote.set_fb_transport_cc(enabled);
+                        config.update_params(&[remote], direction);
+                        assert_eq!(config.params()[0].fb_transport_cc(), expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn static_payload_types_have_canonical_codec_definitions() {
         let definitions = [
             (PT_PCMU, Codec::PCMU, Frequency::EIGHT_KHZ),

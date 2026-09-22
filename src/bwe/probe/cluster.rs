@@ -280,9 +280,16 @@ impl ProbeClusterState {
         // Calculate remaining bytes needed to complete the probe cluster.
         let bytes_remaining = self.config.target_bytes().saturating_sub(self.bytes_sent);
 
-        // Return the minimum of bytes_remaining and recommended_probe_size.
-        // When bytes_remaining is zero, this returns None (no more padding).
-        let request_bytes = cmp::min(bytes_remaining, recommended_probe_size);
+        // Like BitrateProber::ProbeSent, completion requires both the byte and
+        // packet thresholds. At low rates the byte target can fit in one packet;
+        // keep sending bounded padding until the minimum packet count is met.
+        let request_bytes = if bytes_remaining == DataSize::ZERO
+            && self.packets_sent < self.config.min_packet_count
+        {
+            MAX_PADDING_PACKET_SIZE
+        } else {
+            cmp::min(bytes_remaining, recommended_probe_size)
+        };
 
         if request_bytes == DataSize::ZERO {
             None
@@ -315,6 +322,20 @@ impl ProbeClusterState {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn low_rate_padding_reaches_minimum_packet_count() {
+        let now = Instant::now();
+        let config = ProbeClusterConfig::new(0.into(), Bitrate::kbps(10), ProbeKind::Initial);
+        let mut state = ProbeClusterState::new(config);
+        for i in 0..config.min_packet_count() {
+            let at = if i == 0 { now } else { state.next_probe_time() };
+            let size = state.next_packet(at).expect("minimum packets still needed");
+            assert!(size <= MAX_PADDING_PACKET_SIZE);
+            state.record_packet(at, size);
+        }
+        assert!(state.is_complete(state.next_probe_time()));
+    }
 
     // Test helper to directly set state for testing
     impl ProbeClusterState {

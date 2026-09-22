@@ -2194,6 +2194,85 @@ mod test {
     }
 
     #[test]
+    fn twcc_negotiation_uses_first_media_section_for_each_pt() {
+        crate::init_crypto_default();
+        for enabled_audio in [1, 2] {
+            let expected_audio = enabled_audio == 1;
+            let now = Instant::now();
+            let mut local = Rtc::builder().build(now);
+            let mut remote = Rtc::builder().build(now);
+            let mut change = local.sdp_api();
+            change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+            change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            let (offer, pending) = change.apply().unwrap();
+            let mut section = 0;
+            let sdp = offer
+                .to_sdp_string()
+                .lines()
+                .filter(|line| {
+                    if line.starts_with("m=") {
+                        section += 1;
+                    }
+                    section == enabled_audio || !line.contains("transport-cc")
+                })
+                .collect::<Vec<_>>()
+                .join("\r\n")
+                + "\r\n";
+            let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+            let answer = remote.sdp_api().accept_offer(offer).unwrap();
+            // Both audio sections use the first section's negotiated result.
+            for m in &answer.media_lines[..2] {
+                assert!(
+                    m.rtp_params()
+                        .iter()
+                        .all(|p| p.fb_transport_cc() == expected_audio)
+                );
+            }
+            assert!(
+                answer.media_lines[2]
+                    .rtp_params()
+                    .iter()
+                    .all(|p| !p.fb_transport_cc())
+            );
+            local.sdp_api().accept_answer(pending, answer).unwrap();
+            for rtc in [&local, &remote] {
+                assert!(
+                    rtc.codec_config()
+                        .params()
+                        .iter()
+                        .filter(|p| p.spec().codec.is_audio())
+                        .all(|p| p.fb_transport_cc() == expected_audio)
+                );
+                assert!(
+                    rtc.codec_config()
+                        .params()
+                        .iter()
+                        .filter(|p| p.spec().codec.is_video())
+                        .all(|p| !p.fb_transport_cc())
+                );
+            }
+
+            // Existing m-lines retain their negotiated codec parameters.
+            let sdp = sdp
+                .lines()
+                .filter(|line| !line.contains("transport-cc"))
+                .collect::<Vec<_>>()
+                .join("\r\n")
+                + "\r\n";
+            let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+            let answer = remote.sdp_api().accept_offer(offer).unwrap();
+            for m in &answer.media_lines[..2] {
+                assert!(
+                    m.rtp_params()
+                        .iter()
+                        .all(|p| p.fb_transport_cc() == expected_audio)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_rtp_payload_priority() {
         crate::init_crypto_default();
 

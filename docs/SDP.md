@@ -76,6 +76,17 @@ anything else. It's as if we collectively pretend that SHOULD is a MUST, and imp
 
 str0m does this too. Sauce for the goose…
 
+### TWCC feedback across m-lines
+
+str0m assumes `fb_transport_cc` is a per-PT capability shared across the
+BUNDLE/session. For each PT, the first matching remote payload parameters
+determine whether TWCC feedback is enabled, provided it is enabled locally.
+Later m-lines using that PT do not change the result, even if they advertise
+different `a=rtcp-fb:<pt> transport-cc` support. We do not model that distinction.
+The transport sequence number header extension must still be negotiated on
+the m-line carrying the RTP packets. As with other codec parameters, feedback
+capabilities are retained when an existing m-line is renegotiated.
+
 ### Renegotiation and narrowed PT lists
 
 On renegotiation of an existing m-line, str0m keeps the remote payload type list

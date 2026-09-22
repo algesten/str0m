@@ -43,6 +43,9 @@ help the system ramp up quickly when conditions improve. They're used:
 - When application demand exceeds current estimate (exploring headroom)
 - During ALR to rediscover capacity
 
+Probing can discover capacity before the first media packet, including on
+connections with only audio negotiated.
+
 ### Application Limited Region (ALR)
 
 ALR occurs when your application sends **less than 65% of available
@@ -543,7 +546,10 @@ entry/exit, disrupting probe scheduling and loss estimation.
 
 The SendSideBandwidthEstimator calls `on_media_sent()` for each media
 packet (excluding padding and probes), passing the packet size and
-timestamp. It also calls `set_estimated_bitrate()` whenever the bandwidth
+timestamp. While probing is available, application-supplied timeout inputs
+advance the same budget with zero media bytes after a 500ms idle interval, so
+complete silence can enter ALR without changing packet-driven updates during media.
+It also calls `set_estimated_bitrate()` whenever the bandwidth
 estimate changes, which adjusts the target rate to 65% of the new
 estimate. The ALR start time flows to both ProbeControl and LossController
 via `alr_start_time()`, providing context for probe gating decisions and
@@ -631,6 +637,45 @@ The pacer outputs paced packet transmission to the network and signals probe
 completion events back to the SendSideBandwidthEstimator when a probe cluster
 finishes sending. Queue management is handled in `src/pacer/queue.rs`.
 
+#### Probe Padding Sources
+
+**Location:** `src/streams/mod.rs`, `src/streams/send.rs`
+**WebRTC:** `modules/pacing/packet_router.cc`,
+`modules/rtp_rtcp/source/rtp_sender.cc`
+
+The stream collection prefers media/RTX padding sources with negotiated TWCC,
+following WebRTC's `PacketRouter::GeneratePadding`. When none is available, an internal `StreamTx`
+provides padding-only RTP on SSRC 0 during an authorized probe cluster. This
+allows probing before media starts, with audio-only media, and after video
+send streams are removed. It requires neither an initialized video/RTX stream
+nor a video padding payload type.
+
+The source becomes available once SRTP keys exist and a sending media section
+has a negotiated transport sequence extension and payload type with TWCC feedback.
+It uses that section's payload type, MID and transport sequence extension.
+For the Direct API, availability is determined by the configured codecs and
+extension map of the declared media. Pacing waits
+for SRTP readiness so unsendable padding cannot produce repeated immediate
+deadlines during the transport handshake.
+
+SSRC 0 has its own extended RTP sequence counter for SRTP and shares the
+session's TWCC sequence space. Its packets pass through the usual SRTP
+protection and probe cluster correlation. Requested bursts are split into
+padding packets of at most 240 bytes; actual padding bytes are charged to the
+pacer and recorded for TWCC, matching the existing padding accounting.
+They are excluded from application media byte counts. On reception, SSRC 0 is
+handled before MID/PT media mapping and does not produce media delivery events.
+
+The fallback exists only during authorized probe clusters; it does not enable
+continuous padding. Startup, ALR, congestion and recovery policies continue to
+determine when and how much to probe. Clusters must meet both their byte target
+and minimum packet count, including at low rates. Empty media queues and a zero
+regular padding rate do not suppress active probe deadlines.
+
+Scheduling remains sans-I/O: deadlines are exposed through `Output::Timeout`
+and advanced by application-supplied `Input::Timeout` values. There are no
+internal timers or threads.
+
 ### Pacer Control
 
 **Location:** `src/pacer/control.rs`
@@ -652,6 +697,8 @@ barely sending anything and padding isn't needed. It's disabled during
 overuse conditions to avoid worsening congestion by adding unnecessary
 traffic. When active, the padding target is 50 kbps (`PADDING_TARGET`),
 sufficient to keep middleboxes alive without adding significant overhead.
+Authorized probe clusters use their own target rates, including when the regular
+padding rate is zero.
 
 This differs from WebRTC, which bases padding decisions on the minimum
 simulcast layer bitrate (typically 30 kbps). str0m uses a fixed 50 kbps
@@ -715,6 +762,15 @@ transmission smoothing and padding generation respectively.
      consistent application demand (e.g., "I want 5 Mbps") triggers probing
      whenever the network might support it, not just when the demand value
      changes
+
+6. **Probe Padding Without Media:**
+   - **WebRTC**: The referenced `PacketRouter::GeneratePadding` implementation
+     obtains padding from RTP modules
+   - **str0m**: Prefers media/RTX padding, with a dedicated SSRC 0 source when
+     no usable media padding source exists
+   - **Reason**: Allows discovery without an initialized video/RTX stream
+   - **Impact**: Audio-only and pre-media connections can probe within the same
+     congestion-control limits, provided a sending section supports TWCC
 
 ### Shared with WebRTC
 

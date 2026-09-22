@@ -47,8 +47,6 @@ pub struct LeakyBucketPacer {
     completed_probe: Option<TwccClusterId>,
     /// Gates poll_queue() until handle_timeout() is called after packet emission.
     needs_timeout_before_next_poll: bool,
-    /// Caches whether we have any queue to send padding on (RTX).
-    has_padding_queue: bool,
 }
 
 impl Pacer for LeakyBucketPacer {
@@ -160,10 +158,6 @@ impl Pacer for LeakyBucketPacer {
             self.completed_probe = Some(cluster_id);
         }
     }
-
-    fn has_padding_queue(&self) -> bool {
-        self.has_padding_queue
-    }
 }
 
 impl LeakyBucketPacer {
@@ -185,7 +179,6 @@ impl LeakyBucketPacer {
             probe_queue: VecDeque::new(),
             completed_probe: None,
             needs_timeout_before_next_poll: true,
-            has_padding_queue: false,
         }
     }
 
@@ -259,9 +252,9 @@ impl LeakyBucketPacer {
                 .iter()
                 .filter(|q| q.snapshot.packet_count > 0);
 
-            return queues
-                .next()
-                .map(|q| ((now, PacerReason::FirstEver), Some(q)));
+            if let Some(queue) = queues.next() {
+                return Some(((now, PacerReason::FirstEver), Some(queue)));
+            }
         };
 
         let unpaced = self
@@ -317,9 +310,7 @@ impl LeakyBucketPacer {
         }
 
         let any_queue_for_padding = self.queue_states.iter().any(|q| q.use_for_padding);
-        let padding_possible = self.padding_bitrate > Bitrate::ZERO && any_queue_for_padding;
-
-        if !padding_possible {
+        if !any_queue_for_padding {
             return None;
         }
 
@@ -329,6 +320,10 @@ impl LeakyBucketPacer {
             // We explicitly don't return a queue to poll here. We need another call to
             // handle_timeout to request the padding before we can poll the selected queue.
             return Some(((next_probe_time, PacerReason::Probe2), None));
+        }
+
+        if self.padding_bitrate == Bitrate::ZERO {
+            return None;
         }
 
         // If all queues are empty and we have a padding rate, wait until we have drained
@@ -414,10 +409,7 @@ impl LeakyBucketPacer {
             .filter(|q| q.use_for_padding)
             .max_by_key(|q| q.snapshot.last_emitted);
 
-        // Save whether we have a valid padding queue.
-        self.has_padding_queue = maybe_queue.is_some();
-
-        if !self.has_padding_queue {
+        if maybe_queue.is_none() {
             // No padding queue, no probes.
             self.probe_queue.clear();
         }
@@ -488,6 +480,42 @@ mod test {
     use crate::rtp_::{DataSize, Mid, RtpHeader};
     use queue::{PacketKind, Queue, QueuedPacket};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn probe_deadline_without_media_or_regular_padding() {
+        use crate::bwe_::ProbeKind;
+
+        let now = Instant::now();
+        let mut pacer = LeakyBucketPacer::new(Bitrate::kbps(300));
+        let queue = QueueState {
+            midrid: MidRid("probe".into(), None),
+            unpaced: false,
+            use_for_padding: true,
+            snapshot: QueueSnapshot {
+                created_at: now,
+                ..Default::default()
+            },
+        };
+        pacer.handle_timeout(now, std::iter::once(queue));
+        pacer.start_probe(ProbeClusterConfig::new(
+            0.into(),
+            Bitrate::kbps(300),
+            ProbeKind::Initial,
+        ));
+        let request = pacer.handle_timeout(now, std::iter::once(queue)).unwrap();
+        let (midrid, cluster) = pacer.poll_queue().unwrap();
+        assert_eq!(cluster, Some(0.into()));
+        pacer.register_send(now, request.padding.into(), midrid);
+        assert!(pacer.handle_timeout(now, std::iter::once(queue)).is_none());
+        let deadline = pacer.poll_timeout().0.unwrap();
+        assert!(deadline > now && deadline <= now + Duration::from_millis(10));
+        assert!(pacer.poll_queue().is_none());
+        assert!(
+            pacer
+                .handle_timeout(deadline, std::iter::once(queue))
+                .is_some()
+        );
+    }
 
     #[test]
     fn test_typical_behavior() {
