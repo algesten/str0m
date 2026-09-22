@@ -1210,6 +1210,10 @@ impl StreamTx {
         })
     }
 
+    pub(crate) fn padding_pt(&self) -> Option<Pt> {
+        self.pt_for_padding
+    }
+
     pub(crate) fn generate_padding(&mut self, padding: usize) {
         if !self.padding_enabled() {
             return;
@@ -1335,6 +1339,21 @@ mod test {
     use super::*;
 
     #[test]
+    fn regular_padding_does_not_search_probe_negotiation() {
+        let mut streams = crate::streams::Streams::new(false, 1200);
+        let stream =
+            streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
+        stream.pt_for_padding = Some(96.into());
+        let queues: Vec<_> = streams
+            .send_queue_states(Instant::now(), |_, _| {
+                panic!("ordinary padding must not check probe negotiation")
+            })
+            .collect();
+        assert_eq!(queues.len(), 1);
+        assert!(queues[0].use_for_padding);
+    }
+
+    #[test]
     fn probe_absolute_send_time_follows_negotiated_extensions() {
         let now = Instant::now();
         let codecs = CodecConfig::new_with_defaults();
@@ -1426,7 +1445,7 @@ mod test {
         // from selection, without resetting the SRTP index for the next cluster.
         streams.set_probe_media(None);
         assert!(streams.stream_tx_by_midrid(queue).is_none());
-        assert_eq!(streams.send_queue_states(now).count(), 0);
+        assert_eq!(streams.send_queue_states(now, |_, _| true).count(), 0);
         streams.set_probe_media(Some(("vid".into(), 96.into())));
         assert_eq!(streams.streams_tx().count(), 0);
         let stream = streams.stream_tx_by_midrid(queue).unwrap();

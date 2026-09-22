@@ -619,23 +619,37 @@ impl Streams {
         self.probe_media = media;
     }
 
-    pub(crate) fn send_queue_states(&mut self, now: Instant) -> impl Iterator<Item = QueueState> {
-        // Prefer media/RTX padding, as PacketRouter does. The fallback is only
-        // exposed while the session has authorized a probe cluster.
-        let media_padding = self
-            .streams_tx
-            .values_mut()
-            .any(|s| s.queue_state(now).use_for_padding);
-        let probe_queue = self.probe_media.map(|_| {
+    pub(crate) fn send_queue_states(
+        &mut self,
+        now: Instant,
+        mut can_probe: impl FnMut(Mid, Pt) -> bool,
+    ) -> impl Iterator<Item = QueueState> {
+        // Snapshot each stream once, preferring media/RTX padding over the
+        // fallback. No extra stream or retransmission-queue scan is needed.
+        let mut media_padding = false;
+        let mut probe_queue = self.probe_media.map(|_| {
             let mut queue = self.probe_tx.queue_state(now);
             queue.midrid = MidRid(MID_PROBE, None);
-            queue.use_for_padding = !media_padding;
             queue
         });
-        self.streams_tx
-            .values_mut()
-            .map(move |s| s.queue_state(now))
-            .chain(probe_queue)
+        let mut streams = self.streams_tx.values_mut();
+        std::iter::from_fn(move || {
+            if let Some(stream) = streams.next() {
+                let mut queue = stream.queue_state(now);
+                if probe_queue.is_some() && queue.use_for_padding {
+                    // Only negotiated feedback sources can provide probe padding.
+                    // Ordinary padding keeps its existing eligibility.
+                    queue.use_for_padding = stream
+                        .padding_pt()
+                        .is_some_and(|pt| can_probe(stream.mid(), pt));
+                }
+                media_padding |= queue.use_for_padding;
+                return Some(queue);
+            }
+            let mut queue = probe_queue.take()?;
+            queue.use_for_padding = !media_padding;
+            Some(queue)
+        })
     }
 
     pub(crate) fn stream_tx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamTx> {

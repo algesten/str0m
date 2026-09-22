@@ -331,8 +331,8 @@ impl Session {
             self.last_nack = now;
         }
 
-        self.handle_timeout_bwe(now);
-        self.update_queue_state(now);
+        let probe_media = self.handle_timeout_bwe(now);
+        self.update_queue_state(now, probe_media);
 
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
@@ -343,15 +343,16 @@ impl Session {
         Ok(())
     }
 
-    fn handle_timeout_bwe(&mut self, now: Instant) {
+    fn handle_timeout_bwe(&mut self, now: Instant) -> Option<(Mid, Pt)> {
+        self.bwe.as_ref()?;
+
         // We can request probes once SRTP keys are available and a non-stopped,
         // sending media section has both a transport sequence extension and a
         // payload type supporting TWCC feedback. No prior media packet or RTX
         // stream is required. The Direct API uses its configured capabilities.
-        let do_probe = self.srtp_tx.is_some() && self.probe_media().is_some();
-        let Some(bwe) = self.bwe.as_mut() else {
-            return;
-        };
+        let probe_media = self.srtp_tx.as_ref().and_then(|_| self.probe_media());
+        let do_probe = probe_media.is_some();
+        let bwe = self.bwe.as_mut()?;
 
         if let Some(probe_config) = bwe.handle_timeout(now, do_probe) {
             // Only start the probe in the pacer if the estimator accepted it.
@@ -369,21 +370,28 @@ impl Session {
             bwe.end_probe(now, cluster_id);
             self.streams.set_probe_media(None);
         }
+        probe_media
     }
 
-    fn update_queue_state(&mut self, now: Instant) {
+    fn update_queue_state(&mut self, now: Instant, probe_media: Option<(Mid, Pt)>) {
         // Do not make unsendable media/padding ready before DTLS supplies keys.
         // Otherwise an immediate pacer deadline can starve the application's I/O.
         if self.srtp_tx.is_none() {
             return;
         }
 
-        let probe_media = self
-            .pacer
-            .active_cluster()
-            .and_then(|_| self.probe_media().map(|(media, pt)| (media.mid(), pt)));
+        let probe_media = probe_media.filter(|_| self.pacer.active_cluster().is_some());
         self.streams.set_probe_media(probe_media);
-        let iter = self.streams.send_queue_states(now);
+        let medias = &self.medias;
+        let codecs = &self.codec_config;
+        let iter = self.streams.send_queue_states(now, |mid, pt| {
+            // Reuse the already-validated fallback binding when it matches.
+            probe_media == Some((mid, pt))
+                || medias
+                    .iter()
+                    .find(|m| m.mid() == mid)
+                    .is_some_and(|media| Self::probe_pt(media, codecs, Some(pt)).is_some())
+        });
 
         let Some(padding_request) = self.pacer.handle_timeout(now, iter) else {
             return;
@@ -399,25 +407,35 @@ impl Session {
 
     // Use a negotiated PT and MID so browser transports can route the packet to
     // their receive-side congestion controller before discarding the empty payload.
-    fn probe_media(&self) -> Option<(&Media, Pt)> {
+    fn probe_media(&self) -> Option<(Mid, Pt)> {
         self.medias.iter().find_map(|media| {
-            if media.stopped() || !media.direction().is_sending() {
-                return None;
-            }
-            media
-                .remote_extmap()
-                .id_of(Extension::TransportSequenceNumber)?;
-            let params = self.codec_config.params().iter().find(|p| {
-                p.fb_transport_cc()
+            Self::probe_pt(media, &self.codec_config, None).map(|pt| (media.mid(), pt))
+        })
+    }
+
+    // A regular padding source needs feedback for its actual payload type;
+    // the SSRC 0 fallback can use any eligible payload type on this media.
+    fn probe_pt(media: &Media, codecs: &CodecConfig, padding_pt: Option<Pt>) -> Option<Pt> {
+        if media.stopped() || !media.direction().is_sending() {
+            return None;
+        }
+        media
+            .remote_extmap()
+            .id_of(Extension::TransportSequenceNumber)?;
+        codecs
+            .params()
+            .iter()
+            .find(|p| {
+                padding_pt.is_none_or(|pt| p.pt() == pt)
+                    && p.fb_transport_cc()
                     && media
                         .remote_transport_cc
                         .as_ref()
                         .is_none_or(|pts| pts.contains(&p.pt()))
                     && p.spec().codec.is_audio() == media.kind().is_audio()
                     && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
-            })?;
-            Some((media, params.pt()))
-        })
+            })
+            .map(|p| p.pt())
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
@@ -512,10 +530,19 @@ impl Session {
 
         // Add PayloadParams for this PT if not already configured.
         // Probes may use different PTs, so we add them as we see them.
-        self.probe_payload_params = Some(PayloadParams::new_probe(pt));
+        if self
+            .probe_payload_params
+            .as_ref()
+            .is_none_or(|p| p.pt() != pt)
+        {
+            self.probe_payload_params = Some(PayloadParams::new_probe(pt));
+        }
 
-        // Create the stream with NACK suppressed (probes don't need retransmission)
-        self.streams.expect_stream_rx(ssrc, None, midrid, true);
+        // Create the stream with NACK suppressed (probes don't need retransmission).
+        // Reusing it must not invalidate the cached NACK state on every packet.
+        if !self.streams.has_stream_rx(ssrc) {
+            self.streams.expect_stream_rx(ssrc, None, midrid, true);
+        }
 
         Some((MID_PROBE, ssrc))
     }
