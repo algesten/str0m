@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
@@ -122,7 +122,12 @@ pub struct DepacketizingBuffer {
     hold_back: usize,
     depack: CodecDepacketizer,
     queue: VecDeque<Entry>,
-    segments: Vec<(usize, usize)>,
+    // Segment indices are relative to the queue at the last rebuild.
+    segments: VecDeque<(usize, usize, Instant)>,
+    segments_dirty: bool,
+    segments_offset: usize,
+    #[cfg(test)]
+    segment_rebuilds: usize,
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
@@ -149,7 +154,11 @@ impl DepacketizingBuffer {
             hold_back,
             depack,
             queue: VecDeque::new(),
-            segments: Vec::new(),
+            segments: VecDeque::new(),
+            segments_dirty: false,
+            segments_offset: 0,
+            #[cfg(test)]
+            segment_rebuilds: 0,
             last_emitted: None,
             max_time: None,
             depack_cache: None,
@@ -210,6 +219,7 @@ impl DepacketizingBuffer {
                     tail,
                 };
                 self.queue.insert(i, entry);
+                self.segments_dirty = true;
 
                 // The depack cache is keyed by queue index. Inserting at or before the cached
                 // segment shifts it, so the cache would answer for the wrong packets.
@@ -222,7 +232,26 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
+    pub fn pop(
+        &mut self,
+        now: Instant,
+        reordering_timeout: Option<Duration>,
+    ) -> Option<Result<Depacketized, PacketError>> {
+        loop {
+            let queued = self.queue.len();
+            let result = self.pop_frame(now, reordering_timeout);
+            if result.is_some() || reordering_timeout.is_none() || self.queue.len() == queued {
+                return result;
+            }
+            // A discarded frame must not leave later frames waiting for new input.
+        }
+    }
+
+    fn pop_frame(
+        &mut self,
+        now: Instant,
+        reordering_timeout: Option<Duration>,
+    ) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
         if self.segments.is_empty() {
@@ -236,7 +265,7 @@ impl DepacketizingBuffer {
         //     self.segments
         // );
 
-        let (start, stop) = *self.segments.first().expect("segment exists");
+        let (start, stop, first_received) = self.first_segment().expect("segment exists");
 
         let seq = {
             let last = self.queue.get(stop).expect("entry for stop index");
@@ -250,7 +279,7 @@ impl DepacketizingBuffer {
                 // this segment cannot be decoded correctly
                 // remove from the queue and return the error
                 self.last_emitted = Some((seq, CodecExtra::None));
-                self.queue.drain(0..=stop);
+                self.consume_segment(stop);
                 return Some(Err(e));
             }
         };
@@ -261,7 +290,9 @@ impl DepacketizingBuffer {
 
         let more_than_hold_back = self.segments.len() >= self.hold_back;
         let contiguous_seq = self.is_following_last(start);
-        let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
+        let wait_for_contiguity = !contiguous_seq
+            && !more_than_hold_back
+            && !self.timeout_allows_progress(now, first_received, reordering_timeout);
 
         if wait_for_contiguity {
             // if we are not sending, cache the depacked
@@ -282,7 +313,7 @@ impl DepacketizingBuffer {
 
         // We're not going to emit frames in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
-        self.queue.drain(0..=stop);
+        self.consume_segment(stop);
 
         if !can_emit {
             return None;
@@ -291,6 +322,22 @@ impl DepacketizingBuffer {
         self.last_emitted = Some((last, dep.codec_extra));
 
         Some(Ok(dep))
+    }
+
+    pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
+        let timeout = reordering_timeout?;
+        self.update_segments();
+
+        let (start, _, first_received) = self.first_segment()?;
+
+        let contiguous_seq = self.is_following_last(start);
+        let more_than_hold_back = self.segments.len() >= self.hold_back;
+        if contiguous_seq || more_than_hold_back {
+            return None;
+        }
+
+        // No representable input time can reach a deadline beyond Instant's range.
+        first_received.checked_add(timeout)
     }
 
     fn discard_old_padding(&mut self) {
@@ -333,8 +380,23 @@ impl DepacketizingBuffer {
         });
 
         if self.queue.len() != original_len {
+            self.segments_dirty = true;
             self.depack_cache = None;
         }
+    }
+
+    fn timeout_allows_progress(
+        &self,
+        now: Instant,
+        first_received: Instant,
+        reordering_timeout: Option<Duration>,
+    ) -> bool {
+        let Some(timeout) = reordering_timeout else {
+            return false;
+        };
+
+        now.checked_duration_since(first_received)
+            .is_some_and(|age| age >= timeout)
     }
 
     fn depacketize(
@@ -376,7 +438,34 @@ impl DepacketizingBuffer {
         })
     }
 
-    fn update_segments(&mut self) -> Option<(usize, usize)> {
+    fn first_segment(&self) -> Option<(usize, usize, Instant)> {
+        self.segments.front().map(|&(start, stop, received)| {
+            (
+                start - self.segments_offset,
+                stop - self.segments_offset,
+                received,
+            )
+        })
+    }
+
+    fn consume_segment(&mut self, stop: usize) {
+        // Removing the first segment leaves later boundaries intact. Advance the
+        // index origin instead of rescanning packets or shifting every segment.
+        self.queue.drain(0..=stop);
+        self.segments.pop_front();
+        self.segments_offset += stop + 1;
+    }
+
+    fn update_segments(&mut self) {
+        if !self.segments_dirty {
+            return;
+        }
+        self.segments_dirty = false;
+        self.segments_offset = 0;
+        #[cfg(test)]
+        {
+            self.segment_rebuilds += 1;
+        }
         self.segments.clear();
 
         #[derive(Clone, Copy)]
@@ -384,6 +473,7 @@ impl DepacketizingBuffer {
             index: i64,
             time: MediaTime,
             offset: i64,
+            first_received: Instant,
         }
 
         let mut start: Option<Start> = None;
@@ -401,8 +491,9 @@ impl DepacketizingBuffer {
                 // We found a segment that ended because the timestamp changed without
                 // a gap in the sequence number. The marker bit in the RTP packet is
                 // just indicative, this is the robust fallback.
-                let segment = (start.unwrap().index as usize, index as usize - 1);
-                self.segments.push(segment);
+                let s = start.unwrap();
+                let segment = (s.index as usize, index as usize - 1, s.first_received);
+                self.segments.push_back(segment);
                 start = None;
             }
 
@@ -417,19 +508,23 @@ impl DepacketizingBuffer {
                     index,
                     time: entry.meta.time,
                     offset: iseq.saturating_sub(index),
+                    first_received: entry.meta.received,
                 });
+            }
+
+            if let Some(s) = start.as_mut() {
+                s.first_received = s.first_received.min(entry.meta.received);
             }
 
             if start.is_some() && entry.tail {
                 // We found a contiguous sequence of packets ending with something from
                 // the packet (like the RTP marker bit) indicating it's the tail.
-                let segment = (start.unwrap().index as usize, index as usize);
-                self.segments.push(segment);
+                let s = start.unwrap();
+                let segment = (s.index as usize, index as usize, s.first_received);
+                self.segments.push_back(segment);
                 start = None;
             }
         }
-
-        None
     }
 
     fn is_following_last(&self, start: usize) -> bool {
@@ -710,11 +805,11 @@ mod test {
 
         // Emit one packet for this PT, then model a long run on another PT.
         buf.push(meta(1), vec![1, 9]);
-        assert!(buf.pop().is_some());
+        assert!(buf.pop(Instant::now(), None).is_some());
 
         for seq in 2..=1_001 {
             buf.push_padding(meta(seq));
-            assert!(buf.pop().is_none());
+            assert!(buf.pop(Instant::now(), None).is_none());
         }
 
         assert!(
@@ -725,7 +820,10 @@ mod test {
 
         // Returning to this PT after compaction must still be contiguous with the last packet.
         buf.push(meta(1_002), vec![1, 9]);
-        let dep = buf.pop().expect("packet emitted").expect("valid packet");
+        let dep = buf
+            .pop(Instant::now(), None)
+            .expect("packet emitted")
+            .expect("valid packet");
         assert!(dep.contiguous);
     }
 
@@ -746,23 +844,26 @@ mod test {
         };
 
         buf.push(meta(1), vec![1, 9]);
-        assert!(buf.pop().is_some());
+        assert!(buf.pop(Instant::now(), None).is_some());
 
         // Sequence 2 is lost while another PT remains active.
         for seq in 3..=1_002 {
             buf.push_padding(meta(seq));
-            assert!(buf.pop().is_none());
+            assert!(buf.pop(Instant::now(), None).is_none());
         }
 
         assert!(buf.queue.len() <= buf.hold_back);
 
         // A discontinuity waits for the normal hold-back before it is emitted.
         buf.push(meta(1_003), vec![1, 9]);
-        assert!(buf.pop().is_none());
+        assert!(buf.pop(Instant::now(), None).is_none());
         buf.push(meta(1_004), vec![1, 9]);
-        assert!(buf.pop().is_none());
+        assert!(buf.pop(Instant::now(), None).is_none());
         buf.push(meta(1_005), vec![1, 9]);
-        let dep = buf.pop().expect("packet emitted").expect("valid packet");
+        let dep = buf
+            .pop(Instant::now(), None)
+            .expect("packet emitted")
+            .expect("valid packet");
         assert!(!dep.contiguous);
     }
 
@@ -785,16 +886,16 @@ mod test {
 
         // Emit one complete VP8 frame for this PT.
         buf.push(meta(1, true), [0x10, 0x00]);
-        assert!(buf.pop().is_some());
+        assert!(buf.pop(Instant::now(), None).is_some());
 
         // The next frame's head is lost, leaving an S=0 fragment at the front.
         buf.push(meta(2, false), [0x00]);
-        assert!(buf.pop().is_none());
+        assert!(buf.pop(Instant::now(), None).is_none());
 
         // The sender switches PT. Every packet becomes synthetic padding here.
         for seq in 3..=1_002 {
             buf.push_padding(meta(seq, false));
-            assert!(buf.pop().is_none());
+            assert!(buf.pop(Instant::now(), None).is_none());
         }
 
         assert!(
@@ -822,24 +923,24 @@ mod test {
         };
 
         buf.push(meta(1, true), [0x10, 0x00]);
-        assert!(buf.pop().is_some());
+        assert!(buf.pop(Instant::now(), None).is_some());
 
         // Lose a frame head, then switch away long enough to compact its padding.
         buf.push(meta(2, false), [0x00]);
-        assert!(buf.pop().is_none());
+        assert!(buf.pop(Instant::now(), None).is_none());
         for seq in 3..=1_002 {
             buf.push_padding(meta(seq, false));
-            assert!(buf.pop().is_none());
+            assert!(buf.pop(Instant::now(), None).is_none());
         }
 
         // One complete frame returns, but waits behind the orphan for hold-back.
         buf.push(meta(1_003, true), [0x10, 0x00]);
-        assert!(buf.pop().is_none());
+        assert!(buf.pop(Instant::now(), None).is_none());
 
         // Switching away again must remain bounded while that frame waits.
         for seq in 1_004..=2_003 {
             buf.push_padding(meta(seq, false));
-            assert!(buf.pop().is_none());
+            assert!(buf.pop(Instant::now(), None).is_none());
         }
 
         assert!(
@@ -867,12 +968,12 @@ mod test {
 
         // Start observing this PT after the head of a VP8 frame was lost.
         buf.push(meta(1), [0x00]);
-        assert!(buf.pop().is_none());
+        assert!(buf.pop(Instant::now(), None).is_none());
 
         // The sender switches PT before this depayloader has emitted anything.
         for seq in 2..=1_001 {
             buf.push_padding(meta(seq));
-            assert!(buf.pop().is_none());
+            assert!(buf.pop(Instant::now(), None).is_none());
         }
 
         assert!(
@@ -880,6 +981,478 @@ mod test {
             "initial incomplete VP8 frame retained {} entries after a 1,000-packet PT switch",
             buf.queue.len()
         );
+    }
+
+    fn test_meta(base: Instant, seq: u64, time: u64, received_ms: u64) -> RtpMeta {
+        RtpMeta {
+            received: base + Duration::from_millis(received_ms),
+            time: MediaTime::from_90khz(time),
+            seq_no: seq.into(),
+            last_sender_info: None,
+            header: RtpHeader {
+                sequence_number: seq as u16,
+                timestamp: time as u32,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Repeated output/deadline polls share a scan; consuming frames retains the suffix.
+    #[test]
+    fn segment_cache_reuses_scans_until_packet_insertion() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 300);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        for seq in 3..103 {
+            buf.push(test_meta(base, seq, seq, 100), [1, 9]);
+        }
+        let deadline = base + Duration::from_millis(350);
+        assert!(
+            buf.pop(base + Duration::from_millis(100), timeout)
+                .is_none()
+        );
+        let scans = buf.segment_rebuilds;
+        for _ in 0..10 {
+            assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+            assert!(
+                buf.pop(base + Duration::from_millis(100), timeout)
+                    .is_none()
+            );
+        }
+        assert_eq!(buf.segment_rebuilds, scans);
+        for seq in 3..103 {
+            let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+            assert_eq!(**dep.seq_range().start(), seq);
+            assert_eq!(dep.contiguous, seq != 3);
+            assert_eq!(buf.poll_timeout(timeout), None);
+        }
+        assert_eq!(buf.segment_rebuilds, scans);
+        assert!(buf.pop(deadline, timeout).is_none());
+
+        // An out-of-order insertion must replace a cached blocked candidate.
+        buf.push(test_meta(base, 104, 104, 400), [1, 9]);
+        assert!(buf.pop(deadline, timeout).is_none());
+        buf.push(test_meta(base, 103, 103, 400), [1, 9]);
+        for seq in [103, 104] {
+            let dep = buf
+                .pop(base + Duration::from_millis(400), timeout)
+                .unwrap()
+                .unwrap();
+            assert_eq!(**dep.seq_range().start(), seq);
+            assert!(dep.contiguous);
+        }
+        assert_eq!(buf.segment_rebuilds, scans + 2);
+    }
+
+    #[test]
+    fn segment_cache_ignores_duplicate_and_old_packets() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        buf.push(test_meta(base, 3, 3, 100), [1, 9]);
+        let deadline = base + Duration::from_millis(350);
+        assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+        let scans = buf.segment_rebuilds;
+
+        for seq in [3, 1, 0] {
+            buf.push(test_meta(base, seq, seq, 200), [1, 9]);
+            assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+            assert!(
+                buf.pop(base + Duration::from_millis(200), timeout)
+                    .is_none()
+            );
+            assert_eq!(buf.segment_rebuilds, scans);
+        }
+        let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+        assert_eq!(**dep.seq_range().start(), 3);
+        assert!(!dep.contiguous);
+        assert_eq!(buf.segment_rebuilds, scans);
+    }
+
+    #[test]
+    fn segment_cache_preserves_frames_after_depacketization_error() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(crate::format::Codec::H264.into(), 3);
+        for (seq, payload) in [(1, [0x7e, 0xaa]), (2, [0x61, 0xaa])] {
+            let mut meta = test_meta(base, seq, seq, 0);
+            meta.header.marker = true;
+            buf.push(meta, payload);
+        }
+        assert_eq!(buf.poll_timeout(timeout), None);
+        let scans = buf.segment_rebuilds;
+        assert!(buf.pop(base, timeout).unwrap().is_err());
+        assert_eq!(buf.poll_timeout(timeout), None);
+        let dep = buf.pop(base, timeout).unwrap().unwrap();
+        assert_eq!(**dep.seq_range().start(), 2);
+        assert!(dep.contiguous);
+        assert!(buf.pop(base, timeout).is_none());
+        assert_eq!(buf.segment_rebuilds, scans);
+    }
+
+    /// Test disabled-timeout polling preserves padding cleanup after frame emission or an error.
+    #[test]
+    fn timeout_none_preserves_padding_cleanup_after_emit_and_error() {
+        let base = Instant::now();
+        for (payload, valid) in [([0x61, 0xaa], true), ([0x7e, 0xaa], false)] {
+            let mut buf = DepacketizingBuffer::new(crate::format::Codec::H264.into(), 3);
+            let mut meta = test_meta(base, 1, 1, 0);
+            meta.header.marker = true;
+            buf.push(meta, payload);
+            for seq in 2..=6 {
+                buf.push_padding(test_meta(base, seq, 1, 0));
+            }
+
+            assert_eq!(buf.pop(base, None).unwrap().is_ok(), valid);
+            assert_eq!(buf.queue.len(), 5);
+            assert_eq!(*buf.last_emitted.unwrap().0, 1);
+            assert_eq!(buf.poll_timeout(None), None);
+            assert_eq!(buf.queue.len(), 5);
+
+            // Cleanup runs on the next poll, which has no frame to process.
+            let scans = buf.segment_rebuilds;
+            assert!(buf.pop(base, None).is_none());
+            assert_eq!(buf.queue.len(), 3);
+            assert_eq!(*buf.last_emitted.unwrap().0, 3);
+            assert_eq!(buf.segment_rebuilds, scans);
+
+            // Compaction invalidates indices; the next poll rebuilds exactly once.
+            for _ in 0..3 {
+                assert!(buf.pop(base, None).is_none());
+                assert_eq!(buf.segment_rebuilds, scans + 1);
+            }
+        }
+    }
+
+    /// Test an unrepresentable deadline neither panics nor releases a frame early.
+    #[test]
+    fn timeout_deadline_beyond_instant_range_does_not_panic() {
+        let base = Instant::now();
+        let (mut low, mut high) = (0, u64::MAX);
+        while low < high {
+            let mid = low + (high - low) / 2 + 1;
+            if base.checked_add(Duration::from_secs(mid)).is_some() {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        let anchor = base.checked_add(Duration::from_secs(low)).unwrap();
+        let timeout = Some(Duration::from_secs(600));
+        assert!(anchor.checked_add(timeout.unwrap()).is_none());
+
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        buf.push(test_meta(anchor, 3, 3, 0), [1, 9]);
+        assert!(buf.pop(anchor, timeout).is_none());
+        assert_eq!(buf.poll_timeout(timeout), None);
+        assert!(buf.pop(anchor, Some(Duration::ZERO)).unwrap().is_ok());
+    }
+
+    /// Test a zero timeout does not release a candidate before its packet receipt time.
+    #[test]
+    fn timeout_zero_does_not_expire_before_packet_receipt() {
+        let base = Instant::now();
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, None).unwrap().unwrap();
+        buf.push(test_meta(base, 3, 3, 100), [1, 9]);
+        assert!(buf.pop(base, Some(Duration::ZERO)).is_none());
+        assert_eq!(
+            buf.poll_timeout(Some(Duration::ZERO)),
+            Some(base + Duration::from_millis(100))
+        );
+    }
+
+    /// Test a zero timeout skips earlier fragments only after a later candidate is complete.
+    #[test]
+    fn timeout_zero_emits_when_later_complete_candidate_exists() {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let base = Instant::now();
+
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        let dep = buf.pop(base, Some(Duration::ZERO)).unwrap().unwrap();
+        assert_eq!(**dep.seq_range().start(), 1);
+        assert!(dep.contiguous);
+
+        buf.push(test_meta(base, 2, 2, 100), [1]);
+        assert!(
+            buf.pop(base + Duration::from_millis(100), Some(Duration::ZERO))
+                .is_none()
+        );
+
+        buf.push(test_meta(base, 4, 4, 200), [1]);
+        assert!(
+            buf.pop(base + Duration::from_millis(200), Some(Duration::ZERO))
+                .is_none()
+        );
+        assert_eq!(buf.poll_timeout(Some(Duration::ZERO)), None);
+        buf.push(test_meta(base, 5, 4, 200), [9]);
+        let dep = buf
+            .pop(base + Duration::from_millis(200), Some(Duration::ZERO))
+            .expect("frame emitted")
+            .expect("valid frame");
+        assert_eq!(**dep.seq_range().start(), 4);
+        assert_eq!(**dep.seq_range().end(), 5);
+        assert!(!dep.contiguous);
+        assert!(buf.queue.is_empty());
+        assert_eq!(buf.hold_back, 3);
+        buf.push(test_meta(base, 3, 2, 300), [9]);
+        assert!(
+            buf.queue.is_empty(),
+            "zero timeout must not allow late packets to backtrack"
+        );
+        assert_eq!(buf.poll_timeout(Some(Duration::ZERO)), None);
+    }
+
+    /// Test multi-packet deadlines start at the earliest receipt, not frame completion.
+    #[test]
+    fn timeout_uses_earliest_packet_receipt_for_multi_packet_frame() {
+        for complete_ms in [200, 400] {
+            let mut buf =
+                DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+            let base = Instant::now();
+            let timeout = Some(Duration::from_millis(250));
+            buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+            assert!(buf.pop(base, None).unwrap().unwrap().contiguous);
+
+            buf.push(test_meta(base, 3, 3, 100), [1]);
+            assert!(
+                buf.pop(base + Duration::from_millis(complete_ms - 1), timeout)
+                    .is_none()
+            );
+            assert_eq!(buf.poll_timeout(timeout), None);
+            buf.push(test_meta(base, 4, 3, complete_ms), [9]);
+            assert_eq!(
+                buf.poll_timeout(timeout),
+                Some(base + Duration::from_millis(350))
+            );
+
+            if complete_ms < 350 {
+                assert!(
+                    buf.pop(base + Duration::from_millis(349), timeout)
+                        .is_none()
+                );
+                // Neither duplicates nor subsequent padding restart the anchor.
+                buf.push(test_meta(base, 3, 3, 300), [1]);
+                buf.push_padding(test_meta(base, 5, 5, 300));
+                assert_eq!(
+                    buf.poll_timeout(timeout),
+                    Some(base + Duration::from_millis(350))
+                );
+            }
+            let dep = buf
+                .pop(base + Duration::from_millis(complete_ms.max(350)), timeout)
+                .expect("complete candidate is due")
+                .unwrap();
+            assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (3, 4));
+            assert!(!dep.contiguous);
+            assert_eq!(buf.poll_timeout(timeout), None);
+        }
+    }
+
+    /// Test reordered packet receipts use the segment minimum, excluding earlier incomplete data.
+    #[test]
+    fn timeout_uses_earliest_receipt_with_reordered_packets() {
+        for received_ms in [[100, 200, 150], [200, 100, 150], [200, 150, 100]] {
+            let base = Instant::now();
+            let timeout = Some(Duration::from_millis(250));
+            let mut buf =
+                DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+            buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+            buf.pop(base, timeout).unwrap().unwrap();
+            buf.push(test_meta(base, 2, 2, 25), [1]);
+
+            let mut packets = [
+                (test_meta(base, 4, 3, received_ms[0]), [1]),
+                (test_meta(base, 5, 3, received_ms[1]), [2]),
+                (test_meta(base, 6, 3, received_ms[2]), [9]),
+            ];
+            packets.sort_by_key(|(meta, _)| meta.received);
+            for (meta, data) in packets {
+                buf.push(meta, data);
+            }
+
+            let deadline = base + Duration::from_millis(350);
+            assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+            assert!(
+                buf.pop(deadline - Duration::from_nanos(1), timeout)
+                    .is_none()
+            );
+            let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+            assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (4, 6));
+            assert_eq!(dep.data, [1, 2, 9]);
+            assert_eq!(dep.first_network_time(), base + Duration::from_millis(100));
+            assert!(!dep.contiguous);
+            assert_eq!(buf.poll_timeout(timeout), None);
+        }
+    }
+
+    /// Test a timestamp boundary excludes the next frame's earlier receipt from the segment minimum.
+    #[test]
+    fn timeout_segment_receipt_excludes_next_timestamp() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+
+        buf.push(test_meta(base, 5, 4, 50), [1, 9]);
+        assert_eq!(
+            buf.poll_timeout(timeout),
+            Some(base + Duration::from_millis(300))
+        );
+        buf.push(test_meta(base, 3, 3, 100), [1]);
+        buf.push(test_meta(base, 4, 3, 150), [2]);
+
+        let deadline = base + Duration::from_millis(350);
+        assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+        assert!(
+            buf.pop(deadline - Duration::from_nanos(1), timeout)
+                .is_none()
+        );
+        let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+        assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (3, 4));
+        assert_eq!(dep.data, [1, 2]);
+        assert_eq!(dep.first_network_time(), base + Duration::from_millis(100));
+        assert!(!dep.contiguous);
+
+        let next = buf.pop(deadline, timeout).unwrap().unwrap();
+        assert_eq!(
+            (**next.seq_range().start(), **next.seq_range().end()),
+            (5, 5)
+        );
+        assert_eq!(next.first_network_time(), base + Duration::from_millis(50));
+        assert!(next.contiguous);
+        assert_eq!(buf.poll_timeout(timeout), None);
+    }
+
+    /// Test a disabled timeout keeps count-based release.
+    #[test]
+    fn timeout_disabled_preserves_count_release() {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let base = Instant::now();
+
+        let timeout = None;
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        buf.push(test_meta(base, 3, 3, 100), [1, 9]);
+        assert!(
+            buf.pop(base + Duration::from_millis(100), timeout)
+                .is_none()
+        );
+        assert_eq!(buf.poll_timeout(None), None);
+        assert!(buf.pop(base + Duration::from_secs(1), None).is_none());
+        for seq in 4..=5 {
+            buf.push(test_meta(base, seq, seq, 1000), [1, 9]);
+        }
+        let dep = buf
+            .pop(base + Duration::from_secs(1), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(**dep.seq_range().start(), 3);
+        assert!(!dep.contiguous);
+    }
+
+    /// Test the count threshold can release a blocked frame before its deadline.
+    #[test]
+    fn timeout_count_limit_can_win_before_deadline() {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let base = Instant::now();
+
+        let timeout = Some(Duration::from_secs(1));
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        for seq in 3..=5 {
+            buf.push(test_meta(base, seq, seq, 100), [1, 9]);
+        }
+        let dep = buf
+            .pop(base + Duration::from_millis(100), timeout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(**dep.seq_range().start(), 3);
+        assert!(!dep.contiguous);
+    }
+
+    /// Test codec rejection retries the next candidate only when the timeout is enabled.
+    #[test]
+    fn timeout_codec_rejection_makes_progress() {
+        #[derive(Debug)]
+        struct LayerDepack;
+        impl Depacketizer for LayerDepack {
+            fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+                Some(packets_size)
+            }
+            fn depacketize(
+                &mut self,
+                packet: &[u8],
+                out: &mut Vec<u8>,
+                extra: &mut CodecExtra,
+            ) -> Result<(), PacketError> {
+                out.extend_from_slice(packet);
+                *extra = CodecExtra::Vp8(super::super::Vp8CodecExtra {
+                    picture_id: Some(packet[1].into()),
+                    tl0_picture_id: Some(packet[2].into()),
+                    layer_index: packet[3],
+                    discardable: false,
+                    sync: false,
+                    is_keyframe: false,
+                });
+                Ok(())
+            }
+            fn is_partition_head(&self, packet: &[u8]) -> bool {
+                TestDepack.is_partition_head(packet)
+            }
+            fn is_partition_tail(&self, marker: bool, packet: &[u8]) -> bool {
+                TestDepack.is_partition_tail(marker, packet)
+            }
+        }
+
+        for timeout in [None, Some(Duration::ZERO), Some(Duration::from_millis(250))] {
+            let base = Instant::now();
+            let hold_back = if timeout.is_none() { 2 } else { 30 };
+            let mut buf = DepacketizingBuffer::new(
+                CodecDepacketizer::Boxed(Box::new(LayerDepack)),
+                hold_back,
+            );
+            buf.contiguity = Contiguity::Vp8(Vp8Contiguity::new());
+            buf.push(test_meta(base, 1, 1, 0), [1, 1, 1, 0, 9]);
+            buf.pop(base, timeout).unwrap().unwrap();
+            buf.push(test_meta(base, 3, 3, 100), [1, 3, 1, 1, 9]);
+            buf.push(test_meta(base, 4, 4, 100), [1, 4, 2, 0, 9]);
+            let due = base + Duration::from_millis(100) + timeout.unwrap_or_default();
+            if timeout.is_none() {
+                for seq in 5..=9 {
+                    buf.push_padding(test_meta(base, seq, seq, 100));
+                }
+                assert!(buf.pop(due, None).is_none());
+                assert_eq!(*buf.queue.front().unwrap().meta.seq_no, 4);
+                assert_eq!(buf.queue.len(), 6);
+                assert_eq!(*buf.last_emitted.unwrap().0, 1);
+                continue;
+            }
+            buf.update_segments();
+            let scans = buf.segment_rebuilds;
+            let dep = buf
+                .pop(due, timeout)
+                .expect("drain past codec-rejected frame")
+                .unwrap();
+            assert_eq!(**dep.seq_range().start(), 4);
+            assert_eq!(
+                buf.segment_rebuilds, scans,
+                "codec rejection must reuse segments"
+            );
+            assert!(buf.queue.is_empty());
+            assert_eq!(buf.poll_timeout(timeout), None);
+        }
     }
 
     fn test(
@@ -941,7 +1514,7 @@ mod test {
             buf.push(meta, data.to_vec());
 
             let mut depacks = vec![];
-            while let Some(res) = buf.pop() {
+            while let Some(res) = buf.pop(Instant::now(), None) {
                 let d = res.unwrap();
                 depacks.push(d);
             }
@@ -1156,8 +1729,9 @@ mod test {
             buffer.push(meta, data);
         }
 
-        let res0before = buffer.pop().unwrap().unwrap(); // Pop PID: 23860, `contiguous_seq == true`.
-        let res1before = buffer.pop().unwrap().unwrap(); // Pop PID: 23861, `contiguous_seq == true`.
+        let now = Instant::now();
+        let res0before = buffer.pop(now, None).unwrap().unwrap(); // Pop PID: 23860, `contiguous_seq == true`.
+        let res1before = buffer.pop(now, None).unwrap().unwrap(); // Pop PID: 23861, `contiguous_seq == true`.
 
         let mut buffer =
             DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 30);
@@ -1171,10 +1745,10 @@ mod test {
         }
 
         // Pop PID: 23860, `contiguous_seq == true`.
-        let res0after = buffer.pop().unwrap().unwrap();
+        let res0after = buffer.pop(now, None).unwrap().unwrap();
         // Try to pop PID: 23861. `None` because `contiguous_seq == false` -- no seq_num=8689.
-        assert!(buffer.pop().is_none());
-        assert!(buffer.pop().is_none()); // Ensure once again.
+        assert!(buffer.pop(now, None).is_none());
+        assert!(buffer.pop(now, None).is_none()); // Ensure once again.
 
         for input in &inputs {
             let (meta, data) = construct_input(input.clone());
@@ -1185,7 +1759,7 @@ mod test {
             }
         }
 
-        let res1after = buffer.pop().unwrap().unwrap();
+        let res1after = buffer.pop(now, None).unwrap().unwrap();
 
         assert_eq!(res0before.data, res0after.data);
         assert_eq!(res1before.data, res1after.data);

@@ -71,6 +71,7 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
+    reordering_timeout_video: Option<Duration>,
     intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
     pub send_buffer_video: usize,
@@ -180,6 +181,7 @@ impl Session {
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
+            reordering_timeout_video: config.reordering_timeout_video,
             intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
@@ -1018,14 +1020,17 @@ impl Session {
         None
     }
 
-    pub fn poll_event_fallible(&mut self) -> Result<Option<Event>, RtcError> {
+    pub fn poll_event_fallible(&mut self, now: Instant) -> Result<Option<Event>, RtcError> {
         // Not relevant in rtp_mode, where the packets are picked up by poll_event().
         if self.rtp_mode {
             return Ok(None);
         }
 
         for media in &mut self.medias {
-            if let Some(e) = media.poll_sample(&self.codec_config)? {
+            let timeout = self
+                .reordering_timeout_video
+                .filter(|_| media.kind().is_video());
+            if let Some(e) = media.poll_sample(&self.codec_config, now, timeout)? {
                 return Ok(Some(Event::MediaData(e)));
             }
         }
@@ -1209,6 +1214,13 @@ impl Session {
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
+        let receive_at = self.reordering_timeout_video.and_then(|timeout| {
+            self.medias
+                .iter_mut()
+                .filter(|m| m.kind().is_video())
+                .filter_map(|m| m.poll_receive_timeout(Some(timeout)))
+                .min()
+        });
         let paused_at = self.paused_at();
         let send_stream_at = self.streams.send_stream();
 
@@ -1224,6 +1236,7 @@ impl Session {
             .soonest((nack_at, Reason::Nack))
             .soonest((twcc_at, Reason::Twcc))
             .soonest(pacing_at)
+            .soonest((receive_at, Reason::ReceiveReorder))
             .soonest((packetize_at, Reason::Packetize))
             .soonest((paused_at, Reason::PauseCheck))
             .soonest((send_stream_at, Reason::SendStream))

@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::media::{Direction, MediaKind};
-use str0m::{Event, RtcConfig, RtcError};
+use str0m::{Event, Rtc, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -96,6 +96,23 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
     );
 
     Ok(())
+}
+
+/// Test timeout defaults and configuration round-trips, including large durations.
+#[test]
+fn config_reordering_timeout_custom() {
+    assert_eq!(RtcConfig::new().reordering_timeout_video(), None);
+    for timeout in [
+        None,
+        Some(Duration::ZERO),
+        Some(Duration::from_millis(250)),
+        Some(Duration::from_secs(601)),
+        Some(Duration::MAX),
+    ] {
+        let config = RtcConfig::new().set_reordering_timeout_video(timeout);
+        assert_eq!(config.reordering_timeout_video(), timeout);
+        assert_eq!(config.clone().reordering_timeout_video(), timeout);
+    }
 }
 
 /// Test enable_raw_packets(true) produces RawPacket events.

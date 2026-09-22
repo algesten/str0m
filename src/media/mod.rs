@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::RtcError;
 use crate::change::AddMedia;
@@ -335,9 +335,11 @@ impl Media {
     pub(crate) fn poll_sample(
         &mut self,
         params: &[PayloadParams],
+        now: Instant,
+        reordering_timeout: Option<Duration>,
     ) -> Result<Option<MediaData>, RtcError> {
         for ((pt, rid), buf) in &mut self.depayloaders {
-            if let Some(r) = buf.pop() {
+            if let Some(r) = buf.pop(now, reordering_timeout) {
                 let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
@@ -504,6 +506,16 @@ impl Media {
         } else {
             None
         }
+    }
+
+    pub(crate) fn poll_receive_timeout(
+        &mut self,
+        reordering_timeout: Option<Duration>,
+    ) -> Option<Instant> {
+        self.depayloaders
+            .values_mut()
+            .filter_map(|buf| buf.poll_timeout(reordering_timeout))
+            .min()
     }
 
     pub(crate) fn do_payload(
@@ -730,5 +742,75 @@ impl Media {
             remote_exts: exts,
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod receive_timeout_test {
+    use super::*;
+    use crate::format::Codec;
+    use crate::rtp_::RtpHeader;
+
+    fn blocked_buffer(base: Instant) -> DepacketizingBuffer {
+        let mut buffer = DepacketizingBuffer::new(Codec::Vp8.into(), 30);
+        for seq in [1u64, 3] {
+            buffer.push(
+                RtpMeta {
+                    received: base,
+                    time: MediaTime::from_90khz(seq * 3000),
+                    seq_no: seq.into(),
+                    header: RtpHeader {
+                        marker: true,
+                        ..Default::default()
+                    },
+                    last_sender_info: None,
+                },
+                [0x10, 0, 0],
+            );
+            if seq == 1 {
+                buffer.pop(base, None).unwrap().unwrap();
+            }
+        }
+        buffer
+    }
+
+    /// Test the earliest deadline covers all payload types and RIDs and changes after buffer resets.
+    #[test]
+    fn deadlines_cover_payload_types_rids_and_resets() {
+        let base = Instant::now();
+        let mut media = Media::default();
+        let pt1 = Pt::new_with_value(96);
+        let pt2 = Pt::new_with_value(98);
+        let rid1 = Some("a".into());
+        let rid2 = Some("b".into());
+        media.depayloaders.insert(
+            (pt1, rid1),
+            blocked_buffer(base + Duration::from_millis(100)),
+        );
+        media.depayloaders.insert((pt2, rid1), blocked_buffer(base));
+        media.depayloaders.insert(
+            (pt1, rid2),
+            blocked_buffer(base + Duration::from_millis(50)),
+        );
+        let timeout = Some(Duration::from_millis(250));
+        assert_eq!(
+            media.poll_receive_timeout(timeout),
+            Some(base + Duration::from_millis(250))
+        );
+        media.reset_depayloader(pt2, rid1);
+        assert_eq!(
+            media.poll_receive_timeout(timeout),
+            Some(base + Duration::from_millis(300))
+        );
+        media.reset_depayloaders_for_rid(rid2);
+        assert_eq!(
+            media.poll_receive_timeout(timeout),
+            Some(base + Duration::from_millis(350))
+        );
+        assert_eq!(media.poll_receive_timeout(None), None);
+        media.reset_depayloaders_for_rid(rid1);
+        assert_eq!(media.poll_receive_timeout(timeout), None);
+        media.depayloaders.insert((pt1, rid1), blocked_buffer(base));
+        assert_eq!(media.poll_receive_timeout(Some(Duration::ZERO)), Some(base));
     }
 }
