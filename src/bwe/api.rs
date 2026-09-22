@@ -40,17 +40,13 @@ impl<'a> Bwe<'a> {
         self.0.session.set_bwe_desired_bitrate(desired_bitrate);
     }
 
-    /// Reset the BWE with a new init_bitrate
+    /// Reset the BWE with a new initial bitrate.
     ///
-    /// # Example
-    ///
-    /// This method is useful when you initially start with only an audio stream. In this case,
-    /// the BWE will report a very low estimated bitrate.
-    /// Later, when you start a video stream, the estimated bitrate will be affected by the previous
-    /// low bitrate, resulting in a very low estimated bitrate, which can cause poor video quality.
-    /// To avoid this, you need to warm up the video stream for a while then calling reset with a
-    /// provided init_bitrate.
-    ///
+    /// This discards the current estimator state and starts estimation again
+    /// from `init_bitrate`. Normal transitions from audio-only to video sending
+    /// do not require a reset: with TWCC negotiated, probing can discover
+    /// capacity before video starts. The desired bitrate controls the capacity
+    /// the estimator attempts to discover.
     pub fn reset(&mut self, init_bitrate: Bitrate) {
         self.0.session.reset_bwe(init_bitrate);
     }

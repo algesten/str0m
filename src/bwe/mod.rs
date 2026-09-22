@@ -332,7 +332,7 @@ impl SendSideBandwidthEstimator {
 
         self.probe_control.enable(do_probe);
 
-        // Timer-driven probe logic (WebRTC `Process()` equivalent).
+        // Probe logic advanced by application timeout input (WebRTC `Process()` equivalent).
         self.probe_control.handle_timeout(now)
     }
 
