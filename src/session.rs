@@ -344,6 +344,10 @@ impl Session {
     }
 
     fn handle_timeout_bwe(&mut self, now: Instant) {
+        // We can request probes once SRTP keys are available and a non-stopped,
+        // sending media section has both a transport sequence extension and a
+        // payload type supporting TWCC feedback. No prior media packet or RTX
+        // stream is required. The Direct API uses its configured capabilities.
         let do_probe = self.srtp_tx.is_some() && self.probe_media().is_some();
         let Some(bwe) = self.bwe.as_mut() else {
             return;
