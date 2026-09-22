@@ -365,7 +365,7 @@ impl MediaLine {
             .map(|(pt, c)| {
                 let mut p = PayloadParams::new(*pt, None, (*c).into());
                 // Remote TWCC feedback is supported only when explicitly advertised.
-                p.fb_transport_cc = false;
+                p.set_fb_transport_cc(false);
                 p
             })
             .collect();
@@ -420,7 +420,7 @@ impl MediaLine {
                             p.fb_remb = true;
                         }
                         "transport-cc" => {
-                            p.fb_transport_cc = true;
+                            p.set_fb_transport_cc(true);
                         }
                         "ccm fir" => {
                             p.fb_fir = true;
@@ -1140,7 +1140,7 @@ impl PayloadParams {
             value: self.spec.into(),
         });
 
-        if self.fb_transport_cc {
+        if self.fb_transport_cc() {
             attrs.push(MediaAttribute::RtcpFb {
                 pt: self.pt,
                 value: "transport-cc".into(),
@@ -1634,7 +1634,7 @@ mod test {
         let params = sdp.media_lines[0].rtp_params();
         for (pt, expected) in [(96, false), (98, true)] {
             let p = params.iter().find(|p| p.pt == pt.into()).unwrap();
-            assert_eq!(p.fb_transport_cc, expected);
+            assert_eq!(p.fb_transport_cc(), expected);
         }
     }
 
@@ -2710,7 +2710,7 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                     },
                 },
             );
-            payload.fb_transport_cc = true;
+            payload.set_fb_transport_cc(true);
             payload.fb_nack = true;
             payload.fb_pli = true;
 
@@ -2954,7 +2954,7 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             assert!(h265.fb_nack);
             assert!(h265.fb_pli);
             assert!(h265.fb_fir);
-            assert!(h265.fb_transport_cc);
+            assert!(h265.fb_transport_cc());
             assert_eq!(h265.resend, Some(97.into()));
 
             // Verify H.265 PTL is correct
@@ -3596,7 +3596,7 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                     },
                 },
             );
-            payload.fb_transport_cc = true;
+            payload.set_fb_transport_cc(true);
             payload.fb_nack = true;
             payload.fb_pli = true;
 
@@ -3840,7 +3840,7 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             assert!(h266.fb_nack);
             assert!(h266.fb_pli);
             assert!(h266.fb_fir);
-            assert!(h266.fb_transport_cc);
+            assert!(h266.fb_transport_cc());
             assert_eq!(h266.resend, Some(97.into()));
 
             // Verify H.266 PTL is correct

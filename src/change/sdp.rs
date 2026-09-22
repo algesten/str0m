@@ -1224,7 +1224,7 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
     let has_transport_cc = sdp
         .media_lines
         .iter()
-        .any(|m| m.rtp_params().iter().any(|p| p.fb_transport_cc));
+        .any(|m| m.rtp_params().iter().any(|p| p.fb_transport_cc()));
 
     // Is the session level sequence number enabled?
     let has_twcc_header = session
