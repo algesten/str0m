@@ -141,6 +141,7 @@ impl CodecConfig {
             },
             resend,
             fb_transport_cc,
+            configured_fb_transport_cc: None,
             fb_fir,
             fb_nack,
             fb_pli,
@@ -542,6 +543,19 @@ impl CodecConfig {
         })
     }
 
+    pub(crate) fn update_transport_cc(&mut self, remote: &[(Pt, bool)]) {
+        for p in &mut self.params {
+            if !remote.iter().any(|(pt, _)| *pt == p.pt) {
+                continue;
+            }
+            let configured = *p
+                .configured_fb_transport_cc
+                .get_or_insert(p.fb_transport_cc);
+            p.fb_transport_cc =
+                configured && remote.iter().any(|(pt, enabled)| *pt == p.pt && *enabled);
+        }
+    }
+
     pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams], remote_dir: Direction) {
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
@@ -700,6 +714,27 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    #[test]
+    fn transport_cc_combines_sections_and_preserves_local_capability() {
+        let mut config = CodecConfig::empty();
+        config.enable_vp8(true);
+        let pt = config.params()[0].pt();
+        for remote in [vec![(pt, true), (pt, false)], vec![(pt, false), (pt, true)]] {
+            config.update_transport_cc(&remote);
+            assert!(config.params()[0].fb_transport_cc());
+        }
+        config.update_transport_cc(&[(pt, false)]);
+        assert!(!config.params()[0].fb_transport_cc());
+        config.update_transport_cc(&[(pt, true)]);
+        assert!(config.params()[0].fb_transport_cc());
+
+        let mut disabled = PayloadParams::new(pt, None, config.params()[0].spec());
+        disabled.set_fb_transport_cc(false);
+        let mut config = CodecConfig::new_from_payload_params(vec![disabled]);
+        config.update_transport_cc(&[(pt, true)]);
+        assert!(!config.params()[0].fb_transport_cc());
+    }
 
     #[test]
     fn static_payload_types_have_canonical_codec_definitions() {

@@ -946,12 +946,12 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     offer.assert_consistency()?;
 
-    update_session(session, &offer);
-
     let bundle_mids = offer.bundle_mids();
     let new_lines = sync_medias(session, &offer, true).map_err(RtcError::RemoteSdp)?;
 
     add_new_lines(session, &new_lines, true, bundle_mids).map_err(RtcError::RemoteSdp)?;
+
+    update_session(session, &offer);
 
     ensure_stream_tx(session);
 
@@ -965,8 +965,6 @@ fn apply_answer(
 ) -> Result<(), RtcError> {
     answer.assert_consistency()?;
 
-    update_session(session, &answer);
-
     let bundle_mids = answer.bundle_mids();
     let new_lines = sync_medias(session, &answer, false).map_err(RtcError::RemoteSdp)?;
 
@@ -976,6 +974,8 @@ fn apply_answer(
     }
 
     add_new_lines(session, &new_lines, false, bundle_mids).map_err(RtcError::RemoteSdp)?;
+
+    update_session(session, &answer);
 
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
@@ -1220,11 +1220,24 @@ fn add_new_lines(
 /// Update session level properties like
 /// Extensions from offer or answer.
 fn update_session(session: &mut Session, sdp: &Sdp) {
-    // Does any m-line contain a a=rtcp-fb:xx transport-cc?
-    let has_transport_cc = sdp
+    // PT remapping is complete. Combine TWCC support across all m-lines for
+    // each session PT, as described in docs/SDP.md.
+    let remote: Vec<_> = sdp
         .media_lines
         .iter()
-        .any(|m| m.rtp_params().iter().any(|p| p.fb_transport_cc));
+        .flat_map(|m| {
+            m.rtp_params().into_iter().filter_map(|p| {
+                session
+                    .codec_config
+                    .sdp_match_remote(p, m.direction())
+                    .map(|pt| (pt, p.fb_transport_cc()))
+            })
+        })
+        .collect();
+    session.codec_config.update_transport_cc(&remote);
+
+    // Does any m-line contain a a=rtcp-fb:xx transport-cc?
+    let has_transport_cc = remote.iter().any(|(_, enabled)| *enabled);
 
     // Is the session level sequence number enabled?
     let has_twcc_header = session
@@ -1327,15 +1340,12 @@ fn update_media(
     }
 
     // Narrowing/ordering of of PT
-    let params = m
+    let pts: Vec<Pt> = m
         .rtp_params()
         .into_iter()
-        .filter_map(|mut p| {
-            p.pt = config.sdp_match_remote(p, m.direction())?;
-            Some(p)
-        })
+        .filter_map(|p| config.sdp_match_remote(p, m.direction()))
         .collect();
-    media.set_remote_params(params);
+    media.set_remote_pts(pts);
 
     let mut remote_extmap = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {
@@ -2194,6 +2204,63 @@ mod test {
             mid_screen,
             "New screen-share should be at position 3"
         );
+    }
+
+    #[test]
+    fn twcc_negotiation_is_per_pt_across_media_sections() {
+        crate::init_crypto_default();
+        for enabled_audio in [1, 2] {
+            let now = Instant::now();
+            let mut local = Rtc::builder().build(now);
+            let mut remote = Rtc::builder().build(now);
+            let mut change = local.sdp_api();
+            change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+            change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            let (offer, pending) = change.apply().unwrap();
+            let mut section = 0;
+            let sdp = offer
+                .to_sdp_string()
+                .lines()
+                .filter(|line| {
+                    if line.starts_with("m=") {
+                        section += 1;
+                    }
+                    section == enabled_audio || !line.contains("transport-cc")
+                })
+                .collect::<Vec<_>>()
+                .join("\r\n")
+                + "\r\n";
+            let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+            let answer = remote.sdp_api().accept_offer(offer).unwrap();
+            // Both audio sections advertise the same session-wide result.
+            for m in &answer.media_lines[..2] {
+                assert!(m.rtp_params().iter().all(|p| p.fb_transport_cc()));
+            }
+            assert!(
+                answer.media_lines[2]
+                    .rtp_params()
+                    .iter()
+                    .all(|p| !p.fb_transport_cc())
+            );
+            local.sdp_api().accept_answer(pending, answer).unwrap();
+            for rtc in [&local, &remote] {
+                assert!(
+                    rtc.codec_config()
+                        .params()
+                        .iter()
+                        .filter(|p| p.spec().codec.is_audio())
+                        .all(|p| p.fb_transport_cc())
+                );
+                assert!(
+                    rtc.codec_config()
+                        .params()
+                        .iter()
+                        .filter(|p| p.spec().codec.is_video())
+                        .all(|p| !p.fb_transport_cc())
+                );
+            }
+        }
     }
 
     #[test]

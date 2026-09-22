@@ -91,6 +91,10 @@ pub struct PayloadParams {
     /// Whether the payload use the TWCC feedback mechanic.
     pub(crate) fb_transport_cc: bool,
 
+    /// Local capability before SDP negotiation narrows the effective flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) configured_fb_transport_cc: Option<bool>,
+
     /// Whether the payload uses NACK to request resends.
     pub(crate) fb_nack: bool,
 
@@ -165,6 +169,7 @@ impl PayloadParams {
 
             // Both audio and video use TWCC
             fb_transport_cc: true,
+            configured_fb_transport_cc: None,
 
             // Only true for video.
             fb_fir: is_video,
@@ -196,6 +201,7 @@ impl PayloadParams {
                 format: FormatParams::default(),
             },
             fb_transport_cc: true,
+            configured_fb_transport_cc: None,
             fb_nack: false,
             fb_pli: false,
             fb_fir: false,
@@ -223,7 +229,8 @@ impl PayloadParams {
 
     /// Sets whether the payload use the TWCC feedback mechanic.
     pub fn set_fb_transport_cc(&mut self, fb_transport_cc: bool) {
-        self.fb_transport_cc = fb_transport_cc
+        self.fb_transport_cc = fb_transport_cc;
+        self.configured_fb_transport_cc = None;
     }
 
     /// Whether the payload use the TWCC feedback mechanic.

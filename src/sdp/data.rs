@@ -364,12 +364,8 @@ impl MediaLine {
             .filter(|(_, c)| c.codec.is_audio() | c.codec.is_video())
             .map(|(pt, c)| {
                 let mut p = PayloadParams::new(*pt, None, (*c).into());
-                // Remote feedback is supported only when explicitly advertised.
+                // Remote TWCC feedback is supported only when explicitly advertised.
                 p.fb_transport_cc = false;
-                p.fb_fir = false;
-                p.fb_nack = false;
-                p.fb_pli = false;
-                p.fb_remb = false;
                 p
             })
             .collect();
@@ -1618,7 +1614,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn remote_feedback_is_explicit_and_per_payload_type() {
+    fn remote_twcc_feedback_is_explicit_and_per_payload_type() {
         let sdp = Sdp::parse(concat!(
             "v=0\r\n",
             "o=- 1 1 IN IP4 127.0.0.1\r\n",
@@ -1633,20 +1629,12 @@ mod test {
             "a=rtpmap:96 VP8/90000\r\n",
             "a=rtpmap:98 VP9/90000\r\n",
             "a=rtcp-fb:98 transport-cc\r\n",
-            "a=rtcp-fb:98 nack\r\n",
-            "a=rtcp-fb:98 nack pli\r\n",
-            "a=rtcp-fb:98 ccm fir\r\n",
-            "a=rtcp-fb:98 goog-remb\r\n",
         ))
         .unwrap();
         let params = sdp.media_lines[0].rtp_params();
         for (pt, expected) in [(96, false), (98, true)] {
             let p = params.iter().find(|p| p.pt == pt.into()).unwrap();
             assert_eq!(p.fb_transport_cc, expected);
-            assert_eq!(p.fb_nack, expected);
-            assert_eq!(p.fb_pli, expected);
-            assert_eq!(p.fb_fir, expected);
-            assert_eq!(p.fb_remb, expected);
         }
     }
 

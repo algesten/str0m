@@ -691,8 +691,9 @@ unnecessary queuing delays. This rate controls how the pacer smooths media
 transmission timing.
 
 The padding rate determines how much additional traffic to inject to
-maintain NAT bindings and keep RTX state warm. Padding is enabled while media
-is active. It's disabled during
+maintain NAT bindings and keep RTX state warm. Padding is enabled when the
+current bitrate exceeds 50 kbps (`MIN_PADDING_THRESHOLD`)—below this, we're
+barely sending anything and padding isn't needed. It's disabled during
 overuse conditions to avoid worsening congestion by adding unnecessary
 traffic. When active, the padding target is 50 kbps (`PADDING_TARGET`),
 sufficient to keep middleboxes alive without adding significant overhead.
@@ -701,7 +702,7 @@ padding rate is zero.
 
 This differs from WebRTC, which bases padding decisions on the minimum
 simulcast layer bitrate (typically 30 kbps). str0m uses a fixed 50 kbps
-target instead, taking a simulcast-agnostic approach that works for any
+threshold instead, taking a simulcast-agnostic approach that works for any
 stream configuration.
 
 The calculated pacing_rate and padding_rate flow to the Pacer, controlling
@@ -735,8 +736,7 @@ transmission smoothing and padding generation respectively.
 
 3. **Padding Strategy:**
    - **WebRTC**: Based on min simulcast layer bitrate (~30 kbps)
-   - **str0m**: Fixed 50 kbps regular padding target while media is active,
-     disabled during overuse
+   - **str0m**: Fixed 50 kbps threshold and target
    - **Reason**: Simulcast-agnostic design
    - **Impact**: Slightly higher padding in audio-only scenarios
 
