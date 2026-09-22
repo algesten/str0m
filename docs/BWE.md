@@ -74,6 +74,9 @@ policies still decide when and how much to probe. At low rates, clusters continu
 until both the byte target and minimum packet count are met. Idle media queues do
 not suppress probe deadlines, even when the regular padding rate is zero.
 
+Pacing starts only once SRTP keys are available, so unsendable padding cannot
+keep returning immediate deadlines during the transport handshake.
+
 All scheduling remains sans-I/O: the application supplies `Input::Timeout` at the
 deadlines returned by `Output::Timeout`. There are no internal timers or threads.
 These timeout inputs also advance ALR's unused media budget, allowing discovery

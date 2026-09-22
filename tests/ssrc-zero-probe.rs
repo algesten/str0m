@@ -271,3 +271,31 @@ fn renegotiating_inactive_stops_probe_traffic() -> Result<(), RtcError> {
     assert_eq!(probes(&l), 0);
     Ok(())
 }
+
+#[test]
+fn video_padding_before_srtp_does_not_spin() -> Result<(), RtcError> {
+    init_crypto_default();
+    let now = Instant::now();
+    let mut l = Rtc::builder()
+        .enable_bwe(Some(Bitrate::kbps(300)))
+        .build(now);
+    let mut r = Rtc::builder().build(now);
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.sdp_api().accept_offer(offer)?;
+    l.sdp_api().accept_answer(pending, answer)?;
+    l.bwe().set_desired_bitrate(Bitrate::mbps(2));
+
+    // Drain immediate work without advancing the supplied clock. There are no
+    // SRTP keys yet, so unsendable padding must not keep the deadline at `now`.
+    for _ in 0..100 {
+        l.handle_input(str0m::Input::Timeout(now))?;
+        match l.poll_output()? {
+            str0m::Output::Timeout(deadline) if deadline > now => return Ok(()),
+            str0m::Output::Transmit(_) => panic!("no candidates or keys have been installed"),
+            _ => {}
+        }
+    }
+    panic!("padding before SRTP readiness kept requesting immediate timeouts");
+}

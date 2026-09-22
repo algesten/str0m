@@ -398,6 +398,12 @@ impl Session {
     }
 
     fn update_queue_state(&mut self, now: Instant) {
+        // Do not make unsendable media/padding ready before DTLS supplies keys.
+        // Otherwise an immediate pacer deadline can starve the application's I/O.
+        if self.srtp_tx.is_none() {
+            return;
+        }
+
         // Only expose the fallback during a congestion-controller-authorized
         // cluster. It must never become a source of continuous padding.
         let probing = self.pacer.active_cluster().is_some() && self.probe_media().is_some();
