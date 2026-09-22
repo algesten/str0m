@@ -428,6 +428,11 @@ impl Session {
             .find(|p| {
                 padding_pt.is_none_or(|pt| p.pt() == pt)
                     && p.fb_transport_cc()
+                    && media.remote_params().is_none_or(|params| {
+                        params
+                            .iter()
+                            .any(|remote| remote.pt() == p.pt() && remote.fb_transport_cc())
+                    })
                     && p.spec().codec.is_audio() == media.kind().is_audio()
                     && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
             })
@@ -1494,6 +1499,37 @@ mod tests {
     use crate::RtcConfig;
     use crate::io::DATAGRAM_MTU_TARGET;
     use crate::packet::RedEncoder;
+
+    #[test]
+    fn probe_payload_requires_remote_feedback_and_tracks_renegotiation() {
+        let mut codecs = CodecConfig::empty();
+        codecs.enable_vp8(true);
+        codecs.enable_vp9(true);
+        let mut params = codecs.params()[..2].to_vec();
+        let first = params[0].pt();
+        let second = params[1].pt();
+        params[0].set_fb_transport_cc(false);
+        let mut exts = ExtensionMap::empty();
+        exts.set(3, Extension::TransportSequenceNumber);
+        let mut media =
+            Media::from_direct_api("vid".into(), 0, crate::media::MediaKind::Video, exts);
+        media.set_remote_params(params.clone());
+
+        assert_eq!(Session::probe_pt(&media, &codecs, None), Some(second));
+        assert_eq!(Session::probe_pt(&media, &codecs, Some(first)), None);
+        assert_eq!(
+            Session::probe_pt(&media, &codecs, Some(second)),
+            Some(second)
+        );
+
+        // Feedback changes independently of the established payload type order.
+        params[0].set_fb_transport_cc(true);
+        params[1].set_fb_transport_cc(false);
+        media.set_remote_params(params);
+        assert_eq!(media.remote_pts(), &[first, second]);
+        assert_eq!(Session::probe_pt(&media, &codecs, None), Some(first));
+        assert_eq!(Session::probe_pt(&media, &codecs, Some(second)), None);
+    }
 
     #[test]
     fn session_mtu_matches_config() {

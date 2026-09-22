@@ -362,7 +362,16 @@ impl MediaLine {
         let mut params: Vec<_> = rtp_maps
             .iter()
             .filter(|(_, c)| c.codec.is_audio() | c.codec.is_video())
-            .map(|(pt, c)| PayloadParams::new(*pt, None, (*c).into()))
+            .map(|(pt, c)| {
+                let mut p = PayloadParams::new(*pt, None, (*c).into());
+                // Remote feedback is supported only when explicitly advertised.
+                p.fb_transport_cc = false;
+                p.fb_fir = false;
+                p.fb_nack = false;
+                p.fb_pli = false;
+                p.fb_remb = false;
+                p
+            })
             .collect();
 
         for p in &mut params {
@@ -1607,6 +1616,39 @@ mod test {
     use crate::rtp_::{Extension, Frequency};
 
     use super::*;
+
+    #[test]
+    fn remote_feedback_is_explicit_and_per_payload_type() {
+        let sdp = Sdp::parse(concat!(
+            "v=0\r\n",
+            "o=- 1 1 IN IP4 127.0.0.1\r\n",
+            "s=-\r\n",
+            "t=0 0\r\n",
+            "m=video 9 UDP/TLS/RTP/SAVPF 96 98\r\n",
+            "a=mid:0\r\n",
+            "a=sendrecv\r\n",
+            "a=setup:actpass\r\n",
+            "a=ice-ufrag:test\r\n",
+            "a=ice-pwd:testpassword\r\n",
+            "a=rtpmap:96 VP8/90000\r\n",
+            "a=rtpmap:98 VP9/90000\r\n",
+            "a=rtcp-fb:98 transport-cc\r\n",
+            "a=rtcp-fb:98 nack\r\n",
+            "a=rtcp-fb:98 nack pli\r\n",
+            "a=rtcp-fb:98 ccm fir\r\n",
+            "a=rtcp-fb:98 goog-remb\r\n",
+        ))
+        .unwrap();
+        let params = sdp.media_lines[0].rtp_params();
+        for (pt, expected) in [(96, false), (98, true)] {
+            let p = params.iter().find(|p| p.pt == pt.into()).unwrap();
+            assert_eq!(p.fb_transport_cc, expected);
+            assert_eq!(p.fb_nack, expected);
+            assert_eq!(p.fb_pli, expected);
+            assert_eq!(p.fb_fir, expected);
+            assert_eq!(p.fb_remb, expected);
+        }
+    }
 
     /// Tests for general format parameter serialization and parsing.
     /// These tests verify that format parameters can be correctly converted to/from strings.

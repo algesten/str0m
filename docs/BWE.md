@@ -651,9 +651,10 @@ send streams are removed. It requires neither an initialized video/RTX stream
 nor a video padding payload type.
 
 The source becomes available once SRTP keys exist and a sending media section
-has a negotiated transport sequence extension and a codec configured for TWCC.
-It uses that section's payload type, MID and transport sequence extension. For the Direct API, availability is determined
-by the configured codecs and extension map of the declared media. Pacing waits
+has a negotiated transport sequence extension and payload type with TWCC feedback.
+It uses that section's payload type, MID and transport sequence extension.
+For the Direct API, availability is determined by the configured codecs and
+extension map of the declared media. Pacing waits
 for SRTP readiness so unsendable padding cannot produce repeated immediate
 deadlines during the transport handshake.
 

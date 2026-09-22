@@ -91,6 +91,7 @@ pub struct Media {
     dir: Direction,
 
     /// Remote PTs negotiated for this media.
+    /// Kept as a contiguous view of the initial remote parameters for `remote_pts()`.
     ///
     /// This tells us both the desired priority order of payload types
     /// as well as which PT the remote side wants (in case they are narrowed).
@@ -101,6 +102,10 @@ pub struct Media {
     ///
     /// If this is empty, the m-line is disabled/rejected (port=0 in SDP).
     remote_pts: Vec<Pt>,
+
+    /// Remote payload parameters, including per-media feedback capabilities.
+    /// None for the Direct API, which uses the session configuration.
+    remote_params: Option<Vec<PayloadParams>>,
 
     /// Set when this m-line has been stopped via
     /// [`SdpApi::stop_media`](crate::change::SdpApi::stop_media) or
@@ -564,7 +569,9 @@ impl Media {
         result.map_err(|e| RtcError::Packet(self.mid, pt, e))
     }
 
-    pub(crate) fn set_remote_pts(&mut self, pts: Vec<Pt>) {
+    pub(crate) fn set_remote_params(&mut self, params: Vec<PayloadParams>) {
+        // Feedback can change during renegotiation even when the PT order is fixed.
+        let params = self.remote_params.insert(params);
         // Have we already set PTs?
         if !self.remote_pts.is_empty() {
             return;
@@ -572,8 +579,11 @@ impl Media {
 
         // TODO: We should verify the remote peer doesn't suddenly change the PT
         // order or removes/adds PTs that weren't there from the start.
-        debug!("Mid ({}) remote PT order is: {:?}", self.mid, pts);
-        self.remote_pts = pts;
+        self.remote_pts = params.iter().map(|p| p.pt()).collect();
+        debug!(
+            "Mid ({}) remote PT order is: {:?}",
+            self.mid, self.remote_pts
+        );
     }
 
     pub(crate) fn set_remote_extmap(&mut self, exts: ExtensionMap) {
@@ -598,6 +608,10 @@ impl Media {
     /// kind (audio/video).
     pub fn remote_extmap(&self) -> &ExtensionMap {
         &self.remote_exts
+    }
+
+    pub(crate) fn remote_params(&self) -> Option<&[PayloadParams]> {
+        self.remote_params.as_deref()
     }
 
     pub(crate) fn remote_created(&self) -> bool {
@@ -646,6 +660,7 @@ impl Default for Media {
             msid: Msid::random(),
             kind: MediaKind::Video,
             remote_pts: vec![],
+            remote_params: Some(vec![]),
             stopped: false,
             remote_exts: ExtensionMap::empty(),
             remote_created: false,
@@ -728,6 +743,7 @@ impl Media {
             kind,
             dir: Direction::SendRecv,
             remote_exts: exts,
+            remote_params: None,
             ..Default::default()
         }
     }

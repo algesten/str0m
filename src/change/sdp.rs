@@ -1327,12 +1327,15 @@ fn update_media(
     }
 
     // Narrowing/ordering of of PT
-    let pts: Vec<Pt> = m
+    let params = m
         .rtp_params()
         .into_iter()
-        .filter_map(|p| config.sdp_match_remote(p, m.direction()))
+        .filter_map(|mut p| {
+            p.pt = config.sdp_match_remote(p, m.direction())?;
+            Some(p)
+        })
         .collect();
-    media.set_remote_pts(pts);
+    media.set_remote_params(params);
 
     let mut remote_extmap = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {
