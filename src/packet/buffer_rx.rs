@@ -12,6 +12,10 @@ use super::contiguity_vp8::Vp8Contiguity;
 use super::contiguity_vp9::Vp9Contiguity;
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
+// Bound incomplete frames as well as complete frames waiting for reordering.
+// 4,096 packets allow roughly 5 MB of payload at a typical 1,200-byte packet size.
+const MAX_BUFFERED_PACKETS: usize = 4096;
+
 #[derive(Clone, PartialEq, Eq)]
 /// Holds metadata incoming RTP data.
 pub struct RtpMeta {
@@ -202,7 +206,17 @@ impl DepacketizingBuffer {
                 // exact same seq_no found. ignore
                 trace!("Drop exactly same packet: {}", meta.seq_no);
             }
-            Err(i) => {
+            Err(mut i) => {
+                if self.queue.len() == MAX_BUFFERED_PACKETS {
+                    if i == 0 {
+                        // This packet is older than everything we can retain.
+                        return;
+                    }
+                    self.queue.pop_front();
+                    self.depack_cache = None;
+                    i -= 1;
+                }
+
                 let (head, tail) = partition.unwrap_or_else(|| {
                     (
                         self.depack.is_partition_head(data.as_ref()),
@@ -586,6 +600,77 @@ mod test {
     use crate::packet::vp9::Vp9Depacketizer;
     use crate::rtp::UserExtensionValues;
     use crate::rtp_::{AbsCaptureTime, Frequency, MediaTime, Pt, Ssrc, VideoOrientation};
+
+    fn bounded_queue_meta(seq: u64) -> RtpMeta {
+        RtpMeta {
+            received: Instant::now(),
+            seq_no: seq.into(),
+            time: MediaTime::from_90khz(seq),
+            last_sender_info: None,
+            header: RtpHeader::default(),
+        }
+    }
+
+    #[test]
+    fn incomplete_frames_cannot_grow_queue_forever() {
+        for hold_back in [0, 3] {
+            let mut buf =
+                DepacketizingBuffer::new(CodecDepacketizer::Vp8(Default::default()), hold_back);
+            for i in 0..MAX_BUFFERED_PACKETS * 2 {
+                // Frame heads with gaps and no tails never form a complete segment.
+                buf.push(bounded_queue_meta((i * 2) as u64), [0x10, 0]);
+                assert!(buf.pop(Instant::now(), None).is_none());
+            }
+            assert!(buf.queue.len() <= MAX_BUFFERED_PACKETS);
+
+            // A new complete keyframe must still get through after the overflow.
+            let seq = (MAX_BUFFERED_PACKETS * 4) as u64;
+            let mut meta = bounded_queue_meta(seq);
+            meta.header.marker = true;
+            buf.push(meta, [0x10, 0]);
+            let frame = buf.pop(Instant::now(), None).unwrap().unwrap();
+            assert_eq!(*frame.seq_range().start(), seq.into());
+        }
+    }
+
+    #[test]
+    fn queue_overflow_discards_cached_frame_and_preserves_gap() {
+        let mut buf = DepacketizingBuffer::new(
+            CodecDepacketizer::Boxed(Box::new(TestDepack)),
+            MAX_BUFFERED_PACKETS,
+        );
+        buf.push(bounded_queue_meta(1), [1, 1, 9]);
+        assert!(buf.pop(Instant::now(), None).unwrap().unwrap().contiguous);
+        buf.push(bounded_queue_meta(3), [1, 3, 9]);
+        assert!(buf.pop(Instant::now(), None).is_none());
+        assert!(buf.depack_cache.is_some());
+
+        // Fill without polling. Evict the cached frame when the queue overflows.
+        for seq in 4..=MAX_BUFFERED_PACKETS as u64 + 3 {
+            buf.push(bounded_queue_meta(seq), [1, 4, 9]);
+        }
+        assert_eq!(buf.queue.len(), MAX_BUFFERED_PACKETS);
+        let frame = buf.pop(Instant::now(), None).unwrap().unwrap();
+        assert_eq!(*frame.seq_range().start(), 4.into());
+        assert_eq!(frame.data, [1, 4, 9]);
+        assert!(!frame.contiguous);
+    }
+
+    #[test]
+    fn full_queue_ignores_older_packets_and_duplicates() {
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        for seq in 2..=MAX_BUFFERED_PACKETS as u64 + 1 {
+            buf.push(bounded_queue_meta(seq), [0]);
+        }
+        buf.push(bounded_queue_meta(1), [0]);
+        buf.push(bounded_queue_meta(2), [0]);
+        assert_eq!(buf.queue.len(), MAX_BUFFERED_PACKETS);
+        assert_eq!(buf.queue.front().unwrap().meta.seq_no, 2.into());
+        assert_eq!(
+            buf.queue.back().unwrap().meta.seq_no,
+            (MAX_BUFFERED_PACKETS as u64 + 1).into()
+        );
+    }
 
     #[test]
     fn end_on_marker() {

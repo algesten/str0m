@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Bound the depacketizing queue when incomplete frames keep arriving #1044
   * Add a configurable video frame reordering timeout via `RtcConfig` #1041
   * Support SSRC 0 bandwidth probing before media starts #1046
   * Let `Rtc::accepts` recognize validated remote addresses in ICE-lite mode before nomination #1039
