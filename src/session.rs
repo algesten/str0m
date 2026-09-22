@@ -371,29 +371,6 @@ impl Session {
         }
     }
 
-    // Use a negotiated PT and MID so browser transports can route the packet to
-    // their receive-side congestion controller before discarding the empty payload.
-    fn probe_media(&self) -> Option<(&Media, Pt)> {
-        self.medias.iter().find_map(|media| {
-            if media.stopped() || !media.direction().is_sending() {
-                return None;
-            }
-            media
-                .remote_extmap()
-                .id_of(Extension::TransportSequenceNumber)?;
-            let params = self.codec_config.params().iter().find(|p| {
-                p.fb_transport_cc()
-                    && media
-                        .remote_transport_cc
-                        .as_ref()
-                        .is_none_or(|pts| pts.contains(&p.pt()))
-                    && p.spec().codec.is_audio() == media.kind().is_audio()
-                    && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
-            })?;
-            Some((media, params.pt()))
-        })
-    }
-
     fn update_queue_state(&mut self, now: Instant) {
         // Do not make unsendable media/padding ready before DTLS supplies keys.
         // Otherwise an immediate pacer deadline can starve the application's I/O.
@@ -418,6 +395,29 @@ impl Session {
             .expect("pacer to use an existing stream");
 
         stream.generate_padding(padding_request.padding);
+    }
+
+    // Use a negotiated PT and MID so browser transports can route the packet to
+    // their receive-side congestion controller before discarding the empty payload.
+    fn probe_media(&self) -> Option<(&Media, Pt)> {
+        self.medias.iter().find_map(|media| {
+            if media.stopped() || !media.direction().is_sending() {
+                return None;
+            }
+            media
+                .remote_extmap()
+                .id_of(Extension::TransportSequenceNumber)?;
+            let params = self.codec_config.params().iter().find(|p| {
+                p.fb_transport_cc()
+                    && media
+                        .remote_transport_cc
+                        .as_ref()
+                        .is_none_or(|pts| pts.contains(&p.pt()))
+                    && p.spec().codec.is_audio() == media.kind().is_audio()
+                    && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
+            })?;
+            Some((media, params.pt()))
+        })
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
