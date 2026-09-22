@@ -1046,6 +1046,54 @@ mod test {
         assert_eq!(buf.segment_rebuilds, scans + 2);
     }
 
+    #[test]
+    fn segment_cache_ignores_duplicate_and_old_packets() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        buf.push(test_meta(base, 3, 3, 100), [1, 9]);
+        let deadline = base + Duration::from_millis(350);
+        assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+        let scans = buf.segment_rebuilds;
+
+        for seq in [3, 1, 0] {
+            buf.push(test_meta(base, seq, seq, 200), [1, 9]);
+            assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+            assert!(
+                buf.pop(base + Duration::from_millis(200), timeout)
+                    .is_none()
+            );
+            assert_eq!(buf.segment_rebuilds, scans);
+        }
+        let dep = buf.pop(deadline, timeout).unwrap().unwrap();
+        assert_eq!(**dep.seq_range().start(), 3);
+        assert!(!dep.contiguous);
+        assert_eq!(buf.segment_rebuilds, scans);
+    }
+
+    #[test]
+    fn segment_cache_preserves_frames_after_depacketization_error() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(crate::format::Codec::H264.into(), 3);
+        for (seq, payload) in [(1, [0x7e, 0xaa]), (2, [0x61, 0xaa])] {
+            let mut meta = test_meta(base, seq, seq, 0);
+            meta.header.marker = true;
+            buf.push(meta, payload);
+        }
+        assert_eq!(buf.poll_timeout(timeout), None);
+        let scans = buf.segment_rebuilds;
+        assert!(buf.pop(base, timeout).unwrap().is_err());
+        assert_eq!(buf.poll_timeout(timeout), None);
+        let dep = buf.pop(base, timeout).unwrap().unwrap();
+        assert_eq!(**dep.seq_range().start(), 2);
+        assert!(dep.contiguous);
+        assert!(buf.pop(base, timeout).is_none());
+        assert_eq!(buf.segment_rebuilds, scans);
+    }
+
     /// Test disabled-timeout polling preserves padding cleanup after frame emission or an error.
     #[test]
     fn timeout_none_preserves_padding_cleanup_after_emit_and_error() {
@@ -1066,9 +1114,17 @@ mod test {
             assert_eq!(buf.queue.len(), 5);
 
             // Cleanup runs on the next poll, which has no frame to process.
+            let scans = buf.segment_rebuilds;
             assert!(buf.pop(base, None).is_none());
             assert_eq!(buf.queue.len(), 3);
             assert_eq!(*buf.last_emitted.unwrap().0, 3);
+            assert_eq!(buf.segment_rebuilds, scans);
+
+            // Compaction invalidates indices; the next poll rebuilds exactly once.
+            for _ in 0..3 {
+                assert!(buf.pop(base, None).is_none());
+                assert_eq!(buf.segment_rebuilds, scans + 1);
+            }
         }
     }
 
