@@ -651,8 +651,8 @@ impl StreamTx {
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
 
-        // SSRC 0 probes use TWCC; media may additionally use Absolute Send Time.
-        if !is_probe && exts.id_of(Extension::AbsoluteSendTime).is_some() {
+        // Absolute Send Time might not be enabled for this m-line.
+        if exts.id_of(Extension::AbsoluteSendTime).is_some() {
             header.ext_vals.abs_send_time = Some(now);
         }
 
@@ -1335,6 +1335,37 @@ mod test {
     use super::*;
 
     #[test]
+    fn probe_absolute_send_time_follows_negotiated_extensions() {
+        let now = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        for negotiated in [false, true] {
+            let mut exts = ExtensionMap::empty();
+            exts.set(1, Extension::RtpMid);
+            exts.set(3, Extension::TransportSequenceNumber);
+            if negotiated {
+                exts.set(2, Extension::AbsoluteSendTime);
+            }
+            let mut stream = StreamTx::new_probe(1200);
+            stream.set_probe_media("aud".into(), 111.into());
+            stream.generate_padding(240);
+            let mut twcc = 42;
+            let mut buf = vec![];
+            let receipt = stream
+                .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)
+                .unwrap();
+            assert_eq!(
+                receipt.header.ext_vals.abs_send_time,
+                negotiated.then_some(now)
+            );
+            let header = RtpHeader::parse(&buf, &exts).unwrap();
+            assert_eq!(header.ext_vals.abs_send_time.is_some(), negotiated);
+            assert_eq!(header.ext_vals.transport_cc, Some(42));
+            assert!(header.ssrc.is_probe());
+            assert!(header.has_padding);
+        }
+    }
+
+    #[test]
     fn padding_accounting_and_sequence_rollover() {
         let now = Instant::now();
         let mut sender = StreamTx::new_probe(1200);
@@ -1350,7 +1381,7 @@ mod test {
             .unwrap();
         assert_eq!(first.payload_size, 240);
         assert!(first.header.has_padding);
-        assert!(first.header.ext_vals.abs_send_time.is_none());
+        assert_eq!(first.header.ext_vals.abs_send_time, Some(now));
         assert_eq!(*first.seq_no, 65_535);
         let second = sender
             .poll_packet(now, &exts, Some(&mut twcc), codecs.params(), &mut buf)

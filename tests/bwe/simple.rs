@@ -74,6 +74,14 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
         duration: Duration::from_secs(40),
     };
 
+    // Burst loss and jitter make the intermediate estimate conservative.
+    // Require progress beyond the mid layer; the final check still requires
+    // the full top-layer rate once media is flowing at that rate.
+    plan[6] = Step::Check {
+        description: "Check ramp toward top",
+        at_least: Bitrate::mbps(1),
+    };
+
     let (mut l, mut r) = connect_with_bwe(LAYER_LOW, LAYER_MID);
 
     let mut ctx = BweTestContext::new(&mut l, &mut r);
