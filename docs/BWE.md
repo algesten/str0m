@@ -13,11 +13,6 @@ The baseline WebRTC revision for the BWE implementation is:
 
 **Date**: Sat Jan 10 00:02:32 2026 -0800
 
-The probe send path additionally follows the pacing and RTP sender components
-at revision `956083e9a9f487b9c2d0cdb96c64ba23cfc1ac76`. This comparison is
-limited to probe scheduling and padding generation, rather than a realignment
-of the entire BWE implementation.
-
 ## How It Works: High-Level Overview
 
 Bandwidth estimation continuously measures how much data you can send
