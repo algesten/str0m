@@ -83,7 +83,9 @@ BUNDLE/session. If `a=rtcp-fb:<pt> transport-cc` is negotiated for a PT in any
 m-line, it applies wherever that PT is used. We do not model different TWCC
 feedback capabilities for the same PT in different m-lines, even though SDP
 can express that distinction. The transport sequence number header extension
-must still be negotiated on the m-line carrying the RTP packets.
+must still be negotiated on the m-line carrying the RTP packets. As with other
+codec parameters, feedback capabilities are retained when an existing m-line
+is renegotiated.
 
 ### Renegotiation and narrowed PT lists
 

@@ -624,6 +624,16 @@ impl PayloadParams {
             return;
         };
 
+        // TWCC is shared per PT across m-lines. Preserve the local capability
+        // while combining support from each newly negotiated media section.
+        self.fb_transport_cc = match self.configured_fb_transport_cc {
+            Some(configured) => self.fb_transport_cc || (configured && first.fb_transport_cc),
+            None => {
+                self.configured_fb_transport_cc = Some(self.fb_transport_cc);
+                self.fb_transport_cc && first.fb_transport_cc
+            }
+        };
+
         // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.
         if self.spec.codec == Codec::H265 && first.spec.codec == Codec::H265 {
             if let Some(remote_ptl) = first.spec.format.h265_profile_tier_level {

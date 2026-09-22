@@ -946,12 +946,12 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     offer.assert_consistency()?;
 
+    update_session(session, &offer);
+
     let bundle_mids = offer.bundle_mids();
     let new_lines = sync_medias(session, &offer, true).map_err(RtcError::RemoteSdp)?;
 
     add_new_lines(session, &new_lines, true, bundle_mids).map_err(RtcError::RemoteSdp)?;
-
-    update_session(session, &offer);
 
     ensure_stream_tx(session);
 
@@ -965,6 +965,8 @@ fn apply_answer(
 ) -> Result<(), RtcError> {
     answer.assert_consistency()?;
 
+    update_session(session, &answer);
+
     let bundle_mids = answer.bundle_mids();
     let new_lines = sync_medias(session, &answer, false).map_err(RtcError::RemoteSdp)?;
 
@@ -974,8 +976,6 @@ fn apply_answer(
     }
 
     add_new_lines(session, &new_lines, false, bundle_mids).map_err(RtcError::RemoteSdp)?;
-
-    update_session(session, &answer);
 
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
@@ -1220,13 +1220,11 @@ fn add_new_lines(
 /// Update session level properties like
 /// Extensions from offer or answer.
 fn update_session(session: &mut Session, sdp: &Sdp) {
-    // PT remapping is complete. Combine TWCC support across all m-lines for
-    // each session PT, as described in docs/SDP.md.
-    let remote = sdp
+    // Does any m-line contain a a=rtcp-fb:xx transport-cc?
+    let has_transport_cc = sdp
         .media_lines
         .iter()
-        .flat_map(|m| m.rtp_params().into_iter().map(move |p| (p, m.direction())));
-    let has_transport_cc = session.codec_config.update_transport_cc(remote);
+        .any(|m| m.rtp_params().iter().any(|p| p.fb_transport_cc));
 
     // Is the session level sequence number enabled?
     let has_twcc_header = session
@@ -2248,6 +2246,19 @@ mod test {
                         .filter(|p| p.spec().codec.is_video())
                         .all(|p| !p.fb_transport_cc())
                 );
+            }
+
+            // Existing m-lines retain their negotiated codec parameters.
+            let sdp = sdp
+                .lines()
+                .filter(|line| !line.contains("transport-cc"))
+                .collect::<Vec<_>>()
+                .join("\r\n")
+                + "\r\n";
+            let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+            let answer = remote.sdp_api().accept_offer(offer).unwrap();
+            for m in &answer.media_lines[..2] {
+                assert!(m.rtp_params().iter().all(|p| p.fb_transport_cc()));
             }
         }
     }

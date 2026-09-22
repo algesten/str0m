@@ -543,34 +543,6 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn update_transport_cc(
-        &mut self,
-        remote: impl Iterator<Item = (PayloadParams, Direction)>,
-    ) -> bool {
-        // Resolve PTs while consuming the remote parameters once, then apply
-        // their combined feedback capability without allocating a temporary list.
-        let mut feedback = [None; 256];
-        let mut has_transport_cc = false;
-        for (params, direction) in remote {
-            let Some(pt) = self.sdp_match_remote(params, direction) else {
-                continue;
-            };
-            let enabled = params.fb_transport_cc();
-            *feedback[*pt as usize].get_or_insert(false) |= enabled;
-            has_transport_cc |= enabled;
-        }
-        for p in &mut self.params {
-            let Some(enabled) = feedback[*p.pt as usize] else {
-                continue;
-            };
-            let configured = *p
-                .configured_fb_transport_cc
-                .get_or_insert(p.fb_transport_cc);
-            p.fb_transport_cc = configured && enabled;
-        }
-        has_transport_cc
-    }
-
     pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams], remote_dir: Direction) {
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
@@ -732,29 +704,26 @@ mod test {
 
     #[test]
     fn transport_cc_combines_sections_and_preserves_local_capability() {
-        let mut config = CodecConfig::empty();
-        config.enable_vp8(true);
-        let pt = config.params()[0].pt();
-        let payload = config.params()[0];
-        let remote_param = |enabled| {
-            let mut p = payload;
-            p.set_fb_transport_cc(enabled);
-            (p, Direction::RecvOnly)
-        };
-        for remote in [[true, false], [false, true]] {
-            assert!(config.update_transport_cc(remote.into_iter().map(remote_param)));
-            assert!(config.params()[0].fb_transport_cc());
+        for direction in [Direction::SendOnly, Direction::RecvOnly] {
+            for local_enabled in [false, true] {
+                for sections in [[false, false], [false, true], [true, false]] {
+                    let mut config = CodecConfig::empty();
+                    config.enable_vp8(true);
+                    config.params[0].set_fb_transport_cc(local_enabled);
+                    let mut remote = config.params[0];
+                    let mut any_enabled = false;
+                    for enabled in sections {
+                        remote.set_fb_transport_cc(enabled);
+                        config.update_params(&[remote], direction);
+                        any_enabled |= enabled;
+                        assert_eq!(
+                            config.params()[0].fb_transport_cc(),
+                            local_enabled && any_enabled
+                        );
+                    }
+                }
+            }
         }
-        assert!(!config.update_transport_cc(std::iter::once(remote_param(false))));
-        assert!(!config.params()[0].fb_transport_cc());
-        assert!(config.update_transport_cc(std::iter::once(remote_param(true))));
-        assert!(config.params()[0].fb_transport_cc());
-
-        let mut disabled = PayloadParams::new(pt, None, config.params()[0].spec());
-        disabled.set_fb_transport_cc(false);
-        let mut config = CodecConfig::new_from_payload_params(vec![disabled]);
-        assert!(config.update_transport_cc(std::iter::once(remote_param(true))));
-        assert!(!config.params()[0].fb_transport_cc());
     }
 
     #[test]
