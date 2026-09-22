@@ -210,7 +210,23 @@ impl RtpWrite {
     ///
     /// * `pt` Payload type. Declared in the [`Media`][crate::media::Media] this
     ///        encoded stream belongs to.
-    /// * `seq_no` Sequence number to use for this packet.
+    /// * `seq_no` Sequence number to use for this packet. This is the
+    ///            **extended** sequence number: only the low 16 bits go on the
+    ///            wire, while the upper bits become the SRTP rollover counter
+    ///            (ROC) used to derive the per-packet IV and auth tag. The ROC
+    ///            is never transmitted, and a receiver seeing a stream for the
+    ///            first time starts at ROC 0 (RFC 3711 §3.3.1). The first
+    ///            packet written to a stream must therefore have
+    ///            `seq_no < 65_536`, or the receiver derives a different key
+    ///            and silently discards every packet: bytes are counted by the
+    ///            transport, but no RTP stream ever appears. This matters most
+    ///            when forwarding: an SFU must not pass an incoming stream's
+    ///            extended sequence number straight through to a newly
+    ///            negotiated outgoing stream, since a subscriber joining a
+    ///            publisher that has been sending for more than 65_536 packets
+    ///            would start past the first rollover. Rebasing by a whole
+    ///            number of rollovers fixes it and leaves the wire sequence
+    ///            number unchanged.
     /// * `time` Time in whatever the clock rate is for the media in question
     ///          (normally 90_000 for video and 48_000 for audio).
     /// * `wallclock` Real world time that corresponds to the media time in the
