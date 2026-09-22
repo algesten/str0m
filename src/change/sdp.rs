@@ -1222,22 +1222,11 @@ fn add_new_lines(
 fn update_session(session: &mut Session, sdp: &Sdp) {
     // PT remapping is complete. Combine TWCC support across all m-lines for
     // each session PT, as described in docs/SDP.md.
-    let remote: Vec<_> = sdp
+    let remote = sdp
         .media_lines
         .iter()
-        .flat_map(|m| {
-            m.rtp_params().into_iter().filter_map(|p| {
-                session
-                    .codec_config
-                    .sdp_match_remote(p, m.direction())
-                    .map(|pt| (pt, p.fb_transport_cc()))
-            })
-        })
-        .collect();
-    session.codec_config.update_transport_cc(&remote);
-
-    // Does any m-line contain a a=rtcp-fb:xx transport-cc?
-    let has_transport_cc = remote.iter().any(|(_, enabled)| *enabled);
+        .flat_map(|m| m.rtp_params().into_iter().map(move |p| (p, m.direction())));
+    let has_transport_cc = session.codec_config.update_transport_cc(remote);
 
     // Is the session level sequence number enabled?
     let has_twcc_header = session
