@@ -9,6 +9,12 @@ pub use crate::rtp_::Bitrate;
 /// Bandwidth estimation kind.
 pub enum BweKind {
     /// Transport wide congestion control.
+    ///
+    /// Emits the current estimate with `can_probe: true` when probing becomes
+    /// available, initially using the configured starting bitrate. Estimate
+    /// updates follow while probing is available. On loss of probing capability,
+    /// emits the last reported estimate once with `can_probe: false`, then
+    /// suppresses updates until probing becomes available again.
     Twcc {
         /// Estimated available bitrate. Initially this is the configured starting bitrate.
         /// When probing becomes unavailable, this retains the last estimate.

@@ -946,29 +946,24 @@ impl Session {
             }
         }
 
-        let bwe_can_probe =
+        let can_probe =
             self.bwe.is_some() && self.srtp_tx.is_some() && self.probe_media().is_some();
-        let could_probe = self.bwe_last_event.is_some_and(|(_, can_probe)| can_probe);
-        let probe_state_changed = bwe_can_probe != could_probe;
-
         if let Some(bwe) = &mut self.bwe {
             // Drain estimates even while unavailable so they cannot be delivered later.
             let estimate = bwe.poll_estimate();
-            let estimate = if probe_state_changed {
-                if bwe_can_probe {
-                    bwe.last_estimate()
-                } else {
-                    self.bwe_last_event.map(|(estimate, _)| estimate)
-                }
-            } else {
-                estimate
+            let estimate = match (can_probe, self.bwe_last_event) {
+                (false, Some((last, true))) => Some(last),
+                (false, _) => None,
+                (true, Some((_, true))) => estimate,
+                (true, _) => bwe.last_estimate(),
             };
-            if let Some(estimate) = estimate.filter(|_| bwe_can_probe || probe_state_changed) {
-                self.bwe_last_event = Some((estimate, bwe_can_probe));
-                return Some(Event::EgressBitrateEstimate(BweKind::Twcc {
+            if let Some(estimate) = estimate {
+                self.bwe_last_event = Some((estimate, can_probe));
+                let kind = BweKind::Twcc {
                     estimate,
-                    can_probe: bwe_can_probe,
-                }));
+                    can_probe,
+                };
+                return Some(Event::EgressBitrateEstimate(kind));
             }
         }
 
