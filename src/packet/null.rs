@@ -12,7 +12,7 @@ impl Packetizer for NullPacketizer {
     }
 
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
-        unreachable!("rtp_mode doesn't use is_marker")
+        false
     }
 }
 

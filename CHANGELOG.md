@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Support opt-in telephone-event (DTMF) SDP negotiation and raw RTP with `0-X` event ranges #1047
   * Bound the depacketizing queue when incomplete frames keep arriving #1044
   * Add a configurable video frame reordering timeout via `RtcConfig` #1041
   * Support SSRC 0 bandwidth probing before media starts #1046

@@ -608,39 +608,56 @@ where
     let fmtp1 = attribute_line("fmtp", (pt(), token(' '), fmtp_param))
         .map(|(pt, _, values)| MediaAttribute::Fmtp { pt, values });
 
-    // a=fmtp:63 111/111   (RFC 2198 RED: "<primary>/<redundant>[/...]" payload-type list). `pt()`
-    // reads the RED pt; from the slash list we keep only the primary (first) entry. Requiring at
-    // least one redundant entry lets a lone pt fall through to `fmtp2`. Each number is read the
-    // same combine way `rtpmap` reads its clock rate, rather than splitting the string by hand.
-    let red_pt_num = || {
+    // Parse bare fmtp syntax without assigning codec meaning; rtpmap decides that later.
+    let fmtp_pt_num = || {
         many1::<String, _, _>(satisfy(|c| c != '/' && c != '\r' && c != '\n')).and_then(|s| {
             s.parse::<u8>()
                 .map_err(StreamErrorFor::<Input>::message_format)
         })
     };
-    let fmtp_red = attribute_line(
+    let fmtp_pt_list = attribute_line(
         "fmtp",
         (
             pt(),
             token(' '),
-            red_pt_num(),
-            skip_many1((token('/'), red_pt_num())),
+            fmtp_pt_num(),
+            skip_many1((token('/'), fmtp_pt_num())),
         ),
     )
-    .map(|(red_pt, _, primary, _)| MediaAttribute::Fmtp {
-        pt: red_pt,
-        values: vec![FormatParam::Red(Pt::from(primary))],
+    .map(|(pt, _, primary, _)| MediaAttribute::Fmtp {
+        pt,
+        values: vec![FormatParam::BarePtList(Pt::from(primary))],
     });
 
-    // a=fmtp:101 0-15
-    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, _value)| {
-        MediaAttribute::Fmtp {
+    let fmtp_range = attribute_line(
+        "fmtp",
+        (
+            pt(),
+            token(' '),
+            string("0-"),
+            many1::<String, _, _>(satisfy(|c: char| c.is_ascii_digit())).and_then(|s| {
+                s.parse::<u8>()
+                    .map_err(StreamErrorFor::<Input>::message_format)
+            }),
+        ),
+    )
+    .map(|(pt, _, _, max)| MediaAttribute::Fmtp {
+        pt,
+        values: vec![FormatParam::BareRange(max)],
+    });
+
+    let fmtp_unknown = attribute_line("fmtp", (pt(), optional(token(' ')), optional(any_value())))
+        .map(|(pt, _, _)| MediaAttribute::Fmtp {
             pt,
             values: vec![FormatParam::Unknown],
-        }
-    });
+        });
 
-    let fmtp = choice((attempt(fmtp1), attempt(fmtp_red), attempt(fmtp2)));
+    let fmtp = choice((
+        attempt(fmtp1),
+        attempt(fmtp_pt_list),
+        attempt(fmtp_range),
+        attempt(fmtp_unknown),
+    ));
 
     // a=rid:<rid-id> <direction> [pt=<fmt-list>;]<restriction>=<value>
     let rid = attribute_line(

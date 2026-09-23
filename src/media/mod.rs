@@ -618,7 +618,7 @@ impl Media {
 
     pub(crate) fn first_pt_with_rtx(&self, config: &CodecConfig) -> Option<Pt> {
         config
-            .all_for_kind(self.kind)
+            .all_for_kind(self.kind, false)
             // Only consider negotiated PTs
             .filter(|p| self.remote_pts.contains(&p.pt))
             // Map to the first PT found in payload params with RTX

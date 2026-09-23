@@ -361,24 +361,28 @@ impl MediaLine {
 
         let mut params: Vec<_> = rtp_maps
             .iter()
-            .filter(|(_, c)| c.codec.is_audio() | c.codec.is_video())
-            .map(|(pt, c)| {
+            .filter(|(pt, c)| {
+                c.codec.is_audio()
+                    || c.codec.is_video()
+                    || (c.codec.is_tele() && self.pts.contains(pt))
+            })
+            .filter_map(|(pt, c)| {
                 let mut p = PayloadParams::new(*pt, None, (*c).into());
+                p.spec.format = FormatParams::from_sdp_fmtp(
+                    c.codec,
+                    fmtps
+                        .iter()
+                        .filter(|(fmtp_pt, _)| **fmtp_pt == *pt)
+                        .map(|(_, values)| values.as_slice()),
+                )?;
                 // Remote TWCC feedback is supported only when explicitly advertised.
                 p.set_fb_transport_cc(false);
-                p
+                Some(p)
             })
             .collect();
 
         for p in &mut params {
             for (pt, values) in fmtps.iter() {
-                // find matching a=fmtp line, if it exists.
-                if **pt == p.pt {
-                    for param in values.iter() {
-                        p.spec.format.set_param(param);
-                    }
-                }
-
                 // find resend pt, if there is one.
                 for fp in values.iter() {
                     if let FormatParam::Apt(v) = fp {
@@ -393,20 +397,20 @@ impl MediaLine {
                         }
                     }
                 }
+            }
 
-                // find red pt, if there is one (RFC 2198). The red fmtp's primary PT
-                // points back to this codec, mirroring how `apt` links RTX. str0m folds RED
-                // onto audio codecs only (the is_audio() gate below), never video.
+            for (pt, values) in fmtps.iter() {
+                // A slash-separated PT list is RED only when its rtpmap says RED.
+                let is_red = rtp_maps
+                    .iter()
+                    .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Red);
+                if !is_red || !p.spec.codec.is_audio() {
+                    continue;
+                }
                 for fp in values.iter() {
-                    if let FormatParam::Red(primary) = fp {
+                    if let FormatParam::BarePtList(primary) | FormatParam::Red(primary) = fp {
                         if *primary == p.pt {
-                            // ensure the owning rtpmap is actually red
-                            let is_red = rtp_maps
-                                .iter()
-                                .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Red);
-                            if is_red && p.spec.codec.is_audio() {
-                                p.red = Some(**pt);
-                            }
+                            p.red = Some(**pt);
                         }
                     }
                 }
@@ -1004,6 +1008,15 @@ pub enum FormatParam {
     /// out-of-order NAL unit decoding. Valid range: 0–32767.
     SpropMaxDonDiff(u16),
 
+    /// Highest event code in an inclusive `0-X` telephone-event range.
+    TelephoneEvents(u8),
+
+    /// Bare `0-X` fmtp syntax, interpreted only with a telephone-event rtpmap.
+    BareRange(u8),
+
+    /// Bare slash-separated payload list, interpreted only with a RED rtpmap.
+    BarePtList(Pt),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -1016,6 +1029,15 @@ pub enum FormatParam {
 }
 
 impl FormatParam {
+    pub(crate) fn parse_telephone_events(value: &str) -> Self {
+        value
+            .strip_prefix("0-")
+            .filter(|end| end.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|end| end.parse::<u8>().ok())
+            .map(Self::TelephoneEvents)
+            .unwrap_or(Self::Unknown)
+    }
+
     pub fn parse(k: &str, v: &str) -> Self {
         use FormatParam::*;
         match k {
@@ -1126,6 +1148,9 @@ impl fmt::Display for FormatParam {
                 )
             }
             SpropMaxDonDiff(v) => write!(f, "sprop-max-don-diff={}", *v),
+            TelephoneEvents(v) => write!(f, "0-{v}"),
+            BareRange(v) => write!(f, "0-{v}"),
+            BarePtList(v) => write!(f, "{v}/{v}"),
             Apt(v) => write!(f, "apt={v}"),
             Red(v) => write!(f, "{v}/{v}"),
             Unknown => Ok(()),
@@ -1171,7 +1196,16 @@ impl PayloadParams {
             });
         }
 
-        let fmtps = self.spec.format.to_format_param();
+        let fmtps = if self.spec.codec.is_tele() {
+            vec![FormatParam::TelephoneEvents(
+                self.spec
+                    .format
+                    .telephone_event_max
+                    .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX),
+            )]
+        } else {
+            self.spec.format.to_format_param()
+        };
         if !fmtps.is_empty() {
             attrs.push(MediaAttribute::Fmtp {
                 pt: self.pt,
@@ -2376,7 +2410,7 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
         }
 
         #[test]
-        fn red_fmtp_parses_and_displays() {
+        fn red_fmtp_is_interpreted_with_red_rtpmap() {
             // Single-level same-codec RED renders as "<primary>/<primary>".
             assert_eq!(FormatParam::Red(111.into()).to_string(), "111/111");
 
@@ -2397,14 +2431,17 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=ice-pwd:testpassword\r\n\
             ";
             let sdp = Sdp::parse(input).expect("should parse");
-            let has_red = sdp.media_lines[0].attrs.iter().any(|a| {
+            assert!(sdp.media_lines[0].attrs.iter().any(|a| {
                 matches!(a, MediaAttribute::Fmtp { pt, values }
-                    if *pt == 63.into() && values == &vec![FormatParam::Red(111.into())])
-            });
-            assert!(
-                has_red,
-                "red fmtp should parse to FormatParam::Red(primary)"
-            );
+                    if *pt == 63.into() && values == &vec![FormatParam::BarePtList(111.into())])
+            }));
+            let params = sdp.media_lines[0].rtp_params();
+            assert_eq!(params[0].red, Some(63.into()));
+
+            // The same bare fmtp text must not be treated as RED without a RED rtpmap.
+            let other_codec = input.replace("a=rtpmap:63 red/48000/2", "a=rtpmap:63 opus/48000/2");
+            let parsed = Sdp::parse(&other_codec).expect("should parse");
+            assert_eq!(parsed.media_lines[0].rtp_params()[0].red, None);
         }
 
         #[test]

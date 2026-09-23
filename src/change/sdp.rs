@@ -872,7 +872,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 
                 let params: Vec<_> = session
                     .codec_config
-                    .all_for_kind(m.kind())
+                    .all_for_kind(m.kind(), false)
                     .cloned()
                     .collect();
 
@@ -1514,6 +1514,7 @@ impl AsSdpMediaLine for Media {
         let mut pts = vec![];
 
         for p in effective_params {
+            let p = *p;
             p.as_media_attrs(&mut attrs);
 
             // The pts that will be advertised in the SDP
@@ -1830,7 +1831,7 @@ impl Change {
             AddMedia(v) => {
                 // TODO can we avoid all this cloning?
                 let mut add = v.clone();
-                add.pts = config.all_for_kind(v.kind).map(|p| p.pt()).collect();
+                add.pts = config.all_for_kind(v.kind, true).map(|p| p.pt()).collect();
                 add.exts = exts.cloned_with_type(v.kind.is_audio());
                 add.index = index;
 
