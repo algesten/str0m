@@ -1011,6 +1011,14 @@ pub enum Event {
     MediaEgressStats(MediaEgressStats),
 
     /// A new estimate from the bandwidth estimation subsystem.
+    ///
+    /// TWCC events report the current estimate when probing becomes available,
+    /// initially the configured starting bitrate, with `can_probe: true`. This
+    /// signals readiness, not that capacity has already been measured. Estimate
+    /// updates follow while probing is available. When probing becomes unavailable,
+    /// one event retains the last estimate with `can_probe: false`; further updates
+    /// are suppressed until probing becomes available again.
+    /// REMB reports are independent of TWCC probing readiness.
     EgressBitrateEstimate(BweKind),
 
     // =================== RTP related events ===================

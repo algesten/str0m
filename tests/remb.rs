@@ -71,7 +71,13 @@ pub fn remb() -> Result<(), RtcError> {
         })
         .collect();
 
-    assert_eq!(l_remb, vec![&BweKind::Remb(mid, Bitrate::bps(123456))]);
+    assert_eq!(
+        l_remb,
+        vec![&BweKind::Remb {
+            estimate: Bitrate::bps(123456),
+            mid
+        }]
+    );
 
     Ok(())
 }

@@ -97,6 +97,7 @@ pub(crate) struct Session {
     max_rx_seq_lookup: HashMap<Ssrc, SeqNo>,
 
     bwe: Option<Bwe>,
+    bwe_last_event: Option<(Bitrate, bool)>,
 
     enable_twcc_feedback: bool,
 
@@ -201,6 +202,7 @@ impl Session {
             twcc_tx_register: TwccSendRegister::new(1000),
             max_rx_seq_lookup: HashMap::new(),
             bwe,
+            bwe_last_event: None,
             enable_twcc_feedback: false,
             pacer,
             pacer_control: PacerControl::new(),
@@ -944,10 +946,30 @@ impl Session {
             }
         }
 
-        if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
-            return Some(Event::EgressBitrateEstimate(BweKind::Twcc(
-                bitrate_estimate,
-            )));
+        let bwe_can_probe =
+            self.bwe.is_some() && self.srtp_tx.is_some() && self.probe_media().is_some();
+        let could_probe = self.bwe_last_event.is_some_and(|(_, can_probe)| can_probe);
+        let probe_state_changed = bwe_can_probe != could_probe;
+
+        if let Some(bwe) = &mut self.bwe {
+            // Drain estimates even while unavailable so they cannot be delivered later.
+            let estimate = bwe.poll_estimate();
+            let estimate = if probe_state_changed {
+                if bwe_can_probe {
+                    bwe.last_estimate()
+                } else {
+                    self.bwe_last_event.map(|(estimate, _)| estimate)
+                }
+            } else {
+                estimate
+            };
+            if let Some(estimate) = estimate.filter(|_| bwe_can_probe || probe_state_changed) {
+                self.bwe_last_event = Some((estimate, bwe_can_probe));
+                return Some(Event::EgressBitrateEstimate(BweKind::Twcc {
+                    estimate,
+                    can_probe: bwe_can_probe,
+                }));
+            }
         }
 
         // If we're not ready to flow media, don't send any events.
@@ -993,7 +1015,10 @@ impl Session {
         }
 
         if let Some((mid, bitrate)) = self.streams.poll_remb_request() {
-            return Some(Event::EgressBitrateEstimate(BweKind::Remb(mid, bitrate)));
+            return Some(Event::EgressBitrateEstimate(BweKind::Remb {
+                estimate: bitrate,
+                mid,
+            }));
         }
 
         for media in &mut self.medias {

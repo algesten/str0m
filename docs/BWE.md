@@ -46,6 +46,18 @@ help the system ramp up quickly when conditions improve. They're used:
 Probing can discover capacity before the first media packet, including on
 connections with only audio negotiated.
 
+`Event::EgressBitrateEstimate(BweKind::Twcc { estimate, can_probe })` also
+signals probing readiness. Probing requires BWE to be enabled, SRTP keys to
+be available, and a sending media section to support TWCC probing. On
+becoming ready, including after renegotiation restores readiness, the current
+estimate is emitted with `can_probe: true` without waiting for feedback.
+Initially this is the configured starting bitrate, not a measured capacity.
+When probing becomes unavailable, one event carries the last estimate with
+`can_probe: false`. Further estimate updates are suppressed until probing
+becomes available again. No TWCC event is emitted for an instance that has
+never been able to probe. REMB reports are independent of this signal and
+carry `BweKind::Remb { estimate, mid }`.
+
 ### Application Limited Region (ALR)
 
 ALR occurs when your application sends **less than 65% of available

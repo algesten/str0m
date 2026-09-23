@@ -89,6 +89,7 @@ fn no_twcc_extension_no_probes() -> Result<(), RtcError> {
     r.direct_api().declare_media("aud".into(), MediaKind::Audio);
     run(&mut l, &mut r, Duration::from_secs(2))?;
     assert_eq!(probes(&l), 0);
+    assert_no_twcc_estimates(&l);
     Ok(())
 }
 
@@ -146,6 +147,7 @@ fn sdp_without_transport_sequence_extension_does_not_probe() -> Result<(), RtcEr
     )?;
     run(&mut l, &mut r, Duration::from_secs(2))?;
     assert_eq!(probes(&l), 0);
+    assert_no_twcc_estimates(&l);
     Ok(())
 }
 
@@ -169,6 +171,7 @@ fn sdp_without_transport_feedback_does_not_probe() -> Result<(), RtcError> {
     )?;
     run(&mut l, &mut r, Duration::from_secs(2))?;
     assert_eq!(probes(&l), 0);
+    assert_no_twcc_estimates(&l);
     Ok(())
 }
 
@@ -206,15 +209,28 @@ fn probes_continue_while_sending_only_audio() -> Result<(), RtcError> {
 }
 
 #[test]
-fn renegotiating_inactive_stops_probe_traffic() -> Result<(), RtcError> {
-    let (mut l, mut r) = peers(false);
+fn renegotiating_inactive_signals_probe_state_transitions() -> Result<(), RtcError> {
+    let (mut l, mut r) = peers(true);
     let mut change = l.sdp_api();
     let mid = change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
     let (offer, pending) = change.apply().unwrap();
     let answer = r.sdp_api().accept_offer(offer)?;
     l.sdp_api().accept_answer(pending, answer)?;
-    run(&mut l, &mut r, Duration::from_millis(5))?;
+    run(&mut l, &mut r, Duration::from_secs(2))?;
     assert!(probes(&l) > 0);
+    let last_estimate = l
+        .events
+        .iter()
+        .rev()
+        .find_map(|(_, event)| match event {
+            Event::EgressBitrateEstimate(BweKind::Twcc {
+                estimate,
+                can_probe: true,
+            }) => Some(*estimate),
+            _ => None,
+        })
+        .unwrap();
+    assert!(last_estimate > Bitrate::kbps(300));
 
     let mut change = l.sdp_api();
     change.set_direction(mid, Direction::Inactive);
@@ -224,6 +240,36 @@ fn renegotiating_inactive_stops_probe_traffic() -> Result<(), RtcError> {
     l.events.clear();
     run(&mut l, &mut r, Duration::from_secs(2))?;
     assert_eq!(probes(&l), 0);
+    let estimates: Vec<_> = l
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::EgressBitrateEstimate(kind) => Some(kind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        estimates,
+        vec![&BweKind::Twcc {
+            estimate: last_estimate,
+            can_probe: false,
+        }]
+    );
+    l.events.clear();
+
+    let mut change = l.sdp_api();
+    change.set_direction(mid, Direction::SendOnly);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.sdp_api().accept_offer(offer)?;
+    l.sdp_api().accept_answer(pending, answer)?;
+    run(&mut l, &mut r, Duration::from_millis(10))?;
+    assert!(l.events.iter().any(|(_, event)| matches!(
+        event,
+        Event::EgressBitrateEstimate(BweKind::Twcc {
+            can_probe: true,
+            ..
+        })
+    )));
     Ok(())
 }
 
@@ -248,6 +294,9 @@ fn video_padding_before_srtp_does_not_spin() -> Result<(), RtcError> {
         l.handle_input(str0m::Input::Timeout(now))?;
         match l.poll_output()? {
             str0m::Output::Timeout(deadline) if deadline > now => return Ok(()),
+            str0m::Output::Event(Event::EgressBitrateEstimate(BweKind::Twcc { .. })) => {
+                panic!("TWCC estimate before SRTP readiness")
+            }
             str0m::Output::Transmit(_) => panic!("no candidates or keys have been installed"),
             _ => {}
         }
@@ -287,7 +336,8 @@ fn video_without_twcc_does_not_hide_audio_probe_source() -> Result<(), RtcError>
         run(&mut l, &mut r, Duration::from_secs(2))?;
         assert!(
             l.events.iter().any(|(_, event)| matches!(event,
-                Event::EgressBitrateEstimate(BweKind::Twcc(rate)) if *rate > Bitrate::kbps(300)
+                Event::EgressBitrateEstimate(BweKind::Twcc { estimate: rate, can_probe: true })
+            if *rate > Bitrate::kbps(300)
             )),
             "video RTX without TWCC must not prevent capacity discovery on audio"
         );
@@ -312,9 +362,37 @@ fn negotiated_video_rtx_remains_preferred_over_audio_fallback() -> Result<(), Rt
         "negotiated video RTX should supply probe padding"
     );
     assert!(l.events.iter().any(|(_, event)| matches!(event,
-        Event::EgressBitrateEstimate(BweKind::Twcc(rate)) if *rate > Bitrate::kbps(300)
+        Event::EgressBitrateEstimate(BweKind::Twcc { estimate: rate, can_probe: true })
+            if *rate > Bitrate::kbps(300)
     )));
     Ok(())
+}
+
+#[test]
+fn readiness_emits_initial_estimate_without_feedback() -> Result<(), RtcError> {
+    let (mut l, mut r) = peers(false);
+    run(&mut l, &mut r, Duration::from_secs(1))?;
+    assert_no_twcc_estimates(&l);
+    l.direct_api().declare_media("aud".into(), MediaKind::Audio);
+    r.direct_api().declare_media("aud".into(), MediaKind::Audio);
+    run(&mut l, &mut r, Duration::from_millis(10))?;
+    let first = l.events.iter().find_map(|(_, event)| match event {
+        Event::EgressBitrateEstimate(BweKind::Twcc {
+            estimate: rate,
+            can_probe: true,
+        }) => Some(*rate),
+        _ => None,
+    });
+    assert_eq!(first, Some(Bitrate::kbps(300)));
+    Ok(())
+}
+
+fn assert_no_twcc_estimates(rtc: &TestRtc) {
+    assert!(
+        !rtc.events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::EgressBitrateEstimate(BweKind::Twcc { .. })))
+    );
 }
 
 fn peers(feedback: bool) -> (TestRtc, TestRtc) {
@@ -369,7 +447,8 @@ fn assert_feedback_and_no_media(l: &TestRtc, r: &TestRtc) {
     assert!(probes(l) >= 5, "SSRC 0 probe cluster was not sent");
     assert!(
         l.events.iter().any(|(_, event)| matches!(event,
-            Event::EgressBitrateEstimate(BweKind::Twcc(rate)) if *rate > Bitrate::kbps(300)
+            Event::EgressBitrateEstimate(BweKind::Twcc { estimate: rate, can_probe: true })
+            if *rate > Bitrate::kbps(300)
         )),
         "probe feedback should measure capacity above the initial estimate"
     );

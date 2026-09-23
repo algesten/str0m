@@ -54,7 +54,11 @@ pub fn get_last_bwe_estimate(rtc: &TestRtc) -> Option<Bitrate> {
     rtc.events
         .iter()
         .filter_map(|(_, e)| {
-            if let Event::EgressBitrateEstimate(BweKind::Twcc(bitrate)) = e {
+            if let Event::EgressBitrateEstimate(BweKind::Twcc {
+                estimate: bitrate,
+                can_probe: true,
+            }) = e
+            {
                 Some(bitrate)
             } else {
                 None

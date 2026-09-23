@@ -9,9 +9,24 @@ pub use crate::rtp_::Bitrate;
 /// Bandwidth estimation kind.
 pub enum BweKind {
     /// Transport wide congestion control.
-    Twcc(Bitrate),
+    Twcc {
+        /// Estimated available bitrate. Initially this is the configured starting bitrate.
+        /// When probing becomes unavailable, this retains the last estimate.
+        estimate: Bitrate,
+        /// Whether the local BWE can currently probe for capacity.
+        ///
+        /// Requires BWE to be enabled, SRTP keys, and a sending media section
+        /// supporting TWCC feedback and the transport sequence extension.
+        /// This does not guarantee that feedback is arriving.
+        can_probe: bool,
+    },
     /// REMB (Receiver Estimated Maximum Bitrate)
-    Remb(Mid, Bitrate),
+    Remb {
+        /// Bitrate reported by the remote receiver.
+        estimate: Bitrate,
+        /// Media section associated with the report.
+        mid: Mid,
+    },
 }
 
 /// Access to the Bandwidth Estimate subsystem.
