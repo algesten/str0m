@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
 
 // Re-export all error types for convenience
 pub use crate::crypto::DtlsError;
@@ -42,6 +43,16 @@ pub enum RtcError {
 
     /// The Rid attempted to write is not known.
     UnknownRid(Rid),
+
+    /// The telephone event is outside the range negotiated for its payload type.
+    UnsupportedTelephoneEvent(u8),
+
+    /// The telephone event's volume is above 63, the quietest (RFC 4733 Section 2.3.4).
+    InvalidTelephoneEventVolume(u8),
+
+    /// The telephone event's duration is shorter than 40 milliseconds or longer than 6 seconds,
+    /// the range libwebrtc accepts.
+    InvalidTelephoneEventDuration(Duration),
 
     /// If MediaWriter.write fails because we can't find an SSRC to use.
     NoSenderSource,
@@ -97,6 +108,15 @@ impl fmt::Display for RtcError {
             RtcError::Packet(mid, pt, err) => write!(f, "{} {} {}", mid, pt, err),
             RtcError::UnknownPt(pt) => write!(f, "PT is unknown {}", pt),
             RtcError::UnknownRid(rid) => write!(f, "RID is unknown {}", rid),
+            RtcError::UnsupportedTelephoneEvent(event) => {
+                write!(f, "Telephone event is not supported {}", event)
+            }
+            RtcError::InvalidTelephoneEventVolume(volume) => {
+                write!(f, "Telephone event volume is invalid {}", volume)
+            }
+            RtcError::InvalidTelephoneEventDuration(duration) => {
+                write!(f, "Telephone event duration is invalid {:?}", duration)
+            }
             RtcError::NoSenderSource => write!(f, "No sender source"),
             RtcError::ResendRequiresRtxPt => write!(
                 f,

@@ -26,10 +26,14 @@ use crate::util::already_happened;
 mod event;
 pub use event::*;
 
+mod telephone_event;
+use telephone_event::TelephoneEventQueue;
+
 mod writer;
 pub use writer::Writer;
 
 pub use crate::packet::MediaKind;
+pub use crate::packet::TelephoneEventPayload;
 pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid};
 
 /// Mid used for SSRC 0 non-media BWE probes.
@@ -140,6 +144,9 @@ pub struct Media {
 
     /// Frames to payload. Should typically only be 0 or 1.
     to_payload: VecDeque<ToPayload>,
+
+    /// Telephone events to send, turned into reports when they are due.
+    telephone_events: TelephoneEventQueue,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -360,10 +367,10 @@ impl Media {
                     seq_range: dep.seq_range(),
                     contiguous: dep.contiguous,
                     ext_vals: dep.ext_vals(),
-                    codec_extra: dep.codec_extra,
                     last_sender_info: dep.first_sender_info(),
-                    audio_start_of_talk_spurt: codec.spec().codec.is_audio()
+                    audio_start_of_talk_spurt: codec.spec().codec.kind().is_audio()
                         && dep.start_of_talkspurt(),
+                    codec_extra: dep.codec_extra,
                     data: dep.data.into(),
                 }));
             }
@@ -397,7 +404,10 @@ impl Media {
             let codec = params.spec.codec;
 
             // How many packets to hold back in the jitter buffer.
-            let hold_back = if codec.is_audio() {
+            let hold_back = if codec.is_tele() {
+                // Telephone-event reports are self-contained, so never wait for missing packets.
+                0
+            } else if codec.is_audio() {
                 reordering_size_audio
             } else {
                 reordering_size_video
@@ -455,6 +465,10 @@ impl Media {
     pub(crate) fn set_direction(&mut self, new_dir: Direction) {
         self.need_changed_event = self.dir != new_dir;
         self.dir = new_dir;
+
+        if !new_dir.is_sending() {
+            self.telephone_events = TelephoneEventQueue::default();
+        }
     }
 
     /// Toggle RFC 2198 RED wrapping for outgoing packets. Takes effect on the next payloaded
@@ -504,7 +518,7 @@ impl Media {
         if !self.to_payload.is_empty() {
             Some(already_happened())
         } else {
-            None
+            self.telephone_events.poll_timeout()
         }
     }
 
@@ -520,16 +534,35 @@ impl Media {
 
     pub(crate) fn do_payload(
         &mut self,
+        now: Instant,
         streams: &mut Streams,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
         red_distances: &[u32],
     ) -> Result<(), RtcError> {
-        let Some(to_payload) = self.to_payload.pop_front() else {
-            return Ok(());
-        };
+        if let Some(to_payload) = self.to_payload.pop_front() {
+            self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)?;
+        }
 
+        // Telephone-event reports are made when due, so each takes the stream's next sequence
+        // number, after the audio written before it.
+        for to_payload in self.telephone_events.poll(now) {
+            self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)?;
+        }
+
+        Ok(())
+    }
+
+    fn payload(
+        &mut self,
+        to_payload: ToPayload,
+        streams: &mut Streams,
+        params: &[PayloadParams],
+        vp9_mode: Vp9PacketizerMode,
+        mtu: usize,
+        red_distances: &[u32],
+    ) -> Result<(), RtcError> {
         let ToPayload { pt, rid, .. } = &to_payload;
 
         let midrid = MidRid(self.mid, *rid);
@@ -668,6 +701,7 @@ impl Default for Media {
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: VecDeque::default(),
+            telephone_events: TelephoneEventQueue::default(),
             need_open_event: true,
             need_changed_event: false,
             red_send_enabled: true,

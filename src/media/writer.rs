@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::RtcError;
 use crate::format::PayloadParams;
@@ -8,6 +8,7 @@ use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 
+use super::telephone_event::TelephoneEvent;
 use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
 
 /// Writer of frame level data.
@@ -124,6 +125,9 @@ impl<'a> Writer<'a> {
     /// This operation fails if the PT doesn't match a negotiated codec, or the RID (`None` or a value)
     /// does not match anything negotiated.
     ///
+    /// Telephone-event payloads are sent as is, in one RTP packet. To send a whole event, see
+    /// [`Writer::write_telephone_event`].
+    ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
     /// contain the media time (RTP time). In the simplest SFU setup, the wallclock could simply
@@ -178,6 +182,97 @@ impl<'a> Writer<'a> {
         media.set_to_payload(to_payload)?;
 
         Ok(())
+    }
+
+    /// Queue a telephone event (RFC 4733), such as a DTMF digit, for sending.
+    ///
+    /// Sends an update every 20 ms and the final report three times, with the RTP marker on the
+    /// first report. Long events are segmented per RFC 4733 Section 2.5.1.3.
+    ///
+    /// `wallclock` and `rtp_time` are when the event starts, as in [`Writer::write`]. Pass the RTP
+    /// time the audio has at `wallclock`, and a telephone-event `pt` with the audio's clock rate.
+    /// Events are sent in the order they are written, at least 50 ms apart. An event that waits
+    /// for an earlier one starts later, with its `wallclock` and `rtp_time` moved forward together.
+    ///
+    /// `event` is the event code: DTMF digits `0`-`9` are 0-9, `*` is 10, `#` is 11, `A`-`D` are
+    /// 12-15 and flash is 16. `volume` is the tone power in -dBm0, from 0 to 63, where larger is
+    /// quieter; libwebrtc sends 10.
+    ///
+    /// The reports use the writer's RID and header extension values. Queued events are dropped if
+    /// the media stops sending.
+    ///
+    /// Fails with:
+    ///
+    /// * [`RtcError::UnknownPt`] if `pt` is not a telephone-event payload type, or is not among
+    ///   the SDP-negotiated payload types for this media.
+    /// * [`RtcError::UnsupportedTelephoneEvent`] if `event` is above
+    ///   [`CodecConfig::telephone_event_max`][crate::format::CodecConfig::telephone_event_max].
+    /// * [`RtcError::InvalidTelephoneEventVolume`] if `volume` is above 63.
+    /// * [`RtcError::InvalidTelephoneEventDuration`] if `duration` is shorter than 40 ms or
+    ///   longer than 6 seconds, the range libwebrtc accepts.
+    /// * [`RtcError::NotSendingDirection`], [`RtcError::UnknownRid`] or
+    ///   [`RtcError::NoSenderSource`] if the media can't send the event.
+    ///
+    /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
+    pub fn write_telephone_event(
+        self,
+        pt: Pt,
+        wallclock: Instant,
+        rtp_time: MediaTime,
+        event: u8,
+        duration: Duration,
+        volume: u8,
+    ) -> Result<(), RtcError> {
+        let codecs = &self.session.codec_config;
+        let params = codecs.params().iter().find(|p| p.pt() == pt);
+        let (Some(max), Some(params)) = (codecs.telephone_event_max(pt), params) else {
+            return Err(RtcError::UnknownPt(pt));
+        };
+        let clock_rate = params.spec().rtp_clock_rate();
+
+        // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
+        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
+
+        // Direct API media have no negotiated payload types.
+        if !media.remote_pts().is_empty() && !media.remote_pts().contains(&pt) {
+            return Err(RtcError::UnknownPt(pt));
+        }
+
+        if event > max {
+            return Err(RtcError::UnsupportedTelephoneEvent(event));
+        }
+
+        if !media.direction().is_sending() {
+            return Err(RtcError::NotSendingDirection(media.direction()));
+        }
+
+        if let Some(rid) = self.rid {
+            if !media.rids_tx().contains(rid) {
+                return Err(RtcError::UnknownRid(rid));
+            }
+        }
+
+        // Fail now rather than when the reports are due.
+        let midrid = MidRid(self.mid, self.rid);
+        if self.session.streams.stream_tx_by_midrid(midrid).is_none() {
+            return Err(RtcError::NoSenderSource);
+        }
+
+        trace!(
+            "write telephone event {:?} {:?} {:?} time: {:?} event: {} duration: {:?}",
+            self.mid, self.rid, pt, rtp_time, event, duration
+        );
+
+        media.telephone_events.push(TelephoneEvent {
+            pt,
+            rid: self.rid,
+            event,
+            volume,
+            duration,
+            wallclock,
+            rtp_time: rtp_time.rebase(clock_rate),
+            ext_vals: self.ext_vals,
+        })
     }
 
     /// Test if the kind of keyframe request is possible.
