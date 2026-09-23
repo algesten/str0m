@@ -74,7 +74,8 @@ pub enum Codec {
     ///
     /// Targets libwebrtc-compatible DTMF, defaulting to events `0-16`, not full
     /// RFC 4733 event handling. Only `0-X` SDP ranges are supported; the application
-    /// handles the RTP payloads and uses [`CodecConfig::telephone_event_max`]
+    /// handles the RTP payloads and uses
+    /// [`CodecConfig::telephone_event_max`][super::CodecConfig::telephone_event_max]
     /// to check the negotiated range.
     Tele,
     /// Technically not a codec, but used in places where codecs go
