@@ -123,7 +123,8 @@ pub struct FormatParams {
     /// Highest event code in the inclusive `0-X` telephone-event SDP range.
     ///
     /// Only contiguous ranges starting at zero are supported. `None` uses the
-    /// library default `0-16`. Negotiation takes the smaller maximum for each media.
+    /// library default `0-16`. Negotiation takes the smaller maximum per payload
+    /// type across the session.
     pub telephone_event_max: Option<u8>,
 }
 

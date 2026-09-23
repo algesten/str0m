@@ -87,6 +87,14 @@ The transport sequence number header extension must still be negotiated on
 the m-line carrying the RTP packets. As with other codec parameters, feedback
 capabilities are retained when an existing m-line is renegotiated.
 
+### Telephone-event ranges across m-lines
+
+str0m keeps one negotiated telephone-event range per payload type in
+`Session::codec_config`. It takes the smaller local and remote maximum and uses
+that range in both directions and on every m-line sharing the PT. SDP can
+express different receive capabilities in each direction and on different
+m-lines; str0m does not model those distinctions.
+
 ### Renegotiation and narrowed PT lists
 
 On renegotiation of an existing m-line, str0m keeps the remote payload type list

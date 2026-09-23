@@ -569,17 +569,13 @@ impl CodecConfig {
         self.params.iter().find(move |p| f(p))
     }
 
-    pub(crate) fn all_for_kind(&self, kind: MediaKind) -> impl Iterator<Item = &PayloadParams> {
-        self.params.iter().filter(move |params| {
-            if kind == MediaKind::Video {
-                params.spec.codec.is_video()
-            } else {
-                params.spec.codec.is_audio() || params.spec.codec == Codec::Tele
-            }
-        })
-    }
-
-    pub(crate) fn for_offer(&self, kind: MediaKind) -> impl Iterator<Item = &PayloadParams> {
+    /// Return configured payloads for a media kind, optionally preferring event
+    /// clock rates that match audio codecs in a new local offer.
+    pub(crate) fn all_for_kind(
+        &self,
+        kind: MediaKind,
+        for_new_offer: bool,
+    ) -> impl Iterator<Item = &PayloadParams> {
         let matches_audio_clock = move |event: &PayloadParams| {
             self.params.iter().any(|audio| {
                 audio.spec.codec.is_audio()
@@ -587,12 +583,40 @@ impl CodecConfig {
             })
         };
         let has_matching_events = self
-            .all_for_kind(kind)
-            .any(|p| p.spec.codec == Codec::Tele && matches_audio_clock(p));
+            .params
+            .iter()
+            .any(|p| kind == MediaKind::Audio && p.spec.codec.is_tele() && matches_audio_clock(p));
 
-        self.all_for_kind(kind).filter(move |p| {
-            p.spec.codec != Codec::Tele || !has_matching_events || matches_audio_clock(p)
+        self.params.iter().filter(move |p| {
+            let matches_kind = if kind == MediaKind::Video {
+                p.spec.codec.is_video()
+            } else {
+                p.spec.codec.is_audio() || p.spec.codec.is_tele()
+            };
+            matches_kind
+                && (!for_new_offer
+                    || !p.spec.codec.is_tele()
+                    || !has_matching_events
+                    || matches_audio_clock(p))
         })
+    }
+
+    /// Highest telephone-event code for this payload type.
+    ///
+    /// Before SDP negotiation this is the configured range (default `0-16`).
+    /// After negotiation it is the smaller range advertised by both peers,
+    /// shared across all m-lines using the payload type. Returns `None` if
+    /// the payload type is not configured as telephone-event.
+    pub fn telephone_event_max(&self, pt: Pt) -> Option<u8> {
+        self.params
+            .iter()
+            .find(|p| p.pt() == pt && p.spec.codec.is_tele())
+            .map(|p| {
+                p.spec
+                    .format
+                    .telephone_event_max
+                    .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX)
+            })
     }
 
     pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams], remote_dir: Direction) {
@@ -1331,7 +1355,7 @@ mod test {
 
         // Now simulate creating a new video m-line (for Firefox's camera)
         // This is where the bug manifests: we collect ALL video codecs from config
-        let all_video_params: Vec<_> = config.all_for_kind(MediaKind::Video).collect();
+        let all_video_params: Vec<_> = config.all_for_kind(MediaKind::Video, false).collect();
 
         // Extract just the PTs (including RTX PTs)
         let mut all_pts = Vec::new();

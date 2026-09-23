@@ -8,9 +8,7 @@ use crate::Rtc;
 use crate::RtcError;
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
-use crate::format::Codec;
 use crate::format::CodecConfig;
-use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::media::{Media, Rids, Simulcast};
 use crate::packet::MediaKind;
@@ -874,7 +872,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 
                 let params: Vec<_> = session
                     .codec_config
-                    .all_for_kind(m.kind())
+                    .all_for_kind(m.kind(), false)
                     .cloned()
                     .collect();
 
@@ -1329,32 +1327,12 @@ fn update_media(
     }
 
     // Narrowing/ordering of of PT
-    let mut telephone_event_ranges = Vec::new();
     let pts: Vec<Pt> = m
         .rtp_params()
         .into_iter()
-        .filter_map(|p| {
-            let pt = config.sdp_match_remote(p, m.direction())?;
-            if p.spec().codec == Codec::Tele {
-                let local = config.match_params(p)?;
-                let max = p
-                    .spec()
-                    .format
-                    .telephone_event_max
-                    .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX)
-                    .min(
-                        local
-                            .spec()
-                            .format
-                            .telephone_event_max
-                            .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX),
-                    );
-                telephone_event_ranges.push((pt, max));
-            }
-            Some(pt)
-        })
+        .filter_map(|p| config.sdp_match_remote(p, m.direction()))
         .collect();
-    media.set_remote_pts(pts, telephone_event_ranges);
+    media.set_remote_pts(pts);
 
     let mut remote_extmap = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {
@@ -1536,10 +1514,7 @@ impl AsSdpMediaLine for Media {
         let mut pts = vec![];
 
         for p in effective_params {
-            let mut p = *p;
-            if let Some(max) = self.telephone_event_max(p.pt()) {
-                p.spec.format.telephone_event_max = Some(max);
-            }
+            let p = *p;
             p.as_media_attrs(&mut attrs);
 
             // The pts that will be advertised in the SDP
@@ -1856,7 +1831,7 @@ impl Change {
             AddMedia(v) => {
                 // TODO can we avoid all this cloning?
                 let mut add = v.clone();
-                add.pts = config.for_offer(v.kind).map(|p| p.pt()).collect();
+                add.pts = config.all_for_kind(v.kind, true).map(|p| p.pt()).collect();
                 add.exts = exts.cloned_with_type(v.kind.is_audio());
                 add.index = index;
 

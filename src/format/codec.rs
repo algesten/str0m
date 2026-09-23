@@ -74,7 +74,7 @@ pub enum Codec {
     ///
     /// Targets libwebrtc-compatible DTMF, defaulting to events `0-16`, not full
     /// RFC 4733 event handling. Only `0-X` SDP ranges are supported; the application
-    /// handles the RTP payloads and uses [`crate::media::Media::telephone_event_max`]
+    /// handles the RTP payloads and uses [`CodecConfig::telephone_event_max`]
     /// to check the negotiated range.
     Tele,
     /// Technically not a codec, but used in places where codecs go
@@ -96,6 +96,11 @@ pub enum Codec {
 crate::drv_identity_copy!(Codec, CodecSpec);
 
 impl Codec {
+    /// Tells if this is the telephone-event RTP payload format.
+    pub fn is_tele(&self) -> bool {
+        *self == Codec::Tele
+    }
+
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {
         use Codec::*;
@@ -110,7 +115,7 @@ impl Codec {
 
     /// Audio/Video.
     pub fn kind(&self) -> MediaKind {
-        if self.is_audio() || *self == Codec::Tele {
+        if self.is_audio() || self.is_tele() {
             MediaKind::Audio
         } else {
             MediaKind::Video

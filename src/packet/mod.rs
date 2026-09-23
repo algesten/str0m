@@ -342,7 +342,7 @@ impl CodecPacketizer {
             Codec::Vp9 => CodecPacketizer::Vp9(Vp9Packetizer::with_mode(vp9_mode)),
             Codec::Av1 => CodecPacketizer::Av1(Av1Packetizer::default()),
             Codec::Null => CodecPacketizer::Null(NullPacketizer),
-            Codec::Tele => panic!("Telephone events require RTP mode"),
+            Codec::Tele => CodecPacketizer::Null(NullPacketizer),
             Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
             Codec::Red => panic!("Cant instantiate packetizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
@@ -389,7 +389,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Vp9 => CodecDepacketizer::Vp9(Vp9Depacketizer::default()),
             Codec::Av1 => CodecDepacketizer::Av1(Av1Depacketizer::default()),
             Codec::Null => CodecDepacketizer::Null(NullDepacketizer),
-            Codec::Tele => panic!("Telephone events require RTP mode"),
+            Codec::Tele => CodecDepacketizer::Null(NullDepacketizer),
             Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
             Codec::Red => panic!("Cant instantiate depacketizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
@@ -587,5 +587,23 @@ mod test {
         assert_eq!(output, payload);
         assert!(depacketizer.is_partition_head(&payload));
         assert!(depacketizer.is_partition_tail(false, &payload));
+    }
+
+    #[test]
+    fn telephone_event_packetizer_and_depacketizer_pass_through_payload() {
+        let payload = [5, 0x80, 0, 160];
+        let mut packetizer = CodecPacketizer::from(Codec::Tele);
+        assert_eq!(
+            packetizer.packetize(1200, &payload).unwrap(),
+            vec![payload.to_vec()]
+        );
+        assert!(!packetizer.is_marker(&payload, None, true));
+
+        let mut depacketizer = CodecDepacketizer::from(Codec::Tele);
+        let mut output = Vec::new();
+        depacketizer
+            .depacketize(&payload, &mut output, &mut CodecExtra::None)
+            .unwrap();
+        assert_eq!(output, payload);
     }
 }

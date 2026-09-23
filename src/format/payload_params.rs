@@ -8,6 +8,7 @@ use crate::packet::H266ProfileTierLevel;
 use crate::rtp_::Pt;
 
 use super::codec::{Codec, CodecSpec};
+use super::format_params::FormatParams;
 
 /// Preferred ranges for dynamic payload type allocation.
 pub(crate) const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
@@ -298,7 +299,7 @@ impl PayloadParams {
         }
 
         // Telephone events match by clock rate, regardless of channel count.
-        if c0.codec == Codec::Tele {
+        if c0.codec.is_tele() {
             return Some(Self::EXACT_MATCH_SCORE);
         }
 
@@ -625,6 +626,20 @@ impl PayloadParams {
         // The first negotiated m-line determines TWCC support for this PT.
         if !self.locked {
             self.fb_transport_cc &= first.fb_transport_cc();
+        }
+
+        if self.spec.codec.is_tele() {
+            let local = self
+                .spec
+                .format
+                .telephone_event_max
+                .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
+            let remote = first
+                .spec
+                .format
+                .telephone_event_max
+                .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
+            self.spec.format.telephone_event_max = Some(local.min(remote));
         }
 
         // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.

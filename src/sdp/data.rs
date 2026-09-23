@@ -364,16 +364,13 @@ impl MediaLine {
             .filter(|(pt, c)| {
                 c.codec.is_audio()
                     || c.codec.is_video()
-                    || (c.codec == Codec::Tele && self.pts.contains(pt))
+                    || (c.codec.is_tele() && self.pts.contains(pt))
             })
             .filter_map(|(pt, c)| {
                 let mut p = PayloadParams::new(*pt, None, (*c).into());
-                if c.codec == Codec::Tele {
-                    let Some(max) = self.telephone_event_max(*pt) else {
-                        debug!("Ignoring unsupported telephone-event fmtp for PT {pt}");
-                        return None;
-                    };
-                    p.spec.format.telephone_event_max = Some(max);
+                let values = FormatParam::for_codec(c.codec, &self.fmtp_lines(*pt))?;
+                for value in &values {
+                    p.spec.format.set_param(value);
                 }
                 // Remote TWCC feedback is supported only when explicitly advertised.
                 p.set_fb_transport_cc(false);
@@ -383,17 +380,6 @@ impl MediaLine {
 
         for p in &mut params {
             for (pt, values) in fmtps.iter() {
-                // find matching a=fmtp line, if it exists.
-                if **pt == p.pt {
-                    for param in values.iter() {
-                        if p.spec.codec == Codec::Tele
-                            || !matches!(param, FormatParam::TelephoneEvents(_))
-                        {
-                            p.spec.format.set_param(param);
-                        }
-                    }
-                }
-
                 // find resend pt, if there is one.
                 for fp in values.iter() {
                     if let FormatParam::Apt(v) = fp {
@@ -408,22 +394,17 @@ impl MediaLine {
                         }
                     }
                 }
+            }
 
-                // find red pt, if there is one (RFC 2198). The red fmtp's primary PT
-                // points back to this codec, mirroring how `apt` links RTX. str0m folds RED
-                // onto audio codecs only (the is_audio() gate below), never video.
-                for fp in values.iter() {
-                    if let FormatParam::Red(primary) = fp {
-                        if *primary == p.pt {
-                            // ensure the owning rtpmap is actually red
-                            let is_red = rtp_maps
-                                .iter()
-                                .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Red);
-                            if is_red && p.spec.codec.is_audio() {
-                                p.red = Some(**pt);
-                            }
-                        }
-                    }
+            // RED's bare fmtp value is meaningful only with a RED rtpmap.
+            for (red_pt, red_rtpmap) in &rtp_maps {
+                if red_rtpmap.codec != Codec::Red || !p.spec.codec.is_audio() {
+                    continue;
+                }
+                let red_values = FormatParam::for_codec(Codec::Red, &self.fmtp_lines(*red_pt));
+                if matches!(red_values.as_deref(), Some([FormatParam::Red(primary)]) if *primary == p.pt)
+                {
+                    p.red = Some(*red_pt);
                 }
             }
 
@@ -457,33 +438,22 @@ impl MediaLine {
         params
     }
 
-    fn telephone_event_max(&self, pt: Pt) -> Option<u8> {
-        let mut fmtps = self.attrs.iter().filter_map(|attr| match attr {
-            MediaAttribute::Fmtp {
-                pt: fmtp_pt,
-                values,
-            } if *fmtp_pt == pt => Some(values.as_slice()),
-            MediaAttribute::Unused(line)
-                if line
-                    .strip_prefix("fmtp:")
-                    .and_then(|v| v.split_whitespace().next())
-                    .and_then(|v| v.parse::<u8>().ok())
-                    == Some(*pt) =>
-            {
-                Some(&[][..])
-            }
-            _ => None,
-        });
-        let Some(values) = fmtps.next() else {
-            return Some(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
-        };
-        if fmtps.next().is_some() {
-            return None;
-        }
-        match values {
-            [FormatParam::TelephoneEvents(max)] => Some(*max),
-            _ => None,
-        }
+    fn fmtp_lines(&self, pt: Pt) -> Vec<FmtpLine<'_>> {
+        self.attrs
+            .iter()
+            .filter_map(|attr| match attr {
+                MediaAttribute::Fmtp {
+                    pt: fmtp_pt,
+                    values,
+                } if *fmtp_pt == pt => Some(FmtpLine::Parsed(values)),
+                MediaAttribute::Unused(line) => {
+                    let value = line.strip_prefix("fmtp:")?;
+                    let (fmtp_pt, value) = value.split_once(' ').unwrap_or((value, ""));
+                    (fmtp_pt.parse::<u8>().ok() == Some(*pt)).then_some(FmtpLine::Raw(value))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn check_consistent(&self) -> Option<String> {
@@ -986,6 +956,11 @@ impl MediaAttribute {
     }
 }
 
+enum FmtpLine<'a> {
+    Parsed(&'a [FormatParam]),
+    Raw(&'a str),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatParam {
     /// The minimum duration of media represented by a packet.
@@ -1063,6 +1038,50 @@ pub enum FormatParam {
 }
 
 impl FormatParam {
+    fn for_codec(codec: Codec, lines: &[FmtpLine<'_>]) -> Option<Vec<FormatParam>> {
+        if codec.is_tele() {
+            return match lines {
+                [] => Some(vec![Self::TelephoneEvents(
+                    FormatParams::DEFAULT_TELEPHONE_EVENT_MAX,
+                )]),
+                [FmtpLine::Raw(value)] => match Self::parse_telephone_events(value) {
+                    Self::TelephoneEvents(max) => Some(vec![Self::TelephoneEvents(max)]),
+                    _ => None,
+                },
+                [FmtpLine::Parsed([Self::TelephoneEvents(max)])] => {
+                    Some(vec![Self::TelephoneEvents(*max)])
+                }
+                _ => None,
+            };
+        }
+
+        if codec == Codec::Red {
+            return match lines {
+                [FmtpLine::Raw(value)] => {
+                    let pts: Option<Vec<_>> = value
+                        .split('/')
+                        .map(|s| s.parse::<u8>().ok().map(Pt::from))
+                        .collect();
+                    pts.filter(|pts| pts.len() >= 2)
+                        .map(|pts| vec![Self::Red(pts[0])])
+                }
+                [FmtpLine::Parsed([Self::Red(pt)])] => Some(vec![Self::Red(*pt)]),
+                _ => None,
+            };
+        }
+
+        Some(
+            lines
+                .iter()
+                .filter_map(|line| match line {
+                    FmtpLine::Parsed(values) => Some(*values),
+                    FmtpLine::Raw(_) => None,
+                })
+                .flat_map(|line| line.iter().cloned())
+                .collect(),
+        )
+    }
+
     pub(crate) fn parse_telephone_events(value: &str) -> Self {
         value
             .strip_prefix("0-")
@@ -1228,7 +1247,7 @@ impl PayloadParams {
             });
         }
 
-        let fmtps = if self.spec.codec == Codec::Tele {
+        let fmtps = if self.spec.codec.is_tele() {
             vec![FormatParam::TelephoneEvents(
                 self.spec
                     .format
@@ -2442,7 +2461,7 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
         }
 
         #[test]
-        fn red_fmtp_parses_and_displays() {
+        fn red_fmtp_is_interpreted_with_red_rtpmap() {
             // Single-level same-codec RED renders as "<primary>/<primary>".
             assert_eq!(FormatParam::Red(111.into()).to_string(), "111/111");
 
@@ -2463,14 +2482,16 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=ice-pwd:testpassword\r\n\
             ";
             let sdp = Sdp::parse(input).expect("should parse");
-            let has_red = sdp.media_lines[0].attrs.iter().any(|a| {
-                matches!(a, MediaAttribute::Fmtp { pt, values }
-                    if *pt == 63.into() && values == &vec![FormatParam::Red(111.into())])
-            });
-            assert!(
-                has_red,
-                "red fmtp should parse to FormatParam::Red(primary)"
-            );
+            assert!(sdp.media_lines[0].attrs.iter().any(|a| {
+                matches!(a, MediaAttribute::Unused(value) if value == "fmtp:63 111/111")
+            }));
+            let params = sdp.media_lines[0].rtp_params();
+            assert_eq!(params[0].red, Some(63.into()));
+
+            // The same bare fmtp text must not be treated as RED without a RED rtpmap.
+            let other_codec = input.replace("a=rtpmap:63 red/48000/2", "a=rtpmap:63 opus/48000/2");
+            let parsed = Sdp::parse(&other_codec).expect("should parse");
+            assert_eq!(parsed.media_lines[0].rtp_params()[0].red, None);
         }
 
         #[test]

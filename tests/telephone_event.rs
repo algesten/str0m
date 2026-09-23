@@ -69,6 +69,15 @@ fn event_params(sdp: &str) -> Vec<(u8, u32, String)> {
         .collect()
 }
 
+fn event_max(rtc: &TestRtc, mid: Mid, pt: u8) -> Option<u8> {
+    rtc.media(mid)
+        .unwrap()
+        .remote_pts()
+        .contains(&pt.into())
+        .then(|| rtc.codec_config().telephone_event_max(pt.into()))
+        .flatten()
+}
+
 fn offer_audio(rtc: &mut TestRtc, direction: Direction) -> (Mid, String, SdpPendingOffer) {
     let mut change = rtc.sdp_api();
     let mid = change.add_media(MediaKind::Audio, direction, None, None, None);
@@ -139,10 +148,7 @@ fn telephone_event_sdp_support_matrix() {
                     assert_eq!(pts.contains(&101.into()), negotiated);
                     assert!(pts.contains(&111.into()));
                     assert!(!pts.contains(&126.into()));
-                    assert_eq!(
-                        rtc.media(mid).unwrap().telephone_event_max(101.into()),
-                        negotiated.then_some(16)
-                    );
+                    assert_eq!(event_max(rtc, mid, 101), negotiated.then_some(16));
                 }
                 if !negotiated {
                     assert!(!answer.contains("a=rtpmap:101 "));
@@ -251,10 +257,7 @@ fn telephone_event_sdp_prefers_audio_rtp_clock_rates() {
                 for &(pt, _, _) in &offered {
                     let negotiated = expected.iter().any(|p| p.0 == pt);
                     assert_eq!(media.remote_pts().contains(&pt.into()), negotiated);
-                    assert_eq!(
-                        media.telephone_event_max(pt.into()),
-                        negotiated.then_some(16)
-                    );
+                    assert_eq!(event_max(rtc, mid, pt), negotiated.then_some(16));
                 }
                 assert_eq!(
                     rtc.codec_config()
@@ -286,7 +289,7 @@ fn telephone_event_sdp_accepts_8khz_with_opus() {
         for rtc in [&l, &r] {
             let media = rtc.media(mid).unwrap();
             assert_eq!(media.remote_pts(), &[111.into(), 101.into()]);
-            assert_eq!(media.telephone_event_max(101.into()), Some(7));
+            assert_eq!(event_max(&l, mid, 101), Some(7));
         }
     }
 }
@@ -313,10 +316,7 @@ fn telephone_event_sdp_reoffer_preserves_negotiated_fallback() {
     assert_eq!(event_params(&answer), [(101, 8_000, "0-16".into())]);
     accept_answer(&mut r, pending, &answer);
     for rtc in [&l, &r] {
-        assert_eq!(
-            rtc.media(mid).unwrap().telephone_event_max(101.into()),
-            Some(16)
-        );
+        assert_eq!(event_max(rtc, mid, 101), Some(16));
         assert_eq!(rtc.media(new_mid).unwrap().remote_pts(), &[111.into()]);
     }
 }
@@ -335,10 +335,7 @@ fn telephone_event_sdp_ignores_unlisted_payloads() {
 
     for rtc in [&l, &r] {
         assert_eq!(rtc.media(mid).unwrap().remote_pts(), &[111.into()]);
-        assert_eq!(
-            rtc.media(mid).unwrap().telephone_event_max(101.into()),
-            None
-        );
+        assert_eq!(event_max(rtc, mid, 101), None);
     }
 }
 
@@ -368,10 +365,7 @@ fn telephone_event_sdp_event_ranges() {
                 [(101, 48_000, format!("0-{expected}"))]
             );
             for rtc in [&l, &r] {
-                assert_eq!(
-                    rtc.media(mid).unwrap().telephone_event_max(101.into()),
-                    Some(expected)
-                );
+                assert_eq!(event_max(rtc, mid, 101), Some(expected));
             }
         }
     }
@@ -419,12 +413,25 @@ fn telephone_event_sdp_missing_or_invalid_fmtp() {
                 rtc.media(mid).unwrap().remote_pts().contains(&101.into()),
                 expected.is_some()
             );
-            assert_eq!(
-                rtc.media(mid).unwrap().telephone_event_max(101.into()),
-                expected
-            );
+            assert_eq!(event_max(rtc, mid, 101), expected);
         }
     }
+}
+
+#[test]
+fn bare_event_range_requires_telephone_event_rtpmap() {
+    init_crypto_default();
+    let mut rtc = with_events(Peer::Left, &[(101, Frequency::FORTY_EIGHT_KHZ, None)]);
+    let (_, offer, _) = offer_audio(&mut rtc, Direction::SendRecv);
+    let offer = offer.replace(
+        "a=rtpmap:101 telephone-event/48000",
+        "a=rtpmap:101 opus/48000/2",
+    );
+    let parsed = SdpOffer::from_sdp_string(&offer).unwrap();
+    let params = parsed.media_lines[0].rtp_params();
+    let other = params.iter().find(|p| p.pt() == 101.into()).unwrap();
+    assert_eq!(other.spec().codec, Codec::Opus);
+    assert_eq!(other.spec().format.telephone_event_max, None);
 }
 
 #[test]
@@ -445,14 +452,14 @@ fn telephone_event_sdp_answer_fmtp() {
         let answer = replace_event_fmtp(&answer, fmtp);
         accept_answer(&mut l, pending, &answer);
         let media = l.media(mid).unwrap();
-        assert_eq!(media.telephone_event_max(101.into()), expected, "{fmtp:?}");
+        assert_eq!(event_max(&l, mid, 101), expected, "{fmtp:?}");
         assert_eq!(media.remote_pts().contains(&101.into()), expected.is_some());
         assert!(media.remote_pts().contains(&111.into()));
     }
 }
 
 #[test]
-fn telephone_event_sdp_ranges_are_per_media() {
+fn telephone_event_sdp_ranges_are_per_pt_across_media() {
     init_crypto_default();
     let mut l = with_events(Peer::Left, &[(101, Frequency::FORTY_EIGHT_KHZ, Some(16))]);
     let mut r = with_events(Peer::Right, &[(126, Frequency::FORTY_EIGHT_KHZ, Some(16))]);
@@ -467,21 +474,18 @@ fn telephone_event_sdp_ranges_are_per_media() {
     let answer = answer_offer(&mut r, &offer);
     assert_eq!(
         event_params(&answer),
-        [(101, 48_000, "0-7".into()), (101, 48_000, "0-16".into())]
+        [(101, 48_000, "0-7".into()), (101, 48_000, "0-7".into())]
     );
     accept_answer(&mut l, pending, &answer);
     for rtc in [&l, &r] {
-        for (mid, max) in [(mid1, 7), (mid2, 16)] {
-            assert_eq!(
-                rtc.media(mid).unwrap().telephone_event_max(101.into()),
-                Some(max)
-            );
+        for mid in [mid1, mid2] {
+            assert_eq!(event_max(rtc, mid, 101), Some(7));
         }
         let params = rtc
             .codec_config()
             .find(|p| p.spec().codec == Codec::Tele)
             .unwrap();
-        assert_eq!(params.spec().format.telephone_event_max, Some(16));
+        assert_eq!(params.spec().format.telephone_event_max, Some(7));
     }
 }
 
@@ -593,7 +597,7 @@ fn telephone_event_rtp_direct_api_roundtrip() -> Result<(), RtcError> {
         let media = rtc.media(mid).unwrap();
         assert!(media.remote_pts().is_empty());
         for pt in [101, 110] {
-            assert_eq!(media.telephone_event_max(pt.into()), None);
+            assert_eq!(event_max(rtc, mid, pt), None);
         }
     }
 
