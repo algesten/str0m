@@ -97,6 +97,7 @@ pub(crate) struct Session {
     max_rx_seq_lookup: HashMap<Ssrc, SeqNo>,
 
     bwe: Option<Bwe>,
+    bwe_last_event: Option<(Bitrate, bool)>,
 
     enable_twcc_feedback: bool,
 
@@ -201,6 +202,7 @@ impl Session {
             twcc_tx_register: TwccSendRegister::new(1000),
             max_rx_seq_lookup: HashMap::new(),
             bwe,
+            bwe_last_event: None,
             enable_twcc_feedback: false,
             pacer,
             pacer_control: PacerControl::new(),
@@ -944,10 +946,25 @@ impl Session {
             }
         }
 
-        if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
-            return Some(Event::EgressBitrateEstimate(BweKind::Twcc(
-                bitrate_estimate,
-            )));
+        let can_probe =
+            self.bwe.is_some() && self.srtp_tx.is_some() && self.probe_media().is_some();
+        if let Some(bwe) = &mut self.bwe {
+            // Drain estimates even while unavailable so they cannot be delivered later.
+            let estimate = bwe.poll_estimate();
+            let estimate = match (can_probe, self.bwe_last_event) {
+                (false, Some((last, true))) => Some(last),
+                (false, _) => None,
+                (true, Some((_, true))) => estimate,
+                (true, _) => bwe.last_estimate(),
+            };
+            if let Some(estimate) = estimate {
+                self.bwe_last_event = Some((estimate, can_probe));
+                let kind = BweKind::Twcc {
+                    estimate,
+                    can_probe,
+                };
+                return Some(Event::EgressBitrateEstimate(kind));
+            }
         }
 
         // If we're not ready to flow media, don't send any events.
@@ -993,7 +1010,10 @@ impl Session {
         }
 
         if let Some((mid, bitrate)) = self.streams.poll_remb_request() {
-            return Some(Event::EgressBitrateEstimate(BweKind::Remb(mid, bitrate)));
+            return Some(Event::EgressBitrateEstimate(BweKind::Remb {
+                estimate: bitrate,
+                mid,
+            }));
         }
 
         for media in &mut self.medias {
