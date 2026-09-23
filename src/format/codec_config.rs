@@ -115,44 +115,8 @@ impl CodecConfig {
         self.params.clear();
     }
 
-    /// Manually configure a payload type.
-    ///
-    /// # Telephone events
-    ///
-    /// Configure each supported [`Codec::Tele`] RTP clock rate with its
-    /// own payload type. No additional event rates or payload types are created
-    /// automatically.
-    ///
-    /// New audio m-lines in local SDP offers prefer configured event payloads
-    /// matching an offered audio codec's RTP clock: 8000 Hz for PCMU, PCMA and
-    /// G722, or 48000 Hz for Opus. Mixed-rate audio offers can advertise both.
-    /// If no configured event rate matches, all configured event payloads are
-    /// offered as fallbacks. Thus, Opus with only an 8000 Hz event PT offers that
-    /// PT; it does not create a 48000 Hz event PT.
-    ///
-    /// All configured event rates remain available when answering remote offers,
-    /// including 8000 Hz events alongside Opus. Re-offers preserve the event
-    /// payloads already negotiated for existing m-lines.
-    ///
-    /// ```
-    /// use str0m::format::{Codec, CodecConfig, FormatParams};
-    /// use str0m::media::Frequency;
-    ///
-    /// let mut config = CodecConfig::empty();
-    /// config.enable_opus(true, false);
-    /// for (pt, rate) in [
-    ///     (101, Frequency::EIGHT_KHZ),
-    ///     (110, Frequency::FORTY_EIGHT_KHZ),
-    /// ] {
-    ///     config.add_config(
-    ///         pt.into(), None, Codec::Tele, rate, None, FormatParams::default(),
-    ///     );
-    /// }
-    /// # assert_eq!(config.params().len(), 3);
-    /// ```
-    ///
-    /// This configuration offers PT 110 with Opus, while retaining PT 101 as a
-    /// capability for incoming offers.
+    /// Manually configure a payload type. For telephone events, configure one
+    /// payload type per supported RTP clock rate; no rates are added automatically.
     pub fn add_config(
         &mut self,
         pt: Pt,
@@ -585,19 +549,16 @@ impl CodecConfig {
         let has_matching_events = self
             .params
             .iter()
-            .any(|p| kind == MediaKind::Audio && p.spec.codec.is_tele() && matches_audio_clock(p));
+            .any(|p| p.spec.codec.is_tele() && matches_audio_clock(p));
 
         self.params.iter().filter(move |p| {
-            let matches_kind = if kind == MediaKind::Video {
+            if kind == MediaKind::Video {
                 p.spec.codec.is_video()
             } else {
-                p.spec.codec.is_audio() || p.spec.codec.is_tele()
-            };
-            matches_kind
-                && (!for_new_offer
-                    || !p.spec.codec.is_tele()
-                    || !has_matching_events
-                    || matches_audio_clock(p))
+                p.spec.codec.is_audio()
+                    || (p.spec.codec.is_tele()
+                        && (!for_new_offer || !has_matching_events || matches_audio_clock(p)))
+            }
         })
     }
 

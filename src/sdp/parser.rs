@@ -608,8 +608,56 @@ where
     let fmtp1 = attribute_line("fmtp", (pt(), token(' '), fmtp_param))
         .map(|(pt, _, values)| MediaAttribute::Fmtp { pt, values });
 
-    // Bare fmtp values fall through to Unused until rtpmap identifies their codec.
-    let fmtp = fmtp1;
+    // Parse bare fmtp syntax without assigning codec meaning; rtpmap decides that later.
+    let fmtp_pt_num = || {
+        many1::<String, _, _>(satisfy(|c| c != '/' && c != '\r' && c != '\n')).and_then(|s| {
+            s.parse::<u8>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        })
+    };
+    let fmtp_pt_list = attribute_line(
+        "fmtp",
+        (
+            pt(),
+            token(' '),
+            fmtp_pt_num(),
+            skip_many1((token('/'), fmtp_pt_num())),
+        ),
+    )
+    .map(|(pt, _, primary, _)| MediaAttribute::Fmtp {
+        pt,
+        values: vec![FormatParam::BarePtList(Pt::from(primary))],
+    });
+
+    let fmtp_range = attribute_line(
+        "fmtp",
+        (
+            pt(),
+            token(' '),
+            string("0-"),
+            many1::<String, _, _>(satisfy(|c: char| c.is_ascii_digit())).and_then(|s| {
+                s.parse::<u8>()
+                    .map_err(StreamErrorFor::<Input>::message_format)
+            }),
+        ),
+    )
+    .map(|(pt, _, _, max)| MediaAttribute::Fmtp {
+        pt,
+        values: vec![FormatParam::BareRange(max)],
+    });
+
+    let fmtp_unknown = attribute_line("fmtp", (pt(), optional(token(' ')), optional(any_value())))
+        .map(|(pt, _, _)| MediaAttribute::Fmtp {
+            pt,
+            values: vec![FormatParam::Unknown],
+        });
+
+    let fmtp = choice((
+        attempt(fmtp1),
+        attempt(fmtp_pt_list),
+        attempt(fmtp_range),
+        attempt(fmtp_unknown),
+    ));
 
     // a=rid:<rid-id> <direction> [pt=<fmt-list>;]<restriction>=<value>
     let rid = attribute_line(

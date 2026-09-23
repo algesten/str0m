@@ -97,11 +97,6 @@ pub enum Codec {
 crate::drv_identity_copy!(Codec, CodecSpec);
 
 impl Codec {
-    /// Tells if this is the telephone-event RTP payload format.
-    pub fn is_tele(&self) -> bool {
-        *self == Codec::Tele
-    }
-
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {
         use Codec::*;
@@ -112,6 +107,11 @@ impl Codec {
     pub fn is_video(&self) -> bool {
         use Codec::*;
         matches!(self, H266 | H265 | H264 | Vp8 | Vp9 | Av1)
+    }
+
+    /// Tells if this is the telephone-event RTP payload format.
+    pub fn is_tele(&self) -> bool {
+        *self == Codec::Tele
     }
 
     /// Audio/Video.

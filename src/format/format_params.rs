@@ -1,20 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use super::Codec;
 use crate::sdp::FormatParam;
 
-/// Codec and RTP payload format parameters.
-///
-/// Create parameters with [`Default::default()`] and then set the desired fields:
-///
-/// ```
-/// use str0m::format::FormatParams;
-///
-/// let mut params = FormatParams::default();
-/// params.min_p_time = Some(10);
-/// params.use_inband_fec = Some(true);
-/// ```
-///
+/// Codec specific format parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct FormatParams {
     /// Opus specific parameter.
@@ -134,6 +124,33 @@ crate::drv_identity_copy!(FormatParams);
 impl FormatParams {
     pub(crate) const DEFAULT_TELEPHONE_EVENT_MAX: u8 = 16;
 
+    pub(crate) fn from_sdp_fmtp<'a>(
+        codec: Codec,
+        mut lines: impl Iterator<Item = &'a [FormatParam]>,
+    ) -> Option<Self> {
+        let mut params = Self::default();
+        if codec.is_tele() {
+            let max = match lines.next() {
+                None => Self::DEFAULT_TELEPHONE_EVENT_MAX,
+                Some([FormatParam::BareRange(max) | FormatParam::TelephoneEvents(max)]) => *max,
+                _ => return None,
+            };
+            if lines.next().is_some() {
+                return None;
+            }
+            params.telephone_event_max = Some(max);
+        } else {
+            for line in lines {
+                for param in line {
+                    if !matches!(param, FormatParam::TelephoneEvents(_)) {
+                        params.set_param(param);
+                    }
+                }
+            }
+        }
+        Some(params)
+    }
+
     /// Parse an fmtp line to create a FormatParams.
     ///
     /// Example `minptime=10;useinbandfec=1`, or `0-16` for telephone events.
@@ -185,6 +202,7 @@ impl FormatParams {
             H266ProfileTierLevel(v) => self.h266_profile_tier_level = Some(*v),
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
             TelephoneEvents(v) => self.telephone_event_max = Some(*v),
+            BareRange(_) | BarePtList(_) => {}
             Apt(_) => {}
             Red(_) => {}
             Unknown => {}
