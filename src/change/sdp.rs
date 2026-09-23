@@ -1335,7 +1335,7 @@ fn update_media(
         .into_iter()
         .filter_map(|p| {
             let pt = config.sdp_match_remote(p, m.direction())?;
-            if p.spec().codec == Codec::TelephoneEvent {
+            if p.spec().codec == Codec::Tele {
                 let local = config.match_params(p)?;
                 let max = p
                     .spec()

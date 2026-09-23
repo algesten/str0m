@@ -15,19 +15,7 @@ use crate::sdp::FormatParam;
 /// params.use_inband_fec = Some(true);
 /// ```
 ///
-/// This struct is non-exhaustive to allow adding new parameters. Struct literals,
-/// including those using `..Default::default()`, cannot be used outside this crate:
-///
-/// ```compile_fail,E0639
-/// use str0m::format::FormatParams;
-///
-/// let params = FormatParams {
-///     min_p_time: Some(10),
-///     ..Default::default()
-/// };
-/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[non_exhaustive]
 pub struct FormatParams {
     /// Opus specific parameter.
     ///
@@ -150,22 +138,22 @@ impl FormatParams {
     /// Example `minptime=10;useinbandfec=1`, or `0-16` for telephone events.
     pub fn parse_line(line: &str) -> Self {
         let mut p = FormatParams::default();
-        if !line.contains('=') {
-            let param = FormatParam::parse_telephone_events(line.trim());
-            if param == FormatParam::Unknown && !line.is_empty() {
-                debug!("Ignoring unsupported fmtp value: {line}");
-            }
-            p.set_param(&param);
-            return p;
-        }
-
         let key_vals: Vec<_> = line
             .split(';')
             .filter_map(|pair| {
                 let mut kv = pair.split('=');
                 match (kv.next(), kv.next()) {
                     (Some(k), Some(v)) => Some((k.trim().to_string(), v.trim().to_string())),
-                    _ => None,
+                    (Some(value), None) => {
+                        let value = value.trim();
+                        let param = FormatParam::parse_telephone_events(value);
+                        if param == FormatParam::Unknown && !value.is_empty() {
+                            debug!("Ignoring unsupported fmtp value: {value}");
+                        }
+                        p.set_param(&param);
+                        None
+                    }
+                    (None, _) => None,
                 }
             })
             .collect();

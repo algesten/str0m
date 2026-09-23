@@ -119,7 +119,7 @@ impl CodecConfig {
     ///
     /// # Telephone events
     ///
-    /// Configure each supported [`Codec::TelephoneEvent`] RTP clock rate with its
+    /// Configure each supported [`Codec::Tele`] RTP clock rate with its
     /// own payload type. No additional event rates or payload types are created
     /// automatically.
     ///
@@ -145,7 +145,7 @@ impl CodecConfig {
     ///     (110, Frequency::FORTY_EIGHT_KHZ),
     /// ] {
     ///     config.add_config(
-    ///         pt.into(), None, Codec::TelephoneEvent, rate, None, FormatParams::default(),
+    ///         pt.into(), None, Codec::Tele, rate, None, FormatParams::default(),
     ///     );
     /// }
     /// # assert_eq!(config.params().len(), 3);
@@ -574,7 +574,7 @@ impl CodecConfig {
             if kind == MediaKind::Video {
                 params.spec.codec.is_video()
             } else {
-                params.spec.codec.is_audio() || params.spec.codec == Codec::TelephoneEvent
+                params.spec.codec.is_audio() || params.spec.codec == Codec::Tele
             }
         })
     }
@@ -588,10 +588,10 @@ impl CodecConfig {
         };
         let has_matching_events = self
             .all_for_kind(kind)
-            .any(|p| p.spec.codec == Codec::TelephoneEvent && matches_audio_clock(p));
+            .any(|p| p.spec.codec == Codec::Tele && matches_audio_clock(p));
 
         self.all_for_kind(kind).filter(move |p| {
-            p.spec.codec != Codec::TelephoneEvent || !has_matching_events || matches_audio_clock(p)
+            p.spec.codec != Codec::Tele || !has_matching_events || matches_audio_clock(p)
         })
     }
 

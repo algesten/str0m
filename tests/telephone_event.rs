@@ -22,7 +22,7 @@ fn add_events(config: &mut CodecConfig, events: &[(u8, Frequency, Option<u8>)]) 
         let format = max
             .map(|max| FormatParams::parse_line(&format!("0-{max}")))
             .unwrap_or_default();
-        config.add_config(pt.into(), None, Codec::TelephoneEvent, rate, None, format);
+        config.add_config(pt.into(), None, Codec::Tele, rate, None, format);
     }
 }
 
@@ -58,7 +58,7 @@ fn event_params(sdp: &str) -> Vec<(u8, u32, String)> {
         .media_lines
         .iter()
         .flat_map(|m| m.rtp_params())
-        .filter(|p| p.spec().codec == Codec::TelephoneEvent)
+        .filter(|p| p.spec().codec == Codec::Tele)
         .map(|p| {
             (
                 *p.pt(),
@@ -259,7 +259,7 @@ fn telephone_event_sdp_prefers_audio_rtp_clock_rates() {
                 assert_eq!(
                     rtc.codec_config()
                         .iter()
-                        .filter(|p| p.spec().codec == Codec::TelephoneEvent)
+                        .filter(|p| p.spec().codec == Codec::Tele)
                         .count(),
                     3
                 );
@@ -479,7 +479,7 @@ fn telephone_event_sdp_ranges_are_per_media() {
         }
         let params = rtc
             .codec_config()
-            .find(|p| p.spec().codec == Codec::TelephoneEvent)
+            .find(|p| p.spec().codec == Codec::Tele)
             .unwrap();
         assert_eq!(params.spec().format.telephone_event_max, Some(16));
     }
@@ -512,7 +512,7 @@ fn telephone_event_rtp_roundtrip() -> Result<(), RtcError> {
                 config.codec_config().add_config(
                     pt,
                     None,
-                    Codec::TelephoneEvent,
+                    Codec::Tele,
                     event_clock_rate,
                     channels,
                     FormatParams::default(),
@@ -534,7 +534,7 @@ fn telephone_event_rtp_roundtrip() -> Result<(), RtcError> {
         for rtc in [&l, &r] {
             let params = rtc
                 .codec_config()
-                .find(|p| p.spec().codec == Codec::TelephoneEvent)
+                .find(|p| p.spec().codec == Codec::Tele)
                 .unwrap();
             assert_eq!(*params.pt(), 101);
             assert_eq!(params.spec().clock_rate, event_clock_rate);

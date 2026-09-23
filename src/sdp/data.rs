@@ -364,11 +364,11 @@ impl MediaLine {
             .filter(|(pt, c)| {
                 c.codec.is_audio()
                     || c.codec.is_video()
-                    || (c.codec == Codec::TelephoneEvent && self.pts.contains(pt))
+                    || (c.codec == Codec::Tele && self.pts.contains(pt))
             })
             .filter_map(|(pt, c)| {
                 let mut p = PayloadParams::new(*pt, None, (*c).into());
-                if c.codec == Codec::TelephoneEvent {
+                if c.codec == Codec::Tele {
                     let Some(max) = self.telephone_event_max(*pt) else {
                         debug!("Ignoring unsupported telephone-event fmtp for PT {pt}");
                         return None;
@@ -386,7 +386,7 @@ impl MediaLine {
                 // find matching a=fmtp line, if it exists.
                 if **pt == p.pt {
                     for param in values.iter() {
-                        if p.spec.codec == Codec::TelephoneEvent
+                        if p.spec.codec == Codec::Tele
                             || !matches!(param, FormatParam::TelephoneEvents(_))
                         {
                             p.spec.format.set_param(param);
@@ -1228,7 +1228,7 @@ impl PayloadParams {
             });
         }
 
-        let fmtps = if self.spec.codec == Codec::TelephoneEvent {
+        let fmtps = if self.spec.codec == Codec::Tele {
             vec![FormatParam::TelephoneEvents(
                 self.spec
                     .format

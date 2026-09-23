@@ -1,8 +1,6 @@
 # Unreleased
 
-  * Support telephone-event (DTMF) negotiation and raw RTP, with `0-X` ranges defaulting to `0-16`
-    and clock-matched offers using only explicitly configured event payload types
-  * Make `FormatParams` non-exhaustive; construct it with `Default::default()` and set fields (breaking)
+  * Support opt-in telephone-event (DTMF) SDP negotiation and raw RTP with `0-X` event ranges #1047
   * Bound the depacketizing queue when incomplete frames keep arriving #1044
   * Add a configurable video frame reordering timeout via `RtcConfig` #1041
   * Support SSRC 0 bandwidth probing before media starts #1046
