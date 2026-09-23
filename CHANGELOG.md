@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Expose TWCC probing state and use named fields in bandwidth estimate events (breaking) #1048
   * Support opt-in telephone-event (DTMF) SDP negotiation and raw RTP with `0-X` event ranges #1047
   * Bound the depacketizing queue when incomplete frames keep arriving #1044
   * Add a configurable video frame reordering timeout via `RtcConfig` #1041
