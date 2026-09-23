@@ -3,8 +3,31 @@ use std::fmt;
 
 use crate::sdp::FormatParam;
 
-/// Codec specific format parameters.
+/// Codec and RTP payload format parameters.
+///
+/// Create parameters with [`Default::default()`] and then set the desired fields:
+///
+/// ```
+/// use str0m::format::FormatParams;
+///
+/// let mut params = FormatParams::default();
+/// params.min_p_time = Some(10);
+/// params.use_inband_fec = Some(true);
+/// ```
+///
+/// This struct is non-exhaustive to allow adding new parameters. Struct literals,
+/// including those using `..Default::default()`, cannot be used outside this crate:
+///
+/// ```compile_fail,E0639
+/// use str0m::format::FormatParams;
+///
+/// let params = FormatParams {
+///     min_p_time: Some(10),
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct FormatParams {
     /// Opus specific parameter.
     ///
@@ -108,16 +131,34 @@ pub struct FormatParams {
     /// When > 0, DONL fields are included in H.265 RTP packets to support
     /// out-of-order NAL unit decoding.
     pub sprop_max_don_diff: Option<u16>,
+
+    /// Highest event code in the inclusive `0-X` telephone-event SDP range.
+    ///
+    /// Only contiguous ranges starting at zero are supported. `None` uses the
+    /// library default `0-16`. Negotiation takes the smaller maximum for each media.
+    pub telephone_event_max: Option<u8>,
 }
 
 #[cfg(feature = "drv")]
 crate::drv_identity_copy!(FormatParams);
 
 impl FormatParams {
+    pub(crate) const DEFAULT_TELEPHONE_EVENT_MAX: u8 = 16;
+
     /// Parse an fmtp line to create a FormatParams.
     ///
-    /// Example `minptime=10;useinbandfec=1`.
+    /// Example `minptime=10;useinbandfec=1`, or `0-16` for telephone events.
     pub fn parse_line(line: &str) -> Self {
+        let mut p = FormatParams::default();
+        if !line.contains('=') {
+            let param = FormatParam::parse_telephone_events(line.trim());
+            if param == FormatParam::Unknown && !line.is_empty() {
+                debug!("Ignoring unsupported fmtp value: {line}");
+            }
+            p.set_param(&param);
+            return p;
+        }
+
         let key_vals: Vec<_> = line
             .split(';')
             .filter_map(|pair| {
@@ -128,8 +169,6 @@ impl FormatParams {
                 }
             })
             .collect();
-
-        let mut p = FormatParams::default();
 
         for param in FormatParam::parse_pairs(key_vals) {
             p.set_param(&param);
@@ -156,6 +195,7 @@ impl FormatParams {
             H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
             H266ProfileTierLevel(v) => self.h266_profile_tier_level = Some(*v),
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
+            TelephoneEvents(v) => self.telephone_event_max = Some(*v),
             Apt(_) => {}
             Red(_) => {}
             Unknown => {}
@@ -213,6 +253,9 @@ impl FormatParams {
         if let Some(v) = self.sprop_max_don_diff {
             r.push(SpropMaxDonDiff(v));
         }
+        if let Some(v) = self.telephone_event_max {
+            r.push(TelephoneEvents(v));
+        }
 
         r
     }
@@ -233,6 +276,22 @@ impl fmt::Display for FormatParams {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn telephone_event_ranges_roundtrip() {
+        for max in [0, 7, 15, 16, 255] {
+            let value = format!("0-{max}");
+            let params = FormatParams::parse_line(&value);
+            assert_eq!(params.telephone_event_max, Some(max));
+            assert_eq!(params.to_string(), value);
+        }
+        for value in ["", "0-", "0-256", "15-0", "1-15", "0-15,16", "0-+15"] {
+            assert_eq!(
+                FormatParam::parse_telephone_events(value),
+                FormatParam::Unknown
+            );
+        }
+    }
 
     #[test]
     fn sprop_max_don_diff_roundtrip() {

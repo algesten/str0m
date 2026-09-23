@@ -297,6 +297,11 @@ impl PayloadParams {
             return None;
         }
 
+        // Telephone events match by clock rate, regardless of channel count.
+        if c0.codec == Codec::TelephoneEvent {
+            return Some(Self::EXACT_MATCH_SCORE);
+        }
+
         if c0.channels != c1.channels {
             // Channels must match
             return None;

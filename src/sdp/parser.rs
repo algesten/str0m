@@ -633,10 +633,10 @@ where
     });
 
     // a=fmtp:101 0-15
-    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, _value)| {
+    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, value)| {
         MediaAttribute::Fmtp {
             pt,
-            values: vec![FormatParam::Unknown],
+            values: vec![FormatParam::parse_telephone_events(&value)],
         }
     });
 

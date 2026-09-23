@@ -1,0 +1,701 @@
+use std::net::Ipv4Addr;
+use std::time::Duration;
+
+use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
+use str0m::format::{Codec, CodecConfig, FormatParams};
+use str0m::media::{Direction, Frequency, MediaKind, Mid};
+use str0m::rtp::{RtpWrite, Ssrc};
+use str0m::{Event, RtcError};
+
+mod common;
+use common::{Peer, TestRtc, connect_l_r_with_rtc, init_crypto_default, init_log, progress};
+
+const DIRECTIONS: [Direction; 4] = [
+    Direction::SendRecv,
+    Direction::SendOnly,
+    Direction::RecvOnly,
+    Direction::Inactive,
+];
+
+fn add_events(config: &mut CodecConfig, events: &[(u8, Frequency, Option<u8>)]) {
+    for &(pt, rate, max) in events {
+        let format = max
+            .map(|max| FormatParams::parse_line(&format!("0-{max}")))
+            .unwrap_or_default();
+        config.add_config(pt.into(), None, Codec::TelephoneEvent, rate, None, format);
+    }
+}
+
+fn with_events(peer: Peer, events: &[(u8, Frequency, Option<u8>)]) -> TestRtc {
+    with_audio_events(peer, &[Codec::Opus], events)
+}
+
+fn enable_audio_codecs(config: &mut CodecConfig, codecs: &[Codec]) {
+    config.enable_opus(codecs.contains(&Codec::Opus), false);
+    config.enable_pcmu(codecs.contains(&Codec::PCMU), false);
+    config.enable_pcma(codecs.contains(&Codec::PCMA), false);
+    config.enable_g722(codecs.contains(&Codec::G722), false);
+}
+
+fn with_audio_events(
+    peer: Peer,
+    codecs: &[Codec],
+    events: &[(u8, Frequency, Option<u8>)],
+) -> TestRtc {
+    TestRtc::new_with_config(peer, |config| {
+        let mut config = config.clear_codecs().set_rtp_mode(true);
+        let params = config.codec_config();
+        enable_audio_codecs(params, codecs);
+        params.enable_vp8(true);
+        add_events(params, events);
+        config
+    })
+}
+
+fn event_params(sdp: &str) -> Vec<(u8, u32, String)> {
+    SdpOffer::from_sdp_string(sdp)
+        .unwrap()
+        .media_lines
+        .iter()
+        .flat_map(|m| m.rtp_params())
+        .filter(|p| p.spec().codec == Codec::TelephoneEvent)
+        .map(|p| {
+            (
+                *p.pt(),
+                p.spec().clock_rate.get(),
+                p.spec().format.to_string(),
+            )
+        })
+        .collect()
+}
+
+fn offer_audio(rtc: &mut TestRtc, direction: Direction) -> (Mid, String, SdpPendingOffer) {
+    let mut change = rtc.sdp_api();
+    let mid = change.add_media(MediaKind::Audio, direction, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    (mid, offer.to_sdp_string(), pending)
+}
+
+fn answer_offer(rtc: &mut TestRtc, offer: &str) -> String {
+    rtc.sdp_api()
+        .accept_offer(SdpOffer::from_sdp_string(offer).unwrap())
+        .unwrap()
+        .to_sdp_string()
+}
+
+fn accept_answer(rtc: &mut TestRtc, pending: SdpPendingOffer, answer: &str) {
+    rtc.sdp_api()
+        .accept_answer(pending, SdpAnswer::from_sdp_string(answer).unwrap())
+        .unwrap();
+}
+
+fn negotiate_events(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    direction: Direction,
+) -> (Mid, String, String) {
+    let (mid, offer, pending) = offer_audio(l, direction);
+    let answer = answer_offer(r, &offer);
+    accept_answer(l, pending, &answer);
+    (mid, offer, answer)
+}
+
+fn replace_event_fmtp(sdp: &str, value: Option<&str>) -> String {
+    let mut sdp = sdp
+        .lines()
+        .filter(|line| !line.starts_with("a=fmtp:101 "))
+        .collect::<Vec<_>>()
+        .join("\r\n");
+    sdp.push_str("\r\n");
+    if let Some(value) = value {
+        sdp.push_str(&format!("a=fmtp:101 {value}\r\n"));
+    }
+    sdp
+}
+
+#[test]
+fn telephone_event_sdp_support_matrix() {
+    init_crypto_default();
+    for rate in [
+        Frequency::EIGHT_KHZ,
+        Frequency::SIXTEEN_KHZ,
+        Frequency::FORTY_EIGHT_KHZ,
+    ] {
+        for direction in DIRECTIONS {
+            for (offer_support, answer_support) in
+                [(true, true), (true, false), (false, true), (false, false)]
+            {
+                let offered = [(101, rate, None)];
+                let supported = [(126, rate, None)];
+                let mut l = with_events(Peer::Left, if offer_support { &offered } else { &[] });
+                let mut r = with_events(Peer::Right, if answer_support { &supported } else { &[] });
+                let (mid, offer, answer) = negotiate_events(&mut l, &mut r, direction);
+                let negotiated = offer_support && answer_support;
+                assert_eq!(event_params(&offer).len(), usize::from(offer_support));
+                assert_eq!(event_params(&answer).len(), usize::from(negotiated));
+                assert!(!answer.contains("m=audio 0 "));
+                for rtc in [&l, &r] {
+                    let pts = rtc.media(mid).unwrap().remote_pts();
+                    assert_eq!(pts.contains(&101.into()), negotiated);
+                    assert!(pts.contains(&111.into()));
+                    assert!(!pts.contains(&126.into()));
+                    assert_eq!(
+                        rtc.media(mid).unwrap().telephone_event_max(101.into()),
+                        negotiated.then_some(16)
+                    );
+                }
+                if !negotiated {
+                    assert!(!answer.contains("a=rtpmap:101 "));
+                    assert!(!answer.contains("a=fmtp:101 "));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn telephone_event_sdp_matches_event_clock_rates() {
+    init_crypto_default();
+    let mut l = with_audio_events(
+        Peer::Left,
+        &[Codec::Opus, Codec::PCMU],
+        &[
+            (101, Frequency::EIGHT_KHZ, None),
+            (102, Frequency::SIXTEEN_KHZ, None),
+            (103, Frequency::FORTY_EIGHT_KHZ, None),
+        ],
+    );
+    let mut r = with_audio_events(
+        Peer::Right,
+        &[Codec::Opus, Codec::PCMU],
+        &[
+            (126, Frequency::SIXTEEN_KHZ, None),
+            (125, Frequency::FORTY_EIGHT_KHZ, None),
+        ],
+    );
+    let (mid, offer, answer) = negotiate_events(&mut l, &mut r, Direction::SendRecv);
+    assert_eq!(
+        event_params(&offer),
+        [(101, 8_000, "0-16".into()), (103, 48_000, "0-16".into())]
+    );
+    let rates: Vec<_> = event_params(&answer)
+        .into_iter()
+        .map(|(pt, rate, _)| (pt, rate))
+        .collect();
+    assert_eq!(rates, [(103, 48_000)]);
+    for rtc in [&l, &r] {
+        assert_eq!(
+            rtc.media(mid).unwrap().remote_pts(),
+            &[111.into(), 0.into(), 103.into()]
+        );
+    }
+
+    let mut l = with_events(Peer::Left, &[(101, Frequency::EIGHT_KHZ, None)]);
+    let mut r = with_events(Peer::Right, &[(126, Frequency::SIXTEEN_KHZ, None)]);
+    let (_, _, answer) = negotiate_events(&mut l, &mut r, Direction::SendRecv);
+    assert!(event_params(&answer).is_empty());
+    assert!(!answer.contains("m=audio 0 "));
+}
+
+#[test]
+fn telephone_event_sdp_prefers_audio_rtp_clock_rates() {
+    init_crypto_default();
+    let offered = [
+        (101, Frequency::EIGHT_KHZ, None),
+        (102, Frequency::SIXTEEN_KHZ, None),
+        (103, Frequency::FORTY_EIGHT_KHZ, None),
+    ];
+    let supported = [
+        (126, Frequency::EIGHT_KHZ, None),
+        (125, Frequency::SIXTEEN_KHZ, None),
+        (124, Frequency::FORTY_EIGHT_KHZ, None),
+    ];
+    let cases = [
+        (&[Codec::PCMU][..], &[(101, 8_000)][..]),
+        (&[Codec::PCMA][..], &[(101, 8_000)][..]),
+        (&[Codec::G722][..], &[(101, 8_000)][..]),
+        (&[Codec::Opus][..], &[(103, 48_000)][..]),
+        (&[Codec::PCMU, Codec::PCMA][..], &[(101, 8_000)][..]),
+        (
+            &[Codec::Opus, Codec::PCMU][..],
+            &[(101, 8_000), (103, 48_000)][..],
+        ),
+        (
+            &[Codec::Opus, Codec::PCMA][..],
+            &[(101, 8_000), (103, 48_000)][..],
+        ),
+        (
+            &[Codec::Opus, Codec::G722][..],
+            &[(101, 8_000), (103, 48_000)][..],
+        ),
+    ];
+
+    for (codecs, expected) in cases {
+        let expected: Vec<_> = expected
+            .iter()
+            .map(|&(pt, rate)| (pt, rate, "0-16".to_string()))
+            .collect();
+        for direction in DIRECTIONS {
+            let mut l = with_audio_events(Peer::Left, codecs, &offered);
+            let mut r = with_audio_events(Peer::Right, codecs, &supported);
+            let (mid, offer, answer) = negotiate_events(&mut l, &mut r, direction);
+            for sdp in [&offer, &answer] {
+                assert_eq!(event_params(sdp), expected, "{codecs:?} {direction:?}");
+                if codecs.contains(&Codec::G722) {
+                    assert!(sdp.contains("a=rtpmap:9 G722/8000\r\n"), "{sdp}");
+                    assert!(!sdp.contains("G722/16000"), "{sdp}");
+                }
+            }
+            for rtc in [&l, &r] {
+                let media = rtc.media(mid).unwrap();
+                for &(pt, _, _) in &offered {
+                    let negotiated = expected.iter().any(|p| p.0 == pt);
+                    assert_eq!(media.remote_pts().contains(&pt.into()), negotiated);
+                    assert_eq!(
+                        media.telephone_event_max(pt.into()),
+                        negotiated.then_some(16)
+                    );
+                }
+                assert_eq!(
+                    rtc.codec_config()
+                        .iter()
+                        .filter(|p| p.spec().codec == Codec::TelephoneEvent)
+                        .count(),
+                    3
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn telephone_event_sdp_accepts_8khz_with_opus() {
+    init_crypto_default();
+    for direction in DIRECTIONS {
+        let mut l = with_events(Peer::Left, &[(101, Frequency::EIGHT_KHZ, None)]);
+        let mut r = with_events(
+            Peer::Right,
+            &[
+                (126, Frequency::EIGHT_KHZ, Some(7)),
+                (125, Frequency::FORTY_EIGHT_KHZ, None),
+            ],
+        );
+        let (mid, offer, answer) = negotiate_events(&mut l, &mut r, direction);
+        assert_eq!(event_params(&offer), [(101, 8_000, "0-16".into())]);
+        assert_eq!(event_params(&answer), [(101, 8_000, "0-7".into())]);
+        for rtc in [&l, &r] {
+            let media = rtc.media(mid).unwrap();
+            assert_eq!(media.remote_pts(), &[111.into(), 101.into()]);
+            assert_eq!(media.telephone_event_max(101.into()), Some(7));
+        }
+    }
+}
+
+#[test]
+fn telephone_event_sdp_reoffer_preserves_negotiated_fallback() {
+    init_crypto_default();
+    let mut l = with_events(Peer::Left, &[(101, Frequency::EIGHT_KHZ, None)]);
+    let mut r = with_events(
+        Peer::Right,
+        &[
+            (126, Frequency::EIGHT_KHZ, None),
+            (125, Frequency::FORTY_EIGHT_KHZ, None),
+        ],
+    );
+    let (mid, _, _) = negotiate_events(&mut l, &mut r, Direction::SendRecv);
+
+    let (new_mid, offer, pending) = offer_audio(&mut r, Direction::SendRecv);
+    assert_eq!(
+        event_params(&offer),
+        [(101, 8_000, "0-16".into()), (125, 48_000, "0-16".into())]
+    );
+    let answer = answer_offer(&mut l, &offer);
+    assert_eq!(event_params(&answer), [(101, 8_000, "0-16".into())]);
+    accept_answer(&mut r, pending, &answer);
+    for rtc in [&l, &r] {
+        assert_eq!(
+            rtc.media(mid).unwrap().telephone_event_max(101.into()),
+            Some(16)
+        );
+        assert_eq!(rtc.media(new_mid).unwrap().remote_pts(), &[111.into()]);
+    }
+}
+
+#[test]
+fn telephone_event_sdp_ignores_unlisted_payloads() {
+    init_crypto_default();
+    let mut l = with_events(Peer::Left, &[(101, Frequency::FORTY_EIGHT_KHZ, None)]);
+    let mut r = with_events(Peer::Right, &[(126, Frequency::FORTY_EIGHT_KHZ, None)]);
+    let (mid, offer, pending) = offer_audio(&mut l, Direction::SendRecv);
+    // The m-line, not a leftover rtpmap/fmtp, determines which payloads are offered.
+    let offer = offer.replace("SAVPF 111 101\r\n", "SAVPF 111\r\n");
+    let answer = answer_offer(&mut r, &offer);
+    assert!(event_params(&answer).is_empty());
+    accept_answer(&mut l, pending, &answer);
+
+    for rtc in [&l, &r] {
+        assert_eq!(rtc.media(mid).unwrap().remote_pts(), &[111.into()]);
+        assert_eq!(
+            rtc.media(mid).unwrap().telephone_event_max(101.into()),
+            None
+        );
+    }
+}
+
+#[test]
+fn telephone_event_sdp_event_ranges() {
+    init_crypto_default();
+    for direction in DIRECTIONS {
+        for (offered, supported, expected) in [
+            (None, None, 16),
+            (Some(15), None, 15),
+            (None, Some(15), 15),
+            (Some(16), None, 16),
+            (None, Some(16), 16),
+            (Some(16), Some(16), 16),
+            (Some(16), Some(7), 7),
+            (Some(7), Some(16), 7),
+            (Some(0), Some(16), 0),
+            (Some(255), Some(255), 255),
+        ] {
+            let mut l = with_events(Peer::Left, &[(101, Frequency::FORTY_EIGHT_KHZ, offered)]);
+            let mut r = with_events(Peer::Right, &[(126, Frequency::FORTY_EIGHT_KHZ, supported)]);
+            let (mid, offer, answer) = negotiate_events(&mut l, &mut r, direction);
+            assert!(offer.contains(&format!("a=fmtp:101 0-{}\r\n", offered.unwrap_or(16))));
+            assert!(answer.contains(&format!("a=fmtp:101 0-{expected}\r\n")));
+            assert_eq!(
+                event_params(&answer),
+                [(101, 48_000, format!("0-{expected}"))]
+            );
+            for rtc in [&l, &r] {
+                assert_eq!(
+                    rtc.media(mid).unwrap().telephone_event_max(101.into()),
+                    Some(expected)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn telephone_event_sdp_missing_or_invalid_fmtp() {
+    init_crypto_default();
+    for (fmtp, expected) in [
+        (None, Some(16)),
+        (Some("0-15"), Some(15)),
+        (Some("0-16"), Some(16)),
+        (Some("0-255"), Some(16)),
+        (Some("0-256"), None),
+        (Some("15-0"), None),
+        (Some("1-15"), None),
+        (Some("0-15,66,70"), None),
+        (Some("0-+15"), None),
+        (Some(""), None),
+        (Some("bogus"), None),
+        (Some("0-15 16"), None),
+        (Some("0-15;useinbandfec=1"), None),
+        (Some("0-15\r\na=fmtp:101 0-16"), None),
+    ] {
+        let mut l = with_events(Peer::Left, &[(101, Frequency::FORTY_EIGHT_KHZ, None)]);
+        let mut r = with_events(Peer::Right, &[(126, Frequency::FORTY_EIGHT_KHZ, None)]);
+        let (mid, offer, pending) = offer_audio(&mut l, Direction::SendRecv);
+        let offer = replace_event_fmtp(&offer, fmtp);
+        let answer = answer_offer(&mut r, &offer);
+        assert_eq!(
+            event_params(&answer).len(),
+            usize::from(expected.is_some()),
+            "{fmtp:?}"
+        );
+        if let Some(max) = expected {
+            assert!(
+                answer.contains(&format!("a=fmtp:101 0-{max}\r\n")),
+                "{fmtp:?}"
+            );
+        }
+        assert!(!answer.contains("m=audio 0 "));
+        accept_answer(&mut l, pending, &answer);
+        for rtc in [&l, &r] {
+            assert_eq!(
+                rtc.media(mid).unwrap().remote_pts().contains(&101.into()),
+                expected.is_some()
+            );
+            assert_eq!(
+                rtc.media(mid).unwrap().telephone_event_max(101.into()),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn telephone_event_sdp_answer_fmtp() {
+    init_crypto_default();
+    for (fmtp, expected) in [
+        (None, Some(16)),
+        (Some("0-7"), Some(7)),
+        (Some("0-15"), Some(15)),
+        (Some("0-16"), Some(16)),
+        (Some("0-255"), Some(16)),
+        (Some("0-15,66,70"), None),
+    ] {
+        let mut l = with_events(Peer::Left, &[(101, Frequency::FORTY_EIGHT_KHZ, None)]);
+        let mut r = with_events(Peer::Right, &[(126, Frequency::FORTY_EIGHT_KHZ, None)]);
+        let (mid, offer, pending) = offer_audio(&mut l, Direction::SendRecv);
+        let answer = answer_offer(&mut r, &offer);
+        let answer = replace_event_fmtp(&answer, fmtp);
+        accept_answer(&mut l, pending, &answer);
+        let media = l.media(mid).unwrap();
+        assert_eq!(media.telephone_event_max(101.into()), expected, "{fmtp:?}");
+        assert_eq!(media.remote_pts().contains(&101.into()), expected.is_some());
+        assert!(media.remote_pts().contains(&111.into()));
+    }
+}
+
+#[test]
+fn telephone_event_sdp_ranges_are_per_media() {
+    init_crypto_default();
+    let mut l = with_events(Peer::Left, &[(101, Frequency::FORTY_EIGHT_KHZ, Some(16))]);
+    let mut r = with_events(Peer::Right, &[(126, Frequency::FORTY_EIGHT_KHZ, Some(16))]);
+    let mut change = l.sdp_api();
+    let mid1 = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let mid2 = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let offer = offer
+        .to_sdp_string()
+        .replacen("a=fmtp:101 0-16", "a=fmtp:101 0-7", 1);
+    let answer = answer_offer(&mut r, &offer);
+    assert_eq!(
+        event_params(&answer),
+        [(101, 48_000, "0-7".into()), (101, 48_000, "0-16".into())]
+    );
+    accept_answer(&mut l, pending, &answer);
+    for rtc in [&l, &r] {
+        for (mid, max) in [(mid1, 7), (mid2, 16)] {
+            assert_eq!(
+                rtc.media(mid).unwrap().telephone_event_max(101.into()),
+                Some(max)
+            );
+        }
+        let params = rtc
+            .codec_config()
+            .find(|p| p.spec().codec == Codec::TelephoneEvent)
+            .unwrap();
+        assert_eq!(params.spec().format.telephone_event_max, Some(16));
+    }
+}
+
+#[test]
+fn telephone_event_rtp_roundtrip() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    for (audio_codec, audio_clock_rate, event_clock_rate) in [
+        (Codec::PCMU, Frequency::EIGHT_KHZ, Frequency::EIGHT_KHZ),
+        (Codec::PCMA, Frequency::EIGHT_KHZ, Frequency::EIGHT_KHZ),
+        (Codec::G722, Frequency::EIGHT_KHZ, Frequency::EIGHT_KHZ),
+        (
+            Codec::Opus,
+            Frequency::FORTY_EIGHT_KHZ,
+            Frequency::FORTY_EIGHT_KHZ,
+        ),
+        (
+            Codec::Opus,
+            Frequency::FORTY_EIGHT_KHZ,
+            Frequency::EIGHT_KHZ,
+        ),
+    ] {
+        let configured = |peer, pt, channels| {
+            TestRtc::new_with_config(peer, |config| {
+                let mut config = config.clear_codecs().set_rtp_mode(true);
+                enable_audio_codecs(config.codec_config(), &[audio_codec]);
+                config.codec_config().add_config(
+                    pt,
+                    None,
+                    Codec::TelephoneEvent,
+                    event_clock_rate,
+                    channels,
+                    FormatParams::default(),
+                );
+                config
+            })
+        };
+        let mut l = configured(Peer::Left, 101.into(), None);
+        let mut r = configured(Peer::Right, 126.into(), Some(1));
+        l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+        r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+        let (mid, offer, answer) = negotiate_events(&mut l, &mut r, Direction::SendRecv);
+        let rtpmap = format!("a=rtpmap:101 telephone-event/{}", event_clock_rate.get());
+        assert!(offer.contains(&rtpmap), "{offer}");
+        assert!(offer.contains("a=fmtp:101 0-16\r\n"));
+        assert!(answer.contains(&rtpmap), "{answer}");
+
+        for rtc in [&l, &r] {
+            let params = rtc
+                .codec_config()
+                .find(|p| p.spec().codec == Codec::TelephoneEvent)
+                .unwrap();
+            assert_eq!(*params.pt(), 101);
+            assert_eq!(params.spec().clock_rate, event_clock_rate);
+        }
+
+        let audio_pt = *l
+            .codec_config()
+            .find(|p| p.spec().codec == audio_codec)
+            .unwrap()
+            .pt();
+        let audio_timestamp = 4960 * audio_clock_rate.get() / event_clock_rate.get();
+        let packets: &[(u8, u32, bool, &[u8])] = &[
+            (audio_pt, 0, false, &[1, 2, 3, 4]),
+            (101, 160, true, &[5, 0x0a, 0x00, 0xa0]),
+            (101, 160, false, &[5, 0x0a, 0x01, 0x40]),
+            (101, 160, false, &[5, 0x8a, 0x12, 0xc0]),
+            (101, 160, false, &[5, 0x8a, 0x12, 0xc0]),
+            (101, 160, false, &[5, 0x8a, 0x12, 0xc0]),
+            (audio_pt, audio_timestamp, false, &[5, 6, 7, 8]),
+        ];
+
+        assert_rtp_roundtrip(
+            &mut l,
+            &mut r,
+            mid,
+            packets,
+            &[(audio_pt, audio_clock_rate), (101, event_clock_rate)],
+        )?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn telephone_event_rtp_direct_api_roundtrip() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let events = [
+        (101, Frequency::EIGHT_KHZ, None),
+        (110, Frequency::FORTY_EIGHT_KHZ, None),
+    ];
+    let l = with_events(Peer::Left, &events);
+    let r = with_events(Peer::Right, &events);
+    let (mut l, mut r) = connect_l_r_with_rtc(l.rtc, r.rtc);
+
+    let mid: Mid = "audio".into();
+    let ssrc_l: Ssrc = 1.into();
+    let ssrc_r: Ssrc = 2.into();
+    for (rtc, ssrc_tx, ssrc_rx) in [(&mut l, ssrc_l, ssrc_r), (&mut r, ssrc_r, ssrc_l)] {
+        let mut direct = rtc.direct_api();
+        direct.declare_media(mid, MediaKind::Audio);
+        direct.declare_stream_tx(ssrc_tx, None, mid, None);
+        direct.expect_stream_rx(ssrc_rx, None, mid, None);
+
+        let media = rtc.media(mid).unwrap();
+        assert!(media.remote_pts().is_empty());
+        for pt in [101, 110] {
+            assert_eq!(media.telephone_event_max(pt.into()), None);
+        }
+    }
+
+    let packets: &[(u8, u32, bool, &[u8])] = &[
+        (111, 0, false, &[1, 2, 3, 4]),
+        (101, 160, true, &[16, 0x0a, 0x00, 0xa0]),
+        (101, 160, false, &[16, 0x0a, 0x01, 0x40]),
+        (101, 160, false, &[16, 0x8a, 0x12, 0xc0]),
+        (101, 160, false, &[16, 0x8a, 0x12, 0xc0]),
+        (101, 160, false, &[16, 0x8a, 0x12, 0xc0]),
+        (111, 29_760, false, &[5, 6, 7, 8]),
+        (110, 30_720, true, &[5, 0x0a, 0x03, 0xc0]),
+        (110, 30_720, false, &[5, 0x0a, 0x07, 0x80]),
+        (110, 30_720, false, &[5, 0x8a, 0x12, 0xc0]),
+        (110, 30_720, false, &[5, 0x8a, 0x12, 0xc0]),
+        (110, 30_720, false, &[5, 0x8a, 0x12, 0xc0]),
+        (111, 35_520, false, &[9, 10, 11, 12]),
+    ];
+    assert_rtp_roundtrip(
+        &mut l,
+        &mut r,
+        mid,
+        packets,
+        &[
+            (111, Frequency::FORTY_EIGHT_KHZ),
+            (101, Frequency::EIGHT_KHZ),
+            (110, Frequency::FORTY_EIGHT_KHZ),
+        ],
+    )
+}
+
+fn assert_rtp_roundtrip(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    mid: Mid,
+    packets: &[(u8, u32, bool, &[u8])],
+    clock_rates: &[(u8, Frequency)],
+) -> Result<(), RtcError> {
+    while !l.is_connected() || !r.is_connected() {
+        assert!(
+            l.duration() < Duration::from_secs(5),
+            "connection timed out"
+        );
+        progress(l, r)?;
+    }
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    for reverse in [false, true] {
+        let (tx, rx) = if reverse {
+            (&mut *r, &mut *l)
+        } else {
+            (&mut *l, &mut *r)
+        };
+        let ssrc = tx.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+        for (index, &(pt, timestamp, marker, payload)) in packets.iter().enumerate() {
+            let wallclock = tx.start + tx.duration();
+            tx.direct_api().stream_tx(&ssrc).unwrap().write_rtp(
+                RtpWrite::new(
+                    pt.into(),
+                    (index as u64 + 1).into(),
+                    timestamp,
+                    wallclock,
+                    payload,
+                )
+                .marker(marker),
+            );
+            progress(tx, rx)?;
+        }
+
+        let deadline = tx.duration() + Duration::from_secs(1);
+        while tx.duration() < deadline {
+            progress(tx, rx)?;
+        }
+
+        let received: Vec<_> = rx
+            .events
+            .iter()
+            .filter_map(|(_, event)| match event {
+                Event::RtpPacket(packet) => Some(packet),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(received.len(), packets.len());
+        for (index, (packet, &(pt, timestamp, marker, payload))) in
+            received.iter().zip(packets).enumerate()
+        {
+            assert_eq!(packet.header.ssrc, ssrc);
+            assert_eq!(*packet.header.payload_type, pt);
+            assert_eq!(*packet.seq_no, index as u64 + 1);
+            assert_eq!(packet.header.timestamp, timestamp);
+            assert_eq!(packet.header.marker, marker);
+            let clock_rate = clock_rates
+                .iter()
+                .find_map(|&(payload_type, rate)| (payload_type == pt).then_some(rate))
+                .expect("expected clock rate for payload type");
+            assert_eq!(packet.time.frequency(), clock_rate);
+            assert_eq!(packet.time.numer(), u64::from(timestamp));
+            assert_eq!(packet.payload.as_ref(), payload);
+        }
+    }
+
+    Ok(())
+}

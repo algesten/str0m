@@ -361,12 +361,23 @@ impl MediaLine {
 
         let mut params: Vec<_> = rtp_maps
             .iter()
-            .filter(|(_, c)| c.codec.is_audio() | c.codec.is_video())
-            .map(|(pt, c)| {
+            .filter(|(pt, c)| {
+                c.codec.is_audio()
+                    || c.codec.is_video()
+                    || (c.codec == Codec::TelephoneEvent && self.pts.contains(pt))
+            })
+            .filter_map(|(pt, c)| {
                 let mut p = PayloadParams::new(*pt, None, (*c).into());
+                if c.codec == Codec::TelephoneEvent {
+                    let Some(max) = self.telephone_event_max(*pt) else {
+                        debug!("Ignoring unsupported telephone-event fmtp for PT {pt}");
+                        return None;
+                    };
+                    p.spec.format.telephone_event_max = Some(max);
+                }
                 // Remote TWCC feedback is supported only when explicitly advertised.
                 p.set_fb_transport_cc(false);
-                p
+                Some(p)
             })
             .collect();
 
@@ -375,7 +386,11 @@ impl MediaLine {
                 // find matching a=fmtp line, if it exists.
                 if **pt == p.pt {
                     for param in values.iter() {
-                        p.spec.format.set_param(param);
+                        if p.spec.codec == Codec::TelephoneEvent
+                            || !matches!(param, FormatParam::TelephoneEvents(_))
+                        {
+                            p.spec.format.set_param(param);
+                        }
                     }
                 }
 
@@ -440,6 +455,35 @@ impl MediaLine {
         }
 
         params
+    }
+
+    fn telephone_event_max(&self, pt: Pt) -> Option<u8> {
+        let mut fmtps = self.attrs.iter().filter_map(|attr| match attr {
+            MediaAttribute::Fmtp {
+                pt: fmtp_pt,
+                values,
+            } if *fmtp_pt == pt => Some(values.as_slice()),
+            MediaAttribute::Unused(line)
+                if line
+                    .strip_prefix("fmtp:")
+                    .and_then(|v| v.split_whitespace().next())
+                    .and_then(|v| v.parse::<u8>().ok())
+                    == Some(*pt) =>
+            {
+                Some(&[][..])
+            }
+            _ => None,
+        });
+        let Some(values) = fmtps.next() else {
+            return Some(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
+        };
+        if fmtps.next().is_some() {
+            return None;
+        }
+        match values {
+            [FormatParam::TelephoneEvents(max)] => Some(*max),
+            _ => None,
+        }
     }
 
     pub fn check_consistent(&self) -> Option<String> {
@@ -1004,6 +1048,9 @@ pub enum FormatParam {
     /// out-of-order NAL unit decoding. Valid range: 0–32767.
     SpropMaxDonDiff(u16),
 
+    /// Highest event code in an inclusive `0-X` telephone-event range.
+    TelephoneEvents(u8),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -1016,6 +1063,15 @@ pub enum FormatParam {
 }
 
 impl FormatParam {
+    pub(crate) fn parse_telephone_events(value: &str) -> Self {
+        value
+            .strip_prefix("0-")
+            .filter(|end| end.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|end| end.parse::<u8>().ok())
+            .map(Self::TelephoneEvents)
+            .unwrap_or(Self::Unknown)
+    }
+
     pub fn parse(k: &str, v: &str) -> Self {
         use FormatParam::*;
         match k {
@@ -1126,6 +1182,7 @@ impl fmt::Display for FormatParam {
                 )
             }
             SpropMaxDonDiff(v) => write!(f, "sprop-max-don-diff={}", *v),
+            TelephoneEvents(v) => write!(f, "0-{v}"),
             Apt(v) => write!(f, "apt={v}"),
             Red(v) => write!(f, "{v}/{v}"),
             Unknown => Ok(()),
@@ -1171,7 +1228,16 @@ impl PayloadParams {
             });
         }
 
-        let fmtps = self.spec.format.to_format_param();
+        let fmtps = if self.spec.codec == Codec::TelephoneEvent {
+            vec![FormatParam::TelephoneEvents(
+                self.spec
+                    .format
+                    .telephone_event_max
+                    .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX),
+            )]
+        } else {
+            self.spec.format.to_format_param()
+        };
         if !fmtps.is_empty() {
             attrs.push(MediaAttribute::Fmtp {
                 pt: self.pt,

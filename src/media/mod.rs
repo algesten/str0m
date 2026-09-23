@@ -102,6 +102,9 @@ pub struct Media {
     /// If this is empty, the m-line is disabled/rejected (port=0 in SDP).
     remote_pts: Vec<Pt>,
 
+    /// Maximum supported telephone-event payload type for this media.
+    telephone_event_ranges: Vec<(Pt, u8)>,
+
     /// Set when this m-line has been stopped via
     /// [`SdpApi::stop_media`](crate::change::SdpApi::stop_media) or
     /// rejected by the remote peer. Independent of `remote_pts` so that
@@ -576,7 +579,7 @@ impl Media {
         result.map_err(|e| RtcError::Packet(self.mid, pt, e))
     }
 
-    pub(crate) fn set_remote_pts(&mut self, pts: Vec<Pt>) {
+    pub(crate) fn set_remote_pts(&mut self, pts: Vec<Pt>, ranges: Vec<(Pt, u8)>) {
         // Have we already set PTs?
         if !self.remote_pts.is_empty() {
             return;
@@ -586,6 +589,18 @@ impl Media {
         // order or removes/adds PTs that weren't there from the start.
         debug!("Mid ({}) remote PT order is: {:?}", self.mid, pts);
         self.remote_pts = pts;
+        self.telephone_event_ranges = ranges;
+    }
+
+    /// Highest negotiated telephone-event code for this payload type.
+    ///
+    /// Supported events are the inclusive range `0..=max`. In RTP mode the
+    /// application must restrict sent events to this range.
+    /// Returns `None` when the payload type has not been negotiated via SDP.
+    pub fn telephone_event_max(&self, pt: Pt) -> Option<u8> {
+        self.telephone_event_ranges
+            .iter()
+            .find_map(|&(p, max)| (p == pt).then_some(max))
     }
 
     pub(crate) fn set_remote_extmap(&mut self, exts: ExtensionMap) {
@@ -658,6 +673,7 @@ impl Default for Media {
             msid: Msid::random(),
             kind: MediaKind::Video,
             remote_pts: vec![],
+            telephone_event_ranges: vec![],
             stopped: false,
             remote_exts: ExtensionMap::empty(),
             remote_created: false,
