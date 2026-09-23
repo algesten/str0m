@@ -1356,14 +1356,9 @@ fn update_media(
     }
     media.set_remote_extmap(remote_extmap);
 
-    // SSRC changes
-    // This will always be for ReceiverSource since any incoming a=ssrc line will be
-    // about the remote side's SSRC.
-    if !new_dir.is_receiving() {
-        return;
-    }
-
-    // Simulcast configuration
+    // Simulcast configuration. This applies to both directions: every later SDP for the
+    // m-line is generated from the Media, and must repeat the negotiated a=rid and
+    // a=simulcast lines (RFC 8829 5.2.2, RFC 8853 5.3.4).
     if let Some(s) = m.simulcast() {
         if s.is_munged {
             warn!("Not supporting simulcast via munging SDP");
@@ -1371,6 +1366,13 @@ fn update_media(
             // Invert before setting, since it has a recv and send config.
             media.set_simulcast(s.invert());
         }
+    }
+
+    // SSRC changes
+    // This will always be for ReceiverSource since any incoming a=ssrc line will be
+    // about the remote side's SSRC.
+    if !new_dir.is_receiving() {
+        return;
     }
 
     // Only use pre-communicated SSRC if we are running without simulcast.

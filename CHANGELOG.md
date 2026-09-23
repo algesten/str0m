@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Keep `a=simulcast`/`a=rid` for send simulcast in SDP after the first offer.
   * Preserve receive state across pauses; expire the oldest incomplete frame #1057
   * Configure pause threshold; default audio/video reordering to 1 s/2 s #1057
   * Send and receive telephone-event (DTMF) packets in frame mode with `Writer::telephone_event` #1050
