@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::packet::PacketError;
 
-use super::{ExtensionValues, Frequency, MediaTime, Pt, Rid, TelephoneEventPayload, ToPayload};
+use super::{ExtensionValues, Frequency, MediaTime, Pt, Rid, TeleEvent, ToPayload};
 
 const UPDATE_INTERVAL: Duration = Duration::from_millis(20);
 const MIN_PAUSE: Duration = Duration::from_millis(50);
@@ -125,7 +125,7 @@ impl TelephoneEvent {
     /// A report on the segment that starts `segment` into the event, in RTP time.
     fn report(&self, segment: u64, duration: u64, end: bool, marker: bool) -> ToPayload {
         let clock_rate = self.rtp_time.frequency();
-        let report = TelephoneEventPayload {
+        let report = TeleEvent {
             event: self.event,
             end,
             volume: self.volume,
@@ -156,7 +156,7 @@ mod test {
     const MS: Duration = Duration::from_millis(1);
 
     /// A report as (time since the start of the test, RTP time, marker, report).
-    type Sent = (Duration, u64, bool, TelephoneEventPayload);
+    type Sent = (Duration, u64, bool, TeleEvent);
 
     fn event(wallclock: Instant, duration: Duration, clock_rate: Frequency) -> TelephoneEvent {
         TelephoneEvent {
@@ -171,8 +171,8 @@ mod test {
         }
     }
 
-    fn report(duration: u16, end: bool) -> TelephoneEventPayload {
-        TelephoneEventPayload {
+    fn report(duration: u16, end: bool) -> TeleEvent {
+        TeleEvent {
             event: 5,
             end,
             volume: 10,
@@ -182,7 +182,7 @@ mod test {
 
     fn poll_at(queue: &mut TelephoneEventQueue, base: Instant, now: Instant) -> Vec<Sent> {
         let sent = |p: ToPayload| {
-            let report = TelephoneEventPayload::parse(&p.data).unwrap();
+            let report = TeleEvent::parse(&p.data).unwrap();
             (
                 now - base,
                 p.rtp_time.numer(),

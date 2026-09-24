@@ -76,8 +76,8 @@ pub enum Codec {
     /// RFC 4733 event handling. Only `0-X` SDP ranges are supported.
     ///
     /// Frame mode uses [`Writer::write_telephone_event`][crate::media::Writer::write_telephone_event]
-    /// and [`CodecExtra::TelephoneEvent`][super::CodecExtra::TelephoneEvent]. For RTP mode, see
-    /// [`TelephoneEventPayload`][crate::media::TelephoneEventPayload].
+    /// and [`CodecExtra::Tele`][super::CodecExtra::Tele]. For RTP mode, see
+    /// [`TeleEvent`][crate::media::TeleEvent].
     Tele,
     /// Technically not a codec, but used in places where codecs go
     /// in `a=rtpmap` lines.

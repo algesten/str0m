@@ -4,7 +4,7 @@ use std::time::Duration;
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::error::PacketError;
 use str0m::format::{Codec, CodecConfig, CodecExtra, FormatParams};
-use str0m::media::TelephoneEventPayload;
+use str0m::media::TeleEvent;
 use str0m::media::{Direction, Frequency, MediaData, MediaKind, MediaTime, Mid, Pt};
 use str0m::rtp::{RtpWrite, Ssrc};
 use str0m::{Event, RtcError};
@@ -719,7 +719,7 @@ fn telephone_event_frame_roundtrip() -> Result<(), RtcError> {
     let (mut l, mut r, mid) = connected_frame_mode();
     let audio_pt = l.params_opus().pt();
     let start = MediaTime::new(960, Frequency::FORTY_EIGHT_KHZ);
-    let report = |end, duration| TelephoneEventPayload {
+    let report = |end, duration| TeleEvent {
         event: 5,
         end,
         volume: 10,
@@ -757,7 +757,7 @@ fn telephone_event_frame_roundtrip() -> Result<(), RtcError> {
     let first_seq = **events[0].seq_range.start();
     for (index, (data, (sent_ms, report))) in events.into_iter().zip(reports).enumerate() {
         assert_eq!(data.data.as_ref(), report.to_bytes());
-        assert_eq!(data.codec_extra, CodecExtra::TelephoneEvent(vec![report]));
+        assert_eq!(data.codec_extra, CodecExtra::Tele(vec![report]));
         assert_eq!(data.audio_start_of_talk_spurt, index == 0);
         assert!(!data.is_keyframe());
         assert_eq!(data.time.numer(), start.numer());
@@ -861,13 +861,13 @@ fn telephone_event_frame_queued_events_wait_for_each_other() -> Result<(), RtcEr
         for (report_index, data) in reports.iter().enumerate() {
             // Updates at 20 to 80 ms, then the final reports at 100 ms.
             let ticks = (report_index as u64 + 1).min(5);
-            let expected = TelephoneEventPayload {
+            let expected = TeleEvent {
                 event: digit,
                 end: ticks == 5,
                 volume: 10,
                 duration: 960 * ticks as u16,
             };
-            assert_eq!(data.codec_extra, CodecExtra::TelephoneEvent(vec![expected]));
+            assert_eq!(data.codec_extra, CodecExtra::Tele(vec![expected]));
             assert_eq!(data.audio_start_of_talk_spurt, report_index == 0);
             assert_eq!(data.time.numer(), start.numer() + offset * 48);
             assert_eq!(
@@ -926,13 +926,13 @@ fn telephone_event_frame_packed_reports_arrive_as_one_sample() -> Result<(), Rtc
     init_crypto_default();
 
     let (mut l, mut r, mid) = connected_frame_mode();
-    let first = TelephoneEventPayload {
+    let first = TeleEvent {
         event: 1,
         end: true,
         volume: 10,
         duration: 960,
     };
-    let second = TelephoneEventPayload {
+    let second = TeleEvent {
         event: 2,
         end: true,
         volume: 10,
@@ -950,13 +950,8 @@ fn telephone_event_frame_packed_reports_arrive_as_one_sample() -> Result<(), Rtc
     let events = telephone_events(&r);
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].data.as_ref(), packed);
-    assert_eq!(
-        events[0].codec_extra,
-        CodecExtra::TelephoneEvent(vec![first, second])
-    );
-    let reports: Vec<_> = TelephoneEventPayload::parse_all(&events[0].data)
-        .unwrap()
-        .collect();
+    assert_eq!(events[0].codec_extra, CodecExtra::Tele(vec![first, second]));
+    let reports: Vec<_> = TeleEvent::parse_all(&events[0].data).unwrap().collect();
     assert_eq!(reports, [first, second]);
     Ok(())
 }
@@ -967,7 +962,7 @@ fn telephone_event_frame_reports_malformed_payloads() -> Result<(), RtcError> {
     init_crypto_default();
 
     let (mut l, mut r, mid) = connected_frame_mode();
-    let report = TelephoneEventPayload {
+    let report = TeleEvent {
         event: 1,
         end: false,
         volume: 10,
@@ -996,10 +991,7 @@ fn telephone_event_frame_reports_malformed_payloads() -> Result<(), RtcError> {
 
     let events = telephone_events(&r);
     assert_eq!(events.len(), 1);
-    assert_eq!(
-        events[0].codec_extra,
-        CodecExtra::TelephoneEvent(vec![report])
-    );
+    assert_eq!(events[0].codec_extra, CodecExtra::Tele(vec![report]));
     Ok(())
 }
 

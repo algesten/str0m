@@ -11,19 +11,19 @@ const REPORT_LEN: usize = 4;
 /// Builds and parses the 4-byte reports carried in telephone-event RTP payloads.
 ///
 /// ```
-/// use str0m::media::TelephoneEventPayload;
+/// use str0m::media::TeleEvent;
 ///
-/// let report = TelephoneEventPayload {
+/// let report = TeleEvent {
 ///     event: 5,
 ///     end: true,
 ///     volume: 10,
 ///     duration: 800,
 /// };
 /// let bytes = report.to_bytes();
-/// assert_eq!(TelephoneEventPayload::parse(&bytes), Some(report));
+/// assert_eq!(TeleEvent::parse(&bytes), Some(report));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TelephoneEventPayload {
+pub struct TeleEvent {
     /// The event code (RFC 4733 Section 2.3.1).
     ///
     /// DTMF digits `0`-`9` are codes 0-9, `*` is 10, `#` is 11 and `A`-`D` are 12-15
@@ -40,14 +40,14 @@ pub struct TelephoneEventPayload {
     pub duration: u16,
 }
 
-impl TelephoneEventPayload {
+impl TeleEvent {
     /// Parses the report in the first four bytes of `buf`.
     pub fn parse(buf: &[u8]) -> Option<Self> {
         let [event, flags, d0, d1, ..] = *buf else {
             return None;
         };
 
-        Some(TelephoneEventPayload {
+        Some(TeleEvent {
             event,
             end: flags & 0x80 != 0,
             volume: flags & 0x3f,
@@ -123,14 +123,14 @@ impl Depacketizer for TelephoneEventDepacketizer {
         out: &mut Vec<u8>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
-        let reports = TelephoneEventPayload::parse_all(packet).ok_or(PacketError::TeleInvalid(
+        let reports = TeleEvent::parse_all(packet).ok_or(PacketError::TeleInvalid(
             "payload must contain one or more complete 4-byte reports",
         ))?;
         let mut events = Vec::with_capacity(packet.len() / REPORT_LEN);
         events.extend(reports);
 
         out.extend_from_slice(packet);
-        *codec_extra = CodecExtra::TelephoneEvent(events);
+        *codec_extra = CodecExtra::Tele(events);
         Ok(())
     }
 
@@ -154,7 +154,7 @@ mod test {
 
     #[test]
     fn payload_roundtrip() {
-        let report = TelephoneEventPayload {
+        let report = TeleEvent {
             event: 5,
             end: true,
             volume: 10,
@@ -162,19 +162,19 @@ mod test {
         };
 
         assert_eq!(report.to_bytes(), REPORT);
-        assert_eq!(TelephoneEventPayload::parse(&REPORT), Some(report));
+        assert_eq!(TeleEvent::parse(&REPORT), Some(report));
         for len in 0..REPORT_LEN {
-            assert_eq!(TelephoneEventPayload::parse(&REPORT[..len]), None);
+            assert_eq!(TeleEvent::parse(&REPORT[..len]), None);
         }
     }
 
     #[test]
     fn payload_ignores_reserved_bit_and_masks_volume() {
-        let report = TelephoneEventPayload::parse(&[0xff; 4]).unwrap();
+        let report = TeleEvent::parse(&[0xff; 4]).unwrap();
         assert_eq!(report.volume, 63);
         assert_eq!(report.to_bytes(), [0xff, 0xbf, 0xff, 0xff]);
 
-        let loud = TelephoneEventPayload {
+        let loud = TeleEvent {
             event: 0,
             end: false,
             volume: 0xff,
@@ -187,17 +187,17 @@ mod test {
     fn parse_all_requires_whole_reports() {
         let packed = [REPORT, NEXT].concat();
 
-        let reports: Vec<_> = TelephoneEventPayload::parse_all(&packed).unwrap().collect();
+        let reports: Vec<_> = TeleEvent::parse_all(&packed).unwrap().collect();
         assert_eq!(
             reports,
             [
-                TelephoneEventPayload::parse(&REPORT).unwrap(),
-                TelephoneEventPayload::parse(&NEXT).unwrap(),
+                TeleEvent::parse(&REPORT).unwrap(),
+                TeleEvent::parse(&NEXT).unwrap(),
             ]
         );
 
         for len in [0, 1, 3, 5, 7] {
-            assert!(TelephoneEventPayload::parse_all(&packed[..len]).is_none());
+            assert!(TeleEvent::parse_all(&packed[..len]).is_none());
         }
     }
 
@@ -242,8 +242,8 @@ mod test {
     #[test]
     fn depacketizer_passes_reports_through() {
         let mut depacketizer = TelephoneEventDepacketizer;
-        let first = TelephoneEventPayload::parse(&REPORT).unwrap();
-        let second = TelephoneEventPayload::parse(&NEXT).unwrap();
+        let first = TeleEvent::parse(&REPORT).unwrap();
+        let second = TeleEvent::parse(&NEXT).unwrap();
         let packed = [REPORT, NEXT].concat();
 
         for (packet, expected) in [
@@ -257,7 +257,7 @@ mod test {
                 .unwrap();
 
             assert_eq!(out, packet);
-            assert_eq!(extra, CodecExtra::TelephoneEvent(expected));
+            assert_eq!(extra, CodecExtra::Tele(expected));
             assert!(depacketizer.is_partition_head(packet));
             assert!(depacketizer.is_partition_tail(false, packet));
         }
