@@ -7,6 +7,7 @@ use std::panic::UnwindSafe;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+pub use sctp_proto::ReceiveLimits as SctpReceiveLimits;
 use sctp_proto::{Association, AssociationHandle, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
 use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig, TransportConfig};
@@ -51,6 +52,7 @@ pub(crate) struct RtcSctp {
     // be sent after Close.
     reset_complete: VecDeque<u16>,
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
+    receive_limits: Option<SctpReceiveLimits>,
     last_now: Instant,
     client: bool,
     remote_max_message_size: u32,
@@ -285,7 +287,12 @@ const _: () = assert!(
 );
 
 impl RtcSctp {
+    #[cfg(test)]
     pub fn new(mtu: usize) -> Self {
+        Self::with_receive_limits(mtu, None)
+    }
+
+    pub fn with_receive_limits(mtu: usize, receive_limits: Option<SctpReceiveLimits>) -> Self {
         let mut config = EndpointConfig::default();
         let max_payload = mtu
             .saturating_sub(crate::io::MAX_DTLS_OVERHEAD)
@@ -294,7 +301,7 @@ impl RtcSctp {
         #[cfg(test)]
         let max_payload_size = max_payload;
         let mut server_config = ServerConfig::default();
-        server_config.transport = webrtc_transport_config();
+        server_config.transport = webrtc_transport_config(receive_limits);
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
         let fake_addr = "1.1.1.1:5000".parse().unwrap();
 
@@ -308,6 +315,7 @@ impl RtcSctp {
             reset_pending: HashSet::new(),
             reset_complete: VecDeque::new(),
             pushed_back_transmit: None,
+            receive_limits,
             last_now: Instant::now(), // placeholder until init()
             client: false,
             remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
@@ -355,7 +363,7 @@ impl RtcSctp {
             self.remote_max_message_size = max_msg_size;
         }
 
-        if let Some(snap_data) = sctp_init_data {
+        if let Some(mut snap_data) = sctp_init_data {
             // SNAP path: both local and remote INIT chunks must be present.
             if snap_data.local_init.is_none() || snap_data.remote_init.is_none() {
                 return Err(SctpError::Proto(ProtoError::Other(
@@ -363,6 +371,25 @@ impl RtcSctp {
                 )));
             }
 
+            // A direct SNAP caller may have already signaled the cached local
+            // INIT. Do not silently install a smaller receive budget than the
+            // window the peer was told it could use.
+            if let Some(limits) = self.receive_limits {
+                let advertised_window = snap_data
+                    .local_init
+                    .as_ref()
+                    .and_then(|init| init.get(8..12))
+                    .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
+                    .ok_or_else(|| {
+                        SctpError::Proto(ProtoError::Other("Invalid local SNAP INIT".into()))
+                    })?;
+                if advertised_window > limits.max_buffered_bytes() {
+                    return Err(SctpError::Proto(ProtoError::Other(
+                        "Local SNAP INIT receive window exceeds configured limit".into(),
+                    )));
+                }
+                snap_data.transport = webrtc_transport_config(Some(limits));
+            }
             let config = snap_data.into_client_config();
             debug!(
                 "New {} association (out-of-band: true)",
@@ -387,14 +414,15 @@ impl RtcSctp {
         } else if client {
             // Normal client path: initiate the SCTP association.
             let mut config = SctpInitData::default().into_client_config();
-
-            config.transport = Arc::new(
-                TransportConfig::default()
-                    .with_max_init_retransmits(None)
-                    .with_max_data_retransmits(None)
-                    .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
-                    .with_max_send_message_size(self.remote_max_message_size),
-            );
+            let mut transport = TransportConfig::default()
+                .with_max_init_retransmits(None)
+                .with_max_data_retransmits(None)
+                .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
+                .with_max_send_message_size(self.remote_max_message_size);
+            if let Some(limits) = self.receive_limits {
+                transport = transport.with_receive_limits(limits);
+            }
+            config.transport = Arc::new(transport);
 
             debug!("New local association (out-of-band: false)");
             let (handle, assoc) = self
@@ -412,6 +440,11 @@ impl RtcSctp {
         Ok(())
     }
 
+    pub fn local_max_message_size(&self) -> u32 {
+        self.receive_limits
+            .map_or(LOCAL_MAX_MESSAGE_SIZE, SctpReceiveLimits::max_message_size)
+    }
+
     pub fn is_client(&self) -> bool {
         self.client
     }
@@ -419,7 +452,8 @@ impl RtcSctp {
     /// Enable SNAP by pre-populating the init data.
     pub fn enable_snap(&mut self) {
         self.snap_enabled = true;
-        self.snap_init.get_or_insert_with(SctpInitData::new);
+        self.snap_init
+            .get_or_insert_with(|| SctpInitData::with_optional_receive_limits(self.receive_limits));
     }
 
     /// Whether local offers should opt in to SNAP.
@@ -430,7 +464,9 @@ impl RtcSctp {
     /// Ensure the local SNAP INIT chunk is generated. Returns `false` if
     /// generation failed (degrades to non-SNAP).
     pub fn ensure_local_snap_init(&mut self) -> bool {
-        let init_data = self.snap_init.get_or_insert_with(SctpInitData::new);
+        let init_data = self
+            .snap_init
+            .get_or_insert_with(|| SctpInitData::with_optional_receive_limits(self.receive_limits));
         if init_data.local_init_chunk().is_err() {
             self.snap_init = None;
             false
@@ -480,7 +516,9 @@ impl RtcSctp {
     /// Set the remote SNAP INIT from a base64 string. Returns `Ok(true)` if
     /// accepted, `Ok(false)` on decode error (degrades to non-SNAP).
     pub fn set_remote_snap_init_string(&mut self, value: &str) -> bool {
-        let init_data = self.snap_init.get_or_insert_with(SctpInitData::new);
+        let init_data = self
+            .snap_init
+            .get_or_insert_with(|| SctpInitData::with_optional_receive_limits(self.receive_limits));
         match init_data.set_remote_init_string(value) {
             Ok(()) => true,
             Err(_) => {
@@ -1418,9 +1456,16 @@ mod tests {
 
     /// Helper to connect a client and server RtcSctp pair to Established state.
     fn connect_client_server() -> (RtcSctp, RtcSctp) {
+        connect_client_server_with_limits(None, None)
+    }
+
+    fn connect_client_server_with_limits(
+        client_limits: Option<SctpReceiveLimits>,
+        server_limits: Option<SctpReceiveLimits>,
+    ) -> (RtcSctp, RtcSctp) {
         let now = Instant::now();
-        let mut client = RtcSctp::new(DATAGRAM_MTU_TARGET);
-        let mut server = RtcSctp::new(DATAGRAM_MTU_TARGET);
+        let mut client = RtcSctp::with_receive_limits(DATAGRAM_MTU_TARGET, client_limits);
+        let mut server = RtcSctp::with_receive_limits(DATAGRAM_MTU_TARGET, server_limits);
 
         client.init(true, now, None, None).unwrap();
         server.init(false, now, None, None).unwrap();
@@ -1473,6 +1518,110 @@ mod tests {
         assert_eq!(server.state, RtcSctpState::Established);
 
         (client, server)
+    }
+
+    #[test]
+    fn receive_limits_apply_to_both_association_roles() {
+        fn pump(from: &mut RtcSctp, to: &mut RtcSctp) -> Vec<SctpEvent> {
+            let mut output = Vec::new();
+            while let Some(event) = from.do_poll() {
+                if let SctpEvent::Transmit { packets } = event {
+                    for packet in packets {
+                        to.handle_input(from.last_now, &packet);
+                    }
+                } else {
+                    output.push(event);
+                }
+            }
+            output
+        }
+        let limits = SctpReceiveLimits::new(8192, 32768, 64, 8);
+        for receiver_is_client in [false, true] {
+            let (mut client, mut server) = connect_client_server_with_limits(
+                receiver_is_client.then_some(limits),
+                (!receiver_is_client).then_some(limits),
+            );
+            let (sender, receiver) = if receiver_is_client {
+                (&mut server, &mut client)
+            } else {
+                (&mut client, &mut server)
+            };
+            for id in [0, 65000] {
+                let config = ChannelConfig {
+                    negotiated: Some(id),
+                    ..Default::default()
+                };
+                sender.open_stream(id, config.clone());
+                receiver.open_stream(id, config);
+            }
+            pump(sender, receiver);
+            pump(receiver, sender);
+            let mut now = Instant::now();
+            for (id, size) in [(0, 8192), (65000, 512), (65000, 8193)] {
+                sender.write(id, true, &vec![42; size]).unwrap();
+                let mut received = None;
+                let mut lost = false;
+                for _ in 0..200 {
+                    now += Duration::from_millis(10);
+                    sender.handle_timeout(now);
+                    receiver.handle_timeout(now);
+                    pump(sender, receiver);
+                    for event in pump(receiver, sender) {
+                        match event {
+                            SctpEvent::Data {
+                                id: stream, data, ..
+                            } => received = Some((stream, data)),
+                            SctpEvent::AssociationLost => lost = true,
+                            _ => {}
+                        }
+                    }
+                    if received.is_some() || lost {
+                        break;
+                    }
+                }
+                if size <= 8192 {
+                    assert!(!lost);
+                    assert_eq!(received, Some((id, vec![42; size])));
+                } else {
+                    assert!(lost);
+                    assert!(received.is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn snap_advertises_the_configured_receive_window() {
+        let limits = SctpReceiveLimits::new(8192, 32768, 64, 8);
+        let mut direct = SctpInitData::with_receive_limits(limits);
+        let init = direct.local_init_chunk().unwrap();
+        assert_eq!(u32::from_be_bytes(init[8..12].try_into().unwrap()), 32768);
+        let mut sctp = RtcSctp::with_receive_limits(DATAGRAM_MTU_TARGET, Some(limits));
+        sctp.enable_snap();
+        assert!(sctp.ensure_local_snap_init());
+        let init = sctp
+            .snap_init
+            .as_ref()
+            .unwrap()
+            .local_init
+            .as_ref()
+            .unwrap();
+        assert_eq!(u32::from_be_bytes(init[8..12].try_into().unwrap()), 32768);
+    }
+
+    #[test]
+    fn direct_snap_rejects_init_advertising_a_larger_window_than_receive_policy() {
+        let limits = SctpReceiveLimits::new(8192, 32768, 64, 8);
+        let mut sctp = RtcSctp::with_receive_limits(DATAGRAM_MTU_TARGET, Some(limits));
+        let mut local = SctpInitData::new();
+        local.local_init_chunk().unwrap();
+        let mut remote = SctpInitData::new();
+        local.set_remote_init_chunk(remote.local_init_chunk().unwrap());
+
+        assert!(
+            sctp.init(true, Instant::now(), Some(local), None).is_err(),
+            "the already-signaled INIT advertises a larger receive window than the configured policy"
+        );
     }
 
     /// A stream the remote opened can be gone from the association by the time the

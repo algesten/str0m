@@ -880,6 +880,17 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
             })
             .collect::<Vec<_>>();
 
+        // Use the same local limit for SDP and the SCTP reassembly policy.
+        for line in &mut lines {
+            if line.typ.is_channel() {
+                line.attrs
+                    .retain(|a| !matches!(a, MediaAttribute::MaxMessageSize(_)));
+                line.attrs.push(MediaAttribute::MaxMessageSize(
+                    params.local_max_message_size as usize,
+                ));
+            }
+        }
+
         // Add a=sctp-init to the application m-line if SNAP is configured.
         if let Some(sctp_init) = &params.local_sctp_init {
             for line in &mut lines {
@@ -1607,6 +1618,7 @@ struct AsSdpParams<'a, 'b> {
     pub setup: Setup,
     pub pending: Option<&'b Changes>,
     pub local_sctp_init: Option<String>,
+    pub local_max_message_size: u32,
 }
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
@@ -1656,6 +1668,7 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             setup,
             pending,
             local_sctp_init: rtc.sctp.local_sctp_init_for_sdp(),
+            local_max_message_size: rtc.sctp.local_max_message_size(),
         }
     }
 
@@ -2623,6 +2636,28 @@ mod test {
         assert!(
             sdp_string.contains(&expected_line),
             "SDP should contain max-message-size attribute with LOCAL_MAX_MESSAGE_SIZE value"
+        );
+    }
+
+    #[test]
+    fn test_configured_max_message_size_advertised() {
+        crate::init_crypto_default();
+        let limits = crate::channel::SctpReceiveLimits::new(8192, 32768, 64, 8);
+        let mut rtc = Rtc::builder()
+            .set_sctp_receive_limits(limits)
+            .build(Instant::now());
+        let mut change = rtc.sdp_api();
+        change.add_channel("control".into());
+        let (offer, _) = change.apply().unwrap();
+        let app = offer
+            .media_lines
+            .iter()
+            .find(|m| m.typ.is_channel())
+            .unwrap();
+        assert_eq!(app.max_message_size(), Some(8192));
+        assert_eq!(
+            offer.to_sdp_string().matches("a=max-message-size:").count(),
+            1
         );
     }
 

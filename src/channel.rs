@@ -9,6 +9,7 @@ use crate::{Rtc, RtcError};
 pub use crate::sctp::ChannelConfig;
 pub use crate::sctp::Reliability;
 pub use crate::sctp::SctpInitData;
+pub use crate::sctp::SctpReceiveLimits;
 
 /// Identifier of a data channel.
 ///

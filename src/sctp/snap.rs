@@ -7,19 +7,21 @@ use std::sync::Arc;
 use base64ct::{Base64, Encoding};
 use sctp_proto::{ClientConfig, TransportConfig, generate_snap_token};
 
-use super::{LOCAL_MAX_MESSAGE_SIZE, SctpError as Error};
+use super::{LOCAL_MAX_MESSAGE_SIZE, SctpError as Error, SctpReceiveLimits};
 
 /// Build the WebRTC transport config with unlimited retransmits.
 ///
 /// For WebRTC, we never want to give up retransmitting init and data packets.
 /// The connectivity is in ICE, and SCTP should not give up until ICE gives up.
-pub(super) fn webrtc_transport_config() -> Arc<TransportConfig> {
-    Arc::new(
-        TransportConfig::default()
-            .with_max_init_retransmits(None)
-            .with_max_data_retransmits(None)
-            .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE),
-    )
+pub(super) fn webrtc_transport_config(limits: Option<SctpReceiveLimits>) -> Arc<TransportConfig> {
+    let mut config = TransportConfig::default()
+        .with_max_init_retransmits(None)
+        .with_max_data_retransmits(None)
+        .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE);
+    if let Some(limits) = limits {
+        config = config.with_receive_limits(limits);
+    }
+    Arc::new(config)
 }
 
 /// Out-of-band SCTP INIT data for SNAP negotiation.
@@ -61,7 +63,7 @@ pub struct SctpInitData {
 impl Default for SctpInitData {
     fn default() -> Self {
         SctpInitData {
-            transport: webrtc_transport_config(),
+            transport: webrtc_transport_config(None),
             local_init: None,
             remote_init: None,
         }
@@ -75,6 +77,21 @@ impl SctpInitData {
     /// which is recommended for WebRTC where connectivity is managed by ICE.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create SNAP data with the same receive limits used by `RtcConfig`.
+    /// Configure this before generating the local INIT bytes so its advertised
+    /// receive window matches the association's resource policy.
+    pub fn with_receive_limits(limits: SctpReceiveLimits) -> Self {
+        Self::with_optional_receive_limits(Some(limits))
+    }
+
+    pub(super) fn with_optional_receive_limits(limits: Option<SctpReceiveLimits>) -> Self {
+        Self {
+            transport: webrtc_transport_config(limits),
+            local_init: None,
+            remote_init: None,
+        }
     }
 
     /// Get the local INIT chunk bytes for out-of-band signaling.
