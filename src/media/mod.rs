@@ -423,7 +423,7 @@ impl Media {
 
             let mut depack: CodecDepacketizer = codec.into();
 
-            if let CodecDepacketizer::TelephoneEvent(ref mut tele) = depack {
+            if let CodecDepacketizer::Tele(ref mut tele) = depack {
                 tele.clock_rate = params.spec.rtp_clock_rate();
             }
 

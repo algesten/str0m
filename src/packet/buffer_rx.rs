@@ -150,7 +150,7 @@ impl DepacketizingBuffer {
             | CodecDepacketizer::Boxed(_)
             | CodecDepacketizer::Opus(_)
             | CodecDepacketizer::ComfortNoise(_)
-            | CodecDepacketizer::TelephoneEvent(_)
+            | CodecDepacketizer::Tele(_)
             | CodecDepacketizer::G711(_)
             | CodecDepacketizer::Null(_) => Contiguity::None,
         };
@@ -328,7 +328,7 @@ impl DepacketizingBuffer {
 
         // Keep the same RTP entry until every packed report has been emitted. The next pop
         // depacketizes its remaining bytes, so sequence ordering and duplicate checks stay intact.
-        let is_tele = matches!(self.depack, CodecDepacketizer::TelephoneEvent(_));
+        let is_tele = matches!(self.depack, CodecDepacketizer::Tele(_));
         let has_more_reports = dep.data.len() > 4;
         if can_emit && is_tele && has_more_reports {
             self.retain_tele_reports(start, &mut dep);
