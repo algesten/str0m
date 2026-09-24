@@ -123,8 +123,9 @@ impl Depacketizer for TelephoneEventDepacketizer {
         out: &mut Vec<u8>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
-        let reports = TelephoneEventPayload::parse_all(packet)
-            .ok_or(PacketError::ErrTelephoneEventCorruptedPacket)?;
+        let reports = TelephoneEventPayload::parse_all(packet).ok_or(PacketError::TeleInvalid(
+            "payload must contain one or more complete 4-byte reports",
+        ))?;
         let mut events = Vec::with_capacity(packet.len() / REPORT_LEN);
         events.extend(reports);
 
@@ -272,12 +273,21 @@ mod test {
             let mut extra = CodecExtra::None;
             let result = depacketizer.depacketize(&packed[..len], &mut out, &mut extra);
 
-            assert_eq!(result, Err(PacketError::ErrTelephoneEventCorruptedPacket));
+            assert_eq!(
+                result,
+                Err(PacketError::TeleInvalid(
+                    "payload must contain one or more complete 4-byte reports"
+                ))
+            );
             assert!(out.is_empty());
             assert_eq!(extra, CodecExtra::None);
         }
 
-        let error = PacketError::ErrTelephoneEventCorruptedPacket;
-        assert_eq!(error.to_string(), "Telephone-event corrupted packet");
+        let error =
+            PacketError::TeleInvalid("payload must contain one or more complete 4-byte reports");
+        assert_eq!(
+            error.to_string(),
+            "Invalid telephone event: payload must contain one or more complete 4-byte reports"
+        );
     }
 }

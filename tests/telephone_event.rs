@@ -982,8 +982,9 @@ fn telephone_event_frame_reports_malformed_payloads() -> Result<(), RtcError> {
     let result = progress_for(&mut l, &mut r, Duration::from_secs(1));
     assert!(matches!(
         result,
-        Err(RtcError::Packet(m, pt, PacketError::ErrTelephoneEventCorruptedPacket))
+        Err(RtcError::Packet(m, pt, PacketError::TeleInvalid(reason)))
             if m == mid && pt == EVENT_PT.into()
+                && reason == "payload must contain one or more complete 4-byte reports"
     ));
     assert!(telephone_events(&r).is_empty());
 
@@ -1077,21 +1078,39 @@ fn telephone_event_write_rejects_invalid_events() {
     assert!(matches!(result, Err(RtcError::UnknownPt(pt)) if pt == audio_pt));
 
     let err = write(EVENT_PT.into(), 17, 500, 0).unwrap_err();
-    assert!(matches!(err, RtcError::UnsupportedTelephoneEvent(17)));
-    assert_eq!(err.to_string(), "Telephone event is not supported 17");
+    assert!(matches!(
+        err,
+        RtcError::Packet(m, pt, PacketError::TeleInvalid("event exceeds negotiated range"))
+            if m == mid && pt == EVENT_PT.into()
+    ));
+    assert!(
+        err.to_string()
+            .ends_with("Invalid telephone event: event exceeds negotiated range")
+    );
 
     let err = write(EVENT_PT.into(), 16, 500, 64).unwrap_err();
-    assert!(matches!(err, RtcError::InvalidTelephoneEventVolume(64)));
-    assert_eq!(err.to_string(), "Telephone event volume is invalid 64");
+    assert!(matches!(
+        err,
+        RtcError::Packet(m, pt, PacketError::TeleInvalid("volume exceeds 63"))
+            if m == mid && pt == EVENT_PT.into()
+    ));
+    assert!(
+        err.to_string()
+            .ends_with("Invalid telephone event: volume exceeds 63")
+    );
 
     // libwebrtc allows 40 ms to 6 s.
     for millis in [39, 6001] {
         let err = write(EVENT_PT.into(), 16, millis, 0).unwrap_err();
-        assert!(matches!(err, RtcError::InvalidTelephoneEventDuration(_)));
-        let duration = Duration::from_millis(millis);
-        assert_eq!(
-            err.to_string(),
-            format!("Telephone event duration is invalid {duration:?}")
+        assert!(matches!(
+            err,
+            RtcError::Packet(m, pt, PacketError::TeleInvalid(
+                "duration must be between 40 ms and 6 s"
+            )) if m == mid && pt == EVENT_PT.into()
+        ));
+        assert!(
+            err.to_string()
+                .ends_with("Invalid telephone event: duration must be between 40 ms and 6 s")
         );
     }
     for millis in [40, 6000] {

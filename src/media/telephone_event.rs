@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::RtcError;
+use crate::packet::PacketError;
 
 use super::{ExtensionValues, Frequency, MediaTime, Pt, Rid, TelephoneEventPayload, ToPayload};
 
@@ -44,13 +44,15 @@ pub(crate) struct TelephoneEventQueue {
 }
 
 impl TelephoneEventQueue {
-    pub(crate) fn push(&mut self, mut event: TelephoneEvent) -> Result<(), RtcError> {
+    pub(crate) fn push(&mut self, mut event: TelephoneEvent) -> Result<(), PacketError> {
         // The volume field has 6 bits (RFC 4733 Section 2.3.4).
         if event.volume > 63 {
-            return Err(RtcError::InvalidTelephoneEventVolume(event.volume));
+            return Err(PacketError::TeleInvalid("volume exceeds 63"));
         }
         if !(MIN_DURATION..=MAX_DURATION).contains(&event.duration) {
-            return Err(RtcError::InvalidTelephoneEventDuration(event.duration));
+            return Err(PacketError::TeleInvalid(
+                "duration must be between 40 ms and 6 s",
+            ));
         }
 
         // Waiting for the previous event moves the start in wallclock and RTP time alike.

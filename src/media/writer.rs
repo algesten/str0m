@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::RtcError;
 use crate::format::PayloadParams;
+use crate::packet::PacketError;
 use crate::rtp_::AbsCaptureTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
@@ -205,10 +206,8 @@ impl<'a> Writer<'a> {
     ///
     /// * [`RtcError::UnknownPt`] if `pt` is not a telephone-event payload type, or is not among
     ///   the SDP-negotiated payload types for this media.
-    /// * [`RtcError::UnsupportedTelephoneEvent`] if `event` exceeds the negotiated range.
-    /// * [`RtcError::InvalidTelephoneEventVolume`] if `volume` is above 63.
-    /// * [`RtcError::InvalidTelephoneEventDuration`] if `duration` is shorter than 40 ms or
-    ///   longer than 6 seconds, the range libwebrtc accepts.
+    /// * [`RtcError::Packet`] with [`PacketError::TeleInvalid`] if `event` exceeds the negotiated
+    ///   range, `volume` is above 63, or `duration` is outside 40 ms through 6 seconds.
     /// * [`RtcError::NotSendingDirection`], [`RtcError::UnknownRid`] or
     ///   [`RtcError::NoSenderSource`] if the media can't send the event.
     ///
@@ -238,7 +237,11 @@ impl<'a> Writer<'a> {
         }
 
         if event > max {
-            return Err(RtcError::UnsupportedTelephoneEvent(event));
+            return Err(RtcError::Packet(
+                self.mid,
+                pt,
+                PacketError::TeleInvalid("event exceeds negotiated range"),
+            ));
         }
 
         if !media.direction().is_sending() {
@@ -262,16 +265,19 @@ impl<'a> Writer<'a> {
             self.mid, self.rid, pt, rtp_time, event, duration
         );
 
-        media.telephone_events.push(TelephoneEvent {
-            pt,
-            rid: self.rid,
-            event,
-            volume,
-            duration,
-            wallclock,
-            rtp_time: rtp_time.rebase(clock_rate),
-            ext_vals: self.ext_vals,
-        })
+        media
+            .telephone_events
+            .push(TelephoneEvent {
+                pt,
+                rid: self.rid,
+                event,
+                volume,
+                duration,
+                wallclock,
+                rtp_time: rtp_time.rebase(clock_rate),
+                ext_vals: self.ext_vals,
+            })
+            .map_err(|e| RtcError::Packet(self.mid, pt, e))
     }
 
     /// Test if the kind of keyframe request is possible.
