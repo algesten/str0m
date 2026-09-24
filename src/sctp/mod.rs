@@ -1594,6 +1594,21 @@ mod tests {
         assert_eq!(u32::from_be_bytes(init[8..12].try_into().unwrap()), 32768);
     }
 
+    #[test]
+    fn direct_snap_rejects_init_advertising_a_larger_window_than_receive_policy() {
+        let limits = SctpReceiveLimits::new(8192, 32768, 64, 8);
+        let mut sctp = RtcSctp::with_receive_limits(DATAGRAM_MTU_TARGET, Some(limits));
+        let mut local = SctpInitData::new();
+        local.local_init_chunk().unwrap();
+        let mut remote = SctpInitData::new();
+        local.set_remote_init_chunk(remote.local_init_chunk().unwrap());
+
+        assert!(
+            sctp.init(true, Instant::now(), Some(local), None).is_err(),
+            "the already-signaled INIT advertises a larger receive window than the configured policy"
+        );
+    }
+
     /// A stream the remote opened can be gone from the association by the time the
     /// application configures it.
     ///
