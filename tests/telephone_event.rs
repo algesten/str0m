@@ -4,7 +4,7 @@ use std::time::Duration;
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::error::PacketError;
 use str0m::format::{Codec, CodecConfig, CodecExtra, FormatParams};
-use str0m::media::TeleEvent;
+use str0m::media::TelephoneEvent;
 use str0m::media::{Direction, Frequency, MediaData, MediaKind, MediaTime, Mid, Pt};
 use str0m::rtp::{RtpWrite, Ssrc};
 use str0m::{Event, RtcError};
@@ -80,7 +80,7 @@ fn event_max(rtc: &TestRtc, mid: Mid, pt: u8) -> Option<u8> {
         .then(|| {
             rtc.codec_config()
                 .find(|p| p.pt() == pt.into() && p.spec().codec.is_tele())
-                .map(|p| p.spec().format.tele_event_max.unwrap_or(16))
+                .map(|p| p.spec().format.telephone_event_max.unwrap_or(16))
         })
         .flatten()
 }
@@ -438,7 +438,7 @@ fn bare_event_range_requires_telephone_event_rtpmap() {
     let params = parsed.media_lines[0].rtp_params();
     let other = params.iter().find(|p| p.pt() == 101.into()).unwrap();
     assert_eq!(other.spec().codec, Codec::Opus);
-    assert_eq!(other.spec().format.tele_event_max, None);
+    assert_eq!(other.spec().format.telephone_event_max, None);
 }
 
 #[test]
@@ -492,7 +492,7 @@ fn telephone_event_sdp_ranges_are_per_pt_across_media() {
             .codec_config()
             .find(|p| p.spec().codec == Codec::Tele)
             .unwrap();
-        assert_eq!(params.spec().format.tele_event_max, Some(7));
+        assert_eq!(params.spec().format.telephone_event_max, Some(7));
     }
 }
 
@@ -719,7 +719,7 @@ fn telephone_event_frame_roundtrip() -> Result<(), RtcError> {
     let (mut l, mut r, mid) = connected_frame_mode();
     let audio_pt = l.params_opus().pt();
     let start = MediaTime::new(960, Frequency::FORTY_EIGHT_KHZ);
-    let report = |end, duration: u64| TeleEvent {
+    let report = |end, duration: u64| TelephoneEvent {
         event: 5,
         end,
         volume: 10,
@@ -742,7 +742,7 @@ fn telephone_event_frame_roundtrip() -> Result<(), RtcError> {
     let written_at = l.last;
     l.writer(mid)
         .unwrap()
-        .tele_event(tele(5, Duration::from_millis(110), 10))
+        .telephone_event(tele(5, Duration::from_millis(110), 10))
         .write(audio_pt, written_at, start, [])?;
     advance_with_empty_audio(&mut l, &mut r, mid, audio_pt, written_at, start, 110)?;
     write_audio(&mut l, mid, audio_pt, 9600)?;
@@ -789,7 +789,7 @@ fn telephone_event_frame_reports_take_sequence_numbers_when_sent() -> Result<(),
     let written_at = l.last;
     l.writer(mid)
         .unwrap()
-        .tele_event(tele(7, Duration::from_millis(250), 10))
+        .telephone_event(tele(7, Duration::from_millis(250), 10))
         .write(
             audio_pt,
             written_at,
@@ -841,7 +841,7 @@ fn telephone_event_packets_send_on_deadlines_with_empty_audio() -> Result<(), Rt
     let rtp_start = MediaTime::new(0, Frequency::FORTY_EIGHT_KHZ);
     l.writer(mid)
         .unwrap()
-        .tele_event(tele(5, Duration::from_millis(100), 10))
+        .telephone_event(tele(5, Duration::from_millis(100), 10))
         .write(audio_pt, start, rtp_start, [])?;
 
     progress_for(&mut l, &mut r, Duration::from_millis(200))?;
@@ -854,7 +854,7 @@ fn telephone_event_packets_send_on_deadlines_with_empty_audio() -> Result<(), Rt
     );
     assert!(events[4..].iter().all(|data| {
         data.codec_extra
-            == CodecExtra::Tele(vec![TeleEvent {
+            == CodecExtra::Tele(vec![TelephoneEvent {
                 event: 5,
                 end: true,
                 volume: 10,
@@ -876,7 +876,7 @@ fn audio_written_out_of_order_is_inserted_among_telephone_packets() -> Result<()
     let start = l.last;
     l.writer(mid)
         .unwrap()
-        .tele_event(tele(5, Duration::from_millis(100), 10))
+        .telephone_event(tele(5, Duration::from_millis(100), 10))
         .write(
             audio_pt,
             start,
@@ -920,7 +920,7 @@ fn telephone_event_frame_long_duration_roundtrip() -> Result<(), RtcError> {
     let audio_pt = l.params_opus().pt();
     l.writer(mid)
         .unwrap()
-        .tele_event(tele(5, Duration::from_secs(3), 10))
+        .telephone_event(tele(5, Duration::from_secs(3), 10))
         .write(audio_pt, wallclock, start, [])?;
     advance_with_empty_audio(&mut l, &mut r, mid, audio_pt, wallclock, start, 3000)?;
     progress_for(&mut l, &mut r, Duration::from_secs(1))?;
@@ -945,7 +945,7 @@ fn maximum_duration_telephone_event_fits_payload_queue() -> Result<(), RtcError>
     let rtp_time = MediaTime::new(0, Frequency::FORTY_EIGHT_KHZ);
     l.writer(mid)
         .unwrap()
-        .tele_event(tele(5, Duration::from_secs(6), 10))
+        .telephone_event(tele(5, Duration::from_secs(6), 10))
         .write(audio_pt, wallclock, rtp_time, [])
 }
 
@@ -966,7 +966,7 @@ fn telephone_event_frame_queued_events_wait_for_each_other() -> Result<(), RtcEr
         let event_time = MediaTime::new(start.numer() + offset * 48, start.frequency());
         l.writer(mid)
             .unwrap()
-            .tele_event(tele(event, Duration::from_millis(100), 10))
+            .telephone_event(tele(event, Duration::from_millis(100), 10))
             .write(audio_pt, event_wallclock, event_time, [])?;
         advance_with_empty_audio(
             &mut l,
@@ -988,7 +988,7 @@ fn telephone_event_frame_queued_events_wait_for_each_other() -> Result<(), RtcEr
         for (report_index, data) in reports.iter().enumerate() {
             // Updates at 20 to 80 ms, then the final reports at 100 ms.
             let ticks = (report_index as u64 + 1).min(5);
-            let expected = TeleEvent {
+            let expected = TelephoneEvent {
                 event: digit,
                 end: ticks == 5,
                 volume: 10,
@@ -1015,7 +1015,7 @@ fn telephone_event_frame_stops_when_media_stops_sending() -> Result<(), RtcError
         let wallclock = rtc.last;
         rtc.writer(mid)
             .unwrap()
-            .tele_event(tele(event, Duration::from_millis(500), 10))
+            .telephone_event(tele(event, Duration::from_millis(500), 10))
             .write(audio_pt, wallclock, start, [])
     };
     write(&mut l, 1)?;
@@ -1024,7 +1024,7 @@ fn telephone_event_frame_stops_when_media_stops_sending() -> Result<(), RtcError
         Err(RtcError::Packet(
             _,
             _,
-            PacketError::TeleInvalid("telephone events must be at least 50 ms apart")
+            PacketError::InvalidTelephoneEvent("telephone events must be at least 50 ms apart")
         ))
     ));
     // Updates at 20 to 100 ms.
@@ -1056,13 +1056,13 @@ fn telephone_event_frame_packed_reports_arrive_as_one_sample() -> Result<(), Rtc
     init_crypto_default();
 
     let (mut l, mut r, mid) = connected_frame_mode();
-    let first = TeleEvent {
+    let first = TelephoneEvent {
         event: 1,
         end: true,
         volume: 10,
         duration: Duration::from_millis(20),
     };
-    let second = TeleEvent {
+    let second = TelephoneEvent {
         event: 2,
         end: true,
         volume: 10,
@@ -1085,7 +1085,7 @@ fn telephone_event_frame_packed_reports_arrive_as_one_sample() -> Result<(), Rtc
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].data.as_ref(), packed);
     assert_eq!(events[0].codec_extra, CodecExtra::Tele(vec![first, second]));
-    let reports: Vec<_> = TeleEvent::parse_all(&events[0].data, Frequency::FORTY_EIGHT_KHZ)
+    let reports: Vec<_> = TelephoneEvent::parse_all(&events[0].data, Frequency::FORTY_EIGHT_KHZ)
         .unwrap()
         .collect();
     assert_eq!(reports, [first, second]);
@@ -1098,7 +1098,7 @@ fn telephone_event_frame_reports_malformed_payloads() -> Result<(), RtcError> {
     init_crypto_default();
 
     let (mut l, mut r, mid) = connected_frame_mode();
-    let report = TeleEvent {
+    let report = TelephoneEvent {
         event: 1,
         end: false,
         volume: 10,
@@ -1113,7 +1113,7 @@ fn telephone_event_frame_reports_malformed_payloads() -> Result<(), RtcError> {
     let result = progress_for(&mut l, &mut r, Duration::from_secs(1));
     assert!(matches!(
         result,
-        Err(RtcError::Packet(m, pt, PacketError::TeleInvalid(reason)))
+        Err(RtcError::Packet(m, pt, PacketError::InvalidTelephoneEvent(reason)))
             if m == mid && pt == EVENT_PT.into()
                 && reason == "payload must contain one or more complete 4-byte reports"
     ));
@@ -1158,11 +1158,11 @@ fn telephone_event_write_rejects_unnegotiated_clock_rate() {
         let result = rtc
             .writer(mid)
             .unwrap()
-            .tele_event(tele(5, Duration::from_millis(100), 10))
+            .telephone_event(tele(5, Duration::from_millis(100), 10))
             .write(audio_pt, wallclock, start, []);
         assert!(matches!(
             result,
-            Err(RtcError::Packet(_, p, PacketError::TeleInvalid("no negotiated telephone event for audio clock rate")))
+            Err(RtcError::Packet(_, p, PacketError::InvalidTelephoneEvent("no negotiated telephone event for audio clock rate")))
                 if p == audio_pt
         ));
     }
@@ -1183,7 +1183,7 @@ fn telephone_event_write_rejects_unnegotiated_clock_rate() {
     let result = l
         .writer(mid)
         .unwrap()
-        .tele_event(tele(5, Duration::from_millis(100), 10))
+        .telephone_event(tele(5, Duration::from_millis(100), 10))
         .write(
             audio_pt,
             wallclock,
@@ -1192,7 +1192,7 @@ fn telephone_event_write_rejects_unnegotiated_clock_rate() {
         );
     assert!(matches!(
         result,
-        Err(RtcError::Packet(_, p, PacketError::TeleInvalid("no negotiated telephone event for audio clock rate")))
+        Err(RtcError::Packet(_, p, PacketError::InvalidTelephoneEvent("no negotiated telephone event for audio clock rate")))
             if p == audio_pt
     ));
 }
@@ -1220,11 +1220,11 @@ fn telephone_event_write_selects_pt_from_audio_clock_rate() {
         let result = l
             .writer(mid)
             .unwrap()
-            .tele_event(tele(8, Duration::from_millis(100), 10))
+            .telephone_event(tele(8, Duration::from_millis(100), 10))
             .write(audio_pt, wallclock, MediaTime::new(0, clock_rate), []);
         assert!(matches!(
             result,
-            Err(RtcError::Packet(_, p, PacketError::TeleInvalid("event exceeds negotiated range")))
+            Err(RtcError::Packet(_, p, PacketError::InvalidTelephoneEvent("event exceeds negotiated range")))
                 if p == event_pt.into()
         ));
     }
@@ -1246,7 +1246,7 @@ fn telephone_event_write_direct_api() -> Result<(), RtcError> {
     let audio_pt = rtc.params_opus().pt();
     rtc.writer(mid)
         .unwrap()
-        .tele_event(tele(5, Duration::from_millis(100), 10))
+        .telephone_event(tele(5, Duration::from_millis(100), 10))
         .write(audio_pt, wallclock, start, [])
 }
 
@@ -1263,7 +1263,7 @@ fn telephone_event_write_rejects_invalid_events() {
         let duration = Duration::from_millis(millis);
         l.writer(mid)
             .unwrap()
-            .tele_event(tele(event, duration, volume))
+            .telephone_event(tele(event, duration, volume))
             .write(pt, wallclock, start, [])
     };
 
@@ -1273,7 +1273,7 @@ fn telephone_event_write_rejects_invalid_events() {
     let err = write(audio_pt, 17, 500, 0).unwrap_err();
     assert!(matches!(
         err,
-        RtcError::Packet(m, pt, PacketError::TeleInvalid("event exceeds negotiated range"))
+        RtcError::Packet(m, pt, PacketError::InvalidTelephoneEvent("event exceeds negotiated range"))
             if m == mid && pt == EVENT_PT.into()
     ));
     assert!(
@@ -1284,7 +1284,7 @@ fn telephone_event_write_rejects_invalid_events() {
     let err = write(audio_pt, 16, 500, 64).unwrap_err();
     assert!(matches!(
         err,
-        RtcError::Packet(m, pt, PacketError::TeleInvalid("volume exceeds 63"))
+        RtcError::Packet(m, pt, PacketError::InvalidTelephoneEvent("volume exceeds 63"))
             if m == mid && pt == EVENT_PT.into()
     ));
     assert!(
@@ -1297,7 +1297,7 @@ fn telephone_event_write_rejects_invalid_events() {
         let err = write(audio_pt, 16, millis, 0).unwrap_err();
         assert!(matches!(
             err,
-            RtcError::Packet(m, pt, PacketError::TeleInvalid(
+            RtcError::Packet(m, pt, PacketError::InvalidTelephoneEvent(
                 "duration must be between 40 ms and 6 s"
             )) if m == mid && pt == EVENT_PT.into()
         ));
@@ -1313,12 +1313,16 @@ fn telephone_event_write_rejects_invalid_events() {
     let err = l
         .writer(mid)
         .unwrap()
-        .tele_event(incomplete)
+        .telephone_event(incomplete)
         .write(audio_pt, wallclock, start, [])
         .unwrap_err();
     assert!(matches!(
         err,
-        RtcError::Packet(_, _, PacketError::TeleInvalid("event must have end set"))
+        RtcError::Packet(
+            _,
+            _,
+            PacketError::InvalidTelephoneEvent("event must have end set")
+        )
     ));
 
     // Without the send stream, writes fail, and so do the reports of the events queued above.
@@ -1326,9 +1330,10 @@ fn telephone_event_write_rejects_invalid_events() {
     assert!(l.direct_api().remove_stream_tx(ssrc));
     let duration = Duration::from_millis(100);
     let writer = l.writer(mid).unwrap();
-    let result = writer
-        .tele_event(tele(16, duration, 0))
-        .write(audio_pt, wallclock, start, []);
+    let result =
+        writer
+            .telephone_event(tele(16, duration, 0))
+            .write(audio_pt, wallclock, start, []);
     assert!(matches!(result, Err(RtcError::NoSenderSource)));
     progress_for(&mut l, &mut r, Duration::from_millis(100)).unwrap();
 
@@ -1336,23 +1341,25 @@ fn telephone_event_write_rejects_invalid_events() {
     let wallclock = l.last;
     let rid = "r0".into();
     let writer = l.writer(mid).unwrap().rid(rid);
-    let result = writer
-        .tele_event(tele(16, duration, 0))
-        .write(audio_pt, wallclock, start, []);
+    let result =
+        writer
+            .telephone_event(tele(16, duration, 0))
+            .write(audio_pt, wallclock, start, []);
     assert!(matches!(result, Err(RtcError::UnknownRid(_))));
     l.direct_api()
         .declare_stream_tx(1234.into(), None, mid, Some(rid));
     let writer = l.writer(mid).unwrap().rid(rid);
-    let result = writer
-        .tele_event(tele(16, duration, 0))
-        .write(audio_pt, wallclock, start, []);
+    let result =
+        writer
+            .telephone_event(tele(16, duration, 0))
+            .write(audio_pt, wallclock, start, []);
     assert!(result.is_ok());
 }
 
 const EVENT_PT: u8 = 101;
 
-fn tele(event: u8, duration: Duration, volume: u8) -> TeleEvent {
-    TeleEvent {
+fn tele(event: u8, duration: Duration, volume: u8) -> TelephoneEvent {
+    TelephoneEvent {
         event,
         end: true,
         volume,

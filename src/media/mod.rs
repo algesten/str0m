@@ -26,13 +26,13 @@ use crate::util::already_happened;
 mod event;
 pub use event::*;
 
-mod telephone_event;
+mod tele;
 
 mod writer;
 pub use writer::Writer;
 
 pub use crate::packet::MediaKind;
-pub use crate::packet::TeleEvent;
+pub use crate::packet::TelephoneEvent;
 pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid};
 
 /// Mid used for SSRC 0 non-media BWE probes.

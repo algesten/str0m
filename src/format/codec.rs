@@ -75,9 +75,9 @@ pub enum Codec {
     /// Targets libwebrtc-compatible DTMF, defaulting to events `0-16`, not full
     /// RFC 4733 event handling. Only `0-X` SDP ranges are supported.
     ///
-    /// Frame mode uses [`Writer::tele_event`][crate::media::Writer::tele_event]
+    /// Frame mode uses [`Writer::telephone_event`][crate::media::Writer::telephone_event]
     /// and [`CodecExtra::Tele`][super::CodecExtra::Tele]. For RTP mode, see
-    /// [`TeleEvent`][crate::media::TeleEvent].
+    /// [`TelephoneEvent`][crate::media::TelephoneEvent].
     Tele,
     /// Technically not a codec, but used in places where codecs go
     /// in `a=rtpmap` lines.

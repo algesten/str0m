@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::packet::duration_from_units;
 
-use super::{ExtensionValues, Frequency, MediaTime, Pt, Rid, TeleEvent, ToPayload};
+use super::{ExtensionValues, Frequency, MediaTime, Pt, Rid, TelephoneEvent, ToPayload};
 
 const UPDATE_INTERVAL: Duration = Duration::from_millis(20);
 pub(crate) const MIN_PAUSE: Duration = Duration::from_millis(50);
@@ -18,7 +18,7 @@ const MAX_SEGMENT: u64 = u16::MAX as u64;
 pub(crate) struct TelephonePackets {
     pt: Pt,
     rid: Option<Rid>,
-    tele: TeleEvent,
+    tele: TelephoneEvent,
     wallclock: Instant,
     rtp_time: MediaTime,
     ext_vals: ExtensionValues,
@@ -33,7 +33,7 @@ impl TelephonePackets {
     pub(crate) fn new(
         pt: Pt,
         rid: Option<Rid>,
-        tele: TeleEvent,
+        tele: TelephoneEvent,
         wallclock: Instant,
         rtp_time: MediaTime,
         ext_vals: ExtensionValues,
@@ -55,7 +55,7 @@ impl TelephonePackets {
 
     fn packet(&mut self, duration: u64, end: bool, not_before: Instant) -> ToPayload {
         let clock_rate = self.rtp_time.frequency();
-        let payload = TeleEvent {
+        let payload = TelephoneEvent {
             event: self.tele.event,
             end,
             volume: self.tele.volume,
@@ -136,7 +136,7 @@ mod test {
         TelephonePackets::new(
             101.into(),
             None,
-            TeleEvent {
+            TelephoneEvent {
                 event: 5,
                 end: true,
                 volume: 10,
@@ -166,7 +166,7 @@ mod test {
         assert!(packets[1..].iter().all(|p| !p.start_of_talk_spurt));
         assert!(packets.iter().all(|p| p.rtp_time.numer() == 1000));
         for (index, packet) in packets.iter().enumerate() {
-            let tele = TeleEvent::parse(&packet.data, Frequency::EIGHT_KHZ).unwrap();
+            let tele = TelephoneEvent::parse(&packet.data, Frequency::EIGHT_KHZ).unwrap();
             assert_eq!(tele.end, index >= 5);
         }
     }
@@ -186,7 +186,7 @@ mod test {
         assert_eq!(at_boundary[0].rtp_time.numer(), 1000);
         assert_eq!(at_boundary[1].rtp_time.numer(), 1000 + MAX_SEGMENT);
         assert!(packets[151..].iter().all(|p| {
-            TeleEvent::parse(&p.data, Frequency::FORTY_EIGHT_KHZ)
+            TelephoneEvent::parse(&p.data, Frequency::FORTY_EIGHT_KHZ)
                 .unwrap()
                 .end
         }));

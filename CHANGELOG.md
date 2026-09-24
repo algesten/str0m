@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Send and receive telephone-event (DTMF) packets in frame mode with `Writer::tele_event` #1050
+  * Send and receive telephone-event (DTMF) packets in frame mode with `Writer::telephone_event` #1050
   * Add telephone-event payload vectors to `CodecExtra`, which is no longer `Copy` (breaking) #1050
   * Stop SSRC 0 probes from repeatedly scheduling an immediate RTCP feedback timeout #1052
   * Expose TWCC probing state and use named fields in bandwidth estimate events (breaking) #1048

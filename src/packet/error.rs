@@ -20,7 +20,7 @@ pub enum PacketError {
     ErrVP9CorruptedPacket,
     ErrAv1CorruptedPacket,
     ErrRedCorruptedPacket,
-    TeleInvalid(&'static str),
+    InvalidTelephoneEvent(&'static str),
 }
 
 impl fmt::Display for PacketError {
@@ -48,7 +48,9 @@ impl fmt::Display for PacketError {
             PacketError::ErrVP9CorruptedPacket => write!(f, "VP9 corrupted packet"),
             PacketError::ErrAv1CorruptedPacket => write!(f, "AV1 corrupted packet"),
             PacketError::ErrRedCorruptedPacket => write!(f, "RED corrupted packet"),
-            PacketError::TeleInvalid(reason) => write!(f, "Invalid telephone event: {reason}"),
+            PacketError::InvalidTelephoneEvent(reason) => {
+                write!(f, "Invalid telephone event: {reason}")
+            }
         }
     }
 }

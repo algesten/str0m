@@ -13,21 +13,21 @@ const REPORT_LEN: usize = 4;
 /// Builds and parses the 4-byte data carried in telephone-event RTP payloads.
 ///
 /// ```
-/// use str0m::media::TeleEvent;
+/// use str0m::media::TelephoneEvent;
 /// use str0m::media::Frequency;
 /// use std::time::Duration;
 ///
-/// let report = TeleEvent {
+/// let report = TelephoneEvent {
 ///     event: 5,
 ///     end: true,
 ///     volume: 10,
 ///     duration: Duration::from_millis(100),
 /// };
 /// let bytes = report.to_bytes(Frequency::EIGHT_KHZ).unwrap();
-/// assert_eq!(TeleEvent::parse(&bytes, Frequency::EIGHT_KHZ), Some(report));
+/// assert_eq!(TelephoneEvent::parse(&bytes, Frequency::EIGHT_KHZ), Some(report));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TeleEvent {
+pub struct TelephoneEvent {
     /// The event code (RFC 4733 Section 2.3.1).
     ///
     /// DTMF digits `0`-`9` are codes 0-9, `*` is 10, `#` is 11 and `A`-`D` are 12-15
@@ -44,7 +44,7 @@ pub struct TeleEvent {
     pub duration: Duration,
 }
 
-impl TeleEvent {
+impl TelephoneEvent {
     /// Parses the report in the first four bytes of `buf`, using its RTP clock rate to convert
     /// the wire duration to [`Duration`].
     pub fn parse(buf: &[u8], clock_rate: Frequency) -> Option<Self> {
@@ -52,7 +52,7 @@ impl TeleEvent {
             return None;
         };
 
-        Some(TeleEvent {
+        Some(TelephoneEvent {
             event,
             end: flags & 0x80 != 0,
             volume: flags & 0x3f,
@@ -155,8 +155,10 @@ impl Depacketizer for TelephoneEventDepacketizer {
         out: &mut Vec<u8>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
-        let reports = TeleEvent::parse_all(packet, self.clock_rate).ok_or(
-            PacketError::TeleInvalid("payload must contain one or more complete 4-byte reports"),
+        let reports = TelephoneEvent::parse_all(packet, self.clock_rate).ok_or(
+            PacketError::InvalidTelephoneEvent(
+                "payload must contain one or more complete 4-byte reports",
+            ),
         )?;
         let mut events = Vec::with_capacity(packet.len() / REPORT_LEN);
         events.extend(reports);
@@ -186,7 +188,7 @@ mod test {
 
     #[test]
     fn payload_roundtrip() {
-        let report = TeleEvent {
+        let report = TelephoneEvent {
             event: 5,
             end: true,
             volume: 10,
@@ -195,11 +197,14 @@ mod test {
 
         assert_eq!(report.to_bytes(Frequency::EIGHT_KHZ).unwrap(), REPORT);
         assert_eq!(
-            TeleEvent::parse(&REPORT, Frequency::EIGHT_KHZ),
+            TelephoneEvent::parse(&REPORT, Frequency::EIGHT_KHZ),
             Some(report)
         );
         for len in 0..REPORT_LEN {
-            assert_eq!(TeleEvent::parse(&REPORT[..len], Frequency::EIGHT_KHZ), None);
+            assert_eq!(
+                TelephoneEvent::parse(&REPORT[..len], Frequency::EIGHT_KHZ),
+                None
+            );
         }
     }
 
@@ -212,7 +217,7 @@ mod test {
             }
         }
 
-        let report = TeleEvent {
+        let report = TelephoneEvent {
             event: 5,
             end: true,
             volume: 10,
@@ -221,11 +226,11 @@ mod test {
         let bytes = report.to_bytes(Frequency::FORTY_EIGHT_KHZ).unwrap();
         assert_eq!(&bytes[2..], &u16::MAX.to_be_bytes());
         assert_eq!(
-            TeleEvent::parse(&bytes, Frequency::FORTY_EIGHT_KHZ),
+            TelephoneEvent::parse(&bytes, Frequency::FORTY_EIGHT_KHZ),
             Some(report)
         );
 
-        let too_long = TeleEvent {
+        let too_long = TelephoneEvent {
             duration: Duration::from_secs(3),
             ..report
         };
@@ -234,14 +239,14 @@ mod test {
 
     #[test]
     fn payload_ignores_reserved_bit_and_masks_volume() {
-        let report = TeleEvent::parse(&[0xff; 4], Frequency::EIGHT_KHZ).unwrap();
+        let report = TelephoneEvent::parse(&[0xff; 4], Frequency::EIGHT_KHZ).unwrap();
         assert_eq!(report.volume, 63);
         assert_eq!(
             report.to_bytes(Frequency::EIGHT_KHZ).unwrap(),
             [0xff, 0xbf, 0xff, 0xff]
         );
 
-        let loud = TeleEvent {
+        let loud = TelephoneEvent {
             event: 0,
             end: false,
             volume: 0xff,
@@ -257,19 +262,19 @@ mod test {
     fn parse_all_requires_whole_reports() {
         let packed = [REPORT, NEXT].concat();
 
-        let reports: Vec<_> = TeleEvent::parse_all(&packed, Frequency::EIGHT_KHZ)
+        let reports: Vec<_> = TelephoneEvent::parse_all(&packed, Frequency::EIGHT_KHZ)
             .unwrap()
             .collect();
         assert_eq!(
             reports,
             [
-                TeleEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap(),
-                TeleEvent::parse(&NEXT, Frequency::EIGHT_KHZ).unwrap(),
+                TelephoneEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap(),
+                TelephoneEvent::parse(&NEXT, Frequency::EIGHT_KHZ).unwrap(),
             ]
         );
 
         for len in [0, 1, 3, 5, 7] {
-            assert!(TeleEvent::parse_all(&packed[..len], Frequency::EIGHT_KHZ).is_none());
+            assert!(TelephoneEvent::parse_all(&packed[..len], Frequency::EIGHT_KHZ).is_none());
         }
     }
 
@@ -314,8 +319,8 @@ mod test {
     #[test]
     fn depacketizer_passes_reports_through() {
         let mut depacketizer = TelephoneEventDepacketizer::default();
-        let first = TeleEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap();
-        let second = TeleEvent::parse(&NEXT, Frequency::EIGHT_KHZ).unwrap();
+        let first = TelephoneEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap();
+        let second = TelephoneEvent::parse(&NEXT, Frequency::EIGHT_KHZ).unwrap();
         let packed = [REPORT, NEXT].concat();
 
         for (packet, expected) in [
@@ -347,7 +352,7 @@ mod test {
 
             assert_eq!(
                 result,
-                Err(PacketError::TeleInvalid(
+                Err(PacketError::InvalidTelephoneEvent(
                     "payload must contain one or more complete 4-byte reports"
                 ))
             );
@@ -355,8 +360,9 @@ mod test {
             assert_eq!(extra, CodecExtra::None);
         }
 
-        let error =
-            PacketError::TeleInvalid("payload must contain one or more complete 4-byte reports");
+        let error = PacketError::InvalidTelephoneEvent(
+            "payload must contain one or more complete 4-byte reports",
+        );
         assert_eq!(
             error.to_string(),
             "Invalid telephone event: payload must contain one or more complete 4-byte reports"

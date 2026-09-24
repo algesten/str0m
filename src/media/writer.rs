@@ -10,9 +10,9 @@ use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 use crate::streams::Streams;
 
-use super::telephone_event::{MAX_DURATION, MIN_DURATION, MIN_PAUSE, TelephonePackets};
+use super::tele::{MAX_DURATION, MIN_DURATION, MIN_PAUSE, TelephonePackets};
 use super::{
-    ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TeleEvent, ToPayload,
+    ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TelephoneEvent, ToPayload,
 };
 
 /// Writer of frame level data.
@@ -26,7 +26,7 @@ pub struct Writer<'a> {
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
-    tele_event: Option<TeleEvent>,
+    tele_event: Option<TelephoneEvent>,
     ext_vals: ExtensionValues,
 }
 
@@ -123,7 +123,7 @@ impl<'a> Writer<'a> {
     ///
     /// Only one event can be active on this media. Start the next one on a later write, at least
     /// 50 ms after the previous event ends.
-    pub fn tele_event(mut self, event: TeleEvent) -> Self {
+    pub fn telephone_event(mut self, event: TelephoneEvent) -> Self {
         self.tele_event = Some(event);
         self
     }
@@ -148,7 +148,7 @@ impl<'a> Writer<'a> {
     /// does not match anything negotiated.
     ///
     /// Telephone-event payloads written directly are sent as is, in one RTP packet. Use
-    /// [`Writer::tele_event`] to send a whole event alongside audio. A write with empty audio
+    /// [`Writer::telephone_event`] to send a whole event alongside audio. A write with empty audio
     /// data sends no audio packet.
     ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
@@ -312,7 +312,7 @@ fn validate_tele_event(
     rid: Option<Rid>,
     audio_params: &PayloadParams,
     wallclock: Instant,
-    event: TeleEvent,
+    event: TelephoneEvent,
 ) -> Result<Pt, RtcError> {
     let mid = media.mid();
     let audio_pt = audio_params.pt();
@@ -369,7 +369,7 @@ fn validate_tele_event(
 }
 
 fn tele_invalid(mid: Mid, pt: Pt, reason: &'static str) -> RtcError {
-    RtcError::Packet(mid, pt, PacketError::TeleInvalid(reason))
+    RtcError::Packet(mid, pt, PacketError::InvalidTelephoneEvent(reason))
 }
 
 /// Get a &mut Media in a slice for a `mid`.

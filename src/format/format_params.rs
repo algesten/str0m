@@ -115,7 +115,7 @@ pub struct FormatParams {
     /// Only contiguous ranges starting at zero are supported. `None` uses the
     /// library default `0-16`. Negotiation takes the smaller maximum per payload
     /// type across the session.
-    pub tele_event_max: Option<u8>,
+    pub telephone_event_max: Option<u8>,
 }
 
 #[cfg(feature = "drv")]
@@ -138,7 +138,7 @@ impl FormatParams {
             if lines.next().is_some() {
                 return None;
             }
-            params.tele_event_max = Some(max);
+            params.telephone_event_max = Some(max);
         } else {
             for line in lines {
                 for param in line {
@@ -201,7 +201,7 @@ impl FormatParams {
             H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
             H266ProfileTierLevel(v) => self.h266_profile_tier_level = Some(*v),
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
-            TelephoneEvents(v) => self.tele_event_max = Some(*v),
+            TelephoneEvents(v) => self.telephone_event_max = Some(*v),
             BareRange(_) | BarePtList(_) => {}
             Apt(_) => {}
             Red(_) => {}
@@ -260,7 +260,7 @@ impl FormatParams {
         if let Some(v) = self.sprop_max_don_diff {
             r.push(SpropMaxDonDiff(v));
         }
-        if let Some(v) = self.tele_event_max {
+        if let Some(v) = self.telephone_event_max {
             r.push(TelephoneEvents(v));
         }
 
@@ -289,7 +289,7 @@ mod test {
         for max in [0, 7, 15, 16, 255] {
             let value = format!("0-{max}");
             let params = FormatParams::parse_line(&value);
-            assert_eq!(params.tele_event_max, Some(max));
+            assert_eq!(params.telephone_event_max, Some(max));
             assert_eq!(params.to_string(), value);
         }
         for value in ["", "0-", "0-256", "15-0", "1-15", "0-15,16", "0-+15"] {

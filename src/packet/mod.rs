@@ -71,10 +71,10 @@ use null::{NullDepacketizer, NullPacketizer};
 mod comfort_noise;
 use comfort_noise::{ComfortNoiseDepacketizer, ComfortNoisePacketizer};
 
-mod telephone_event;
-pub use telephone_event::TeleEvent;
-pub(crate) use telephone_event::duration_from_units;
-use telephone_event::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
+mod tele;
+pub use tele::TelephoneEvent;
+pub(crate) use tele::duration_from_units;
+use tele::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
 
 mod buffer_rx;
 pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
@@ -159,7 +159,7 @@ pub enum CodecExtra {
     /// Codec extra parameters for H266 (VVC). Prototype.
     H266(H266CodecExtra),
     /// All telephone-event (RFC 4733) values in the payload, in wire order.
-    Tele(Vec<TeleEvent>),
+    Tele(Vec<TelephoneEvent>),
 }
 
 /// Depacketizes an RTP payload.
@@ -625,7 +625,7 @@ mod test {
             .depacketize(&payload, &mut output, &mut extra)
             .unwrap();
         assert_eq!(output, payload);
-        let report = TeleEvent::parse(&payload, crate::rtp_::Frequency::EIGHT_KHZ).unwrap();
+        let report = TelephoneEvent::parse(&payload, crate::rtp_::Frequency::EIGHT_KHZ).unwrap();
         assert_eq!(extra, CodecExtra::Tele(vec![report]));
     }
 }

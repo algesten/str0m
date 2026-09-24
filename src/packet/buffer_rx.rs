@@ -684,7 +684,7 @@ mod test {
             buf.push(test_meta(base, 1, 1, 0), &packed[..len]);
             assert!(matches!(
                 buf.pop(base, None),
-                Some(Err(PacketError::TeleInvalid(
+                Some(Err(PacketError::InvalidTelephoneEvent(
                     "payload must contain one or more complete 4-byte reports"
                 )))
             ));

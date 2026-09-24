@@ -1200,7 +1200,7 @@ impl PayloadParams {
             vec![FormatParam::TelephoneEvents(
                 self.spec
                     .format
-                    .tele_event_max
+                    .telephone_event_max
                     .unwrap_or(FormatParams::DEFAULT_TELE_EVENT_MAX),
             )]
         } else {
