@@ -936,6 +936,20 @@ fn telephone_event_frame_long_duration_roundtrip() -> Result<(), RtcError> {
 }
 
 #[test]
+fn maximum_duration_telephone_event_fits_payload_queue() -> Result<(), RtcError> {
+    init_crypto_default();
+
+    let (mut l, _r, mid) = connected_frame_mode();
+    let audio_pt = l.params_opus().pt();
+    let wallclock = l.last;
+    let rtp_time = MediaTime::new(0, Frequency::FORTY_EIGHT_KHZ);
+    l.writer(mid)
+        .unwrap()
+        .tele_event(tele(5, Duration::from_secs(6), 10))
+        .write(audio_pt, wallclock, rtp_time, [])
+}
+
+#[test]
 fn telephone_event_frame_queued_events_wait_for_each_other() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();

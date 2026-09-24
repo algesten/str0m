@@ -42,6 +42,8 @@ pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt,
 ///
 /// These probes carry `transport_cc` for TWCC feedback but no real media.
 pub(crate) const MID_PROBE: Mid = Mid::from_array(*b"~]probe\0\0\0\0\0\0\0\0\0");
+// A 6-second telephone event at 48 kHz needs about 306 packets.
+const MAX_PENDING_PAYLOADS: usize = 512;
 
 #[derive(Debug)]
 /// Information about some configured media.
@@ -518,17 +520,6 @@ impl Media {
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        if to_payload.not_before.is_none() {
-            let pending_media = self
-                .to_payload
-                .iter()
-                .filter(|p| p.not_before.is_none())
-                .count();
-            if pending_media > 100 {
-                return Err(RtcError::WriteWithoutPoll);
-            }
-        }
-
         let queue_time = to_payload.queue_time();
         let position = self
             .to_payload
@@ -536,6 +527,10 @@ impl Media {
             .position(|p| p.queue_time() > queue_time)
             .unwrap_or(self.to_payload.len());
         self.to_payload.insert(position, to_payload);
+        if self.to_payload.len() > MAX_PENDING_PAYLOADS {
+            self.to_payload.remove(position);
+            return Err(RtcError::WriteWithoutPoll);
+        }
         Ok(())
     }
 
