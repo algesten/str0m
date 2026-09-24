@@ -54,6 +54,8 @@ _str0m_test = { path = "crates/_str0m_test" }
 tracing = "0.1.37"
 fastrand = "2.0.1"
 sctp-proto = { version = "0.10.5", git = "https://github.com/algesten/sctp-proto", rev = "0bfdd067cc7bc425fb2561449dc8b71f02b12aae" }
+# Internal to src/sctp/mod.rs: retain SCTP transmit packets across DTLS backpressure.
+bytes = "1"
 combine = "4.6.6"
 subtle = "2.0.0"
 arrayvec = "0.7.6"
@@ -131,6 +133,8 @@ drv = ["dep:drv"]
 tracing.workspace = true
 fastrand.workspace = true
 sctp-proto.workspace = true
+# Keep Bytes private to src/sctp/mod.rs; no Bytes in the public str0m API.
+bytes.workspace = true
 combine.workspace = true
 subtle.workspace = true
 arrayvec.workspace = true
