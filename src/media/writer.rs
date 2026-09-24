@@ -119,7 +119,7 @@ impl<'a> Writer<'a> {
     /// telephone-event payload type with the same RTP clock rate is selected automatically.
     /// The complete series of telephone packets is queued by this write. Each packet waits until
     /// its send time, while later audio writes can pass packets still waiting in the queue.
-    /// Audio data may be empty when only the telephone event should be sent.
+    /// Passing an empty audio slice to `write` sends the telephone packets without an audio packet.
     ///
     /// Only one event can be active on this media. Start the next one on a later write, at least
     /// 50 ms after the previous event ends.
@@ -146,10 +146,6 @@ impl<'a> Writer<'a> {
     ///
     /// This operation fails if the PT doesn't match a negotiated codec, or the RID (`None` or a value)
     /// does not match anything negotiated.
-    ///
-    /// Telephone-event payloads written directly are sent as is, in one RTP packet. Use
-    /// [`Writer::telephone_event`] to send a whole event alongside audio. A write with empty audio
-    /// data sends no audio packet.
     ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
