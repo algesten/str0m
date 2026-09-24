@@ -1141,6 +1141,7 @@ fn telephone_event_frame_reports_malformed_payloads() -> Result<(), RtcError> {
 #[test]
 fn telephone_event_write_rejects_unnegotiated_clock_rate() {
     init_crypto_default();
+    let expected_reason = "no negotiated telephone event for audio clock rate";
 
     let events = [(EVENT_PT, Frequency::FORTY_EIGHT_KHZ, None)];
     for (offer_support, answer_support) in [(true, false), (false, true)] {
@@ -1166,8 +1167,8 @@ fn telephone_event_write_rejects_unnegotiated_clock_rate() {
             .write(audio_pt, wallclock, start, []);
         assert!(matches!(
             result,
-            Err(RtcError::Packet(_, p, PacketError::InvalidTelephoneEvent("no negotiated telephone event for audio clock rate")))
-                if p == audio_pt
+            Err(RtcError::Packet(_, p, PacketError::InvalidTelephoneEvent(reason)))
+                if p == audio_pt && reason == expected_reason
         ));
     }
 
@@ -1196,8 +1197,8 @@ fn telephone_event_write_rejects_unnegotiated_clock_rate() {
         );
     assert!(matches!(
         result,
-        Err(RtcError::Packet(_, p, PacketError::InvalidTelephoneEvent("no negotiated telephone event for audio clock rate")))
-            if p == audio_pt
+        Err(RtcError::Packet(_, p, PacketError::InvalidTelephoneEvent(reason)))
+            if p == audio_pt && reason == expected_reason
     ));
 }
 

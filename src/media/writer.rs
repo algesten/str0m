@@ -10,10 +10,9 @@ use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 use crate::streams::Streams;
 
+use super::TelephoneEvent;
 use super::tele::{MAX_DURATION, MIN_DURATION, TelephonePackets};
-use super::{
-    ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TelephoneEvent, ToPayload,
-};
+use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
 
 /// Writer of frame level data.
 ///
