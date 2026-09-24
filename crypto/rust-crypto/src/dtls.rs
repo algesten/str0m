@@ -17,13 +17,20 @@ pub(super) struct RustCryptoDtlsProvider;
 
 impl DtlsProvider for RustCryptoDtlsProvider {
     fn generate_certificate(&self) -> Option<DtlsCert> {
-        // Use dimpl's rcgen-based certificate generation (with RustCrypto backend)
-        dimpl::certificate::generate_self_signed_certificate()
-            .ok()
-            .map(|cert| DtlsCert {
-                certificate: cert.certificate,
-                private_key: cert.private_key,
-            })
+        #[cfg(feature = "generate-cert")]
+        {
+            dimpl::certificate::generate_self_signed_certificate()
+                .ok()
+                .map(|cert| DtlsCert {
+                    certificate: cert.certificate,
+                    private_key: cert.private_key,
+                })
+        }
+        #[cfg(not(feature = "generate-cert"))]
+        {
+            // The application supplies its certificate through RtcConfig.
+            None
+        }
     }
 
     fn new_dtls(
@@ -33,40 +40,66 @@ impl DtlsProvider for RustCryptoDtlsProvider {
         dtls_version: DtlsVersion,
         mtu: Option<usize>,
     ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
-        let dimpl_cert = dimpl::DtlsCertificate {
-            certificate: cert.certificate.clone(),
-            private_key: cert.private_key.clone(),
-        };
-
-        // Create a default dimpl Config with RustCrypto crypto provider
-        // ICE verifies return routability before DTLS, making server cookies redundant.
-        let mut builder = dimpl::Config::builder().use_server_cookie(false);
-        if let Some(mtu) = mtu {
-            builder = builder.mtu(mtu);
-        }
-        if self.is_test() {
-            // We need the DTLS impl to be deterministic for the BWE tests.
-            builder = builder.dangerously_set_rng_seed(42);
-        }
-
-        let config = builder
-            .build()
-            .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {}", e)))?;
-
-        let config = Arc::new(config);
-        let dtls = match dtls_version {
-            DtlsVersion::Dtls12 => dimpl::Dtls::new_12(config, dimpl_cert, now),
-            DtlsVersion::Dtls13 => dimpl::Dtls::new_13(config, dimpl_cert, now),
-            DtlsVersion::Auto => dimpl::Dtls::new_auto(config, dimpl_cert, now),
-            _ => {
-                return Err(CryptoError::Other(format!(
-                    "Unsupported DTLS version: {dtls_version}"
-                )));
-            }
-        };
-
-        Ok(Box::new(RustCryptoDtlsInstance { dtls }))
+        let crypto = dimpl::crypto::rust_crypto::default_provider();
+        create_instance(cert, now, dtls_version, mtu, crypto, self.is_test())
     }
+}
+
+/// Construct DTLS with an application-selected dimpl crypto provider.
+/// Normal authentication, provider validation and OS randomness remain enabled.
+pub fn with_crypto_provider(
+    cert: &DtlsCert,
+    now: Instant,
+    dtls_version: DtlsVersion,
+    mtu: Option<usize>,
+    crypto: dimpl::crypto::CryptoProvider,
+) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    create_instance(cert, now, dtls_version, mtu, crypto, false)
+}
+
+fn create_instance(
+    cert: &DtlsCert,
+    now: Instant,
+    dtls_version: DtlsVersion,
+    mtu: Option<usize>,
+    crypto: dimpl::crypto::CryptoProvider,
+    is_test: bool,
+) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+    let dimpl_cert = dimpl::DtlsCertificate {
+        certificate: cert.certificate.clone(),
+        private_key: cert.private_key.clone(),
+    };
+
+    // Create a dimpl Config with the explicitly selected crypto provider.
+    // ICE verifies return routability before DTLS, making server cookies redundant.
+    let mut builder = dimpl::Config::builder()
+        .with_crypto_provider(crypto)
+        .use_server_cookie(false);
+    if let Some(mtu) = mtu {
+        builder = builder.mtu(mtu);
+    }
+    if is_test {
+        // We need the DTLS impl to be deterministic for the BWE tests.
+        builder = builder.dangerously_set_rng_seed(42);
+    }
+
+    let config = builder
+        .build()
+        .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {}", e)))?;
+
+    let config = Arc::new(config);
+    let dtls = match dtls_version {
+        DtlsVersion::Dtls12 => dimpl::Dtls::new_12(config, dimpl_cert, now),
+        DtlsVersion::Dtls13 => dimpl::Dtls::new_13(config, dimpl_cert, now),
+        DtlsVersion::Auto => dimpl::Dtls::new_auto(config, dimpl_cert, now),
+        _ => {
+            return Err(CryptoError::Other(format!(
+                "Unsupported DTLS version: {dtls_version}"
+            )));
+        }
+    };
+
+    Ok(Box::new(RustCryptoDtlsInstance { dtls }))
 }
 
 // ============================================================================
