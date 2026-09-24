@@ -117,8 +117,15 @@ impl Depacketized {
 struct Entry {
     meta: RtpMeta,
     data: Arc<[u8]>,
+    offset: usize,
     head: bool,
     tail: bool,
+}
+
+impl Entry {
+    fn remaining(&self) -> &[u8] {
+        &self.data[self.offset..]
+    }
 }
 
 #[derive(Debug)]
@@ -150,6 +157,7 @@ impl DepacketizingBuffer {
             | CodecDepacketizer::Boxed(_)
             | CodecDepacketizer::Opus(_)
             | CodecDepacketizer::ComfortNoise(_)
+            | CodecDepacketizer::Tele(_)
             | CodecDepacketizer::G711(_)
             | CodecDepacketizer::Null(_) => Contiguity::None,
         };
@@ -229,6 +237,7 @@ impl DepacketizingBuffer {
                 let entry = Entry {
                     meta,
                     data,
+                    offset: 0,
                     head,
                     tail,
                 };
@@ -325,6 +334,15 @@ impl DepacketizingBuffer {
             .meta
             .seq_no;
 
+        // Keep the same RTP entry until every packed report has been emitted. The next pop
+        // depacketizes its remaining bytes, so sequence ordering and duplicate checks stay intact.
+        let is_tele = matches!(self.depack, CodecDepacketizer::Tele(_));
+        let has_more_reports = self.queue[start].remaining().len() > 4;
+        if can_emit && is_tele && has_more_reports {
+            self.retain_tele_reports(start, &dep);
+            return Some(Ok(dep));
+        }
+
         // We're not going to emit frames in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
         self.consume_segment(stop);
@@ -336,6 +354,19 @@ impl DepacketizingBuffer {
         self.last_emitted = Some((last, dep.codec_extra));
 
         Some(Ok(dep))
+    }
+
+    fn retain_tele_reports(&mut self, start: usize, dep: &Depacketized) {
+        let duration = u16::from_be_bytes([dep.data[2], dep.data[3]]);
+        let entry = self.queue.get_mut(start).expect("telephone packet exists");
+        entry.offset += 4;
+        entry.meta.time = MediaTime::new(
+            entry.meta.time.numer().wrapping_add(u64::from(duration)),
+            entry.meta.time.frequency(),
+        );
+        entry.meta.header.marker = false;
+        self.segments_dirty = true;
+        self.depack_cache = None;
     }
 
     pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
@@ -426,7 +457,11 @@ impl DepacketizingBuffer {
             }
         }
 
-        let packets_size = self.queue.range(start..=stop).map(|p| p.data.len()).sum();
+        let packets_size = self
+            .queue
+            .range(start..=stop)
+            .map(|p| p.remaining().len())
+            .sum();
         let mut data = self
             .depack
             .out_size_hint(packets_size)
@@ -439,7 +474,7 @@ impl DepacketizingBuffer {
 
         for entry in self.queue.range_mut(start..=stop) {
             self.depack
-                .depacketize(entry.data.as_ref(), &mut data, &mut codec_extra)?;
+                .depacketize(entry.remaining(), &mut data, &mut codec_extra)?;
             meta.push(entry.meta.clone());
         }
 
@@ -670,6 +705,50 @@ mod test {
             buf.queue.back().unwrap().meta.seq_no,
             (MAX_BUFFERED_PACKETS as u64 + 1).into()
         );
+    }
+
+    #[test]
+    fn telephone_event_reports_malformed_payloads_and_recovers() {
+        let base = Instant::now();
+        let report = [5, 0x8a, 0, 160];
+        let packed = [report, report].concat();
+
+        for len in [0, 1, 2, 3, 5, 6, 7] {
+            let mut buf = DepacketizingBuffer::new(crate::format::Codec::Tele.into(), 0);
+            buf.push(test_meta(base, 1, 1, 0), &packed[..len]);
+            assert!(matches!(
+                buf.pop(base, None),
+                Some(Err(PacketError::InvalidTelephoneEvent(
+                    "payload must contain one or more complete 4-byte reports"
+                )))
+            ));
+            assert!(buf.queue.is_empty());
+            assert!(buf.pop(base, None).is_none());
+
+            let mut meta = test_meta(base, 2, 1, 0);
+            meta.header.marker = true;
+            buf.push(meta, &packed[..]);
+            let original = Arc::clone(&buf.queue.front().unwrap().data);
+            let first = buf.pop(base, None).unwrap().unwrap();
+            assert_eq!(first.data, report);
+            assert!(first.contiguous);
+            assert!(first.start_of_talkspurt());
+            let buffered = buf.queue.front().unwrap();
+            assert!(Arc::ptr_eq(&buffered.data, &original));
+            assert_eq!(buffered.offset, 4);
+            let second = buf.pop(base, None).unwrap().unwrap();
+            assert_eq!(second.data, report);
+            assert_eq!(second.time.numer(), first.time.numer() + 160);
+            assert!(!second.start_of_talkspurt());
+            assert!(buf.pop(base, None).is_none());
+
+            buf.push_padding(test_meta(base, 3, 2, 0));
+            assert!(buf.pop(base, None).is_none());
+            buf.push(test_meta(base, 4, 3, 0), report);
+            let frame = buf.pop(base, None).unwrap().unwrap();
+            assert_eq!(frame.data, report);
+            assert!(frame.contiguous);
+        }
     }
 
     #[test]

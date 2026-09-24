@@ -71,6 +71,11 @@ use null::{NullDepacketizer, NullPacketizer};
 mod comfort_noise;
 use comfort_noise::{ComfortNoiseDepacketizer, ComfortNoisePacketizer};
 
+mod tele;
+pub use tele::TelephoneEvent;
+pub(crate) use tele::duration_from_units;
+use tele::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
+
 mod buffer_rx;
 pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
 
@@ -153,6 +158,8 @@ pub enum CodecExtra {
     H265(H265CodecExtra),
     /// Codec extra parameters for H266 (VVC). Prototype.
     H266(H266CodecExtra),
+    /// The telephone-event (RFC 4733) value in this media sample.
+    Tele(TelephoneEvent),
 }
 
 /// Depacketizes an RTP payload.
@@ -303,6 +310,7 @@ pub(crate) enum CodecPacketizer {
     H266(H266Packetizer),
     Opus(OpusPacketizer),
     ComfortNoise(ComfortNoisePacketizer),
+    Tele(TelephoneEventPacketizer),
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
     Av1(Av1Packetizer),
@@ -319,6 +327,7 @@ pub(crate) enum CodecDepacketizer {
     H266(H266Depacketizer),
     Opus(OpusDepacketizer),
     ComfortNoise(ComfortNoiseDepacketizer),
+    Tele(TelephoneEventDepacketizer),
     Vp8(Vp8Depacketizer),
     Vp9(Vp9Depacketizer),
     Av1(Av1Depacketizer),
@@ -342,7 +351,7 @@ impl CodecPacketizer {
             Codec::Vp9 => CodecPacketizer::Vp9(Vp9Packetizer::with_mode(vp9_mode)),
             Codec::Av1 => CodecPacketizer::Av1(Av1Packetizer::default()),
             Codec::Null => CodecPacketizer::Null(NullPacketizer),
-            Codec::Tele => CodecPacketizer::Null(NullPacketizer),
+            Codec::Tele => CodecPacketizer::Tele(TelephoneEventPacketizer),
             Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
             Codec::Red => panic!("Cant instantiate packetizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
@@ -389,7 +398,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Vp9 => CodecDepacketizer::Vp9(Vp9Depacketizer::default()),
             Codec::Av1 => CodecDepacketizer::Av1(Av1Depacketizer::default()),
             Codec::Null => CodecDepacketizer::Null(NullDepacketizer),
-            Codec::Tele => CodecDepacketizer::Null(NullDepacketizer),
+            Codec::Tele => CodecDepacketizer::Tele(TelephoneEventDepacketizer::default()),
             Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
             Codec::Red => panic!("Cant instantiate depacketizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
@@ -408,6 +417,7 @@ impl Packetizer for CodecPacketizer {
             H266(v) => v.packetize(mtu, b),
             Opus(v) => v.packetize(mtu, b),
             ComfortNoise(v) => v.packetize(mtu, b),
+            Tele(v) => v.packetize(mtu, b),
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
             Av1(v) => v.packetize(mtu, b),
@@ -422,6 +432,7 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::G722(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Opus(v) => v.is_marker(data, previous, last),
             CodecPacketizer::ComfortNoise(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::Tele(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H264(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H265(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H266(v) => v.is_marker(data, previous, last),
@@ -443,6 +454,7 @@ impl Packetizer for CodecPacketizer {
             H266(v) => v.marks_talkspurt(),
             Opus(v) => v.marks_talkspurt(),
             ComfortNoise(v) => v.marks_talkspurt(),
+            Tele(v) => v.marks_talkspurt(),
             Vp8(v) => v.marks_talkspurt(),
             Vp9(v) => v.marks_talkspurt(),
             Av1(v) => v.marks_talkspurt(),
@@ -461,6 +473,7 @@ impl Packetizer for CodecPacketizer {
             H266(v) => v.nackable(),
             Opus(v) => v.nackable(),
             ComfortNoise(v) => v.nackable(),
+            Tele(v) => v.nackable(),
             Vp8(v) => v.nackable(),
             Vp9(v) => v.nackable(),
             Av1(v) => v.nackable(),
@@ -479,6 +492,7 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.out_size_hint(packets_size),
             Opus(v) => v.out_size_hint(packets_size),
             ComfortNoise(v) => v.out_size_hint(packets_size),
+            Tele(v) => v.out_size_hint(packets_size),
             G711(v) => v.out_size_hint(packets_size),
             Vp8(v) => v.out_size_hint(packets_size),
             Vp9(v) => v.out_size_hint(packets_size),
@@ -501,6 +515,7 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.depacketize(packet, out, extra),
             Opus(v) => v.depacketize(packet, out, extra),
             ComfortNoise(v) => v.depacketize(packet, out, extra),
+            Tele(v) => v.depacketize(packet, out, extra),
             G711(v) => v.depacketize(packet, out, extra),
             Vp8(v) => v.depacketize(packet, out, extra),
             Vp9(v) => v.depacketize(packet, out, extra),
@@ -518,6 +533,7 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.is_partition_head(packet),
             Opus(v) => v.is_partition_head(packet),
             ComfortNoise(v) => v.is_partition_head(packet),
+            Tele(v) => v.is_partition_head(packet),
             G711(v) => v.is_partition_head(packet),
             Vp8(v) => v.is_partition_head(packet),
             Vp9(v) => v.is_partition_head(packet),
@@ -535,6 +551,7 @@ impl Depacketizer for CodecDepacketizer {
             H266(v) => v.is_partition_tail(marker, packet),
             Opus(v) => v.is_partition_tail(marker, packet),
             ComfortNoise(v) => v.is_partition_tail(marker, packet),
+            Tele(v) => v.is_partition_tail(marker, packet),
             G711(v) => v.is_partition_tail(marker, packet),
             Vp8(v) => v.is_partition_tail(marker, packet),
             Vp9(v) => v.is_partition_tail(marker, packet),
@@ -590,7 +607,7 @@ mod test {
     }
 
     #[test]
-    fn telephone_event_packetizer_and_depacketizer_pass_through_payload() {
+    fn telephone_event_codec_uses_telephone_event_packetizers() {
         let payload = [5, 0x80, 0, 160];
         let mut packetizer = CodecPacketizer::from(Codec::Tele);
         assert_eq!(
@@ -598,12 +615,17 @@ mod test {
             vec![payload.to_vec()]
         );
         assert!(!packetizer.is_marker(&payload, None, true));
+        assert!(packetizer.marks_talkspurt());
+        assert!(!packetizer.nackable());
 
         let mut depacketizer = CodecDepacketizer::from(Codec::Tele);
         let mut output = Vec::new();
+        let mut extra = CodecExtra::None;
         depacketizer
-            .depacketize(&payload, &mut output, &mut CodecExtra::None)
+            .depacketize(&payload, &mut output, &mut extra)
             .unwrap();
         assert_eq!(output, payload);
+        let report = TelephoneEvent::parse(&payload, crate::rtp_::Frequency::EIGHT_KHZ).unwrap();
+        assert_eq!(extra, CodecExtra::Tele(report));
     }
 }

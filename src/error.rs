@@ -34,7 +34,7 @@ pub enum RtcError {
     /// DTLS errors
     Dtls(DtlsError),
 
-    /// RTP packetization error
+    /// RTP packetization, depacketization, or payload validation error.
     Packet(Mid, Pt, PacketError),
 
     /// The PT attempted to write to is not known.

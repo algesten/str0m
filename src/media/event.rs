@@ -279,7 +279,8 @@ pub struct MediaData {
     /// First packet of a talkspurt, that is the first packet after a silence period during
     /// which packets have not been transmitted contiguously.
     ///
-    /// For audio only when dtx or silence suppression is enabled.
+    /// For audio only when dtx or silence suppression is enabled. For telephone events, the first
+    /// packet of an event.
     pub audio_start_of_talk_spurt: bool,
 }
 
@@ -288,6 +289,7 @@ impl MediaData {
     pub fn is_keyframe(&self) -> bool {
         match self.codec_extra {
             CodecExtra::None => false,
+            CodecExtra::Tele(_) => false,
             CodecExtra::H264(h264_extra) => h264_extra.is_keyframe,
             CodecExtra::H265(h265_extra) => h265_extra.is_keyframe,
             CodecExtra::H266(h266_extra) => h266_extra.is_keyframe,

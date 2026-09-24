@@ -26,10 +26,13 @@ use crate::util::already_happened;
 mod event;
 pub use event::*;
 
+mod tele;
+
 mod writer;
 pub use writer::Writer;
 
 pub use crate::packet::MediaKind;
+pub use crate::packet::TelephoneEvent;
 pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid};
 
 /// Mid used for SSRC 0 non-media BWE probes.
@@ -39,6 +42,8 @@ pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt,
 ///
 /// These probes carry `transport_cc` for TWCC feedback but no real media.
 pub(crate) const MID_PROBE: Mid = Mid::from_array(*b"~]probe\0\0\0\0\0\0\0\0\0");
+// A 6-second telephone event at 48 kHz needs about 306 packets.
+const MAX_PENDING_PAYLOADS: usize = 512;
 
 #[derive(Debug)]
 /// Information about some configured media.
@@ -138,8 +143,12 @@ pub struct Media {
     /// renegotiation. Defaults to `true`, so a negotiated RED PT wraps unless it is turned off.
     red_send_enabled: bool,
 
-    /// Frames to payload. Should typically only be 0 or 1.
+    /// Outgoing payloads ordered by their send deadlines or media wallclock times.
     to_payload: VecDeque<ToPayload>,
+
+    /// End time of the last telephone event, for the minimum pause between tones.
+    /// The payload queue cannot supply this after the event's packets have been sent.
+    last_tele_end: Option<Instant>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -195,6 +204,9 @@ pub(crate) struct ToPayload {
     pub rid: Option<Rid>,
     pub wallclock: Instant,
     pub rtp_time: MediaTime,
+    /// Optional send deadline, acting as an informal pacer. Telephone packets use it to
+    /// spread updates over the event duration; regular media has no deadline.
+    pub not_before: Option<Instant>,
     pub start_of_talk_spurt: bool,
     pub data: Arc<[u8]>,
     pub ext_vals: ExtensionValues,
@@ -344,6 +356,10 @@ impl Media {
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
                 };
+                // Telephone payloads are audio media even though Codec::is_audio()
+                // excludes their payload format.
+                let audio_start_of_talk_spurt =
+                    codec.spec().codec.kind().is_audio() && dep.start_of_talkspurt();
                 return Ok(Some(MediaData {
                     mid: self.mid,
                     pt: *pt,
@@ -362,8 +378,7 @@ impl Media {
                     ext_vals: dep.ext_vals(),
                     codec_extra: dep.codec_extra,
                     last_sender_info: dep.first_sender_info(),
-                    audio_start_of_talk_spurt: codec.spec().codec.is_audio()
-                        && dep.start_of_talkspurt(),
+                    audio_start_of_talk_spurt,
                     data: dep.data.into(),
                 }));
             }
@@ -397,13 +412,20 @@ impl Media {
             let codec = params.spec.codec;
 
             // How many packets to hold back in the jitter buffer.
-            let hold_back = if codec.is_audio() {
+            let hold_back = if codec.is_tele() {
+                // Telephone-event reports are self-contained, so never wait for missing packets.
+                0
+            } else if codec.is_audio() {
                 reordering_size_audio
             } else {
                 reordering_size_video
             };
 
             let mut depack: CodecDepacketizer = codec.into();
+
+            if let CodecDepacketizer::Tele(ref mut tele) = depack {
+                tele.clock_rate = params.spec.rtp_clock_rate();
+            }
 
             // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
             if let CodecDepacketizer::H265(ref mut h265) = depack {
@@ -455,6 +477,11 @@ impl Media {
     pub(crate) fn set_direction(&mut self, new_dir: Direction) {
         self.need_changed_event = self.dir != new_dir;
         self.dir = new_dir;
+
+        if !new_dir.is_sending() {
+            self.to_payload.clear();
+            self.last_tele_end = None;
+        }
     }
 
     /// Toggle RFC 2198 RED wrapping for outgoing packets. Takes effect on the next payloaded
@@ -490,22 +517,45 @@ impl Media {
         })
     }
 
+    fn queue_position(&self, to_payload: &ToPayload) -> usize {
+        let queue_time = to_payload.not_before.unwrap_or(to_payload.wallclock);
+        self.to_payload
+            .iter()
+            .position(|p| p.not_before.unwrap_or(p.wallclock) > queue_time)
+            .unwrap_or(self.to_payload.len())
+    }
+
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        if self.to_payload.len() > 100 {
+        let position = self.queue_position(&to_payload);
+        self.to_payload.insert(position, to_payload);
+        if self.to_payload.len() > MAX_PENDING_PAYLOADS {
+            self.to_payload.remove(position);
             return Err(RtcError::WriteWithoutPoll);
         }
+        Ok(())
+    }
 
-        self.to_payload.push_back(to_payload);
+    pub(crate) fn telephone_event_too_soon(&self, start: Instant) -> bool {
+        self.last_tele_end
+            .is_some_and(|end| start < end + tele::MIN_PAUSE)
+    }
 
+    pub(crate) fn queue_telephone_packets(
+        &mut self,
+        packets: impl Iterator<Item = ToPayload>,
+        end: Instant,
+    ) -> Result<(), RtcError> {
+        for packet in packets {
+            self.set_to_payload(packet)?;
+        }
+        self.last_tele_end = Some(end);
         Ok(())
     }
 
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
-        if !self.to_payload.is_empty() {
-            Some(already_happened())
-        } else {
-            None
-        }
+        self.to_payload
+            .front()
+            .map(|p| p.not_before.unwrap_or_else(already_happened))
     }
 
     pub(crate) fn poll_receive_timeout(
@@ -520,16 +570,25 @@ impl Media {
 
     pub(crate) fn do_payload(
         &mut self,
+        now: Instant,
         streams: &mut Streams,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
         red_distances: &[u32],
     ) -> Result<(), RtcError> {
-        let Some(to_payload) = self.to_payload.pop_front() else {
+        let Some(front) = self.to_payload.front() else {
             return Ok(());
         };
+        let is_waiting = front.not_before.is_some_and(|deadline| deadline > now);
+        if is_waiting {
+            return Ok(());
+        }
 
+        let to_payload = self
+            .to_payload
+            .pop_front()
+            .expect("front was checked above");
         let ToPayload { pt, rid, .. } = &to_payload;
 
         let midrid = MidRid(self.mid, *rid);
@@ -668,6 +727,7 @@ impl Default for Media {
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: VecDeque::default(),
+            last_tele_end: None,
             need_open_event: true,
             need_changed_event: false,
             red_send_enabled: true,

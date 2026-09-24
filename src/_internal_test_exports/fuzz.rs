@@ -210,7 +210,7 @@ pub fn rtcp(data: &[u8]) -> Option<()> {
 pub fn depack_direct(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
 
-    let codec = match rng.u8(10)? {
+    let codec = match rng.u8(11)? {
         0 => Codec::Opus,
         1 => Codec::Vp8,
         2 => Codec::Vp9,
@@ -222,6 +222,7 @@ pub fn depack_direct(data: &[u8]) -> Option<()> {
         8 => Codec::PCMA,
         9 => Codec::G722,
         10 => Codec::CN,
+        11 => Codec::Tele,
         _ => unreachable!(),
     };
 
