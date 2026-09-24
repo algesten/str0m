@@ -281,7 +281,7 @@ impl Session {
         }
 
         // Payload any waiting frames and due telephone-event reports
-        self.do_payload(now)?;
+        self.do_payload()?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
@@ -1384,11 +1384,10 @@ impl Session {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
-    fn do_payload(&mut self, now: Instant) -> Result<(), RtcError> {
+    fn do_payload(&mut self) -> Result<(), RtcError> {
         let mtu = self.mtu();
         for m in &mut self.medias {
             m.do_payload(
-                now,
                 &mut self.streams,
                 &self.codec_config,
                 self.vp9_packetizer_mode,

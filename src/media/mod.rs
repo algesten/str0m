@@ -508,12 +508,12 @@ impl Media {
         })
     }
 
-    fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        if self.to_payload.len() > 100 {
+    fn set_to_payloads(&mut self, payloads: Vec<ToPayload>) -> Result<(), RtcError> {
+        if self.to_payload.len() + payloads.len() > 101 {
             return Err(RtcError::WriteWithoutPoll);
         }
 
-        self.to_payload.push_back(to_payload);
+        self.to_payload.extend(payloads);
 
         Ok(())
     }
@@ -522,7 +522,7 @@ impl Media {
         if !self.to_payload.is_empty() {
             Some(already_happened())
         } else {
-            self.telephone_events.poll_timeout()
+            None
         }
     }
 
@@ -538,7 +538,6 @@ impl Media {
 
     pub(crate) fn do_payload(
         &mut self,
-        now: Instant,
         streams: &mut Streams,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
@@ -546,12 +545,6 @@ impl Media {
         red_distances: &[u32],
     ) -> Result<(), RtcError> {
         if let Some(to_payload) = self.to_payload.pop_front() {
-            self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)?;
-        }
-
-        // Telephone-event reports are made when due, so each takes the stream's next sequence
-        // number, after the audio written before it.
-        for to_payload in self.telephone_events.poll(now) {
             self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)?;
         }
 

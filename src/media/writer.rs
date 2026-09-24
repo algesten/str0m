@@ -25,6 +25,7 @@ pub struct Writer<'a> {
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
+    tele_event: Option<TeleEvent>,
     ext_vals: ExtensionValues,
 }
 
@@ -38,6 +39,7 @@ impl<'a> Writer<'a> {
             mid,
             rid: None,
             start_of_talkspurt: None,
+            tele_event: None,
             ext_vals: ExtensionValues::default(),
         }
     }
@@ -109,6 +111,21 @@ impl<'a> Writer<'a> {
         self
     }
 
+    /// Start a telephone event alongside the next audio write.
+    ///
+    /// `event` describes the complete tone: set `end` to true and `duration` to its total length.
+    /// The `write` call supplies its start time and audio payload type. The negotiated
+    /// telephone-event payload type with the same RTP clock rate is selected automatically.
+    /// Later audio writes advance the event and emit its updates and repeated end packets.
+    /// Audio data may be empty when only the telephone event should be sent.
+    ///
+    /// Only one event can be active on this media. Start the next one on a later write, at least
+    /// 50 ms after the previous event ends.
+    pub fn tele_event(mut self, event: TeleEvent) -> Self {
+        self.tele_event = Some(event);
+        self
+    }
+
     /// Set the minimum and maximum playout delay values. This can be used by a player
     /// on the receiver end to determine the size of the jitter buffer.
     pub fn playout_delay(mut self, min: MediaTime, max: MediaTime) -> Self {
@@ -128,8 +145,9 @@ impl<'a> Writer<'a> {
     /// This operation fails if the PT doesn't match a negotiated codec, or the RID (`None` or a value)
     /// does not match anything negotiated.
     ///
-    /// Telephone-event payloads are sent as is, in one RTP packet. To send a whole event, see
-    /// [`Writer::write_tele_event`].
+    /// Telephone-event payloads written directly are sent as is, in one RTP packet. Use
+    /// [`Writer::tele_event`] to send a whole event alongside audio. A write with empty audio
+    /// data advances an active telephone event without sending an audio packet.
     ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
@@ -148,12 +166,87 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: impl Into<Arc<[u8]>>,
     ) -> Result<(), RtcError> {
-        // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
-        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
-
         if !self.session.codec_config.has_pt(pt) {
             return Err(RtcError::UnknownPt(pt));
         }
+        let params = self
+            .session
+            .codec_config
+            .params()
+            .iter()
+            .find(|p| p.pt() == pt)
+            .expect("configured payload type exists");
+        let is_audio = params.spec().codec.is_audio();
+
+        let tele = if let Some(event) = self.tele_event {
+            if !is_audio {
+                return Err(RtcError::UnknownPt(pt));
+            }
+            let clock_rate = params.spec().rtp_clock_rate();
+            let media = media_by_mid_mut(&mut self.session.medias, self.mid);
+            let event_params = self.session.codec_config.params().iter().find(|p| {
+                p.spec().codec.is_tele()
+                    && p.spec().rtp_clock_rate() == clock_rate
+                    && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
+            });
+            let Some(event_params) = event_params else {
+                return Err(RtcError::Packet(
+                    self.mid,
+                    pt,
+                    PacketError::TeleInvalid("no negotiated telephone event for audio clock rate"),
+                ));
+            };
+            let event_pt = event_params.pt();
+            let max = self.session.codec_config.tele_event_max(event_pt).unwrap();
+            if event.event > max {
+                return Err(RtcError::Packet(
+                    self.mid,
+                    event_pt,
+                    PacketError::TeleInvalid("event exceeds negotiated range"),
+                ));
+            }
+            if !event.end {
+                return Err(RtcError::Packet(
+                    self.mid,
+                    event_pt,
+                    PacketError::TeleInvalid("event must have end set"),
+                ));
+            }
+            if event.volume > 63 {
+                return Err(RtcError::Packet(
+                    self.mid,
+                    event_pt,
+                    PacketError::TeleInvalid("volume exceeds 63"),
+                ));
+            }
+            if !(super::telephone_event::MIN_DURATION..=super::telephone_event::MAX_DURATION)
+                .contains(&event.duration)
+            {
+                return Err(RtcError::Packet(
+                    self.mid,
+                    event_pt,
+                    PacketError::TeleInvalid("duration must be between 40 ms and 6 s"),
+                ));
+            }
+            if !media.direction().is_sending() {
+                return Err(RtcError::NotSendingDirection(media.direction()));
+            }
+            if let Some(rid) = self.rid {
+                if !media.rids_tx().contains(rid) {
+                    return Err(RtcError::UnknownRid(rid));
+                }
+            }
+            let midrid = MidRid(self.mid, self.rid);
+            if self.session.streams.stream_tx_by_midrid(midrid).is_none() {
+                return Err(RtcError::NoSenderSource);
+            }
+            Some((event_pt, clock_rate, event))
+        } else {
+            None
+        };
+
+        // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
+        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
         if let Some(rid) = self.rid {
             if !media.rids_tx().contains(rid) {
@@ -172,120 +265,42 @@ impl<'a> Writer<'a> {
             data.len()
         );
 
-        let to_payload = ToPayload {
-            pt,
-            rid: self.rid,
-            wallclock,
-            rtp_time,
-            data,
-            start_of_talk_spurt: self.start_of_talkspurt.unwrap_or(false),
-            ext_vals: self.ext_vals,
+        let ext_vals = self.ext_vals;
+        let mut telephone_events = media.telephone_events.clone();
+        let mut payloads = if is_audio {
+            telephone_events.poll(wallclock)
+        } else {
+            vec![]
         };
-
-        media.set_to_payload(to_payload)?;
-
-        Ok(())
-    }
-
-    /// Queue a telephone event (RFC 4733), such as a DTMF digit, for sending.
-    ///
-    /// Sends an update every 20 ms and the final report three times, with the RTP marker on the
-    /// first report. Long events are segmented per RFC 4733 Section 2.5.1.3.
-    ///
-    /// `wallclock` and `rtp_time` are when the event starts, as in [`Writer::write`]. Pass the RTP
-    /// time the audio has at `wallclock`, and a telephone-event `pt` with the audio's clock rate.
-    /// Events are sent in the order they are written, at least 50 ms apart. An event that waits
-    /// for an earlier one starts later, with its `wallclock` and `rtp_time` moved forward together.
-    ///
-    /// The [`TeleEvent`] holds the event code, tone power, and total duration. Set its `end` flag
-    /// for this complete event. DTMF digits `0`-`9` are codes 0-9, `*` is 10, `#` is 11,
-    /// `A`-`D` are 12-15, and flash is 16. libwebrtc sends volume 10.
-    ///
-    /// The reports use the writer's RID and header extension values. Queued events are dropped if
-    /// the media stops sending.
-    ///
-    /// Fails with:
-    ///
-    /// * [`RtcError::UnknownPt`] if `pt` is not a telephone-event payload type, or is not among
-    ///   the SDP-negotiated payload types for this media.
-    /// * [`RtcError::Packet`] with [`PacketError::TeleInvalid`] if the event code exceeds the
-    ///   negotiated range, `end` is false, volume is above 63, or duration is outside 40 ms
-    ///   through 6 seconds.
-    /// * [`RtcError::NotSendingDirection`], [`RtcError::UnknownRid`] or
-    ///   [`RtcError::NoSenderSource`] if the media can't send the event.
-    ///
-    /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
-    pub fn write_tele_event(
-        self,
-        pt: Pt,
-        wallclock: Instant,
-        rtp_time: MediaTime,
-        tele: TeleEvent,
-    ) -> Result<(), RtcError> {
-        let codecs = &self.session.codec_config;
-        let params = codecs.params().iter().find(|p| p.pt() == pt);
-        let (Some(max), Some(params)) = (codecs.tele_event_max(pt), params) else {
-            return Err(RtcError::UnknownPt(pt));
-        };
-        let clock_rate = params.spec().rtp_clock_rate();
-
-        // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
-        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
-
-        // Direct API media have no negotiated payload types.
-        if !media.remote_pts().is_empty() && !media.remote_pts().contains(&pt) {
-            return Err(RtcError::UnknownPt(pt));
+        if let Some((event_pt, clock_rate, event)) = tele {
+            telephone_events
+                .push(TelephoneEvent {
+                    pt: event_pt,
+                    rid: self.rid,
+                    event: event.event,
+                    volume: event.volume,
+                    duration: event.duration,
+                    wallclock,
+                    rtp_time: rtp_time.rebase(clock_rate),
+                    ext_vals: ext_vals.clone(),
+                })
+                .map_err(|e| RtcError::Packet(self.mid, event_pt, e))?;
         }
-
-        if tele.event > max {
-            return Err(RtcError::Packet(
-                self.mid,
-                pt,
-                PacketError::TeleInvalid("event exceeds negotiated range"),
-            ));
-        }
-        if !tele.end {
-            return Err(RtcError::Packet(
-                self.mid,
-                pt,
-                PacketError::TeleInvalid("queued event must have end set"),
-            ));
-        }
-
-        if !media.direction().is_sending() {
-            return Err(RtcError::NotSendingDirection(media.direction()));
-        }
-
-        if let Some(rid) = self.rid {
-            if !media.rids_tx().contains(rid) {
-                return Err(RtcError::UnknownRid(rid));
-            }
-        }
-
-        // Fail now rather than when the reports are due.
-        let midrid = MidRid(self.mid, self.rid);
-        if self.session.streams.stream_tx_by_midrid(midrid).is_none() {
-            return Err(RtcError::NoSenderSource);
-        }
-
-        trace!(
-            "write telephone event {:?} {:?} {:?} time: {:?} event: {} duration: {:?}",
-            self.mid, self.rid, pt, rtp_time, tele.event, tele.duration
-        );
-
-        media
-            .telephone_events
-            .push(TelephoneEvent {
+        if !data.is_empty() {
+            payloads.push(ToPayload {
                 pt,
                 rid: self.rid,
-                event: tele.event,
-                volume: tele.volume,
-                duration: tele.duration,
                 wallclock,
-                rtp_time: rtp_time.rebase(clock_rate),
-                ext_vals: self.ext_vals,
-            })
-            .map_err(|e| RtcError::Packet(self.mid, pt, e))
+                rtp_time,
+                data,
+                start_of_talk_spurt: self.start_of_talkspurt.unwrap_or(false),
+                ext_vals,
+            });
+        }
+        media.set_to_payloads(payloads)?;
+        media.telephone_events = telephone_events;
+
+        Ok(())
     }
 
     /// Test if the kind of keyframe request is possible.

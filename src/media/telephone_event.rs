@@ -1,6 +1,5 @@
-//! Sends queued telephone events (RFC 4733) like libwebrtc, see `Writer::write_tele_event`.
+//! Sends telephone events (RFC 4733) alongside audio writes.
 
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::packet::PacketError;
@@ -10,15 +9,15 @@ use super::{ExtensionValues, Frequency, MediaTime, Pt, Rid, TeleEvent, ToPayload
 
 const UPDATE_INTERVAL: Duration = Duration::from_millis(20);
 const MIN_PAUSE: Duration = Duration::from_millis(50);
-const MIN_DURATION: Duration = Duration::from_millis(40);
-const MAX_DURATION: Duration = Duration::from_millis(6000);
+pub(crate) const MIN_DURATION: Duration = Duration::from_millis(40);
+pub(crate) const MAX_DURATION: Duration = Duration::from_millis(6000);
 
 /// The most the 16-bit duration field holds. Longer events are sent in segments
 /// (RFC 4733 Section 2.5.1.3).
 const MAX_SEGMENT: u64 = u16::MAX as u64;
 
-/// A telephone event to send, from `Writer::write_tele_event`.
-#[derive(Debug)]
+/// A telephone event to send, from `Writer::tele_event`.
+#[derive(Debug, Clone)]
 pub(crate) struct TelephoneEvent {
     pub pt: Pt,
     pub rid: Option<Rid>,
@@ -32,20 +31,20 @@ pub(crate) struct TelephoneEvent {
     pub ext_vals: ExtensionValues,
 }
 
-/// The telephone events to send, and the progress of the first one.
-#[derive(Debug, Default)]
+/// The active telephone event and its progress.
+#[derive(Debug, Default, Clone)]
 pub(crate) struct TelephoneEventQueue {
-    events: VecDeque<TelephoneEvent>,
-    /// When the last queued event ends.
+    event: Option<TelephoneEvent>,
+    /// When the previous event ends.
     last_end: Option<Instant>,
-    /// How many update intervals the first event had lasted at its last report.
+    /// How many update intervals the event had lasted at its last report.
     ticks: u32,
-    /// Where the current segment of the first event starts, in RTP time from the event start.
+    /// Where the current segment starts, in RTP time from the event start.
     segment: u64,
 }
 
 impl TelephoneEventQueue {
-    pub(crate) fn push(&mut self, mut event: TelephoneEvent) -> Result<(), PacketError> {
+    pub(crate) fn push(&mut self, event: TelephoneEvent) -> Result<(), PacketError> {
         // The volume field has 6 bits (RFC 4733 Section 2.3.4).
         if event.volume > 63 {
             return Err(PacketError::TeleInvalid("volume exceeds 63"));
@@ -56,23 +55,26 @@ impl TelephoneEventQueue {
             ));
         }
 
-        // Waiting for the previous event moves the start in wallclock and RTP time alike.
-        let pause_end = self.last_end.map(|end| end + MIN_PAUSE);
-        if let Some(start) = pause_end.filter(|start| *start > event.wallclock) {
-            let clock_rate = event.rtp_time.frequency();
-            let delay = to_units(start - event.wallclock, clock_rate);
-            event.rtp_time = MediaTime::new(event.rtp_time.numer() + delay, clock_rate);
-            event.wallclock = start;
+        if self.event.is_some() {
+            return Err(PacketError::TeleInvalid("telephone event already active"));
+        }
+        if self
+            .last_end
+            .is_some_and(|end| event.wallclock < end + MIN_PAUSE)
+        {
+            return Err(PacketError::TeleInvalid(
+                "telephone events must be at least 50 ms apart",
+            ));
         }
 
         self.last_end = Some(event.wallclock + event.duration);
-        self.events.push_back(event);
+        self.event = Some(event);
         Ok(())
     }
 
     /// When the next report is due: on the 20 ms grid from the start of the event, or at its end.
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
-        let event = self.events.front()?;
+        let event = self.event.as_ref()?;
         let update = event.wallclock + UPDATE_INTERVAL * (self.ticks + 1);
         Some(update.min(event.wallclock + event.duration))
     }
@@ -82,8 +84,8 @@ impl TelephoneEventQueue {
         let mut reports = vec![];
 
         while self.poll_timeout().is_some_and(|due| due <= now) {
-            let Some(event) = self.events.front() else {
-                warn!("Telephone event queue is empty despite a due report");
+            let Some(event) = self.event.as_ref() else {
+                warn!("Telephone event is absent despite a due report");
                 break;
             };
             let end = event.wallclock + event.duration;
@@ -112,7 +114,7 @@ impl TelephoneEventQueue {
                 for marker in [marker, false, false] {
                     reports.push(event.report(self.segment, duration, true, marker));
                 }
-                self.events.pop_front();
+                self.event = None;
                 self.ticks = 0;
                 self.segment = 0;
             }
@@ -212,7 +214,7 @@ mod test {
     }
 
     #[test]
-    fn events_start_at_least_50ms_after_the_previous_one() {
+    fn events_require_a_50ms_pause() {
         let base = Instant::now();
         let mut queue = TelephoneEventQueue::default();
         queue
@@ -220,11 +222,18 @@ mod test {
             .unwrap();
         assert_eq!(drain(&mut queue, base).len(), 7);
 
-        // Written in the pause after the first event, the next one starts when the pause ends,
-        // 30 ms or 240 units later.
+        // The caller starts the next event after the pause.
         let next = event(base + 120 * MS, 100 * MS, Frequency::EIGHT_KHZ);
+        assert!(matches!(
+            queue.push(next),
+            Err(PacketError::TeleInvalid(
+                "telephone events must be at least 50 ms apart"
+            ))
+        ));
+
+        let next = event(base + 150 * MS, 100 * MS, Frequency::EIGHT_KHZ);
         queue.push(next).unwrap();
-        let first = (170 * MS, 1240, true, report(160, false));
+        let first = (170 * MS, 1000, true, report(160, false));
         assert_eq!(drain(&mut queue, base)[0], first);
 
         // Written after the pause, the next one keeps its start.
