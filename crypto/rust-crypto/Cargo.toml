@@ -11,9 +11,13 @@ edition = "2024"
 # MSRV
 rust-version = "1.85.0"
 
+[features]
+default = ["generate-cert"]
+generate-cert = ["dimpl/rcgen"]
+
 [dependencies]
 str0m-proto = { workspace = true, features = ["dtls"] }
-dimpl = { workspace = true, features = ["rust-crypto", "rcgen"] }
+dimpl = { workspace = true, features = ["rust-crypto"] }
 time.workspace = true
 hmac.workspace = true
 aes-gcm.workspace = true

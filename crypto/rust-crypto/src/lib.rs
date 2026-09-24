@@ -2,6 +2,8 @@
 //! DTLS via dimpl with RustCrypto as crypto backend.
 
 mod dtls;
+
+pub use dtls::with_crypto_provider as dtls_with_crypto_provider;
 mod sha1;
 mod sha256;
 mod srtp;
