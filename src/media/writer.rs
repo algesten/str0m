@@ -204,8 +204,13 @@ impl<'a> Writer<'a> {
             data.len()
         );
 
-        let ext_vals = self.ext_vals;
-        if !data.is_empty() {
+        let has_data = !data.is_empty();
+        let has_tele = self.tele_event.is_some();
+
+        // If the user sends an empty slice, we honor it in case there is not
+        // tele event. In case of tele event we assume the user just wants to send
+        // the telephone events and nothing else.
+        if has_data || !has_tele {
             media.set_to_payload(ToPayload {
                 pt,
                 rid: self.rid,
@@ -214,29 +219,35 @@ impl<'a> Writer<'a> {
                 not_before: None,
                 data,
                 start_of_talk_spurt: self.start_of_talkspurt.unwrap_or(false),
-                ext_vals: ext_vals.clone(),
+                ext_vals: self.ext_vals.clone(),
             })?;
         }
-        if let Some(event) = self.tele_event {
-            let event_pt = validate_tele_event(
-                media,
-                &self.session.codec_config,
-                &mut self.session.streams,
-                self.rid,
-                params,
-                wallclock,
-                event,
-            )?;
-            let packets = TelephonePackets::new(
-                event_pt,
-                self.rid,
-                event,
-                wallclock,
-                rtp_time.rebase(clock_rate),
-                ext_vals,
-            );
-            media.queue_telephone_packets(packets, wallclock + event.duration)?;
-        }
+
+        let Some(event) = self.tele_event else {
+            return Ok(());
+        };
+
+        let event_pt = validate_tele_event(
+            media,
+            &self.session.codec_config,
+            &mut self.session.streams,
+            self.rid,
+            params,
+            wallclock,
+            event,
+        )?;
+
+        // Iterator over the packets created by the event.
+        let packets = TelephonePackets::new(
+            event_pt,
+            self.rid,
+            event,
+            wallclock,
+            rtp_time.rebase(clock_rate),
+            self.ext_vals,
+        );
+
+        media.queue_telephone_packets(packets, wallclock + event.duration)?;
 
         Ok(())
     }
