@@ -11,7 +11,8 @@ use crate::session::Session;
 
 use super::telephone_event::{MAX_DURATION, MIN_DURATION, MIN_PAUSE, TelephonePackets};
 use super::{
-    ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TeleEvent, ToPayload,
+    ExtensionValues, Frequency, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TeleEvent,
+    ToPayload,
 };
 
 /// Writer of frame level data.
@@ -161,7 +162,7 @@ impl<'a> Writer<'a> {
     ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
     pub fn write(
-        self,
+        mut self,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
@@ -178,80 +179,16 @@ impl<'a> Writer<'a> {
             .find(|p| p.pt() == pt)
             .expect("configured payload type exists");
         let is_audio = params.spec().codec.is_audio();
-
-        let tele = if let Some(event) = self.tele_event {
-            if !is_audio {
-                return Err(RtcError::UnknownPt(pt));
+        if self.tele_event.is_some() && !is_audio {
+            return Err(RtcError::UnknownPt(pt));
+        }
+        let clock_rate = params.spec().rtp_clock_rate();
+        let tele = match self.tele_event {
+            Some(event) => {
+                let event_pt = self.validate_tele_event(pt, clock_rate, wallclock, event)?;
+                Some((event_pt, clock_rate, event))
             }
-            let clock_rate = params.spec().rtp_clock_rate();
-            let media = media_by_mid_mut(&mut self.session.medias, self.mid);
-            let event_params = self.session.codec_config.params().iter().find(|p| {
-                p.spec().codec.is_tele()
-                    && p.spec().rtp_clock_rate() == clock_rate
-                    && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
-            });
-            let Some(event_params) = event_params else {
-                return Err(RtcError::Packet(
-                    self.mid,
-                    pt,
-                    PacketError::TeleInvalid("no negotiated telephone event for audio clock rate"),
-                ));
-            };
-            let event_pt = event_params.pt();
-            let max = self.session.codec_config.tele_event_max(event_pt).unwrap();
-            if event.event > max {
-                return Err(RtcError::Packet(
-                    self.mid,
-                    event_pt,
-                    PacketError::TeleInvalid("event exceeds negotiated range"),
-                ));
-            }
-            if !event.end {
-                return Err(RtcError::Packet(
-                    self.mid,
-                    event_pt,
-                    PacketError::TeleInvalid("event must have end set"),
-                ));
-            }
-            if event.volume > 63 {
-                return Err(RtcError::Packet(
-                    self.mid,
-                    event_pt,
-                    PacketError::TeleInvalid("volume exceeds 63"),
-                ));
-            }
-            if !(MIN_DURATION..=MAX_DURATION).contains(&event.duration) {
-                return Err(RtcError::Packet(
-                    self.mid,
-                    event_pt,
-                    PacketError::TeleInvalid("duration must be between 40 ms and 6 s"),
-                ));
-            }
-            if !media.direction().is_sending() {
-                return Err(RtcError::NotSendingDirection(media.direction()));
-            }
-            if let Some(rid) = self.rid {
-                if !media.rids_tx().contains(rid) {
-                    return Err(RtcError::UnknownRid(rid));
-                }
-            }
-            let midrid = MidRid(self.mid, self.rid);
-            if self.session.streams.stream_tx_by_midrid(midrid).is_none() {
-                return Err(RtcError::NoSenderSource);
-            }
-            if media
-                .last_tele_end
-                .is_some_and(|end| wallclock < end + MIN_PAUSE)
-            {
-                return Err(RtcError::Packet(
-                    self.mid,
-                    event_pt,
-                    PacketError::TeleInvalid("telephone events must be at least 50 ms apart"),
-                ));
-            }
-            Some((event_pt, clock_rate, event))
-        } else {
-            None
+            None => None,
         };
 
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
@@ -288,20 +225,80 @@ impl<'a> Writer<'a> {
             })?;
         }
         if let Some((event_pt, clock_rate, event)) = tele {
-            for packet in TelephonePackets::new(
+            let packets = TelephonePackets::new(
                 event_pt,
                 self.rid,
                 event,
                 wallclock,
                 rtp_time.rebase(clock_rate),
                 ext_vals,
-            ) {
+            );
+            for packet in packets {
                 media.set_to_payload(packet)?;
             }
             media.last_tele_end = Some(wallclock + event.duration);
         }
 
         Ok(())
+    }
+
+    fn validate_tele_event(
+        &mut self,
+        audio_pt: Pt,
+        clock_rate: Frequency,
+        wallclock: Instant,
+        event: TeleEvent,
+    ) -> Result<Pt, RtcError> {
+        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
+        let event_params = self.session.codec_config.params().iter().find(|p| {
+            p.spec().codec.is_tele()
+                && p.spec().rtp_clock_rate() == clock_rate
+                && (media.remote_pts().is_empty() || media.remote_pts().contains(&p.pt()))
+        });
+        let Some(event_params) = event_params else {
+            let reason = "no negotiated telephone event for audio clock rate";
+            return Err(tele_invalid(self.mid, audio_pt, reason));
+        };
+        let event_pt = event_params.pt();
+        let max = self.session.codec_config.tele_event_max(event_pt).unwrap();
+        if event.event > max {
+            return Err(tele_invalid(
+                self.mid,
+                event_pt,
+                "event exceeds negotiated range",
+            ));
+        }
+        if !event.end {
+            return Err(tele_invalid(self.mid, event_pt, "event must have end set"));
+        }
+        if event.volume > 63 {
+            return Err(tele_invalid(self.mid, event_pt, "volume exceeds 63"));
+        }
+        if !(MIN_DURATION..=MAX_DURATION).contains(&event.duration) {
+            let reason = "duration must be between 40 ms and 6 s";
+            return Err(tele_invalid(self.mid, event_pt, reason));
+        }
+        if !media.direction().is_sending() {
+            return Err(RtcError::NotSendingDirection(media.direction()));
+        }
+        if let Some(rid) = self.rid {
+            if !media.rids_tx().contains(rid) {
+                return Err(RtcError::UnknownRid(rid));
+            }
+        }
+        let midrid = MidRid(self.mid, self.rid);
+        let sender_missing = self.session.streams.stream_tx_by_midrid(midrid).is_none();
+        if sender_missing {
+            return Err(RtcError::NoSenderSource);
+        }
+        let too_soon = media
+            .last_tele_end
+            .is_some_and(|end| wallclock < end + MIN_PAUSE);
+        if too_soon {
+            let reason = "telephone events must be at least 50 ms apart";
+            return Err(tele_invalid(self.mid, event_pt, reason));
+        }
+        Ok(event_pt)
     }
 
     /// Test if the kind of keyframe request is possible.
@@ -363,6 +360,10 @@ impl<'a> Writer<'a> {
 
         Ok(())
     }
+}
+
+fn tele_invalid(mid: Mid, pt: Pt, reason: &'static str) -> RtcError {
+    RtcError::Packet(mid, pt, PacketError::TeleInvalid(reason))
 }
 
 /// Get a &mut Media in a slice for a `mid`.

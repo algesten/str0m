@@ -511,37 +511,36 @@ impl Media {
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        if to_payload.not_before.is_none() {
-            if self
-                .to_payload
-                .iter()
-                .filter(|p| p.not_before.is_none())
-                .count()
-                > 100
-            {
-                return Err(RtcError::WriteWithoutPoll);
-            }
-            // Preserve media write order, and place this frame before telephone packets
-            // scheduled after its wallclock time.
-            let after_media = self
-                .to_payload
-                .iter()
-                .rposition(|p| p.not_before.is_none())
-                .map_or(0, |i| i + 1);
-            let position = self
-                .to_payload
-                .iter()
-                .enumerate()
-                .skip(after_media)
-                .find(|(_, p)| {
-                    p.not_before
-                        .is_some_and(|deadline| deadline > to_payload.wallclock)
-                })
-                .map_or(self.to_payload.len(), |(i, _)| i);
-            self.to_payload.insert(position, to_payload);
-        } else {
+        if to_payload.not_before.is_some() {
             self.to_payload.push_back(to_payload);
+            return Ok(());
         }
+
+        let pending_media = self
+            .to_payload
+            .iter()
+            .filter(|p| p.not_before.is_none())
+            .count();
+        if pending_media > 100 {
+            return Err(RtcError::WriteWithoutPoll);
+        }
+
+        // Preserve media write order, and place this frame before telephone packets
+        // scheduled after its wallclock time.
+        let after_media = self
+            .to_payload
+            .iter()
+            .rposition(|p| p.not_before.is_none())
+            .map_or(0, |i| i + 1);
+        let wallclock = to_payload.wallclock;
+        let next_telephone = self
+            .to_payload
+            .iter()
+            .enumerate()
+            .skip(after_media)
+            .find(|(_, p)| p.not_before.is_some_and(|deadline| deadline > wallclock));
+        let position = next_telephone.map_or(self.to_payload.len(), |(i, _)| i);
+        self.to_payload.insert(position, to_payload);
         Ok(())
     }
 
@@ -570,30 +569,31 @@ impl Media {
         mtu: usize,
         red_distances: &[u32],
     ) -> Result<(), RtcError> {
-        if self
-            .to_payload
-            .front()
-            .is_some_and(|p| p.not_before.is_none_or(|deadline| deadline <= now))
-        {
-            if let Some(p) = self.to_payload.front() {
-                if p.not_before.is_some()
-                    && streams
-                        .stream_tx_by_midrid(MidRid(self.mid, p.rid))
-                        .is_none()
-                {
-                    let rid = p.rid;
-                    self.to_payload
-                        .retain(|pending| pending.not_before.is_none() || pending.rid != rid);
-                    self.last_tele_end = None;
-                    return Ok(());
-                }
-            }
-            if let Some(to_payload) = self.to_payload.pop_front() {
-                self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)?;
-            }
+        let Some(front) = self.to_payload.front() else {
+            return Ok(());
+        };
+        let is_telephone = front.not_before.is_some();
+        let rid = front.rid;
+        let is_waiting = front.not_before.is_some_and(|deadline| deadline > now);
+        if is_waiting {
+            return Ok(());
         }
 
-        Ok(())
+        let midrid = MidRid(self.mid, rid);
+        let telephone_sender_missing =
+            is_telephone && streams.stream_tx_by_midrid(midrid).is_none();
+        if telephone_sender_missing {
+            self.to_payload
+                .retain(|pending| pending.not_before.is_none() || pending.rid != rid);
+            self.last_tele_end = None;
+            return Ok(());
+        }
+
+        let to_payload = self
+            .to_payload
+            .pop_front()
+            .expect("front was checked above");
+        self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)
     }
 
     fn payload(

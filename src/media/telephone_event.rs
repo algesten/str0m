@@ -63,20 +63,23 @@ impl TelephonePackets {
         };
         let marker = self.first;
         self.first = false;
+        let wallclock = self.wallclock + Duration::from(MediaTime::new(self.segment, clock_rate));
+        let rtp_time = MediaTime::new(self.rtp_time.numer() + self.segment, clock_rate);
+        let data = payload
+            .to_bytes(clock_rate)
+            .expect("segment duration fits in 16 bits")
+            .into();
 
         ToPayload {
             pt: self.pt,
             rid: self.rid,
             // The RTP timestamp and wallclock identify the segment start. `not_before` is the
             // independent send deadline for this packet.
-            wallclock: self.wallclock + Duration::from(MediaTime::new(self.segment, clock_rate)),
-            rtp_time: MediaTime::new(self.rtp_time.numer() + self.segment, clock_rate),
+            wallclock,
+            rtp_time,
             not_before: Some(not_before),
             start_of_talk_spurt: marker,
-            data: payload
-                .to_bytes(clock_rate)
-                .expect("segment duration fits in 16 bits")
-                .into(),
+            data,
             ext_vals: self.ext_vals.clone(),
         }
     }
@@ -90,11 +93,9 @@ impl Iterator for TelephonePackets {
             let repeat = 3 - self.final_repeats;
             self.final_repeats -= 1;
             let total = to_units(self.tele.duration, self.rtp_time.frequency());
-            return Some(self.packet(
-                total - self.segment,
-                true,
-                self.wallclock + self.tele.duration + UPDATE_INTERVAL * repeat,
-            ));
+            let not_before = self.wallclock + self.tele.duration + UPDATE_INTERVAL * repeat;
+            let packet = self.packet(total - self.segment, true, not_before);
+            return Some(packet);
         }
         if self.done {
             return None;

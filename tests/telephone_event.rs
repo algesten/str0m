@@ -884,12 +884,11 @@ fn audio_written_around_pending_telephone_packets_keeps_send_order() -> Result<(
             [],
         )?;
     for millis in [10, 30] {
-        l.writer(mid).unwrap().write(
-            audio_pt,
-            start + Duration::from_millis(millis),
-            MediaTime::new(millis * 48, Frequency::FORTY_EIGHT_KHZ),
-            [0xf8, 0xff, 0xfe],
-        )?;
+        let wallclock = start + Duration::from_millis(millis);
+        let rtp_time = MediaTime::new(millis * 48, Frequency::FORTY_EIGHT_KHZ);
+        l.writer(mid)
+            .unwrap()
+            .write(audio_pt, wallclock, rtp_time, [0xf8, 0xff, 0xfe])?;
     }
     progress_for(&mut l, &mut r, Duration::from_millis(200))?;
 
