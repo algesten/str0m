@@ -633,12 +633,12 @@ impl PayloadParams {
                 .spec
                 .format
                 .telephone_event_max
-                .unwrap_or(FormatParams::DEFAULT_TELE_EVENT_MAX);
+                .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
             let remote = first
                 .spec
                 .format
                 .telephone_event_max
-                .unwrap_or(FormatParams::DEFAULT_TELE_EVENT_MAX);
+                .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
             self.spec.format.telephone_event_max = Some(local.min(remote));
         }
 

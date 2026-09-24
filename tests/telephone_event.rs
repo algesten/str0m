@@ -1325,7 +1325,7 @@ fn telephone_event_write_rejects_invalid_events() {
         )
     ));
 
-    // Without the send stream, writes fail, and so do the reports of the events queued above.
+    // Without the send stream, new writes and queued packets fail.
     let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
     assert!(l.direct_api().remove_stream_tx(ssrc));
     let duration = Duration::from_millis(100);
@@ -1335,7 +1335,8 @@ fn telephone_event_write_rejects_invalid_events() {
             .telephone_event(tele(16, duration, 0))
             .write(audio_pt, wallclock, start, []);
     assert!(matches!(result, Err(RtcError::NoSenderSource)));
-    progress_for(&mut l, &mut r, Duration::from_millis(100)).unwrap();
+    let result = progress_for(&mut l, &mut r, Duration::from_millis(100));
+    assert!(matches!(result, Err(RtcError::NoSenderSource)));
 
     let (mut l, _r, mid) = connected_frame_mode();
     let wallclock = l.last;

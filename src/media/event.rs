@@ -288,7 +288,8 @@ impl MediaData {
     /// Return true if MediaData is keyframe independently of Codec
     pub fn is_keyframe(&self) -> bool {
         match self.codec_extra {
-            CodecExtra::None | CodecExtra::Tele(_) => false,
+            CodecExtra::None => false,
+            CodecExtra::Tele(_) => false,
             CodecExtra::H264(h264_extra) => h264_extra.is_keyframe,
             CodecExtra::H265(h265_extra) => h265_extra.is_keyframe,
             CodecExtra::H266(h266_extra) => h266_extra.is_keyframe,

@@ -576,7 +576,7 @@ impl CodecConfig {
                 p.spec
                     .format
                     .telephone_event_max
-                    .unwrap_or(FormatParams::DEFAULT_TELE_EVENT_MAX)
+                    .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX)
             })
     }
 

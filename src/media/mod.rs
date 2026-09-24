@@ -143,10 +143,11 @@ pub struct Media {
     /// renegotiation. Defaults to `true`, so a negotiated RED PT wraps unless it is turned off.
     red_send_enabled: bool,
 
-    /// Outgoing media and telephone packets. Telephone packets may wait for `not_before`.
+    /// Outgoing payloads ordered by their send deadlines or media wallclock times.
     to_payload: VecDeque<ToPayload>,
 
     /// End time of the last telephone event, for the minimum pause between tones.
+    /// The payload queue cannot supply this after the event's packets have been sent.
     last_tele_end: Option<Instant>,
 
     pub(crate) need_open_event: bool,
@@ -203,18 +204,12 @@ pub(crate) struct ToPayload {
     pub rid: Option<Rid>,
     pub wallclock: Instant,
     pub rtp_time: MediaTime,
-    /// Earliest send time. Regular media has no send deadline.
+    /// Optional send deadline, acting as an informal pacer. Telephone packets use it to
+    /// spread updates over the event duration; regular media has no deadline.
     pub not_before: Option<Instant>,
     pub start_of_talk_spurt: bool,
     pub data: Arc<[u8]>,
     pub ext_vals: ExtensionValues,
-}
-
-impl ToPayload {
-    fn queue_time(&self) -> Instant {
-        // Telephone RTP timestamps stay at the event start as their duration grows.
-        self.not_before.unwrap_or(self.wallclock)
-    }
 }
 
 /// Per-(pt, rid) outgoing payloader entry stored in [`Media::payloaders`]: the codec-agnostic
@@ -361,6 +356,11 @@ impl Media {
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
                 };
+                let last_sender_info = dep.first_sender_info();
+                // Telephone payloads are audio media even though Codec::is_audio()
+                // excludes their payload format.
+                let audio_start_of_talk_spurt =
+                    codec.spec().codec.kind().is_audio() && dep.start_of_talkspurt();
                 return Ok(Some(MediaData {
                     mid: self.mid,
                     pt: *pt,
@@ -377,10 +377,9 @@ impl Media {
                     seq_range: dep.seq_range(),
                     contiguous: dep.contiguous,
                     ext_vals: dep.ext_vals(),
-                    last_sender_info: dep.first_sender_info(),
-                    audio_start_of_talk_spurt: codec.spec().codec.kind().is_audio()
-                        && dep.start_of_talkspurt(),
                     codec_extra: dep.codec_extra,
+                    last_sender_info,
+                    audio_start_of_talk_spurt,
                     data: dep.data.into(),
                 }));
             }
@@ -481,7 +480,7 @@ impl Media {
         self.dir = new_dir;
 
         if !new_dir.is_sending() {
-            self.to_payload.retain(|p| p.not_before.is_none());
+            self.to_payload.clear();
             self.last_tele_end = None;
         }
     }
@@ -519,18 +518,38 @@ impl Media {
         })
     }
 
-    fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        let queue_time = to_payload.queue_time();
-        let position = self
-            .to_payload
+    fn queue_position(&self, to_payload: &ToPayload) -> usize {
+        let queue_time = to_payload.not_before.unwrap_or(to_payload.wallclock);
+        self.to_payload
             .iter()
-            .position(|p| p.queue_time() > queue_time)
-            .unwrap_or(self.to_payload.len());
+            .position(|p| p.not_before.unwrap_or(p.wallclock) > queue_time)
+            .unwrap_or(self.to_payload.len())
+    }
+
+    fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
+        let position = self.queue_position(&to_payload);
         self.to_payload.insert(position, to_payload);
         if self.to_payload.len() > MAX_PENDING_PAYLOADS {
             self.to_payload.remove(position);
             return Err(RtcError::WriteWithoutPoll);
         }
+        Ok(())
+    }
+
+    pub(crate) fn telephone_event_too_soon(&self, start: Instant) -> bool {
+        self.last_tele_end
+            .is_some_and(|end| start < end + tele::MIN_PAUSE)
+    }
+
+    pub(crate) fn queue_telephone_packets(
+        &mut self,
+        packets: impl Iterator<Item = ToPayload>,
+        end: Instant,
+    ) -> Result<(), RtcError> {
+        for packet in packets {
+            self.set_to_payload(packet)?;
+        }
+        self.last_tele_end = Some(end);
         Ok(())
     }
 
@@ -562,20 +581,8 @@ impl Media {
         let Some(front) = self.to_payload.front() else {
             return Ok(());
         };
-        let is_telephone = front.not_before.is_some();
-        let rid = front.rid;
         let is_waiting = front.not_before.is_some_and(|deadline| deadline > now);
         if is_waiting {
-            return Ok(());
-        }
-
-        let midrid = MidRid(self.mid, rid);
-        let telephone_sender_missing =
-            is_telephone && streams.stream_tx_by_midrid(midrid).is_none();
-        if telephone_sender_missing {
-            self.to_payload
-                .retain(|pending| pending.not_before.is_none() || pending.rid != rid);
-            self.last_tele_end = None;
             return Ok(());
         }
 
@@ -583,18 +590,6 @@ impl Media {
             .to_payload
             .pop_front()
             .expect("front was checked above");
-        self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)
-    }
-
-    fn payload(
-        &mut self,
-        to_payload: ToPayload,
-        streams: &mut Streams,
-        params: &[PayloadParams],
-        vp9_mode: Vp9PacketizerMode,
-        mtu: usize,
-        red_distances: &[u32],
-    ) -> Result<(), RtcError> {
         let ToPayload { pt, rid, .. } = &to_payload;
 
         let midrid = MidRid(self.mid, *rid);

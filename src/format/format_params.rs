@@ -122,7 +122,7 @@ pub struct FormatParams {
 crate::drv_identity_copy!(FormatParams);
 
 impl FormatParams {
-    pub(crate) const DEFAULT_TELE_EVENT_MAX: u8 = 16;
+    pub(crate) const DEFAULT_TELEPHONE_EVENT_MAX: u8 = 16;
 
     pub(crate) fn from_sdp_fmtp<'a>(
         codec: Codec,
@@ -131,7 +131,7 @@ impl FormatParams {
         let mut params = Self::default();
         if codec.is_tele() {
             let max = match lines.next() {
-                None => Self::DEFAULT_TELE_EVENT_MAX,
+                None => Self::DEFAULT_TELEPHONE_EVENT_MAX,
                 Some([FormatParam::BareRange(max) | FormatParam::TelephoneEvents(max)]) => *max,
                 _ => return None,
             };

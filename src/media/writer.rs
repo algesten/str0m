@@ -10,7 +10,7 @@ use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 use crate::streams::Streams;
 
-use super::tele::{MAX_DURATION, MIN_DURATION, MIN_PAUSE, TelephonePackets};
+use super::tele::{MAX_DURATION, MIN_DURATION, TelephonePackets};
 use super::{
     ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TelephoneEvent, ToPayload,
 };
@@ -235,10 +235,7 @@ impl<'a> Writer<'a> {
                 rtp_time.rebase(clock_rate),
                 ext_vals,
             );
-            for packet in packets {
-                media.set_to_payload(packet)?;
-            }
-            media.last_tele_end = Some(wallclock + event.duration);
+            media.queue_telephone_packets(packets, wallclock + event.duration)?;
         }
 
         Ok(())
@@ -358,9 +355,7 @@ fn validate_tele_event(
     if sender_missing {
         return Err(RtcError::NoSenderSource);
     }
-    let too_soon = media
-        .last_tele_end
-        .is_some_and(|end| wallclock < end + MIN_PAUSE);
+    let too_soon = media.telephone_event_too_soon(wallclock);
     if too_soon {
         let reason = "telephone events must be at least 50 ms apart";
         return Err(tele_invalid(mid, event_pt, reason));
