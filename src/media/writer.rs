@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::RtcError;
 use crate::format::PayloadParams;
@@ -10,7 +10,9 @@ use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 
 use super::telephone_event::TelephoneEvent;
-use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
+use super::{
+    ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TeleEvent, ToPayload,
+};
 
 /// Writer of frame level data.
 ///
@@ -127,7 +129,7 @@ impl<'a> Writer<'a> {
     /// does not match anything negotiated.
     ///
     /// Telephone-event payloads are sent as is, in one RTP packet. To send a whole event, see
-    /// [`Writer::write_telephone_event`].
+    /// [`Writer::write_tele_event`].
     ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
@@ -195,9 +197,9 @@ impl<'a> Writer<'a> {
     /// Events are sent in the order they are written, at least 50 ms apart. An event that waits
     /// for an earlier one starts later, with its `wallclock` and `rtp_time` moved forward together.
     ///
-    /// `event` is the event code: DTMF digits `0`-`9` are 0-9, `*` is 10, `#` is 11, `A`-`D` are
-    /// 12-15 and flash is 16. `volume` is the tone power in -dBm0, from 0 to 63, where larger is
-    /// quieter; libwebrtc sends 10.
+    /// The [`TeleEvent`] holds the event code, tone power, and total duration. Set its `end` flag
+    /// for this complete event. DTMF digits `0`-`9` are codes 0-9, `*` is 10, `#` is 11,
+    /// `A`-`D` are 12-15, and flash is 16. libwebrtc sends volume 10.
     ///
     /// The reports use the writer's RID and header extension values. Queued events are dropped if
     /// the media stops sending.
@@ -206,24 +208,23 @@ impl<'a> Writer<'a> {
     ///
     /// * [`RtcError::UnknownPt`] if `pt` is not a telephone-event payload type, or is not among
     ///   the SDP-negotiated payload types for this media.
-    /// * [`RtcError::Packet`] with [`PacketError::TeleInvalid`] if `event` exceeds the negotiated
-    ///   range, `volume` is above 63, or `duration` is outside 40 ms through 6 seconds.
+    /// * [`RtcError::Packet`] with [`PacketError::TeleInvalid`] if the event code exceeds the
+    ///   negotiated range, `end` is false, volume is above 63, or duration is outside 40 ms
+    ///   through 6 seconds.
     /// * [`RtcError::NotSendingDirection`], [`RtcError::UnknownRid`] or
     ///   [`RtcError::NoSenderSource`] if the media can't send the event.
     ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
-    pub fn write_telephone_event(
+    pub fn write_tele_event(
         self,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
-        event: u8,
-        duration: Duration,
-        volume: u8,
+        tele: TeleEvent,
     ) -> Result<(), RtcError> {
         let codecs = &self.session.codec_config;
         let params = codecs.params().iter().find(|p| p.pt() == pt);
-        let (Some(max), Some(params)) = (codecs.telephone_event_max(pt), params) else {
+        let (Some(max), Some(params)) = (codecs.tele_event_max(pt), params) else {
             return Err(RtcError::UnknownPt(pt));
         };
         let clock_rate = params.spec().rtp_clock_rate();
@@ -236,11 +237,18 @@ impl<'a> Writer<'a> {
             return Err(RtcError::UnknownPt(pt));
         }
 
-        if event > max {
+        if tele.event > max {
             return Err(RtcError::Packet(
                 self.mid,
                 pt,
                 PacketError::TeleInvalid("event exceeds negotiated range"),
+            ));
+        }
+        if !tele.end {
+            return Err(RtcError::Packet(
+                self.mid,
+                pt,
+                PacketError::TeleInvalid("queued event must have end set"),
             ));
         }
 
@@ -262,7 +270,7 @@ impl<'a> Writer<'a> {
 
         trace!(
             "write telephone event {:?} {:?} {:?} time: {:?} event: {} duration: {:?}",
-            self.mid, self.rid, pt, rtp_time, event, duration
+            self.mid, self.rid, pt, rtp_time, tele.event, tele.duration
         );
 
         media
@@ -270,9 +278,9 @@ impl<'a> Writer<'a> {
             .push(TelephoneEvent {
                 pt,
                 rid: self.rid,
-                event,
-                volume,
-                duration,
+                event: tele.event,
+                volume: tele.volume,
+                duration: tele.duration,
                 wallclock,
                 rtp_time: rtp_time.rebase(clock_rate),
                 ext_vals: self.ext_vals,

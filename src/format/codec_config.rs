@@ -568,15 +568,15 @@ impl CodecConfig {
     /// After negotiation it is the smaller range advertised by both peers,
     /// shared across all m-lines using the payload type. Returns `None` if
     /// the payload type is not configured as telephone-event.
-    pub(crate) fn telephone_event_max(&self, pt: Pt) -> Option<u8> {
+    pub(crate) fn tele_event_max(&self, pt: Pt) -> Option<u8> {
         self.params
             .iter()
             .find(|p| p.pt() == pt && p.spec.codec.is_tele())
             .map(|p| {
                 p.spec
                     .format
-                    .telephone_event_max
-                    .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX)
+                    .tele_event_max
+                    .unwrap_or(FormatParams::DEFAULT_TELE_EVENT_MAX)
             })
     }
 

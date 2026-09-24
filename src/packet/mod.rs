@@ -73,6 +73,7 @@ use comfort_noise::{ComfortNoiseDepacketizer, ComfortNoisePacketizer};
 
 mod telephone_event;
 pub use telephone_event::TeleEvent;
+pub(crate) use telephone_event::duration_from_units;
 use telephone_event::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
 
 mod buffer_rx;
@@ -397,7 +398,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Vp9 => CodecDepacketizer::Vp9(Vp9Depacketizer::default()),
             Codec::Av1 => CodecDepacketizer::Av1(Av1Depacketizer::default()),
             Codec::Null => CodecDepacketizer::Null(NullDepacketizer),
-            Codec::Tele => CodecDepacketizer::TelephoneEvent(TelephoneEventDepacketizer),
+            Codec::Tele => CodecDepacketizer::TelephoneEvent(TelephoneEventDepacketizer::default()),
             Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
             Codec::Red => panic!("Cant instantiate depacketizer for RED codec"),
             Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
@@ -624,7 +625,7 @@ mod test {
             .depacketize(&payload, &mut output, &mut extra)
             .unwrap();
         assert_eq!(output, payload);
-        let report = TeleEvent::parse(&payload).unwrap();
+        let report = TeleEvent::parse(&payload, crate::rtp_::Frequency::EIGHT_KHZ).unwrap();
         assert_eq!(extra, CodecExtra::Tele(vec![report]));
     }
 }

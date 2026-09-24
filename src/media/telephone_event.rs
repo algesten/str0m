@@ -1,9 +1,10 @@
-//! Sends queued telephone events (RFC 4733) like libwebrtc, see `Writer::write_telephone_event`.
+//! Sends queued telephone events (RFC 4733) like libwebrtc, see `Writer::write_tele_event`.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::packet::PacketError;
+use crate::packet::duration_from_units;
 
 use super::{ExtensionValues, Frequency, MediaTime, Pt, Rid, TeleEvent, ToPayload};
 
@@ -16,7 +17,7 @@ const MAX_DURATION: Duration = Duration::from_millis(6000);
 /// (RFC 4733 Section 2.5.1.3).
 const MAX_SEGMENT: u64 = u16::MAX as u64;
 
-/// A telephone event to send, from `Writer::write_telephone_event`.
+/// A telephone event to send, from `Writer::write_tele_event`.
 #[derive(Debug)]
 pub(crate) struct TelephoneEvent {
     pub pt: Pt,
@@ -129,7 +130,7 @@ impl TelephoneEvent {
             event: self.event,
             end,
             volume: self.volume,
-            duration: duration as u16,
+            duration: duration_from_units(duration as u16, clock_rate),
         };
         ToPayload {
             pt: self.pt,
@@ -138,7 +139,10 @@ impl TelephoneEvent {
             wallclock: self.wallclock + Duration::from(MediaTime::new(segment, clock_rate)),
             rtp_time: MediaTime::new(self.rtp_time.numer() + segment, clock_rate),
             start_of_talk_spurt: marker,
-            data: report.to_bytes().into(),
+            data: report
+                .to_bytes(clock_rate)
+                .expect("segment fits in 16 bits")
+                .into(),
             ext_vals: self.ext_vals.clone(),
         }
     }
@@ -171,18 +175,22 @@ mod test {
         }
     }
 
-    fn report(duration: u16, end: bool) -> TeleEvent {
+    fn report_at(duration: u16, end: bool, clock_rate: Frequency) -> TeleEvent {
         TeleEvent {
             event: 5,
             end,
             volume: 10,
-            duration,
+            duration: duration_from_units(duration, clock_rate),
         }
+    }
+
+    fn report(duration: u16, end: bool) -> TeleEvent {
+        report_at(duration, end, Frequency::EIGHT_KHZ)
     }
 
     fn poll_at(queue: &mut TelephoneEventQueue, base: Instant, now: Instant) -> Vec<Sent> {
         let sent = |p: ToPayload| {
-            let report = TeleEvent::parse(&p.data).unwrap();
+            let report = TeleEvent::parse(&p.data, p.rtp_time.frequency()).unwrap();
             (
                 now - base,
                 p.rtp_time.numer(),
@@ -279,13 +287,25 @@ mod test {
             let sent = reports.iter().filter(|s| s.0 == ms * MS);
             sent.map(|s| (s.1, s.3)).collect()
         };
-        let segment_end = report(u16::MAX, false);
-        assert_eq!(at(1380), [(1000, segment_end), (66535, report(705, false))]);
+        let segment_end = report_at(u16::MAX, false, Frequency::FORTY_EIGHT_KHZ);
+        assert_eq!(
+            at(1380),
+            [
+                (1000, segment_end),
+                (66535, report_at(705, false, Frequency::FORTY_EIGHT_KHZ))
+            ]
+        );
         assert_eq!(
             at(2740),
-            [(66535, segment_end), (132070, report(450, false))]
+            [
+                (66535, segment_end),
+                (132070, report_at(450, false, Frequency::FORTY_EIGHT_KHZ))
+            ]
         );
-        assert_eq!(at(3000), [(132070, report(12930, true)); 3]);
+        assert_eq!(
+            at(3000),
+            [(132070, report_at(12930, true, Frequency::FORTY_EIGHT_KHZ)); 3]
+        );
 
         // Reports carry the wallclock of their segment start, 65535 units in.
         let mut queue = TelephoneEventQueue::default();

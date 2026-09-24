@@ -3,6 +3,8 @@
 //! A payload is one or more 4-byte event reports and is never split across RTP packets.
 
 use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use crate::rtp_::Frequency;
+use std::time::Duration;
 
 const REPORT_LEN: usize = 4;
 
@@ -12,15 +14,17 @@ const REPORT_LEN: usize = 4;
 ///
 /// ```
 /// use str0m::media::TeleEvent;
+/// use str0m::media::Frequency;
+/// use std::time::Duration;
 ///
 /// let report = TeleEvent {
 ///     event: 5,
 ///     end: true,
 ///     volume: 10,
-///     duration: 800,
+///     duration: Duration::from_millis(100),
 /// };
-/// let bytes = report.to_bytes();
-/// assert_eq!(TeleEvent::parse(&bytes), Some(report));
+/// let bytes = report.to_bytes(Frequency::EIGHT_KHZ).unwrap();
+/// assert_eq!(TeleEvent::parse(&bytes, Frequency::EIGHT_KHZ), Some(report));
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TeleEvent {
@@ -36,13 +40,14 @@ pub struct TeleEvent {
     /// The tone power in -dBm0, 0-63 (RFC 4733 Section 2.3.4). Larger values are quieter.
     pub volume: u8,
 
-    /// How long the event has lasted so far, in RTP timestamp units (RFC 4733 Section 2.3.5).
-    pub duration: u16,
+    /// How long the event has lasted so far (RFC 4733 Section 2.3.5).
+    pub duration: Duration,
 }
 
 impl TeleEvent {
-    /// Parses the report in the first four bytes of `buf`.
-    pub fn parse(buf: &[u8]) -> Option<Self> {
+    /// Parses the report in the first four bytes of `buf`, using its RTP clock rate to convert
+    /// the wire duration to [`Duration`].
+    pub fn parse(buf: &[u8], clock_rate: Frequency) -> Option<Self> {
         let [event, flags, d0, d1, ..] = *buf else {
             return None;
         };
@@ -51,7 +56,7 @@ impl TeleEvent {
             event,
             end: flags & 0x80 != 0,
             volume: flags & 0x3f,
-            duration: u16::from_be_bytes([d0, d1]),
+            duration: duration_from_units(u16::from_be_bytes([d0, d1]), clock_rate),
         })
     }
 
@@ -59,30 +64,57 @@ impl TeleEvent {
     ///
     /// A payload can pack consecutive reports (RFC 4733 Section 2.5.1.5): the first starts at the
     /// RTP timestamp and each later one where the previous one ended. Returns `None` unless the
-    /// payload is one or more whole reports.
-    pub fn parse_all(buf: &[u8]) -> Option<impl Iterator<Item = Self> + '_> {
+    /// payload is one or more whole reports. `clock_rate` is the payload type's RTP clock rate.
+    pub fn parse_all(buf: &[u8], clock_rate: Frequency) -> Option<impl Iterator<Item = Self> + '_> {
         if buf.is_empty() || buf.len() % REPORT_LEN != 0 {
             return None;
         }
 
-        Some(buf.chunks_exact(REPORT_LEN).filter_map(Self::parse))
+        Some(
+            buf.chunks_exact(REPORT_LEN)
+                .filter_map(move |report| Self::parse(report, clock_rate)),
+        )
     }
 
     /// Serializes the report to its four wire bytes.
     ///
-    /// The reserved bit is zero and only the low six bits of the volume are sent.
-    pub fn to_bytes(&self) -> [u8; 4] {
-        let [d0, d1] = self.duration.to_be_bytes();
+    /// The reserved bit is zero and only the low six bits of the volume are sent. Returns `None`
+    /// if the duration exceeds the wire format's 16-bit field at `clock_rate`.
+    pub fn to_bytes(&self, clock_rate: Frequency) -> Option<[u8; 4]> {
+        let [d0, d1] = units_from_duration(self.duration, clock_rate)?.to_be_bytes();
         let end = if self.end { 0x80 } else { 0 };
-        [self.event, end | (self.volume & 0x3f), d0, d1]
+        Some([self.event, end | (self.volume & 0x3f), d0, d1])
     }
+}
+
+pub(crate) fn duration_from_units(units: u16, clock_rate: Frequency) -> Duration {
+    let nanos = (u128::from(units) * 1_000_000_000 + u128::from(clock_rate.get()) / 2)
+        / u128::from(clock_rate.get());
+    Duration::from_nanos(nanos as u64)
+}
+
+fn units_from_duration(duration: Duration, clock_rate: Frequency) -> Option<u16> {
+    let scaled = duration
+        .as_nanos()
+        .checked_mul(u128::from(clock_rate.get()))?;
+    u16::try_from((scaled + 500_000_000) / 1_000_000_000).ok()
 }
 
 #[derive(Debug)]
 pub struct TelephoneEventPacketizer;
 
 #[derive(Debug)]
-pub struct TelephoneEventDepacketizer;
+pub struct TelephoneEventDepacketizer {
+    pub(crate) clock_rate: Frequency,
+}
+
+impl Default for TelephoneEventDepacketizer {
+    fn default() -> Self {
+        Self {
+            clock_rate: Frequency::EIGHT_KHZ,
+        }
+    }
+}
 
 impl Packetizer for TelephoneEventPacketizer {
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
@@ -123,9 +155,9 @@ impl Depacketizer for TelephoneEventDepacketizer {
         out: &mut Vec<u8>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
-        let reports = TeleEvent::parse_all(packet).ok_or(PacketError::TeleInvalid(
-            "payload must contain one or more complete 4-byte reports",
-        ))?;
+        let reports = TeleEvent::parse_all(packet, self.clock_rate).ok_or(
+            PacketError::TeleInvalid("payload must contain one or more complete 4-byte reports"),
+        )?;
         let mut events = Vec::with_capacity(packet.len() / REPORT_LEN);
         events.extend(reports);
 
@@ -158,46 +190,86 @@ mod test {
             event: 5,
             end: true,
             volume: 10,
-            duration: 800,
+            duration: Duration::from_millis(100),
         };
 
-        assert_eq!(report.to_bytes(), REPORT);
-        assert_eq!(TeleEvent::parse(&REPORT), Some(report));
+        assert_eq!(report.to_bytes(Frequency::EIGHT_KHZ).unwrap(), REPORT);
+        assert_eq!(
+            TeleEvent::parse(&REPORT, Frequency::EIGHT_KHZ),
+            Some(report)
+        );
         for len in 0..REPORT_LEN {
-            assert_eq!(TeleEvent::parse(&REPORT[..len]), None);
+            assert_eq!(TeleEvent::parse(&REPORT[..len], Frequency::EIGHT_KHZ), None);
         }
     }
 
     #[test]
+    fn payload_duration_uses_rtp_clock_rate() {
+        for clock_rate in [Frequency::EIGHT_KHZ, Frequency::FORTY_EIGHT_KHZ] {
+            for units in [0, 1, 800, u16::MAX] {
+                let duration = duration_from_units(units, clock_rate);
+                assert_eq!(units_from_duration(duration, clock_rate), Some(units));
+            }
+        }
+
+        let report = TeleEvent {
+            event: 5,
+            end: true,
+            volume: 10,
+            duration: duration_from_units(u16::MAX, Frequency::FORTY_EIGHT_KHZ),
+        };
+        let bytes = report.to_bytes(Frequency::FORTY_EIGHT_KHZ).unwrap();
+        assert_eq!(&bytes[2..], &u16::MAX.to_be_bytes());
+        assert_eq!(
+            TeleEvent::parse(&bytes, Frequency::FORTY_EIGHT_KHZ),
+            Some(report)
+        );
+
+        let too_long = TeleEvent {
+            duration: Duration::from_secs(3),
+            ..report
+        };
+        assert_eq!(too_long.to_bytes(Frequency::FORTY_EIGHT_KHZ), None);
+    }
+
+    #[test]
     fn payload_ignores_reserved_bit_and_masks_volume() {
-        let report = TeleEvent::parse(&[0xff; 4]).unwrap();
+        let report = TeleEvent::parse(&[0xff; 4], Frequency::EIGHT_KHZ).unwrap();
         assert_eq!(report.volume, 63);
-        assert_eq!(report.to_bytes(), [0xff, 0xbf, 0xff, 0xff]);
+        assert_eq!(
+            report.to_bytes(Frequency::EIGHT_KHZ).unwrap(),
+            [0xff, 0xbf, 0xff, 0xff]
+        );
 
         let loud = TeleEvent {
             event: 0,
             end: false,
             volume: 0xff,
-            duration: 0,
+            duration: Duration::ZERO,
         };
-        assert_eq!(loud.to_bytes(), [0, 0x3f, 0, 0]);
+        assert_eq!(
+            loud.to_bytes(Frequency::EIGHT_KHZ).unwrap(),
+            [0, 0x3f, 0, 0]
+        );
     }
 
     #[test]
     fn parse_all_requires_whole_reports() {
         let packed = [REPORT, NEXT].concat();
 
-        let reports: Vec<_> = TeleEvent::parse_all(&packed).unwrap().collect();
+        let reports: Vec<_> = TeleEvent::parse_all(&packed, Frequency::EIGHT_KHZ)
+            .unwrap()
+            .collect();
         assert_eq!(
             reports,
             [
-                TeleEvent::parse(&REPORT).unwrap(),
-                TeleEvent::parse(&NEXT).unwrap(),
+                TeleEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap(),
+                TeleEvent::parse(&NEXT, Frequency::EIGHT_KHZ).unwrap(),
             ]
         );
 
         for len in [0, 1, 3, 5, 7] {
-            assert!(TeleEvent::parse_all(&packed[..len]).is_none());
+            assert!(TeleEvent::parse_all(&packed[..len], Frequency::EIGHT_KHZ).is_none());
         }
     }
 
@@ -241,9 +313,9 @@ mod test {
 
     #[test]
     fn depacketizer_passes_reports_through() {
-        let mut depacketizer = TelephoneEventDepacketizer;
-        let first = TeleEvent::parse(&REPORT).unwrap();
-        let second = TeleEvent::parse(&NEXT).unwrap();
+        let mut depacketizer = TelephoneEventDepacketizer::default();
+        let first = TeleEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap();
+        let second = TeleEvent::parse(&NEXT, Frequency::EIGHT_KHZ).unwrap();
         let packed = [REPORT, NEXT].concat();
 
         for (packet, expected) in [
@@ -265,7 +337,7 @@ mod test {
 
     #[test]
     fn depacketizer_rejects_empty_and_partial_reports() {
-        let mut depacketizer = TelephoneEventDepacketizer;
+        let mut depacketizer = TelephoneEventDepacketizer::default();
         let packed = [REPORT, NEXT].concat();
 
         for len in [0, 1, 3, 5, 7] {

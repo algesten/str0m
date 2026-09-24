@@ -415,6 +415,10 @@ impl Media {
 
             let mut depack: CodecDepacketizer = codec.into();
 
+            if let CodecDepacketizer::TelephoneEvent(ref mut tele) = depack {
+                tele.clock_rate = params.spec.rtp_clock_rate();
+            }
+
             // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
             if let CodecDepacketizer::H265(ref mut h265) = depack {
                 if params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {

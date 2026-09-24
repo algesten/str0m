@@ -632,14 +632,14 @@ impl PayloadParams {
             let local = self
                 .spec
                 .format
-                .telephone_event_max
-                .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
+                .tele_event_max
+                .unwrap_or(FormatParams::DEFAULT_TELE_EVENT_MAX);
             let remote = first
                 .spec
                 .format
-                .telephone_event_max
-                .unwrap_or(FormatParams::DEFAULT_TELEPHONE_EVENT_MAX);
-            self.spec.format.telephone_event_max = Some(local.min(remote));
+                .tele_event_max
+                .unwrap_or(FormatParams::DEFAULT_TELE_EVENT_MAX);
+            self.spec.format.tele_event_max = Some(local.min(remote));
         }
 
         // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.
