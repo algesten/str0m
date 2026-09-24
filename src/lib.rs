@@ -2258,7 +2258,7 @@ pub mod unversioned {
     //! To use this module, enable the `unversioned` feature flag in your Cargo.toml.
 
     pub use super::packet::{
-        Depacketizer, H264Depacketizer, H264Packetizer, OpusPacketizer, Packetizer,
+        Depacketizer, H264Depacketizer, H264Packetizer, OpusPacketizer, Packetizer, TelephoneEvent,
         Vp8Depacketizer, Vp8Packetizer,
     };
 }

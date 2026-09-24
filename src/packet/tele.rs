@@ -11,6 +11,9 @@ const REPORT_LEN: usize = 4;
 /// A telephone-event (DTMF, RFC 4733) payload.
 ///
 /// Builds and parses the 4-byte data carried in telephone-event RTP payloads.
+/// The wire parsing and serialization methods are unversioned and take the negotiated RTP
+/// clock rate on each call. This type is also available through `str0m::unversioned` when the
+/// `unversioned` feature is enabled.
 ///
 /// ```
 /// use str0m::media::TelephoneEvent;
@@ -47,6 +50,11 @@ pub struct TelephoneEvent {
 impl TelephoneEvent {
     /// Parses the report in the first four bytes of `buf`, using its RTP clock rate to convert
     /// the wire duration to [`Duration`].
+    ///
+    /// ## Unversioned API surface
+    ///
+    /// This method is not currently versioned according to semver rules.
+    /// Breaking changes may be made in minor or patch releases.
     pub fn parse(buf: &[u8], clock_rate: Frequency) -> Option<Self> {
         let [event, flags, d0, d1, ..] = *buf else {
             return None;
@@ -65,6 +73,11 @@ impl TelephoneEvent {
     /// A payload can pack consecutive reports (RFC 4733 Section 2.5.1.5): the first starts at the
     /// RTP timestamp and each later one where the previous one ended. Returns `None` unless the
     /// payload is one or more whole reports. `clock_rate` is the payload type's RTP clock rate.
+    ///
+    /// ## Unversioned API surface
+    ///
+    /// This method is not currently versioned according to semver rules.
+    /// Breaking changes may be made in minor or patch releases.
     pub fn parse_all(buf: &[u8], clock_rate: Frequency) -> Option<impl Iterator<Item = Self> + '_> {
         if buf.is_empty() || buf.len() % REPORT_LEN != 0 {
             return None;
@@ -80,6 +93,11 @@ impl TelephoneEvent {
     ///
     /// The reserved bit is zero and only the low six bits of the volume are sent. Returns `None`
     /// if the duration exceeds the wire format's 16-bit field at `clock_rate`.
+    ///
+    /// ## Unversioned API surface
+    ///
+    /// This method is not currently versioned according to semver rules.
+    /// Breaking changes may be made in minor or patch releases.
     pub fn to_bytes(&self, clock_rate: Frequency) -> Option<[u8; 4]> {
         let [d0, d1] = units_from_duration(self.duration, clock_rate)?.to_be_bytes();
         let end = if self.end { 0x80 } else { 0 };

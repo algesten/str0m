@@ -20,6 +20,37 @@ const DIRECTIONS: [Direction; 4] = [
     Direction::Inactive,
 ];
 
+#[cfg(feature = "unversioned")]
+#[test]
+fn unversioned_telephone_event_wire_helpers() {
+    use str0m::unversioned::TelephoneEvent as WireEvent;
+
+    let report: TelephoneEvent = WireEvent {
+        event: 5,
+        end: true,
+        volume: 10,
+        duration: Duration::from_millis(100),
+    };
+
+    for (clock_rate, units) in [
+        (Frequency::EIGHT_KHZ, 800),
+        (Frequency::SIXTEEN_KHZ, 1600),
+        (Frequency::new(32_000).unwrap(), 3200),
+        (Frequency::FORTY_EIGHT_KHZ, 4800),
+    ] {
+        let bytes = report.to_bytes(clock_rate).unwrap();
+        assert_eq!(&bytes[..2], &[5, 0x8a]);
+        assert_eq!(u16::from_be_bytes([bytes[2], bytes[3]]), units);
+        assert_eq!(WireEvent::parse(&bytes, clock_rate), Some(report));
+
+        let packed = [bytes, bytes].concat();
+        let reports: Vec<_> = WireEvent::parse_all(&packed, clock_rate).unwrap().collect();
+        assert_eq!(reports, [report, report]);
+        assert!(WireEvent::parse(&bytes[..3], clock_rate).is_none());
+        assert!(WireEvent::parse_all(&packed[..7], clock_rate).is_none());
+    }
+}
+
 fn add_events(config: &mut CodecConfig, events: &[(u8, Frequency, Option<u8>)]) {
     for &(pt, rate, max) in events {
         let format = max
