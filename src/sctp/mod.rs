@@ -7,6 +7,9 @@ use std::panic::UnwindSafe;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+// Keep Bytes inside this module to avoid copying SCTP packets before DTLS accepts them.
+use bytes::Bytes;
+
 pub use sctp_proto::ReceiveLimits as SctpReceiveLimits;
 use sctp_proto::{Association, AssociationHandle, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
@@ -51,7 +54,7 @@ pub(crate) struct RtcSctp {
     // Used to guarantee emission ordering, ResetComplete must
     // be sent after Close.
     reset_complete: VecDeque<u16>,
-    pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
+    pushed_back_transmit: Option<VecDeque<Bytes>>,
     receive_limits: Option<SctpReceiveLimits>,
     last_now: Instant,
     client: bool,
@@ -132,7 +135,7 @@ impl BufferedThresholdConfig {
 
 pub(crate) enum SctpEvent {
     Transmit {
-        packets: VecDeque<Vec<u8>>,
+        packets: VecDeque<Bytes>,
     },
     Open {
         id: u16,
@@ -1190,7 +1193,7 @@ impl RtcSctp {
         }
     }
 
-    pub fn push_back_transmit(&mut self, data: VecDeque<Vec<u8>>) {
+    pub fn push_back_transmit(&mut self, data: VecDeque<Bytes>) {
         trace!("Push back transmit: {}", data.len());
         assert!(self.pushed_back_transmit.is_none());
         self.pushed_back_transmit = Some(data);
@@ -1238,12 +1241,12 @@ impl RtcSctp {
     }
 }
 
-fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Vec<u8>>> {
+fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Bytes>> {
     let Payload::RawEncode(v) = t.payload else {
         return None;
     };
 
-    Some(v.into_iter().map(|b| b.to_vec()).collect())
+    Some(v.into())
 }
 
 fn set_state(current_state: &mut RtcSctpState, state: RtcSctpState) {
@@ -1622,6 +1625,25 @@ mod tests {
             sctp.init(true, Instant::now(), Some(local), None).is_err(),
             "the already-signaled INIT advertises a larger receive window than the configured policy"
         );
+    }
+
+    #[test]
+    fn transmit_retains_packet_ownership_and_order() {
+        let packets = vec![Bytes::from(vec![1; 48]), Bytes::from(vec![2; 512])];
+        let pointers = [packets[0].as_ptr(), packets[1].as_ptr()];
+        let transmit = Transmit {
+            now: Instant::now(),
+            remote: "127.0.0.1:5000".parse().unwrap(),
+            ecn: None,
+            local_ip: None,
+            payload: Payload::RawEncode(packets),
+        };
+        let output = transmit_to_vec(transmit).unwrap();
+        assert_eq!(output.len(), 2);
+        for (n, packet) in output.iter().enumerate() {
+            assert_eq!(packet.as_ptr(), pointers[n]);
+            assert!(packet.iter().all(|byte| *byte == n as u8 + 1));
+        }
     }
 
     /// A stream the remote opened can be gone from the association by the time the
