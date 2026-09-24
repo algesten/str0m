@@ -122,7 +122,13 @@ impl<'a> Writer<'a> {
     ///
     /// Only one event can be active on this media. Start the next one on a later write, at least
     /// 50 ms after the previous event ends.
+    ///
+    /// Panics if called twice before `write`. Use a separate `write` for each event.
     pub fn telephone_event(mut self, event: TelephoneEvent) -> Self {
+        assert!(
+            self.tele_event.is_none(),
+            "telephone_event was already set; call write before setting another event"
+        );
         self.tele_event = Some(event);
         self
     }
