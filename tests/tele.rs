@@ -756,7 +756,7 @@ fn telephone_event_frame_roundtrip() -> Result<(), RtcError> {
             data.data.as_ref(),
             report.to_bytes(Frequency::FORTY_EIGHT_KHZ).unwrap()
         );
-        assert_eq!(data.codec_extra, CodecExtra::Tele(vec![report]));
+        assert_eq!(data.codec_extra, CodecExtra::Tele(report));
         assert_eq!(data.audio_start_of_talk_spurt, index == 0);
         assert!(!data.is_keyframe());
         assert_eq!(data.time.numer(), start.numer());
@@ -848,18 +848,18 @@ fn telephone_event_packets_send_on_deadlines_with_empty_audio() -> Result<(), Rt
     let events = telephone_events(&r);
     assert_eq!(events.len(), 7);
     assert!(
-        events[..4].iter().all(|data| {
-            matches!(&data.codec_extra, CodecExtra::Tele(values) if !values[0].end)
-        })
+        events[..4]
+            .iter()
+            .all(|data| { matches!(data.codec_extra, CodecExtra::Tele(value) if !value.end) })
     );
     assert!(events[4..].iter().all(|data| {
         data.codec_extra
-            == CodecExtra::Tele(vec![TelephoneEvent {
+            == CodecExtra::Tele(TelephoneEvent {
                 event: 5,
                 end: true,
                 volume: 10,
                 duration: Duration::from_millis(100),
-            }])
+            })
     }));
     assert!(r.events.iter().all(|(_, event)| {
         !matches!(event, Event::MediaData(data) if data.params.spec().codec == Codec::Opus)
@@ -930,8 +930,8 @@ fn telephone_event_frame_long_duration_roundtrip() -> Result<(), RtcError> {
     let CodecExtra::Tele(last) = &events.last().unwrap().codec_extra else {
         panic!("expected telephone-event report");
     };
-    assert_eq!(last[0].duration, Duration::from_micros(269_375));
-    assert!(last[0].end);
+    assert_eq!(last.duration, Duration::from_micros(269_375));
+    assert!(last.end);
     Ok(())
 }
 
@@ -994,7 +994,7 @@ fn telephone_event_frame_queued_events_wait_for_each_other() -> Result<(), RtcEr
                 volume: 10,
                 duration: Duration::from_millis(20 * ticks),
             };
-            assert_eq!(data.codec_extra, CodecExtra::Tele(vec![expected]));
+            assert_eq!(data.codec_extra, CodecExtra::Tele(expected));
             assert_eq!(data.audio_start_of_talk_spurt, report_index == 0);
             assert_eq!(data.time.numer(), start.numer() + offset * 48);
             assert!(data.network_time >= written_at);
@@ -1027,9 +1027,9 @@ fn telephone_event_frame_stops_when_media_stops_sending() -> Result<(), RtcError
             PacketError::InvalidTelephoneEvent("telephone events must be at least 50 ms apart")
         ))
     ));
-    // Updates at 20 to 100 ms.
+    // Advance past the 100 ms update deadline.
     let first = l.last;
-    advance_with_empty_audio(&mut l, &mut r, mid, audio_pt, first, start, 100)?;
+    advance_with_empty_audio(&mut l, &mut r, mid, audio_pt, first, start, 120)?;
     let sent_before_direction_change = telephone_events(&r).len();
     assert!(sent_before_direction_change >= 5);
 
@@ -1051,7 +1051,7 @@ fn telephone_event_frame_stops_when_media_stops_sending() -> Result<(), RtcError
 }
 
 #[test]
-fn telephone_event_frame_packed_reports_arrive_as_one_sample() -> Result<(), RtcError> {
+fn telephone_event_frame_packed_reports_arrive_as_separate_samples() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
@@ -1082,13 +1082,17 @@ fn telephone_event_frame_packed_reports_arrive_as_one_sample() -> Result<(), Rtc
     progress_for(&mut l, &mut r, Duration::from_secs(1))?;
 
     let events = telephone_events(&r);
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].data.as_ref(), packed);
-    assert_eq!(events[0].codec_extra, CodecExtra::Tele(vec![first, second]));
-    let reports: Vec<_> = TelephoneEvent::parse_all(&events[0].data, Frequency::FORTY_EIGHT_KHZ)
-        .unwrap()
-        .collect();
-    assert_eq!(reports, [first, second]);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].data.as_ref(), &packed[..4]);
+    assert_eq!(events[1].data.as_ref(), &packed[4..]);
+    assert_eq!(events[0].codec_extra, CodecExtra::Tele(first));
+    assert_eq!(events[1].codec_extra, CodecExtra::Tele(second));
+    assert_eq!(events[0].time, start);
+    assert_eq!(events[1].time.numer(), start.numer() + 960);
+    assert_eq!(events[0].seq_range, events[1].seq_range);
+    // A directly written telephone payload does not set the RTP marker bit.
+    assert!(!events[0].audio_start_of_talk_spurt);
+    assert!(!events[1].audio_start_of_talk_spurt);
     Ok(())
 }
 
@@ -1130,7 +1134,7 @@ fn telephone_event_frame_reports_malformed_payloads() -> Result<(), RtcError> {
 
     let events = telephone_events(&r);
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].codec_extra, CodecExtra::Tele(vec![report]));
+    assert_eq!(events[0].codec_extra, CodecExtra::Tele(report));
     Ok(())
 }
 

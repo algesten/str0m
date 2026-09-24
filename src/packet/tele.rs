@@ -155,16 +155,17 @@ impl Depacketizer for TelephoneEventDepacketizer {
         out: &mut Vec<u8>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
-        let reports = TelephoneEvent::parse_all(packet, self.clock_rate).ok_or(
+        let mut reports = TelephoneEvent::parse_all(packet, self.clock_rate).ok_or(
             PacketError::InvalidTelephoneEvent(
                 "payload must contain one or more complete 4-byte reports",
             ),
         )?;
-        let mut events = Vec::with_capacity(packet.len() / REPORT_LEN);
-        events.extend(reports);
+        let first = reports
+            .next()
+            .expect("validated nonempty telephone payload");
 
         out.extend_from_slice(packet);
-        *codec_extra = CodecExtra::Tele(events);
+        *codec_extra = CodecExtra::Tele(first);
         Ok(())
     }
 
@@ -320,13 +321,9 @@ mod test {
     fn depacketizer_passes_reports_through() {
         let mut depacketizer = TelephoneEventDepacketizer::default();
         let first = TelephoneEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap();
-        let second = TelephoneEvent::parse(&NEXT, Frequency::EIGHT_KHZ).unwrap();
         let packed = [REPORT, NEXT].concat();
 
-        for (packet, expected) in [
-            (&REPORT[..], vec![first]),
-            (&packed[..], vec![first, second]),
-        ] {
+        for packet in [&REPORT[..], &packed[..]] {
             let mut out = Vec::new();
             let mut extra = CodecExtra::None;
             depacketizer
@@ -334,7 +331,7 @@ mod test {
                 .unwrap();
 
             assert_eq!(out, packet);
-            assert_eq!(extra, CodecExtra::Tele(expected));
+            assert_eq!(extra, CodecExtra::Tele(first));
             assert!(depacketizer.is_partition_head(packet));
             assert!(depacketizer.is_partition_tail(false, packet));
         }

@@ -141,7 +141,7 @@ pub trait Packetizer: fmt::Debug {
 ///
 /// Contains additional codec specific information which are deemed useful for
 /// managing and repackaging the frame
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CodecExtra {
     /// No extra information available
@@ -158,8 +158,8 @@ pub enum CodecExtra {
     H265(H265CodecExtra),
     /// Codec extra parameters for H266 (VVC). Prototype.
     H266(H266CodecExtra),
-    /// All telephone-event (RFC 4733) values in the payload, in wire order.
-    Tele(Vec<TelephoneEvent>),
+    /// The telephone-event (RFC 4733) value in this media sample.
+    Tele(TelephoneEvent),
 }
 
 /// Depacketizes an RTP payload.
@@ -626,6 +626,6 @@ mod test {
             .unwrap();
         assert_eq!(output, payload);
         let report = TelephoneEvent::parse(&payload, crate::rtp_::Frequency::EIGHT_KHZ).unwrap();
-        assert_eq!(extra, CodecExtra::Tele(vec![report]));
+        assert_eq!(extra, CodecExtra::Tele(report));
     }
 }

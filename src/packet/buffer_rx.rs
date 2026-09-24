@@ -132,9 +132,10 @@ pub struct DepacketizingBuffer {
     segments_offset: usize,
     #[cfg(test)]
     segment_rebuilds: usize,
-    last_emitted: Option<SeqNo>,
+    last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
+    pending_tele: VecDeque<Depacketized>,
     contiguity: Contiguity,
 }
 
@@ -167,6 +168,7 @@ impl DepacketizingBuffer {
             last_emitted: None,
             max_time: None,
             depack_cache: None,
+            pending_tele: VecDeque::new(),
             contiguity,
         }
     }
@@ -185,7 +187,7 @@ impl DepacketizingBuffer {
         //
         // As a special case, per popular demand, if hold_back is 0, we do emit
         // out of order packets.
-        if let Some(last) = self.last_emitted {
+        if let Some((last, _)) = self.last_emitted {
             if meta.seq_no <= last && self.hold_back > 0 {
                 trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
                 return;
@@ -252,14 +254,56 @@ impl DepacketizingBuffer {
         now: Instant,
         reordering_timeout: Option<Duration>,
     ) -> Option<Result<Depacketized, PacketError>> {
+        if let Some(report) = self.pending_tele.pop_front() {
+            return Some(Ok(report));
+        }
+
         loop {
             let queued = self.queue.len();
-            let result = self.pop_frame(now, reordering_timeout);
+            let result = match self.pop_frame(now, reordering_timeout) {
+                Some(Ok(dep)) => return Some(Ok(self.split_tele_reports(dep))),
+                other => other,
+            };
             if result.is_some() || reordering_timeout.is_none() || self.queue.len() == queued {
                 return result;
             }
             // A discarded frame must not leave later frames waiting for new input.
         }
+    }
+
+    fn split_tele_reports(&mut self, dep: Depacketized) -> Depacketized {
+        let CodecDepacketizer::TelephoneEvent(tele) = &self.depack else {
+            return dep;
+        };
+        if dep.data.len() == 4 {
+            return dep;
+        }
+
+        let mut time = dep.time;
+        let mut reports = dep.data.chunks_exact(4).enumerate().map(|(index, bytes)| {
+            let event = super::TelephoneEvent::parse(bytes, tele.clock_rate)
+                .expect("telephone payload was validated by the depacketizer");
+            let mut meta = dep.meta.clone();
+            if index > 0 {
+                meta[0].header.marker = false;
+            }
+            let report = Depacketized {
+                time,
+                contiguous: dep.contiguous,
+                meta,
+                data: bytes.to_vec(),
+                codec_extra: CodecExtra::Tele(event),
+            };
+            let duration = u16::from_be_bytes([bytes[2], bytes[3]]);
+            time = MediaTime::new(
+                time.numer().wrapping_add(u64::from(duration)),
+                time.frequency(),
+            );
+            report
+        });
+        let first = reports.next().expect("telephone payload is nonempty");
+        self.pending_tele.extend(reports);
+        first
     }
 
     fn pop_frame(
@@ -293,7 +337,7 @@ impl DepacketizingBuffer {
             Err(e) => {
                 // this segment cannot be decoded correctly
                 // remove from the queue and return the error
-                self.last_emitted = Some(seq);
+                self.last_emitted = Some((seq, CodecExtra::None));
                 self.consume_segment(stop);
                 return Some(Err(e));
             }
@@ -334,7 +378,7 @@ impl DepacketizingBuffer {
             return None;
         }
 
-        self.last_emitted = Some(last);
+        self.last_emitted = Some((last, dep.codec_extra));
 
         Some(Ok(dep))
     }
@@ -359,7 +403,7 @@ impl DepacketizingBuffer {
         let original_len = self.queue.len();
         let is_padding = |entry: &Entry| entry.data.is_empty() && !entry.head && !entry.tail;
 
-        if let Some(mut last) = self.last_emitted {
+        if let Some((mut last, extra)) = self.last_emitted {
             while self.queue.len() > self.hold_back {
                 let entry = self.queue.front().expect("queue exceeds hold back");
                 if !is_padding(entry) {
@@ -372,7 +416,7 @@ impl DepacketizingBuffer {
                 self.queue.pop_front();
             }
 
-            self.last_emitted = Some(last);
+            self.last_emitted = Some((last, extra));
         }
 
         // An incomplete frame can remain at the front while another payload type
@@ -543,7 +587,7 @@ impl DepacketizingBuffer {
     }
 
     fn is_following_last(&self, start: usize) -> bool {
-        let Some(last) = self.last_emitted else {
+        let Some((last, _)) = self.last_emitted else {
             // First time we emit something.
             return true;
         };
@@ -691,10 +735,18 @@ mod test {
             assert!(buf.queue.is_empty());
             assert!(buf.pop(base, None).is_none());
 
-            buf.push(test_meta(base, 2, 1, 0), packed.clone());
-            let frame = buf.pop(base, None).unwrap().unwrap();
-            assert_eq!(frame.data, packed);
-            assert!(frame.contiguous);
+            let mut meta = test_meta(base, 2, 1, 0);
+            meta.header.marker = true;
+            buf.push(meta, packed.clone());
+            let first = buf.pop(base, None).unwrap().unwrap();
+            assert_eq!(first.data, report);
+            assert!(first.contiguous);
+            assert!(first.start_of_talkspurt());
+            let second = buf.pop(base, None).unwrap().unwrap();
+            assert_eq!(second.data, report);
+            assert_eq!(second.time.numer(), first.time.numer() + 160);
+            assert!(!second.start_of_talkspurt());
+            assert!(buf.pop(base, None).is_none());
 
             buf.push_padding(test_meta(base, 3, 2, 0));
             assert!(buf.pop(base, None).is_none());
@@ -1227,7 +1279,7 @@ mod test {
 
             assert_eq!(buf.pop(base, None).unwrap().is_ok(), valid);
             assert_eq!(buf.queue.len(), 5);
-            assert_eq!(*buf.last_emitted.unwrap(), 1);
+            assert_eq!(*buf.last_emitted.unwrap().0, 1);
             assert_eq!(buf.poll_timeout(None), None);
             assert_eq!(buf.queue.len(), 5);
 
@@ -1235,7 +1287,7 @@ mod test {
             let scans = buf.segment_rebuilds;
             assert!(buf.pop(base, None).is_none());
             assert_eq!(buf.queue.len(), 3);
-            assert_eq!(*buf.last_emitted.unwrap(), 3);
+            assert_eq!(*buf.last_emitted.unwrap().0, 3);
             assert_eq!(buf.segment_rebuilds, scans);
 
             // Compaction invalidates indices; the next poll rebuilds exactly once.
@@ -1554,7 +1606,7 @@ mod test {
                 assert!(buf.pop(due, None).is_none());
                 assert_eq!(*buf.queue.front().unwrap().meta.seq_no, 4);
                 assert_eq!(buf.queue.len(), 6);
-                assert_eq!(*buf.last_emitted.unwrap(), 1);
+                assert_eq!(*buf.last_emitted.unwrap().0, 1);
                 continue;
             }
             buf.update_segments();

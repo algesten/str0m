@@ -356,7 +356,6 @@ impl Media {
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
                 };
-                let last_sender_info = dep.first_sender_info();
                 // Telephone payloads are audio media even though Codec::is_audio()
                 // excludes their payload format.
                 let audio_start_of_talk_spurt =
@@ -378,7 +377,7 @@ impl Media {
                     contiguous: dep.contiguous,
                     ext_vals: dep.ext_vals(),
                     codec_extra: dep.codec_extra,
-                    last_sender_info,
+                    last_sender_info: dep.first_sender_info(),
                     audio_start_of_talk_spurt,
                     data: dep.data.into(),
                 }));
