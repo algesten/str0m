@@ -371,9 +371,24 @@ impl RtcSctp {
                 )));
             }
 
-            // Enforce the local resource policy for both SDP and direct SNAP.
-            if self.receive_limits.is_some() {
-                snap_data.transport = webrtc_transport_config(self.receive_limits);
+            // A direct SNAP caller may have already signaled the cached local
+            // INIT. Do not silently install a smaller receive budget than the
+            // window the peer was told it could use.
+            if let Some(limits) = self.receive_limits {
+                let advertised_window = snap_data
+                    .local_init
+                    .as_ref()
+                    .and_then(|init| init.get(8..12))
+                    .map(|bytes| u32::from_be_bytes(bytes.try_into().unwrap()))
+                    .ok_or_else(|| {
+                        SctpError::Proto(ProtoError::Other("Invalid local SNAP INIT".into()))
+                    })?;
+                if advertised_window > limits.max_buffered_bytes() {
+                    return Err(SctpError::Proto(ProtoError::Other(
+                        "Local SNAP INIT receive window exceeds configured limit".into(),
+                    )));
+                }
+                snap_data.transport = webrtc_transport_config(Some(limits));
             }
             let config = snap_data.into_client_config();
             debug!(
