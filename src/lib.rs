@@ -1256,7 +1256,7 @@ impl Rtc {
              crypto provider that supports certificate generation.",
             );
 
-        let mut sctp = RtcSctp::new(*mtu.start());
+        let mut sctp = RtcSctp::with_receive_limits(*mtu.start(), config.sctp_receive_limits);
         if config.snap_enabled {
             sctp.enable_snap();
         }

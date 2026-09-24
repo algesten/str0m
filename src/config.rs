@@ -54,6 +54,7 @@ pub struct RtcConfig {
     pub(crate) dtls_version: DtlsVersion,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
+    pub(crate) sctp_receive_limits: Option<crate::channel::SctpReceiveLimits>,
     pub(crate) mtu: RangeInclusive<usize>,
 }
 
@@ -721,6 +722,21 @@ impl RtcConfig {
         self
     }
 
+    /// Set hard resource limits for retained inbound SCTP DATA state.
+    ///
+    /// The per-message limit is advertised in SDP and enforced during fragment
+    /// reassembly. Byte and chunk limits also include reset-deferred DATA and
+    /// DATA retained behind missing TSNs. Stream count is independent of the
+    /// numerical IDs. Exceeding a limit closes the SCTP association.
+    ///
+    /// This does not bound total SCTP heap use or control-chunk metadata. Default
+    /// behavior is unchanged when no limits are configured. For direct SNAP,
+    /// create matching `SctpInitData::with_receive_limits` before signaling INIT.
+    pub fn set_sctp_receive_limits(mut self, limits: crate::channel::SctpReceiveLimits) -> Self {
+        self.sctp_receive_limits = Some(limits);
+        self
+    }
+
     /// Set which DTLS version to use.
     ///
     /// Defaults to [`DtlsVersion::Dtls12`].
@@ -844,6 +860,7 @@ impl Default for RtcConfig {
             dtls_version: DtlsVersion::Dtls12,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
+            sctp_receive_limits: None,
             mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
         }
     }
