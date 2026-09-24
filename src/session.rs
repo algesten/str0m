@@ -280,7 +280,7 @@ impl Session {
             return Ok(());
         }
 
-        // Payload ready media and telephone packets.
+        // Payload ready media.
         self.do_payload(now)?;
 
         let sender_ssrc = self.streams.first_ssrc_local();

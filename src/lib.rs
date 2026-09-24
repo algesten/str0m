@@ -1162,8 +1162,7 @@ pub enum Reason {
 
     /// Packetizing of media into RTP data (if used).
     ///
-    /// Written media data needs packetizing, or a telephone packet is due.
-    /// This is not used in RTP mode.
+    /// Written media data needs packetizing. This is not used in RTP mode.
     Packetize,
 
     /// A complete video frame is waiting for missing earlier packets or its timeout.
