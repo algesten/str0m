@@ -102,7 +102,9 @@ rand = "0.9.0"
 [features]
 default = ["aws-lc-rs", "examples"]
 aws-lc-rs = ["dep:str0m-aws-lc-rs"]
-rust-crypto = ["dep:str0m-rust-crypto"]
+rust-crypto = ["rust-crypto-external-cert", "str0m-rust-crypto/generate-cert"]
+# Use RustCrypto with a certificate supplied through RtcConfig::set_dtls_cert.
+rust-crypto-external-cert = ["dep:str0m-rust-crypto"]
 openssl = ["dep:str0m-openssl"]
 openssl-dimpl = ["dep:str0m-openssl", "str0m-openssl/dimpl"]
 wincrypto = ["dep:str0m-wincrypto"]
@@ -152,7 +154,7 @@ drv = { workspace = true, optional = true }
 
 # Crypto providers
 str0m-aws-lc-rs = { workspace = true, optional = true }
-str0m-rust-crypto = { workspace = true, optional = true }
+str0m-rust-crypto = { version = "0.6.0", path = "crypto/rust-crypto", optional = true, default-features = false }
 str0m-openssl = { workspace = true, optional = true }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
