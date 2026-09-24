@@ -117,8 +117,15 @@ impl Depacketized {
 struct Entry {
     meta: RtpMeta,
     data: Arc<[u8]>,
+    offset: usize,
     head: bool,
     tail: bool,
+}
+
+impl Entry {
+    fn remaining(&self) -> &[u8] {
+        &self.data[self.offset..]
+    }
 }
 
 #[derive(Debug)]
@@ -230,6 +237,7 @@ impl DepacketizingBuffer {
                 let entry = Entry {
                     meta,
                     data,
+                    offset: 0,
                     head,
                     tail,
                 };
@@ -329,9 +337,9 @@ impl DepacketizingBuffer {
         // Keep the same RTP entry until every packed report has been emitted. The next pop
         // depacketizes its remaining bytes, so sequence ordering and duplicate checks stay intact.
         let is_tele = matches!(self.depack, CodecDepacketizer::Tele(_));
-        let has_more_reports = dep.data.len() > 4;
+        let has_more_reports = self.queue[start].remaining().len() > 4;
         if can_emit && is_tele && has_more_reports {
-            self.retain_tele_reports(start, &mut dep);
+            self.retain_tele_reports(start, &dep);
             return Some(Ok(dep));
         }
 
@@ -348,11 +356,10 @@ impl DepacketizingBuffer {
         Some(Ok(dep))
     }
 
-    fn retain_tele_reports(&mut self, start: usize, dep: &mut Depacketized) {
+    fn retain_tele_reports(&mut self, start: usize, dep: &Depacketized) {
         let duration = u16::from_be_bytes([dep.data[2], dep.data[3]]);
-        let remaining = dep.data.split_off(4);
         let entry = self.queue.get_mut(start).expect("telephone packet exists");
-        entry.data = remaining.into();
+        entry.offset += 4;
         entry.meta.time = MediaTime::new(
             entry.meta.time.numer().wrapping_add(u64::from(duration)),
             entry.meta.time.frequency(),
@@ -450,7 +457,11 @@ impl DepacketizingBuffer {
             }
         }
 
-        let packets_size = self.queue.range(start..=stop).map(|p| p.data.len()).sum();
+        let packets_size = self
+            .queue
+            .range(start..=stop)
+            .map(|p| p.remaining().len())
+            .sum();
         let mut data = self
             .depack
             .out_size_hint(packets_size)
@@ -463,7 +474,7 @@ impl DepacketizingBuffer {
 
         for entry in self.queue.range_mut(start..=stop) {
             self.depack
-                .depacketize(entry.data.as_ref(), &mut data, &mut codec_extra)?;
+                .depacketize(entry.remaining(), &mut data, &mut codec_extra)?;
             meta.push(entry.meta.clone());
         }
 
@@ -716,11 +727,15 @@ mod test {
 
             let mut meta = test_meta(base, 2, 1, 0);
             meta.header.marker = true;
-            buf.push(meta, packed.clone());
+            buf.push(meta, &packed[..]);
+            let original = Arc::clone(&buf.queue.front().unwrap().data);
             let first = buf.pop(base, None).unwrap().unwrap();
             assert_eq!(first.data, report);
             assert!(first.contiguous);
             assert!(first.start_of_talkspurt());
+            let buffered = buf.queue.front().unwrap();
+            assert!(Arc::ptr_eq(&buffered.data, &original));
+            assert_eq!(buffered.offset, 4);
             let second = buf.pop(base, None).unwrap().unwrap();
             assert_eq!(second.data, report);
             assert_eq!(second.time.numer(), first.time.numer() + 160);

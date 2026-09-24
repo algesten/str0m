@@ -146,7 +146,7 @@ impl Packetizer for TelephoneEventPacketizer {
 
 impl Depacketizer for TelephoneEventDepacketizer {
     fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
-        Some(packets_size)
+        Some(packets_size.min(REPORT_LEN))
     }
 
     fn depacketize(
@@ -164,7 +164,7 @@ impl Depacketizer for TelephoneEventDepacketizer {
             .next()
             .expect("validated nonempty telephone payload");
 
-        out.extend_from_slice(packet);
+        out.extend_from_slice(&packet[..REPORT_LEN]);
         *codec_extra = CodecExtra::Tele(first);
         Ok(())
     }
@@ -318,7 +318,7 @@ mod test {
     }
 
     #[test]
-    fn depacketizer_passes_reports_through() {
+    fn depacketizer_emits_one_report_at_a_time() {
         let mut depacketizer = TelephoneEventDepacketizer::default();
         let first = TelephoneEvent::parse(&REPORT, Frequency::EIGHT_KHZ).unwrap();
         let packed = [REPORT, NEXT].concat();
@@ -330,7 +330,7 @@ mod test {
                 .depacketize(packet, &mut out, &mut extra)
                 .unwrap();
 
-            assert_eq!(out, packet);
+            assert_eq!(out, REPORT);
             assert_eq!(extra, CodecExtra::Tele(first));
             assert!(depacketizer.is_partition_head(packet));
             assert!(depacketizer.is_partition_tail(false, packet));
