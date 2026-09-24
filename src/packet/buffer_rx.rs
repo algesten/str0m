@@ -135,7 +135,6 @@ pub struct DepacketizingBuffer {
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
-    pending_tele: VecDeque<Depacketized>,
     contiguity: Contiguity,
 }
 
@@ -168,7 +167,6 @@ impl DepacketizingBuffer {
             last_emitted: None,
             max_time: None,
             depack_cache: None,
-            pending_tele: VecDeque::new(),
             contiguity,
         }
     }
@@ -254,56 +252,14 @@ impl DepacketizingBuffer {
         now: Instant,
         reordering_timeout: Option<Duration>,
     ) -> Option<Result<Depacketized, PacketError>> {
-        if let Some(report) = self.pending_tele.pop_front() {
-            return Some(Ok(report));
-        }
-
         loop {
             let queued = self.queue.len();
-            let result = match self.pop_frame(now, reordering_timeout) {
-                Some(Ok(dep)) => return Some(Ok(self.split_tele_reports(dep))),
-                other => other,
-            };
+            let result = self.pop_frame(now, reordering_timeout);
             if result.is_some() || reordering_timeout.is_none() || self.queue.len() == queued {
                 return result;
             }
             // A discarded frame must not leave later frames waiting for new input.
         }
-    }
-
-    fn split_tele_reports(&mut self, dep: Depacketized) -> Depacketized {
-        let CodecDepacketizer::TelephoneEvent(tele) = &self.depack else {
-            return dep;
-        };
-        if dep.data.len() == 4 {
-            return dep;
-        }
-
-        let mut time = dep.time;
-        let mut reports = dep.data.chunks_exact(4).enumerate().map(|(index, bytes)| {
-            let event = super::TelephoneEvent::parse(bytes, tele.clock_rate)
-                .expect("telephone payload was validated by the depacketizer");
-            let mut meta = dep.meta.clone();
-            if index > 0 {
-                meta[0].header.marker = false;
-            }
-            let report = Depacketized {
-                time,
-                contiguous: dep.contiguous,
-                meta,
-                data: bytes.to_vec(),
-                codec_extra: CodecExtra::Tele(event),
-            };
-            let duration = u16::from_be_bytes([bytes[2], bytes[3]]);
-            time = MediaTime::new(
-                time.numer().wrapping_add(u64::from(duration)),
-                time.frequency(),
-            );
-            report
-        });
-        let first = reports.next().expect("telephone payload is nonempty");
-        self.pending_tele.extend(reports);
-        first
     }
 
     fn pop_frame(
@@ -370,6 +326,16 @@ impl DepacketizingBuffer {
             .meta
             .seq_no;
 
+        // Keep the same RTP entry until every packed report has been emitted. The next pop
+        // depacketizes its remaining bytes, so sequence ordering and duplicate checks stay intact.
+        if can_emit
+            && matches!(self.depack, CodecDepacketizer::TelephoneEvent(_))
+            && dep.data.len() > 4
+        {
+            self.retain_tele_reports(start, &mut dep);
+            return Some(Ok(dep));
+        }
+
         // We're not going to emit frames in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
         self.consume_segment(stop);
@@ -381,6 +347,20 @@ impl DepacketizingBuffer {
         self.last_emitted = Some((last, dep.codec_extra));
 
         Some(Ok(dep))
+    }
+
+    fn retain_tele_reports(&mut self, start: usize, dep: &mut Depacketized) {
+        let duration = u16::from_be_bytes([dep.data[2], dep.data[3]]);
+        let remaining = dep.data.split_off(4);
+        let entry = self.queue.get_mut(start).expect("telephone packet exists");
+        entry.data = remaining.into();
+        entry.meta.time = MediaTime::new(
+            entry.meta.time.numer().wrapping_add(u64::from(duration)),
+            entry.meta.time.frequency(),
+        );
+        entry.meta.header.marker = false;
+        self.segments_dirty = true;
+        self.depack_cache = None;
     }
 
     pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
