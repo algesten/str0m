@@ -1162,7 +1162,7 @@ pub enum Reason {
 
     /// Packetizing of media into RTP data (if used).
     ///
-    /// Written media data needs packetizing, or a queued telephone event has a report due.
+    /// Written media data needs packetizing, or a telephone packet is due.
     /// This is not used in RTP mode.
     Packetize,
 

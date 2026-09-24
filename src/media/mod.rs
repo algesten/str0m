@@ -27,7 +27,6 @@ mod event;
 pub use event::*;
 
 mod telephone_event;
-use telephone_event::TelephoneEventQueue;
 
 mod writer;
 pub use writer::Writer;
@@ -142,11 +141,11 @@ pub struct Media {
     /// renegotiation. Defaults to `true`, so a negotiated RED PT wraps unless it is turned off.
     red_send_enabled: bool,
 
-    /// Frames to payload. Should typically only be 0 or 1.
+    /// Outgoing media and telephone packets. Telephone packets may wait for `not_before`.
     to_payload: VecDeque<ToPayload>,
 
-    /// Telephone events to send, turned into reports when they are due.
-    telephone_events: TelephoneEventQueue,
+    /// End time of the last telephone event, for the minimum pause between tones.
+    last_tele_end: Option<Instant>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -202,6 +201,8 @@ pub(crate) struct ToPayload {
     pub rid: Option<Rid>,
     pub wallclock: Instant,
     pub rtp_time: MediaTime,
+    /// Earliest send time. Regular media has no send deadline.
+    pub not_before: Option<Instant>,
     pub start_of_talk_spurt: bool,
     pub data: Arc<[u8]>,
     pub ext_vals: ExtensionValues,
@@ -471,7 +472,8 @@ impl Media {
         self.dir = new_dir;
 
         if !new_dir.is_sending() {
-            self.telephone_events = TelephoneEventQueue::default();
+            self.to_payload.retain(|p| p.not_before.is_none());
+            self.last_tele_end = None;
         }
     }
 
@@ -508,22 +510,45 @@ impl Media {
         })
     }
 
-    fn set_to_payloads(&mut self, payloads: Vec<ToPayload>) -> Result<(), RtcError> {
-        if self.to_payload.len() + payloads.len() > 101 {
-            return Err(RtcError::WriteWithoutPoll);
+    fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
+        if to_payload.not_before.is_none() {
+            if self
+                .to_payload
+                .iter()
+                .filter(|p| p.not_before.is_none())
+                .count()
+                > 100
+            {
+                return Err(RtcError::WriteWithoutPoll);
+            }
+            // Preserve media write order, and place this frame before telephone packets
+            // scheduled after its wallclock time.
+            let after_media = self
+                .to_payload
+                .iter()
+                .rposition(|p| p.not_before.is_none())
+                .map_or(0, |i| i + 1);
+            let position = self
+                .to_payload
+                .iter()
+                .enumerate()
+                .skip(after_media)
+                .find(|(_, p)| {
+                    p.not_before
+                        .is_some_and(|deadline| deadline > to_payload.wallclock)
+                })
+                .map_or(self.to_payload.len(), |(i, _)| i);
+            self.to_payload.insert(position, to_payload);
+        } else {
+            self.to_payload.push_back(to_payload);
         }
-
-        self.to_payload.extend(payloads);
-
         Ok(())
     }
 
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
-        if !self.to_payload.is_empty() {
-            Some(already_happened())
-        } else {
-            None
-        }
+        self.to_payload
+            .front()
+            .map(|p| p.not_before.unwrap_or_else(already_happened))
     }
 
     pub(crate) fn poll_receive_timeout(
@@ -538,14 +563,34 @@ impl Media {
 
     pub(crate) fn do_payload(
         &mut self,
+        now: Instant,
         streams: &mut Streams,
         params: &[PayloadParams],
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
         red_distances: &[u32],
     ) -> Result<(), RtcError> {
-        if let Some(to_payload) = self.to_payload.pop_front() {
-            self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)?;
+        if self
+            .to_payload
+            .front()
+            .is_some_and(|p| p.not_before.is_none_or(|deadline| deadline <= now))
+        {
+            if let Some(p) = self.to_payload.front() {
+                if p.not_before.is_some()
+                    && streams
+                        .stream_tx_by_midrid(MidRid(self.mid, p.rid))
+                        .is_none()
+                {
+                    let rid = p.rid;
+                    self.to_payload
+                        .retain(|pending| pending.not_before.is_none() || pending.rid != rid);
+                    self.last_tele_end = None;
+                    return Ok(());
+                }
+            }
+            if let Some(to_payload) = self.to_payload.pop_front() {
+                self.payload(to_payload, streams, params, vp9_mode, mtu, red_distances)?;
+            }
         }
 
         Ok(())
@@ -698,7 +743,7 @@ impl Default for Media {
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: VecDeque::default(),
-            telephone_events: TelephoneEventQueue::default(),
+            last_tele_end: None,
             need_open_event: true,
             need_changed_event: false,
             red_send_enabled: true,

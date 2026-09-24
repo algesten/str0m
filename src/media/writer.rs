@@ -9,7 +9,7 @@ use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 
-use super::telephone_event::TelephoneEvent;
+use super::telephone_event::{MAX_DURATION, MIN_DURATION, MIN_PAUSE, TelephonePackets};
 use super::{
     ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, TeleEvent, ToPayload,
 };
@@ -116,7 +116,8 @@ impl<'a> Writer<'a> {
     /// `event` describes the complete tone: set `end` to true and `duration` to its total length.
     /// The `write` call supplies its start time and audio payload type. The negotiated
     /// telephone-event payload type with the same RTP clock rate is selected automatically.
-    /// Later audio writes advance the event and emit its updates and repeated end packets.
+    /// The complete series of telephone packets is queued by this write. Each packet waits until
+    /// its send time, while later audio writes can pass packets still waiting in the queue.
     /// Audio data may be empty when only the telephone event should be sent.
     ///
     /// Only one event can be active on this media. Start the next one on a later write, at least
@@ -147,7 +148,7 @@ impl<'a> Writer<'a> {
     ///
     /// Telephone-event payloads written directly are sent as is, in one RTP packet. Use
     /// [`Writer::tele_event`] to send a whole event alongside audio. A write with empty audio
-    /// data advances an active telephone event without sending an audio packet.
+    /// data sends no audio packet.
     ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
@@ -219,9 +220,7 @@ impl<'a> Writer<'a> {
                     PacketError::TeleInvalid("volume exceeds 63"),
                 ));
             }
-            if !(super::telephone_event::MIN_DURATION..=super::telephone_event::MAX_DURATION)
-                .contains(&event.duration)
-            {
+            if !(MIN_DURATION..=MAX_DURATION).contains(&event.duration) {
                 return Err(RtcError::Packet(
                     self.mid,
                     event_pt,
@@ -239,6 +238,16 @@ impl<'a> Writer<'a> {
             let midrid = MidRid(self.mid, self.rid);
             if self.session.streams.stream_tx_by_midrid(midrid).is_none() {
                 return Err(RtcError::NoSenderSource);
+            }
+            if media
+                .last_tele_end
+                .is_some_and(|end| wallclock < end + MIN_PAUSE)
+            {
+                return Err(RtcError::Packet(
+                    self.mid,
+                    event_pt,
+                    PacketError::TeleInvalid("telephone events must be at least 50 ms apart"),
+                ));
             }
             Some((event_pt, clock_rate, event))
         } else {
@@ -266,39 +275,31 @@ impl<'a> Writer<'a> {
         );
 
         let ext_vals = self.ext_vals;
-        let mut telephone_events = media.telephone_events.clone();
-        let mut payloads = if is_audio {
-            telephone_events.poll(wallclock)
-        } else {
-            vec![]
-        };
-        if let Some((event_pt, clock_rate, event)) = tele {
-            telephone_events
-                .push(TelephoneEvent {
-                    pt: event_pt,
-                    rid: self.rid,
-                    event: event.event,
-                    volume: event.volume,
-                    duration: event.duration,
-                    wallclock,
-                    rtp_time: rtp_time.rebase(clock_rate),
-                    ext_vals: ext_vals.clone(),
-                })
-                .map_err(|e| RtcError::Packet(self.mid, event_pt, e))?;
-        }
         if !data.is_empty() {
-            payloads.push(ToPayload {
+            media.set_to_payload(ToPayload {
                 pt,
                 rid: self.rid,
                 wallclock,
                 rtp_time,
+                not_before: None,
                 data,
                 start_of_talk_spurt: self.start_of_talkspurt.unwrap_or(false),
-                ext_vals,
-            });
+                ext_vals: ext_vals.clone(),
+            })?;
         }
-        media.set_to_payloads(payloads)?;
-        media.telephone_events = telephone_events;
+        if let Some((event_pt, clock_rate, event)) = tele {
+            for packet in TelephonePackets::new(
+                event_pt,
+                self.rid,
+                event,
+                wallclock,
+                rtp_time.rebase(clock_rate),
+                ext_vals,
+            ) {
+                media.set_to_payload(packet)?;
+            }
+            media.last_tele_end = Some(wallclock + event.duration);
+        }
 
         Ok(())
     }

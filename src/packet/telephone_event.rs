@@ -8,9 +8,9 @@ use std::time::Duration;
 
 const REPORT_LEN: usize = 4;
 
-/// A telephone-event (DTMF, RFC 4733) report.
+/// A telephone-event (DTMF, RFC 4733) payload.
 ///
-/// Builds and parses the 4-byte reports carried in telephone-event RTP payloads.
+/// Builds and parses the 4-byte data carried in telephone-event RTP payloads.
 ///
 /// ```
 /// use str0m::media::TeleEvent;

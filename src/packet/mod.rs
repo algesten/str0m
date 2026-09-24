@@ -158,7 +158,7 @@ pub enum CodecExtra {
     H265(H265CodecExtra),
     /// Codec extra parameters for H266 (VVC). Prototype.
     H266(H266CodecExtra),
-    /// All telephone-event (RFC 4733) reports in the payload, in wire order.
+    /// All telephone-event (RFC 4733) values in the payload, in wire order.
     Tele(Vec<TeleEvent>),
 }
 

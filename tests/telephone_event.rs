@@ -750,7 +750,7 @@ fn telephone_event_frame_roundtrip() -> Result<(), RtcError> {
 
     let events = telephone_events(&r);
     assert_eq!(events.len(), reports.len());
-    let first_seq = **events[0].seq_range.start();
+    let mut previous_seq = None;
     for (index, (data, (_, report))) in events.into_iter().zip(reports).enumerate() {
         assert_eq!(
             data.data.as_ref(),
@@ -762,7 +762,10 @@ fn telephone_event_frame_roundtrip() -> Result<(), RtcError> {
         assert_eq!(data.time.numer(), start.numer());
         assert!(data.network_time >= written_at);
         assert_eq!(data.seq_range.start(), data.seq_range.end());
-        assert_eq!(**data.seq_range.start(), first_seq + index as u64);
+        if let Some(previous) = previous_seq {
+            assert!(**data.seq_range.start() > previous);
+        }
+        previous_seq = Some(**data.seq_range.start());
     }
 
     let audio = r
@@ -829,7 +832,7 @@ fn telephone_event_frame_reports_take_sequence_numbers_when_sent() -> Result<(),
 }
 
 #[test]
-fn telephone_event_advances_only_on_write_with_empty_audio() -> Result<(), RtcError> {
+fn telephone_event_packets_send_on_deadlines_with_empty_audio() -> Result<(), RtcError> {
     init_crypto_default();
 
     let (mut l, mut r, mid) = connected_frame_mode();
@@ -842,18 +845,14 @@ fn telephone_event_advances_only_on_write_with_empty_audio() -> Result<(), RtcEr
         .write(audio_pt, start, rtp_start, [])?;
 
     progress_for(&mut l, &mut r, Duration::from_millis(200))?;
-    assert!(telephone_events(&r).is_empty());
-
-    l.writer(mid).unwrap().write(
-        audio_pt,
-        start + Duration::from_millis(200),
-        MediaTime::new(9600, Frequency::FORTY_EIGHT_KHZ),
-        [],
-    )?;
-    progress_for(&mut l, &mut r, Duration::from_millis(100))?;
     let events = telephone_events(&r);
-    assert_eq!(events.len(), 3);
-    assert!(events.iter().all(|data| {
+    assert_eq!(events.len(), 7);
+    assert!(
+        events[..4].iter().all(|data| {
+            matches!(&data.codec_extra, CodecExtra::Tele(values) if !values[0].end)
+        })
+    );
+    assert!(events[4..].iter().all(|data| {
         data.codec_extra
             == CodecExtra::Tele(vec![TeleEvent {
                 event: 5,
@@ -865,6 +864,50 @@ fn telephone_event_advances_only_on_write_with_empty_audio() -> Result<(), RtcEr
     assert!(r.events.iter().all(|(_, event)| {
         !matches!(event, Event::MediaData(data) if data.params.spec().codec == Codec::Opus)
     }));
+    Ok(())
+}
+
+#[test]
+fn audio_written_around_pending_telephone_packets_keeps_send_order() -> Result<(), RtcError> {
+    init_crypto_default();
+
+    let (mut l, mut r, mid) = connected_frame_mode();
+    let audio_pt = l.params_opus().pt();
+    let start = l.last;
+    l.writer(mid)
+        .unwrap()
+        .tele_event(tele(5, Duration::from_millis(100), 10))
+        .write(
+            audio_pt,
+            start,
+            MediaTime::new(0, Frequency::FORTY_EIGHT_KHZ),
+            [],
+        )?;
+    for millis in [10, 30] {
+        l.writer(mid).unwrap().write(
+            audio_pt,
+            start + Duration::from_millis(millis),
+            MediaTime::new(millis * 48, Frequency::FORTY_EIGHT_KHZ),
+            [0xf8, 0xff, 0xfe],
+        )?;
+    }
+    progress_for(&mut l, &mut r, Duration::from_millis(200))?;
+
+    let mut packets: Vec<_> = r
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::MediaData(data) => {
+                Some((**data.seq_range.start(), data.params.spec().codec.is_tele()))
+            }
+            _ => None,
+        })
+        .collect();
+    packets.sort_by_key(|p| p.0);
+    assert_eq!(
+        &packets[..4].iter().map(|p| p.1).collect::<Vec<_>>(),
+        &[false, true, false, true]
+    );
     Ok(())
 }
 
@@ -968,13 +1011,14 @@ fn telephone_event_frame_stops_when_media_stops_sending() -> Result<(), RtcError
         Err(RtcError::Packet(
             _,
             _,
-            PacketError::TeleInvalid("telephone event already active")
+            PacketError::TeleInvalid("telephone events must be at least 50 ms apart")
         ))
     ));
     // Updates at 20 to 100 ms.
     let first = l.last;
     advance_with_empty_audio(&mut l, &mut r, mid, audio_pt, first, start, 100)?;
-    assert_eq!(telephone_events(&r).len(), 5);
+    let sent_before_direction_change = telephone_events(&r).len();
+    assert!(sent_before_direction_change >= 5);
 
     negotiate(&mut l, &mut r, |change| {
         change.set_direction(mid, Direction::RecvOnly)
@@ -989,7 +1033,7 @@ fn telephone_event_frame_stops_when_media_stops_sending() -> Result<(), RtcError
         change.set_direction(mid, Direction::SendRecv)
     });
     progress_for(&mut l, &mut r, Duration::from_secs(2))?;
-    assert_eq!(telephone_events(&r).len(), 5);
+    assert_eq!(telephone_events(&r).len(), sent_before_direction_change);
     Ok(())
 }
 
