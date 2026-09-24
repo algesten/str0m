@@ -868,7 +868,7 @@ fn telephone_event_packets_send_on_deadlines_with_empty_audio() -> Result<(), Rt
 }
 
 #[test]
-fn audio_written_around_pending_telephone_packets_keeps_send_order() -> Result<(), RtcError> {
+fn audio_written_out_of_order_is_inserted_among_telephone_packets() -> Result<(), RtcError> {
     init_crypto_default();
 
     let (mut l, mut r, mid) = connected_frame_mode();
@@ -883,7 +883,7 @@ fn audio_written_around_pending_telephone_packets_keeps_send_order() -> Result<(
             MediaTime::new(0, Frequency::FORTY_EIGHT_KHZ),
             [],
         )?;
-    for millis in [10, 30] {
+    for millis in [30, 10] {
         let wallclock = start + Duration::from_millis(millis);
         let rtp_time = MediaTime::new(millis * 48, Frequency::FORTY_EIGHT_KHZ);
         l.writer(mid)

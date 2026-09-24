@@ -208,6 +208,13 @@ pub(crate) struct ToPayload {
     pub ext_vals: ExtensionValues,
 }
 
+impl ToPayload {
+    fn queue_time(&self) -> Instant {
+        // Telephone RTP timestamps stay at the event start as their duration grows.
+        self.not_before.unwrap_or(self.wallclock)
+    }
+}
+
 /// Per-(pt, rid) outgoing payloader entry stored in [`Media::payloaders`]: the codec-agnostic
 /// [`Payloader`] together with its optional RFC 2198 RED send state. Bundling them keeps a single
 /// map keyed by (pt, rid) rather than parallel maps on the same key.
@@ -511,35 +518,23 @@ impl Media {
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        if to_payload.not_before.is_some() {
-            self.to_payload.push_back(to_payload);
-            return Ok(());
+        if to_payload.not_before.is_none() {
+            let pending_media = self
+                .to_payload
+                .iter()
+                .filter(|p| p.not_before.is_none())
+                .count();
+            if pending_media > 100 {
+                return Err(RtcError::WriteWithoutPoll);
+            }
         }
 
-        let pending_media = self
+        let queue_time = to_payload.queue_time();
+        let position = self
             .to_payload
             .iter()
-            .filter(|p| p.not_before.is_none())
-            .count();
-        if pending_media > 100 {
-            return Err(RtcError::WriteWithoutPoll);
-        }
-
-        // Preserve media write order, and place this frame before telephone packets
-        // scheduled after its wallclock time.
-        let after_media = self
-            .to_payload
-            .iter()
-            .rposition(|p| p.not_before.is_none())
-            .map_or(0, |i| i + 1);
-        let wallclock = to_payload.wallclock;
-        let next_telephone = self
-            .to_payload
-            .iter()
-            .enumerate()
-            .skip(after_media)
-            .find(|(_, p)| p.not_before.is_some_and(|deadline| deadline > wallclock));
-        let position = next_telephone.map_or(self.to_payload.len(), |(i, _)| i);
+            .position(|p| p.queue_time() > queue_time)
+            .unwrap_or(self.to_payload.len());
         self.to_payload.insert(position, to_payload);
         Ok(())
     }
