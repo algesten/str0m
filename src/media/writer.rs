@@ -205,8 +205,7 @@ impl<'a> Writer<'a> {
     ///
     /// * [`RtcError::UnknownPt`] if `pt` is not a telephone-event payload type, or is not among
     ///   the SDP-negotiated payload types for this media.
-    /// * [`RtcError::UnsupportedTelephoneEvent`] if `event` is above
-    ///   [`CodecConfig::telephone_event_max`][crate::format::CodecConfig::telephone_event_max].
+    /// * [`RtcError::UnsupportedTelephoneEvent`] if `event` exceeds the negotiated range.
     /// * [`RtcError::InvalidTelephoneEventVolume`] if `volume` is above 63.
     /// * [`RtcError::InvalidTelephoneEventDuration`] if `duration` is shorter than 40 ms or
     ///   longer than 6 seconds, the range libwebrtc accepts.

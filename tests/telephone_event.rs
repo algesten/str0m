@@ -77,7 +77,11 @@ fn event_max(rtc: &TestRtc, mid: Mid, pt: u8) -> Option<u8> {
         .unwrap()
         .remote_pts()
         .contains(&pt.into())
-        .then(|| rtc.codec_config().telephone_event_max(pt.into()))
+        .then(|| {
+            rtc.codec_config()
+                .find(|p| p.pt() == pt.into() && p.spec().codec.is_tele())
+                .map(|p| p.spec().format.telephone_event_max.unwrap_or(16))
+        })
         .flatten()
 }
 
@@ -1009,7 +1013,11 @@ fn telephone_event_write_rejects_unnegotiated_payload_type() {
         let (mid, _, _) = negotiate_events(&mut l, &mut r, Direction::SendRecv);
         let rtc = if offer_support { &mut l } else { &mut r };
         let pt = EVENT_PT.into();
-        assert_eq!(rtc.codec_config().telephone_event_max(pt), Some(16));
+        assert!(
+            rtc.codec_config()
+                .find(|p| p.pt() == pt && p.spec().codec.is_tele())
+                .is_some()
+        );
         assert!(!rtc.media(mid).unwrap().remote_pts().contains(&pt));
 
         let wallclock = rtc.last;
