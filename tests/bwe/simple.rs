@@ -69,9 +69,15 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
         description: "Cellular conditions",
         config: NetemConfig::cellular().seed(42),
     };
+    // Probes now follow their own timers instead of an expired receiver-report timer.
+    // Allow the lossy cellular link time to collect enough feedback at that cadence.
     plan[2] = Step::Run {
         description: "Wait for mid",
-        duration: Duration::from_secs(40),
+        duration: Duration::from_secs(60),
+    };
+    plan[5] = Step::Run {
+        description: "Wait for top",
+        duration: Duration::from_secs(30),
     };
 
     // Burst loss and jitter make the intermediate estimate conservative.
