@@ -241,6 +241,56 @@ fn pause_preserves_video_contiguity_history() -> Result<(), RtcError> {
     Ok(())
 }
 
+#[test]
+fn sparse_audio_resumes_after_packet_loss() -> Result<(), RtcError> {
+    init_crypto_default();
+
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+    let mid = negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None)
+    });
+    while !l.is_connected() || !r.is_connected() {
+        progress(&mut l, &mut r)?;
+    }
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+    let pt = l.params_opus().pt();
+
+    let send = |l: &mut TestRtc, r: &mut TestRtc, seq: u64| -> Result<(), RtcError> {
+        let at = l.last.max(r.last) + Duration::from_millis(10);
+        l.direct_api()
+            .stream_tx_by_mid(mid, None)
+            .unwrap()
+            .write_rtp(RtpWrite::new(
+                pt,
+                seq.into(),
+                seq as u32 * 960,
+                at,
+                [0xf8, 0xff, 0xfe],
+            ));
+        advance_until(l, r, at + Duration::from_millis(100))
+    };
+
+    send(&mut l, &mut r, 10)?;
+    assert_frame_contiguity(&r, 10, true);
+    advance_both(&mut l, &mut r, Duration::from_secs(2))?;
+    assert!(
+        r.events.iter().any(|(_, event)| {
+            matches!(event, Event::StreamPaused(p) if p.paused && p.mid == mid)
+        })
+    );
+
+    // Sequence 11 is lost. A sparse sender may send only one packet on resume.
+    send(&mut l, &mut r, 12)?;
+    advance_both(&mut l, &mut r, Duration::from_secs(3))?;
+    assert_frame_contiguity(&r, 12, false);
+    Ok(())
+}
+
 fn send_vp8(
     l: &mut TestRtc,
     r: &mut TestRtc,
