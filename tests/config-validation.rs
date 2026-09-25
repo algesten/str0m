@@ -103,7 +103,7 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
 fn config_reordering_timeout_custom() {
     assert_eq!(
         RtcConfig::new().reordering_timeout_video(),
-        Some(Duration::from_millis(1500))
+        Some(Duration::from_secs(2))
     );
     for timeout in [
         None,

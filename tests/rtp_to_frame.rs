@@ -814,7 +814,7 @@ fn video_new_frame_after_paused_incomplete_frame_makes_progress() -> Result<(), 
     // with a complete new frame, which should be delivered as noncontiguous
     // within a bounded interval even if no more packets arrive.
     t.write(1337.into(), 47_002, 2000, &[0x10, 0, 0], true)?;
-    t.advance_to(t.now + Duration::from_secs(2))?;
+    t.advance_to(t.now + Duration::from_millis(2500))?;
     assert_eq!(
         t.received_frames(),
         [(46_999, 46_999, true), (47_002, 47_002, false)]
