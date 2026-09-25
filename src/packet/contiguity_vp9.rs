@@ -168,7 +168,7 @@ mod test {
         let mut restarted = get_codec_extra(1, 0, 1);
         restarted.is_keyframe = true;
         assert_eq!(contiguity.check(&restarted, true), (true, false));
-        assert_eq!(contiguity.check(&restarted, true), (false, true));
+        assert_eq!(contiguity.check(&restarted, true), (true, false));
         assert_eq!(
             contiguity.check(&get_codec_extra(2, 0, 2), true),
             (true, true)

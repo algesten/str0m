@@ -61,7 +61,7 @@ impl FrameContiguityState {
 
         // A new encoder can keep the SSRC while restarting picture IDs. A keyframe
         // is independently decodable, so it can establish a fresh baseline.
-        if is_keyframe && picture_id < last_picture_id {
+        if is_keyframe && picture_id <= last_picture_id {
             self.last_tl0_picture_id = Some(tl0_picture_id);
             self.last_picture_id = Some(picture_id);
             return (true, false);
