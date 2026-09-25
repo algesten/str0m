@@ -848,7 +848,7 @@ fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test video reordering timeouts leave audio's count-based waiting unchanged.
+/// Test a video reordering timeout does not change audio's separate timeout.
 #[test]
 fn video_reorder_timeout_does_not_change_audio() -> Result<(), RtcError> {
     let mut t = VideoTest::new(

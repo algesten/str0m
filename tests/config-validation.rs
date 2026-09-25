@@ -102,6 +102,10 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
 #[test]
 fn config_reordering_timeout_custom() {
     assert_eq!(
+        RtcConfig::new().reordering_timeout_audio(),
+        Some(Duration::from_secs(2))
+    );
+    assert_eq!(
         RtcConfig::new().reordering_timeout_video(),
         Some(Duration::from_secs(2))
     );
@@ -115,6 +119,9 @@ fn config_reordering_timeout_custom() {
         let config = RtcConfig::new().set_reordering_timeout_video(timeout);
         assert_eq!(config.reordering_timeout_video(), timeout);
         assert_eq!(config.clone().reordering_timeout_video(), timeout);
+        let config = RtcConfig::new().set_reordering_timeout_audio(timeout);
+        assert_eq!(config.reordering_timeout_audio(), timeout);
+        assert_eq!(config.clone().reordering_timeout_audio(), timeout);
     }
 }
 
