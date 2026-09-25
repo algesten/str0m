@@ -24,6 +24,7 @@ impl Vp9Contiguity {
             Some(next.pid.into()),
             next.tl0_picture_id.map(Into::into),
             next.tid.map(Into::into),
+            next.is_keyframe,
             contiguous_seq,
         );
 
@@ -155,5 +156,22 @@ mod test {
             // all layer 0 are contiguous therefore can be emitted
             assert_eq!(emit, next.tid == Some(0));
         }
+    }
+
+    #[test]
+    fn keyframe_accepts_restarted_picture_ids() {
+        let mut contiguity = Vp9Contiguity::new();
+        let mut first = get_codec_extra(40, 0, 40);
+        first.is_keyframe = true;
+        assert_eq!(contiguity.check(&first, true), (true, true));
+
+        let mut restarted = get_codec_extra(1, 0, 1);
+        restarted.is_keyframe = true;
+        assert_eq!(contiguity.check(&restarted, true), (true, false));
+        assert_eq!(contiguity.check(&restarted, true), (false, true));
+        assert_eq!(
+            contiguity.check(&get_codec_extra(2, 0, 2), true),
+            (true, true)
+        );
     }
 }
