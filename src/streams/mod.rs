@@ -282,11 +282,10 @@ impl Streams {
                 // We got a change in main SSRC for this stream.
                 let did_change = self.change_stream_rx_ssrc(ssrc_from, ssrc_main);
 
-                // When the SSRCs changes the sequence number typically also does, the
-                // depayloader (if in use) relies on sequence numbers and will not handle a
-                // large jump correctly, reset it.
+                // When the SSRC changes, any payload type on this RID can start with
+                // a new sequence number. Reset all depayloaders for the RID.
                 if did_change {
-                    media.reset_depayloader(payload.pt(), midrid.rid());
+                    media.reset_depayloaders_for_rid(midrid.rid());
                 }
             }
 

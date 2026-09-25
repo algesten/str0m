@@ -31,6 +31,13 @@ fn send_frame(
     Ok(())
 }
 
+fn received_frame(r: &TestRtc, pt: str0m::media::Pt, seq: u64) -> bool {
+    r.events.iter().any(|(_, event)| match event {
+        Event::MediaData(frame) => frame.pt == pt && frame.seq_range.contains(&seq.into()),
+        _ => false,
+    })
+}
+
 #[test]
 fn ssrc_change_resets_every_payload_type_on_the_stream() -> Result<(), RtcError> {
     init_crypto_default();
@@ -60,16 +67,14 @@ fn ssrc_change_resets_every_payload_type_on_the_stream() -> Result<(), RtcError>
         90_000,
         &[0x10, 0x01, 0xaa],
     )?;
-    assert!(r.events.iter().any(|(_, e)| matches!(e, Event::MediaData(m) if m.pt == vp8_pt && m.seq_range.contains(&100u64.into()))));
+    assert!(received_frame(&r, vp8_pt, 100));
 
     l.direct_api()
         .reset_stream_tx(mid, Some(rid), 84.into(), None)
         .expect("SSRC reset");
     // The first packet on the new SSRC uses H.264, so it resets that depacketizer.
     send_frame(&mut l, &mut r, mid, rid, h264_pt, 1, 180_000, &[0x65, 0xaa])?;
-    assert!(r.events.iter().any(|(_, e)| {
-        matches!(e, Event::MediaData(m) if m.pt == h264_pt && m.seq_range.contains(&1u64.into()))
-    }));
+    assert!(received_frame(&r, h264_pt, 1));
     // VP8 must also start fresh on the new SSRC, even though it was not the
     // payload type of the packet that signaled the change.
     send_frame(
@@ -83,7 +88,7 @@ fn ssrc_change_resets_every_payload_type_on_the_stream() -> Result<(), RtcError>
         &[0x10, 0x01, 0xbb],
     )?;
     assert!(
-        r.events.iter().any(|(_, e)| matches!(e, Event::MediaData(m) if m.pt == vp8_pt && m.seq_range.contains(&2u64.into()))),
+        received_frame(&r, vp8_pt, 2),
         "VP8 frame on the replacement SSRC was lost to the old depacketizer state"
     );
     Ok(())
