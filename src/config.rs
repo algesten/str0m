@@ -521,9 +521,11 @@ impl RtcConfig {
         self.reordering_size_audio
     }
 
-    /// Sets how long a complete audio frame waits for missing earlier packets.
+    /// Sets how long the oldest audio frame may wait to finish or for missing earlier packets.
     ///
-    /// The default is 1 second. `None` keeps count-based waiting only.
+    /// On expiry, an incomplete frame is dropped; a complete frame can move past a gap.
+    /// Later frames stay buffered and retain their own deadlines. The default is 1 second.
+    /// `None` disables this deadline and keeps count-based waiting only.
     /// Applies to audio streams in frame mode, not RTP mode.
     pub fn set_reordering_timeout_audio(mut self, timeout: Option<Duration>) -> Self {
         self.reordering_timeout_audio = timeout;
@@ -572,31 +574,18 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
-    /// Sets how long a complete video frame waits for missing earlier packets.
+    /// Sets how long the oldest video frame may wait to finish or for missing earlier packets.
     ///
-    /// The default is 2 seconds. `None` keeps count-based waiting only. `Some(Duration::ZERO)`
-    /// skips missing earlier data on the next output poll once a complete frame
-    /// is available. With a positive timeout, waiting ends at the deadline or
-    /// the existing count limit, whichever comes first. The limit counts recognized
-    /// frame candidates, including the blocked one, not individual RTP packets.
+    /// Frames are considered in sequence order. Each deadline starts when that frame's first
+    /// packet arrives. On expiry, an incomplete frame is dropped; a complete frame can move
+    /// past a gap. Later frames remain buffered with their own deadlines. Reordering or RTX
+    /// can complete a frame before its deadline. The existing frame count limit can release
+    /// complete frames earlier.
     ///
-    /// Frames are considered in sequence order. Each deadline is the frame's
-    /// earliest packet receipt time plus the timeout. Completing the frame or
-    /// receiving newer frames does not restart it. A frame that completes after
-    /// its deadline can proceed immediately.
-    ///
-    /// For example, after emitting frame 1, if frame 2 is missing, complete frame 3
-    /// waits on its own deadline. Once it proceeds, frames 4 and 5 can follow
-    /// without waiting for frame 2 again, unless there is another gap.
-    ///
-    /// Reordered or retransmitted packets can fill the gap before the deadline.
-    /// Frames without an earlier gap are not delayed. Expiry discards buffered
-    /// packets before the candidate; existing frame-assembly and codec dependency
-    /// checks still apply.
-    ///
-    /// Applies to all video streams in frame mode, not audio or
-    /// [`RTP mode`](RtcConfig::set_rtp_mode). Stream pauses preserve buffered data;
-    /// an SSRC reset may discard it before the deadline.
+    /// The default is 2 seconds. `None` disables this deadline and keeps count-based waiting
+    /// only. `Some(Duration::ZERO)` expires an incomplete frame immediately. This setting
+    /// applies to video streams in frame mode, not audio or
+    /// [`RTP mode`](RtcConfig::set_rtp_mode).
     pub fn set_reordering_timeout_video(mut self, timeout: Option<Duration>) -> Self {
         self.reordering_timeout_video = timeout;
         self

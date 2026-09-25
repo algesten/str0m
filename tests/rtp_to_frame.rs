@@ -478,51 +478,69 @@ fn video_reorder_timeout_temporal_dependencies() -> Result<(), RtcError> {
 #[test]
 fn video_reorder_timeout_h264_fragments() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
-    for completion_delay in [Duration::from_millis(100), Duration::from_millis(300)] {
-        let mut t = VideoTest::with_codec(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
-            false,
-            Codec::H264,
-        )?;
-        // Synthetic NAL/FU-A payloads exercise reassembly, not video decoding.
-        t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
-        t.advance_to(t.now + Duration::from_millis(100))?;
-        t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
-        let deadline = t.now + timeout;
-        t.write(1337.into(), 47_003, 2000, &[0x7c, 0x05, 0x22], false)?;
-        t.advance_to(t.now + completion_delay)?;
-        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-        assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-        t.write(1337.into(), 47_004, 2000, &[0x7c, 0x45, 0x33], true)?;
-        if completion_delay < timeout {
-            t.advance_to(deadline - Duration::from_nanos(1))?;
-            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-            assert_eq!(t.receiver.last, deadline);
-            assert_eq!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-            t.tick(deadline)?;
-        }
-        assert_eq!(
-            t.received_frames(),
-            [(47_000, 47_000, true), (47_002, 47_004, false)]
-        );
-        let data = t
-            .receiver
-            .events
-            .iter()
-            .find_map(|(_, event)| match event {
-                Event::MediaData(data) if **data.seq_range.start() == 47_002 => Some(data),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(data.data.as_ref(), &[0, 0, 0, 1, 0x65, 0x11, 0x22, 0x33]);
-        assert_eq!(data.network_time, deadline - timeout);
-        assert!(matches!(data.codec_extra, CodecExtra::H264(e) if e.is_keyframe));
-        t.write(1337.into(), 47_005, 3000, &[0x61, 0x44], true)?;
-        t.advance_to(t.now + Duration::from_millis(100))?;
-        assert_eq!(t.received_frames().last(), Some(&(47_005, 47_005, true)));
-        assert_eq!(t.received_frames().len(), 3);
-        assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-    }
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+        false,
+        Codec::H264,
+    )?;
+    // Synthetic NAL/FU-A payloads exercise reassembly, not video decoding.
+    t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
+    t.advance_to(t.now + Duration::from_millis(100))?;
+    t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
+    let deadline = t.now + timeout;
+    t.write(1337.into(), 47_003, 2000, &[0x7c, 0x05, 0x22], false)?;
+    t.advance_to(t.now + Duration::from_millis(100))?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    t.write(1337.into(), 47_004, 2000, &[0x7c, 0x45, 0x33], true)?;
+    t.advance_to(deadline - Duration::from_nanos(1))?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_eq!(t.receiver.last, deadline);
+    assert_eq!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    t.tick(deadline)?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_002, 47_004, false)]
+    );
+    let data = t
+        .receiver
+        .events
+        .iter()
+        .find_map(|(_, event)| match event {
+            Event::MediaData(data) if **data.seq_range.start() == 47_002 => Some(data),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(data.data.as_ref(), &[0, 0, 0, 1, 0x65, 0x11, 0x22, 0x33]);
+    assert_eq!(data.network_time, deadline - timeout);
+    assert!(matches!(data.codec_extra, CodecExtra::H264(e) if e.is_keyframe));
+    t.write(1337.into(), 47_005, 3000, &[0x61, 0x44], true)?;
+    t.advance_to(t.now + Duration::from_millis(100))?;
+    assert_eq!(t.received_frames().last(), Some(&(47_005, 47_005, true)));
+    assert_eq!(t.received_frames().len(), 3);
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    Ok(())
+}
+
+/// An H264 fragment tail arriving after the frame deadline cannot revive it.
+#[test]
+fn video_reorder_timeout_h264_incomplete_frame_expires() -> Result<(), RtcError> {
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(250))),
+        false,
+        Codec::H264,
+    )?;
+    t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
+    t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
+    t.advance_to(t.now + Duration::from_millis(300))?;
+    t.write(1337.into(), 47_003, 2000, &[0x7c, 0x45, 0x33], true)?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    t.write(1337.into(), 47_004, 3000, &[0x61, 0x44], true)?;
+    t.advance_to(t.now + Duration::from_millis(600))?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_004, 47_004, false)]
+    );
     Ok(())
 }
 
@@ -709,9 +727,9 @@ fn video_reorder_timeout_rtx_after_release() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test None keeps waiting while zero releases a later VP8 frame only once complete.
+/// None preserves count-only waiting; zero discards each incomplete frame at once.
 #[test]
-fn video_reorder_timeout_none_zero_and_partial_frames() -> Result<(), RtcError> {
+fn video_reorder_timeout_none_and_zero_on_partial_frames() -> Result<(), RtcError> {
     for policy in [None, Some(Duration::ZERO)] {
         let mut t = VideoTest::new(Rtc::builder().set_reordering_timeout_video(policy), false)?;
         t.send_vp8_frame(47_000)?;
@@ -722,9 +740,11 @@ fn video_reorder_timeout_none_zero_and_partial_frames() -> Result<(), RtcError> 
         assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
         t.write(1337.into(), 47_004, 200, &[0x00, 0], true)?;
         if policy.is_some() {
+            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+            t.write(1337.into(), 47_005, 300, &[0x10, 0, 0], true)?;
             assert_eq!(
                 t.received_frames(),
-                [(47_000, 47_000, true), (47_003, 47_004, false)]
+                [(47_000, 47_000, true), (47_005, 47_005, false)]
             );
         } else {
             assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
