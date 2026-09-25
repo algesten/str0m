@@ -286,7 +286,7 @@ fn sparse_audio_resumes_after_packet_loss() -> Result<(), RtcError> {
 
     // Sequence 11 is lost. A sparse sender may send only one packet on resume.
     send(&mut l, &mut r, 12)?;
-    advance_both(&mut l, &mut r, Duration::from_secs(3))?;
+    advance_both(&mut l, &mut r, Duration::from_millis(1200))?;
     assert_frame_contiguity(&r, 12, false);
     Ok(())
 }

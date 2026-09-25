@@ -523,7 +523,7 @@ impl RtcConfig {
 
     /// Sets how long a complete audio frame waits for missing earlier packets.
     ///
-    /// The default is 2 seconds. `None` keeps count-based waiting only.
+    /// The default is 1 second. `None` keeps count-based waiting only.
     /// Applies to audio streams in frame mode, not RTP mode.
     pub fn set_reordering_timeout_audio(mut self, timeout: Option<Duration>) -> Self {
         self.reordering_timeout_audio = timeout;
@@ -864,7 +864,7 @@ impl Default for RtcConfig {
             bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
-            reordering_timeout_audio: Some(Duration::from_secs(2)),
+            reordering_timeout_audio: Some(Duration::from_secs(1)),
             reordering_timeout_video: Some(Duration::from_secs(2)),
             pause_threshold: Duration::from_millis(1500),
             send_buffer_audio: 50,
