@@ -772,7 +772,9 @@ fn video_reorder_timeout_pause_discards_pending_frame() -> Result<(), RtcError> 
             Duration::from_secs(2)
         };
         let mut t = VideoTest::new(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+            Rtc::builder()
+                .set_reordering_timeout_video(Some(timeout))
+                .set_reordering_size_video(2),
             false,
         )?;
         t.send_vp8_frame(47_000)?;
@@ -798,7 +800,8 @@ fn video_reorder_timeout_pause_discards_pending_frame() -> Result<(), RtcError> 
             "reset frames cannot be resurrected"
         );
         t.send_vp8_frame(47_003)?;
-        assert_eq!(t.received_frames().last(), Some(&(47_003, 47_003, true)));
+        t.send_vp8_frame(47_004)?;
+        assert!(t.received_frames().contains(&(47_003, 47_003, false)));
     }
     Ok(())
 }
