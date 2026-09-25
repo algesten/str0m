@@ -212,12 +212,15 @@ fn measure_fresh_age_after_pause(pause_duration: Duration) -> Result<Duration, R
         deliver_packet(&mut r, delivery_time, packet)?;
     }
 
-    assert!(
-        !r.events[before_tail_event_count..]
-            .iter()
-            .any(|(_, e)| matches!(e, Event::MediaData(_))),
-        "did not expect stale MediaData from the delayed pre-pause tail"
-    );
+    let resumed = r.events[before_tail_event_count..]
+        .iter()
+        .find_map(|(_, event)| match event {
+            Event::MediaData(frame) => Some(frame),
+            _ => None,
+        })
+        .expect("expected the frame spanning the pause to complete");
+    assert_eq!(*resumed.seq_range.start(), 10_000u64.into());
+    assert_eq!(*resumed.seq_range.end(), 10_001u64.into());
 
     let fresh_first_at = delivery_time + Duration::from_millis(20);
     let fresh_frame_timestamp = frame_timestamp + 3_000;
@@ -310,7 +313,7 @@ fn collect_fresh_ages_after_repeated_pauses(
     let mut fresh_ages = Vec::new();
 
     for (i, pause_duration) in pause_durations.iter().copied().enumerate() {
-        let seq = 20_000u64 + (i as u64) * 2;
+        let seq = 20_000u64 + (i as u64) * 4;
         let frame_timestamp = 90_000u32 + (i as u32) * 3_000;
         let first_write_at = l.last + Duration::from_millis(20);
 
@@ -375,18 +378,19 @@ fn collect_fresh_ages_after_repeated_pauses(
             deliver_packet(&mut r, delivery_time, packet)?;
         }
 
-        assert_eq!(
-            r.events[before_tail_event_count..]
-                .iter()
-                .filter(|(_, e)| matches!(e, Event::MediaData(_)))
-                .count(),
-            0,
-            "did not expect stale MediaData from delayed pre-pause packets"
-        );
+        let resumed = r.events[before_tail_event_count..]
+            .iter()
+            .find_map(|(_, event)| match event {
+                Event::MediaData(frame) => Some(frame),
+                _ => None,
+            })
+            .expect("expected the frame spanning the pause to complete");
+        assert_eq!(*resumed.seq_range.start(), seq.into());
+        assert_eq!(*resumed.seq_range.end(), (seq + 1).into());
 
         let fresh_first_at = delivery_time + Duration::from_millis(20);
         let fresh_frame_timestamp = frame_timestamp + 3_000;
-        let fresh_seq = 30_000u64 + (i as u64) * 2;
+        let fresh_seq = seq + 2;
 
         {
             let mut direct = l.direct_api();
@@ -453,7 +457,7 @@ fn collect_fresh_ages_after_repeated_pauses(
 }
 
 #[test]
-fn delayed_vp8_tail_packet_after_pause_is_dropped() -> Result<(), RtcError> {
+fn delayed_vp8_tail_packet_after_pause_completes_frame() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 

@@ -985,12 +985,6 @@ impl Session {
         // This must be before pending_packet.take() since we need to emit the unpaused event
         // before the first packet causing the unpause.
         if let Some(paused) = self.streams.poll_stream_paused() {
-            if paused.paused {
-                if let Some(media) = self.medias.iter_mut().find(|m| m.mid() == paused.mid) {
-                    // Drop incomplete frames without losing sequence and codec history.
-                    media.discard_pending_depayloaders_for_rid(paused.rid);
-                }
-            }
             return Some(Event::StreamPaused(paused));
         }
 

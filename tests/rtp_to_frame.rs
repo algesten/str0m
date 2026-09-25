@@ -762,46 +762,31 @@ fn video_reorder_timeout_earliest_across_media() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test stream pause discards buffered frames, including when a timeout is handled late.
+/// A frame can start before a stream pause and finish after its resume.
 #[test]
-fn video_reorder_timeout_pause_discards_pending_frame() -> Result<(), RtcError> {
-    for late_wakeup in [false, true] {
-        let timeout = if late_wakeup {
-            Duration::from_millis(250)
-        } else {
-            Duration::from_secs(2)
-        };
+fn video_frame_completes_across_pause() -> Result<(), RtcError> {
+    for policy in [None, Some(Duration::from_secs(2))] {
         let mut t = VideoTest::new(
             Rtc::builder()
-                .set_reordering_timeout_video(Some(timeout))
-                .set_reordering_size_video(2),
+                .set_pause_threshold(Duration::from_millis(500))
+                .set_reordering_timeout_video(policy),
             false,
         )?;
-        t.send_vp8_frame(47_000)?;
-        t.advance_to(t.now + Duration::from_millis(100))?;
-        t.send_vp8_frame(47_002)?;
-        let paused = t.now + Duration::from_millis(1500);
-        if late_wakeup {
-            t.tick(paused)?;
-        } else {
-            t.advance_to(paused)?;
-        }
+        t.write(1337.into(), 47_000, 1000, &[0x10, 0, 0], false)?;
+        assert!(t.received_frames().is_empty());
+        t.advance_to(t.now + Duration::from_millis(650))?;
         assert!(
-            t.receiver
-                .events
-                .iter()
-                .any(|(_, event)| matches!(event, Event::StreamPaused(_)))
+            t.receiver.events.iter().any(|(_, event)| {
+                matches!(event, Event::StreamPaused(paused) if paused.paused)
+            })
         );
-        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-        t.advance_to(paused + timeout)?;
-        assert_eq!(
-            t.received_frames().len(),
-            1,
-            "reset frames cannot be resurrected"
+        t.write(1337.into(), 47_001, 1000, &[0x00, 0], true)?;
+        assert_eq!(t.received_frames(), [(47_000, 47_001, true)]);
+        assert!(
+            t.receiver.events.iter().any(|(_, event)| {
+                matches!(event, Event::StreamPaused(paused) if !paused.paused)
+            })
         );
-        t.send_vp8_frame(47_003)?;
-        t.send_vp8_frame(47_004)?;
-        assert!(t.received_frames().contains(&(47_003, 47_003, false)));
     }
     Ok(())
 }
