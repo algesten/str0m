@@ -1,14 +1,93 @@
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
 use str0m::media::{Frequency, MediaKind, MediaTime};
 use str0m::rtp::{ExtensionValues, RtpWrite, Ssrc};
-use str0m::{Event, RtcError};
+use str0m::{Event, Rtc, RtcError};
 use tracing::info;
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress};
+use common::{TestRtc, connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, progress};
+
+fn send_frame(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    mid: str0m::media::Mid,
+    rid: str0m::media::Rid,
+    pt: str0m::media::Pt,
+    seq: u64,
+    timestamp: u32,
+    payload: &'static [u8],
+) -> Result<(), RtcError> {
+    let at = l.last.max(r.last) + Duration::from_millis(10);
+    l.direct_api()
+        .stream_tx_by_mid(mid, Some(rid))
+        .unwrap()
+        .write_rtp(RtpWrite::new(pt, seq.into(), timestamp, at, payload).marker(true));
+    for _ in 0..100 {
+        progress(l, r)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn ssrc_change_resets_every_payload_type_on_the_stream() -> Result<(), RtcError> {
+    init_crypto_default();
+    let now = Instant::now();
+    let (mut l, mut r) = connect_l_r_with_rtc(
+        Rtc::builder().set_rtp_mode(true).build(now),
+        Rtc::builder().build(now),
+    );
+    let mid = "vid".into();
+    let rid = "hi".into();
+    l.direct_api().declare_media(mid, MediaKind::Video);
+    l.direct_api()
+        .declare_stream_tx(42.into(), None, mid, Some(rid));
+    r.direct_api()
+        .declare_media(mid, MediaKind::Video)
+        .expect_rid_rx(rid);
+    let vp8_pt = l.params_vp8().pt();
+    let h264_pt = l.params_h264().pt();
+
+    send_frame(
+        &mut l,
+        &mut r,
+        mid,
+        rid,
+        vp8_pt,
+        100,
+        90_000,
+        &[0x10, 0x01, 0xaa],
+    )?;
+    assert!(r.events.iter().any(|(_, e)| matches!(e, Event::MediaData(m) if m.pt == vp8_pt && m.seq_range.contains(&100u64.into()))));
+
+    l.direct_api()
+        .reset_stream_tx(mid, Some(rid), 84.into(), None)
+        .expect("SSRC reset");
+    // The first packet on the new SSRC uses H.264, so it resets that depacketizer.
+    send_frame(&mut l, &mut r, mid, rid, h264_pt, 1, 180_000, &[0x65, 0xaa])?;
+    assert!(r.events.iter().any(|(_, e)| {
+        matches!(e, Event::MediaData(m) if m.pt == h264_pt && m.seq_range.contains(&1u64.into()))
+    }));
+    // VP8 must also start fresh on the new SSRC, even though it was not the
+    // payload type of the packet that signaled the change.
+    send_frame(
+        &mut l,
+        &mut r,
+        mid,
+        rid,
+        vp8_pt,
+        2,
+        270_000,
+        &[0x10, 0x01, 0xbb],
+    )?;
+    assert!(
+        r.events.iter().any(|(_, e)| matches!(e, Event::MediaData(m) if m.pt == vp8_pt && m.seq_range.contains(&2u64.into()))),
+        "VP8 frame on the replacement SSRC was lost to the old depacketizer state"
+    );
+    Ok(())
+}
 
 #[test]
 pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
