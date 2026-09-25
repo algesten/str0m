@@ -159,6 +159,7 @@ pub(crate) struct Streams {
     /// Threshold above which an outgoing RTP packet triggers an MTU warning. Used as a
     /// hard cap when selecting RTX cache entries for spurious padding.
     mtu_warn: usize,
+    pause_threshold: Duration,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -175,7 +176,7 @@ struct RxLookup {
 }
 
 impl Streams {
-    pub(crate) fn new(enable_stats: bool, mtu_warn: usize) -> Self {
+    pub(crate) fn new(enable_stats: bool, mtu_warn: usize, pause_threshold: Duration) -> Self {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
@@ -188,6 +189,7 @@ impl Streams {
             any_nack_active: None,
             enable_stats,
             mtu_warn,
+            pause_threshold,
         }
     }
 
@@ -313,10 +315,11 @@ impl Streams {
         // New stream might have enabled nacks.
         self.any_nack_active = None;
 
-        let stream = self
-            .streams_rx
-            .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc, midrid, suppress_nack));
+        let stream = self.streams_rx.entry(ssrc).or_insert_with(|| {
+            let mut stream = StreamRx::new(ssrc, midrid, suppress_nack);
+            stream.set_pause_threshold(self.pause_threshold);
+            stream
+        });
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);

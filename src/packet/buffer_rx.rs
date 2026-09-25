@@ -146,6 +146,15 @@ pub struct DepacketizingBuffer {
 }
 
 impl DepacketizingBuffer {
+    /// Forget incomplete frames while retaining the last emitted frame and codec history.
+    pub(crate) fn discard_pending(&mut self) {
+        self.queue.clear();
+        self.segments.clear();
+        self.segments_dirty = false;
+        self.segments_offset = 0;
+        self.depack_cache = None;
+    }
+
     pub(crate) fn new(depack: CodecDepacketizer, hold_back: usize) -> Self {
         let contiguity = match depack {
             CodecDepacketizer::Vp8(_) => Contiguity::Vp8(Vp8Contiguity::new()),

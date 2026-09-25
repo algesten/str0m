@@ -47,6 +47,7 @@ pub struct RtcConfig {
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
     pub(crate) reordering_timeout_video: Option<Duration>,
+    pub(crate) pause_threshold: Duration,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
     pub(crate) rtp_mode: bool,
@@ -601,6 +602,18 @@ impl RtcConfig {
         self.reordering_timeout_video
     }
 
+    /// Sets how long an incoming stream may receive no packets before it is reported paused.
+    /// Defaults to 1.5 seconds and applies to all incoming streams created by this `Rtc`.
+    pub fn set_pause_threshold(mut self, threshold: Duration) -> Self {
+        self.pause_threshold = threshold;
+        self
+    }
+
+    /// Returns the incoming stream pause threshold.
+    pub fn pause_threshold(&self) -> Duration {
+        self.pause_threshold
+    }
+
     /// Sets the buffer size for outgoing audio packets.
     ///
     /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
@@ -837,6 +850,7 @@ impl Default for RtcConfig {
             reordering_size_audio: 15,
             reordering_size_video: 30,
             reordering_timeout_video: None,
+            pause_threshold: Duration::from_millis(1500),
             send_buffer_audio: 50,
             send_buffer_video: 1000,
             rtp_mode: false,

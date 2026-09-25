@@ -689,9 +689,12 @@ impl Media {
         self.depayloaders.remove(&(payload_type, rid));
     }
 
-    pub(crate) fn reset_depayloaders_for_rid(&mut self, rid: Option<Rid>) {
-        self.depayloaders
-            .retain(|(_, existing_rid), _| *existing_rid != rid);
+    pub(crate) fn discard_pending_depayloaders_for_rid(&mut self, rid: Option<Rid>) {
+        for ((_, buffer_rid), buffer) in &mut self.depayloaders {
+            if *buffer_rid == rid {
+                buffer.discard_pending();
+            }
+        }
     }
 
     pub(crate) fn set_rid_rx(&mut self, rids: Rids) {
@@ -834,9 +837,9 @@ mod receive_timeout_test {
         buffer
     }
 
-    /// Test the earliest deadline covers all payload types and RIDs and changes after buffer resets.
+    /// Test deadlines across payload types and RIDs after pending frames are discarded.
     #[test]
-    fn deadlines_cover_payload_types_rids_and_resets() {
+    fn deadlines_cover_payload_types_rids_and_discard_pending() {
         let base = Instant::now();
         let mut media = Media::default();
         let pt1 = Pt::new_with_value(96);
@@ -862,13 +865,13 @@ mod receive_timeout_test {
             media.poll_receive_timeout(timeout),
             Some(base + Duration::from_millis(300))
         );
-        media.reset_depayloaders_for_rid(rid2);
+        media.discard_pending_depayloaders_for_rid(rid2);
         assert_eq!(
             media.poll_receive_timeout(timeout),
             Some(base + Duration::from_millis(350))
         );
         assert_eq!(media.poll_receive_timeout(None), None);
-        media.reset_depayloaders_for_rid(rid1);
+        media.discard_pending_depayloaders_for_rid(rid1);
         assert_eq!(media.poll_receive_timeout(timeout), None);
         media.depayloaders.insert((pt1, rid1), blocked_buffer(base));
         assert_eq!(media.poll_receive_timeout(Some(Duration::ZERO)), Some(base));

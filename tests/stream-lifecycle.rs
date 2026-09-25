@@ -2,10 +2,12 @@
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
+use std::time::Instant;
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
-use str0m::{Event, RtcError};
+use str0m::rtp::RtpWrite;
+use str0m::{Event, Rtc, RtcError};
 
 mod common;
 use common::{Peer, TestRtc, init_crypto_default, init_log, negotiate, progress};
@@ -178,6 +180,105 @@ fn stream_pause_resume_cycle() -> Result<(), RtcError> {
     );
 
     Ok(())
+}
+
+#[test]
+fn pause_preserves_video_contiguity_history() -> Result<(), RtcError> {
+    init_crypto_default();
+
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new_with_config(Peer::Right, |config| {
+        config
+            .set_pause_threshold(Duration::from_millis(500))
+            .set_reordering_size_video(1)
+            .set_reordering_timeout_video(Some(Duration::from_millis(100)))
+    });
+    assert_eq!(
+        Rtc::builder().pause_threshold(),
+        Duration::from_millis(1500)
+    );
+
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+    let mid = negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
+    });
+    while !l.is_connected() || !r.is_connected() {
+        progress(&mut l, &mut r)?;
+    }
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+    let pt = l.params_vp8().pt();
+
+    // A one-packet frame establishes the sequence and codec history.
+    send_vp8(&mut l, &mut r, mid, pt, 10, 90_000)?;
+    assert_frame_contiguity(&r, 10, true);
+
+    // An idle interval longer than the configured threshold is a pause, but
+    // the next packet can still be the immediate successor.
+    advance_both(&mut l, &mut r, Duration::from_millis(200))?;
+    assert!(
+        !r.events.iter().any(|(_, event)| {
+            matches!(event, Event::StreamPaused(p) if p.paused && p.mid == mid)
+        })
+    );
+    advance_both(&mut l, &mut r, Duration::from_millis(450))?;
+    assert!(
+        r.events.iter().any(|(_, event)| {
+            matches!(event, Event::StreamPaused(p) if p.paused && p.mid == mid)
+        })
+    );
+    send_vp8(&mut l, &mut r, mid, pt, 11, 180_000)?;
+    assert_frame_contiguity(&r, 11, true);
+
+    // After another pause, packet 12 is lost. The first resumed delta frame
+    // must report the gap, even though the pause discarded pending fragments.
+    advance_both(&mut l, &mut r, Duration::from_millis(650))?;
+    send_vp8(&mut l, &mut r, mid, pt, 13, 360_000)?;
+    assert_frame_contiguity(&r, 13, false);
+
+    Ok(())
+}
+
+fn send_vp8(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    mid: str0m::media::Mid,
+    pt: str0m::media::Pt,
+    seq: u64,
+    timestamp: u32,
+) -> Result<(), RtcError> {
+    let at = l.last.max(r.last) + Duration::from_millis(10);
+    l.direct_api()
+        .stream_tx_by_mid(mid, None)
+        .unwrap()
+        .write_rtp(RtpWrite::new(pt, seq.into(), timestamp, at, [0x10, 0x01, 0xaa]).marker(true));
+    advance_until(l, r, at + Duration::from_millis(200))
+}
+
+fn advance_both(l: &mut TestRtc, r: &mut TestRtc, duration: Duration) -> Result<(), RtcError> {
+    let until = l.last.max(r.last) + duration;
+    advance_until(l, r, until)
+}
+
+fn advance_until(l: &mut TestRtc, r: &mut TestRtc, until: Instant) -> Result<(), RtcError> {
+    while l.last < until || r.last < until {
+        progress(l, r)?;
+    }
+    Ok(())
+}
+
+fn assert_frame_contiguity(r: &TestRtc, seq: u64, expected: bool) {
+    let frame = r.events.iter().find_map(|(_, event)| match event {
+        Event::MediaData(frame) if frame.seq_range.contains(&seq.into()) => Some(frame),
+        _ => None,
+    });
+    assert_eq!(
+        frame.map(|frame| frame.contiguous),
+        Some(expected),
+        "frame {seq}"
+    );
 }
 
 /// Test changing media direction to SendOnly.

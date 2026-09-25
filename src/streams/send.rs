@@ -1339,7 +1339,7 @@ mod test {
 
     #[test]
     fn regular_padding_does_not_search_probe_negotiation() {
-        let mut streams = crate::streams::Streams::new(false, 1200);
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
         let stream =
             streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
         stream.pt_for_padding = Some(96.into());
@@ -1425,7 +1425,7 @@ mod test {
         use crate::streams::Streams;
 
         let now = Instant::now();
-        let mut streams = Streams::new(false, 1200);
+        let mut streams = Streams::new(false, 1200, Duration::from_millis(1500));
         let queue = MidRid(MID_PROBE, None);
         let mut twcc = 0;
         let mut buf = vec![];
