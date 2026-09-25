@@ -1,5 +1,7 @@
 # Unreleased
 
+# 0.24.0
+
   * Keep `a=simulcast`/`a=rid` for send simulcast in SDP after the first offer.
   * Preserve receive state across pauses; expire the oldest incomplete frame #1057
   * Configure pause threshold; default audio/video reordering to 1 s/2 s #1057
