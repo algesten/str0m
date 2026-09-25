@@ -536,10 +536,11 @@ impl DepacketizingBuffer {
             let is_same_timestamp = start.map(|s| s.time) == Some(entry.meta.time);
             let is_defacto_tail = is_expected_seq && !is_same_timestamp;
 
-            if start.is_some() && is_defacto_tail {
+            if start.is_some() && is_defacto_tail && !entry.head {
                 // We found a segment that ended because the timestamp changed without
-                // a gap in the sequence number. The marker bit in the RTP packet is
-                // just indicative, this is the robust fallback.
+                // a gap in the sequence number. If this packet explicitly starts a new
+                // frame, the previous frame's tail is missing; do not emit it as complete.
+                // Otherwise, the marker bit is only indicative and this is the fallback.
                 let s = start.unwrap();
                 let segment = (s.index as usize, index as usize - 1, s.first_received);
                 self.segments.push_back(segment);
@@ -1458,9 +1459,9 @@ mod test {
         }
     }
 
-    /// Test a timestamp boundary excludes the next frame's earlier receipt from the segment minimum.
+    /// A new frame head discards the unfinished frame and keeps its own receipt deadline.
     #[test]
-    fn timeout_segment_receipt_excludes_next_timestamp() {
+    fn new_head_drops_unfinished_frame_and_uses_own_receipt() {
         let base = Instant::now();
         let timeout = Some(Duration::from_millis(250));
         let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
@@ -1475,25 +1476,18 @@ mod test {
         buf.push(test_meta(base, 3, 3, 100), [1]);
         buf.push(test_meta(base, 4, 3, 150), [2]);
 
-        let deadline = base + Duration::from_millis(350);
+        let deadline = base + Duration::from_millis(300);
         assert_eq!(buf.poll_timeout(timeout), Some(deadline));
         assert!(
             buf.pop(deadline - Duration::from_nanos(1), timeout)
                 .is_none()
         );
         let dep = buf.pop(deadline, timeout).unwrap().unwrap();
-        assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (3, 4));
-        assert_eq!(dep.data, [1, 2]);
-        assert_eq!(dep.first_network_time(), base + Duration::from_millis(100));
+        assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (5, 5));
+        assert_eq!(dep.data, [1, 9]);
+        assert_eq!(dep.first_network_time(), base + Duration::from_millis(50));
         assert!(!dep.contiguous);
-
-        let next = buf.pop(deadline, timeout).unwrap().unwrap();
-        assert_eq!(
-            (**next.seq_range().start(), **next.seq_range().end()),
-            (5, 5)
-        );
-        assert_eq!(next.first_network_time(), base + Duration::from_millis(50));
-        assert!(next.contiguous);
+        assert!(buf.pop(deadline, timeout).is_none());
         assert_eq!(buf.poll_timeout(timeout), None);
     }
 

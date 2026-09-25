@@ -822,6 +822,29 @@ fn video_new_frame_after_paused_incomplete_frame_makes_progress() -> Result<(), 
     Ok(())
 }
 
+/// A new frame after a pause must not implicitly complete the old frame's missing tail.
+#[test]
+fn video_new_frame_start_drops_paused_incomplete_frame() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder().set_pause_threshold(Duration::from_millis(500)),
+        false,
+    )?;
+    t.write(1337.into(), 46_999, 500, &[0x10, 0, 0], true)?;
+    t.write(1337.into(), 47_000, 1000, &[0x10, 0, 0], false)?;
+    t.advance_to(t.now + Duration::from_millis(650))?;
+
+    // Same SSRC and consecutive sequence numbers, but a new VP8 frame starts.
+    t.write(1337.into(), 47_001, 2000, &[0x10, 0, 0], false)?;
+    assert_eq!(t.received_frames(), [(46_999, 46_999, true)]);
+    t.write(1337.into(), 47_002, 2000, &[0x00, 0], true)?;
+    t.advance_to(t.now + Duration::from_millis(2200))?;
+    assert_eq!(
+        t.received_frames(),
+        [(46_999, 46_999, true), (47_001, 47_002, false)]
+    );
+    Ok(())
+}
+
 /// Test video reordering timeouts leave RTP-mode packet delivery unchanged.
 #[test]
 fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
