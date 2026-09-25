@@ -233,7 +233,7 @@ fn pause_preserves_video_contiguity_history() -> Result<(), RtcError> {
     assert_frame_contiguity(&r, 11, true);
 
     // After another pause, packet 12 is lost. The first resumed delta frame
-    // must report the gap, even though the pause discarded pending fragments.
+    // must report the gap even though the stream was reported paused.
     advance_both(&mut l, &mut r, Duration::from_millis(650))?;
     send_vp8(&mut l, &mut r, mid, pt, 13, 360_000)?;
     assert_frame_contiguity(&r, 13, false);

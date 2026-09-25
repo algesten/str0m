@@ -143,6 +143,8 @@ pub struct DepacketizingBuffer {
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
     contiguity: Contiguity,
+    /// A timed-out frame makes the next emitted frame noncontiguous even when
+    /// its sequence number immediately follows the last discarded packet.
     dropped_frame: bool,
 }
 
@@ -599,12 +601,15 @@ impl DepacketizingBuffer {
 
             let is_expected_seq = expected_seq == Some(iseq);
             let is_same_timestamp = start.map(|s| s.time) == Some(entry.meta.time);
-            if start.is_some() && is_expected_seq && !is_same_timestamp {
-                // The marker bit is only indicative. A new RTP timestamp can
-                // delimit the previous frame when no timeout is configured.
+            let is_defacto_tail = is_expected_seq && !is_same_timestamp;
+
+            if start.is_some() && is_defacto_tail {
+                // We found a segment that ended because the timestamp changed without
+                // a gap in the sequence number. The marker bit in the RTP packet is
+                // just indicative, this is the robust fallback.
                 let s = start.unwrap();
-                self.segments
-                    .push_back((s.index as usize, index as usize - 1, s.first_received));
+                let segment = (s.index as usize, index as usize - 1, s.first_received);
+                self.segments.push_back(segment);
                 start = None;
             }
 
