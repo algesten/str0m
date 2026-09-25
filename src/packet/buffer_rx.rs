@@ -128,6 +128,29 @@ impl Entry {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum LastProcessed {
+    /// The cutoff advanced without a frame timeout, including depacketization errors.
+    Advanced(SeqNo),
+    /// An incomplete frame expired; the next emitted frame has a discontinuity.
+    Expired(SeqNo),
+}
+
+impl LastProcessed {
+    fn seq_no(self) -> SeqNo {
+        match self {
+            Self::Advanced(seq_no) | Self::Expired(seq_no) => seq_no,
+        }
+    }
+
+    fn with_seq_no(self, seq_no: SeqNo) -> Self {
+        match self {
+            Self::Advanced(_) => Self::Advanced(seq_no),
+            Self::Expired(_) => Self::Expired(seq_no),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct DepacketizingBuffer {
     hold_back: usize,
@@ -139,13 +162,10 @@ pub struct DepacketizingBuffer {
     segments_offset: usize,
     #[cfg(test)]
     segment_rebuilds: usize,
-    last_emitted: Option<(SeqNo, CodecExtra)>,
+    last_processed: Option<LastProcessed>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
     contiguity: Contiguity,
-    /// A timed-out frame makes the next emitted frame noncontiguous even when
-    /// its sequence number immediately follows the last discarded packet.
-    dropped_frame: bool,
 }
 
 impl DepacketizingBuffer {
@@ -174,11 +194,10 @@ impl DepacketizingBuffer {
             segments_offset: 0,
             #[cfg(test)]
             segment_rebuilds: 0,
-            last_emitted: None,
+            last_processed: None,
             max_time: None,
             depack_cache: None,
             contiguity,
-            dropped_frame: false,
         }
     }
 
@@ -196,7 +215,7 @@ impl DepacketizingBuffer {
         //
         // As a special case, per popular demand, if hold_back is 0, we do emit
         // out of order packets.
-        if let Some((last, _)) = self.last_emitted {
+        if let Some(last) = self.last_processed.map(LastProcessed::seq_no) {
             if meta.seq_no <= last && self.hold_back > 0 {
                 trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
                 return;
@@ -288,8 +307,7 @@ impl DepacketizingBuffer {
                     self.queue.drain(0..end);
                     self.segments_dirty = true;
                     self.depack_cache = None;
-                    self.last_emitted = Some((last, CodecExtra::None));
-                    self.dropped_frame = true;
+                    self.last_processed = Some(LastProcessed::Expired(last));
                 }
                 return None;
             }
@@ -315,8 +333,7 @@ impl DepacketizingBuffer {
             if self.timeout_allows_progress(now, first_received, reordering_timeout) {
                 let last = self.queue[stop].meta.seq_no;
                 self.consume_segment(stop);
-                self.last_emitted = Some((last, CodecExtra::None));
-                self.dropped_frame = true;
+                self.last_processed = Some(LastProcessed::Expired(last));
             }
             return None;
         }
@@ -332,7 +349,7 @@ impl DepacketizingBuffer {
             Err(e) => {
                 // this segment cannot be decoded correctly
                 // remove from the queue and return the error
-                self.last_emitted = Some((seq, CodecExtra::None));
+                self.last_processed = Some(LastProcessed::Advanced(seq));
                 self.consume_segment(stop);
                 return Some(Err(e));
             }
@@ -343,7 +360,8 @@ impl DepacketizingBuffer {
         // and re-evaluate contiguity based on codec specific information
 
         let more_than_hold_back = self.segments.len() >= self.hold_back;
-        let contiguous_seq = !self.dropped_frame && self.is_following_last(start);
+        let expired = matches!(self.last_processed, Some(LastProcessed::Expired(_)));
+        let contiguous_seq = !expired && self.is_following_last(start);
         let wait_for_contiguity = !contiguous_seq
             && !more_than_hold_back
             && !self.timeout_allows_progress(now, first_received, reordering_timeout);
@@ -356,7 +374,7 @@ impl DepacketizingBuffer {
         }
 
         let (can_emit, contiguous_codec) = self.contiguity.check(&dep.codec_extra, contiguous_seq);
-        dep.contiguous = contiguous_codec && !self.dropped_frame;
+        dep.contiguous = contiguous_codec && !expired;
 
         let last = self
             .queue
@@ -382,8 +400,7 @@ impl DepacketizingBuffer {
             return None;
         }
 
-        self.last_emitted = Some((last, dep.codec_extra));
-        self.dropped_frame = false;
+        self.last_processed = Some(LastProcessed::Advanced(last));
 
         Some(Ok(dep))
     }
@@ -415,7 +432,8 @@ impl DepacketizingBuffer {
             return first_received.checked_add(timeout);
         }
 
-        let contiguous_seq = !self.dropped_frame && self.is_following_last(start);
+        let contiguous_seq = !matches!(self.last_processed, Some(LastProcessed::Expired(_)))
+            && self.is_following_last(start);
         let more_than_hold_back = self.segments.len() >= self.hold_back;
         if contiguous_seq || more_than_hold_back {
             return None;
@@ -429,7 +447,8 @@ impl DepacketizingBuffer {
         let original_len = self.queue.len();
         let is_padding = |entry: &Entry| entry.data.is_empty() && !entry.head && !entry.tail;
 
-        if let Some((mut last, extra)) = self.last_emitted {
+        if let Some(processed) = self.last_processed {
+            let mut last = processed.seq_no();
             while self.queue.len() > self.hold_back {
                 let entry = self.queue.front().expect("queue exceeds hold back");
                 if !is_padding(entry) {
@@ -442,13 +461,13 @@ impl DepacketizingBuffer {
                 self.queue.pop_front();
             }
 
-            self.last_emitted = Some((last, extra));
+            self.last_processed = Some(processed.with_seq_no(last));
         }
 
         // An incomplete frame can remain at the front while another payload type
         // contributes synthetic padding indefinitely. Keep the frame, but retain
         // only the newest padding needed for the reordering window. Padding removed
-        // from behind media cannot advance last_emitted across that media.
+        // from behind media cannot advance last_processed across that media.
         let mut excess_padding = self
             .queue
             .iter()
@@ -644,7 +663,7 @@ impl DepacketizingBuffer {
     }
 
     fn is_following_last(&self, start: usize) -> bool {
-        let Some((last, _)) = self.last_emitted else {
+        let Some(last) = self.last_processed.map(LastProcessed::seq_no) else {
             // First time we emit something.
             return true;
         };
@@ -1340,7 +1359,7 @@ mod test {
 
             assert_eq!(buf.pop(base, None).unwrap().is_ok(), valid);
             assert_eq!(buf.queue.len(), 5);
-            assert_eq!(*buf.last_emitted.unwrap().0, 1);
+            assert_eq!(*buf.last_processed.unwrap().seq_no(), 1);
             assert_eq!(buf.poll_timeout(None), None);
             assert_eq!(buf.queue.len(), 5);
 
@@ -1348,7 +1367,7 @@ mod test {
             let scans = buf.segment_rebuilds;
             assert!(buf.pop(base, None).is_none());
             assert_eq!(buf.queue.len(), 3);
-            assert_eq!(*buf.last_emitted.unwrap().0, 3);
+            assert_eq!(*buf.last_processed.unwrap().seq_no(), 3);
             assert_eq!(buf.segment_rebuilds, scans);
 
             // Compaction invalidates indices; the next poll rebuilds exactly once.
@@ -1723,7 +1742,7 @@ mod test {
                 assert!(buf.pop(due, None).is_none());
                 assert_eq!(*buf.queue.front().unwrap().meta.seq_no, 4);
                 assert_eq!(buf.queue.len(), 6);
-                assert_eq!(*buf.last_emitted.unwrap().0, 1);
+                assert_eq!(*buf.last_processed.unwrap().seq_no(), 1);
                 continue;
             }
             buf.update_segments();
