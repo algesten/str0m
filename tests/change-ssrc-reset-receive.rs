@@ -146,7 +146,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
         pause_duration.as_millis()
     );
 
-    // Check if the stream was paused
+    // The old SSRC must be paused before packets arrive on the replacement SSRC.
     let mut seen_paused = false;
     for (_, event) in &r.events {
         if let Event::StreamPaused(stream_paused) = event {
@@ -157,6 +157,10 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
             }
         }
     }
+    assert!(
+        seen_paused,
+        "Old SSRC should pause before the SSRC change is received"
+    );
 
     // Second batch of packets with new SSRC, but with timestamps that would appear to go
     // backward if last_time is not reset during change_ssrc
@@ -263,13 +267,10 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
         }
     }
 
-    // If we saw a pause event, we should also see an unpause event after the new packets
-    if seen_paused {
-        assert!(
-            stream_unpaused_after_new_ssrc,
-            "Stream should have unpaused after receiving packets with new SSRC"
-        );
-    }
+    assert!(
+        stream_unpaused_after_new_ssrc,
+        "Stream should have unpaused after receiving packets with new SSRC"
+    );
 
     // Verify the first batch packets sequence numbers
     for (i, packet) in first_ssrc_packets.iter().enumerate() {
