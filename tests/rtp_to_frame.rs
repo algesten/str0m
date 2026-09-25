@@ -865,6 +865,33 @@ fn video_new_frame_start_drops_paused_incomplete_frame() -> Result<(), RtcError>
     Ok(())
 }
 
+/// A restarted sender can keep its SSRC while starting its picture IDs over.
+#[test]
+fn video_same_ssrc_restart_after_pause_accepts_new_keyframe() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder().set_pause_threshold(Duration::from_millis(500)),
+        false,
+    )?;
+    let vp8_keyframe = |picture_id: u8| [0x90, 0xe0, picture_id, picture_id, 0, 0, 0, 0];
+    t.write(1337.into(), 47_000, 1000, &vp8_keyframe(40), true)?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    t.advance_to(t.now + Duration::from_millis(650))?;
+    assert!(
+        t.receiver
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::StreamPaused(p) if p.paused))
+    );
+
+    t.write(1337.into(), 47_001, 2000, &vp8_keyframe(1), true)?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_001, 47_001, false)],
+        "a new keyframe from the same SSRC must restore frame delivery"
+    );
+    Ok(())
+}
+
 /// Test video reordering timeouts leave RTP-mode packet delivery unchanged.
 #[test]
 fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
