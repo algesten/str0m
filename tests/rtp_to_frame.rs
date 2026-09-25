@@ -894,7 +894,7 @@ fn video_same_ssrc_restart_after_pause_accepts_new_keyframe() -> Result<(), RtcE
         assert_eq!(
             t.received_frames(),
             [(47_000, 47_000, true), (47_001, 47_001, false)],
-            "a new keyframe from the same SSRC must restore frame delivery after picture ID {previous_picture_id}"
+            "keyframe after PictureID {previous_picture_id} was not emitted"
         );
     }
     Ok(())
