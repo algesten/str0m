@@ -478,51 +478,69 @@ fn video_reorder_timeout_temporal_dependencies() -> Result<(), RtcError> {
 #[test]
 fn video_reorder_timeout_h264_fragments() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
-    for completion_delay in [Duration::from_millis(100), Duration::from_millis(300)] {
-        let mut t = VideoTest::with_codec(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
-            false,
-            Codec::H264,
-        )?;
-        // Synthetic NAL/FU-A payloads exercise reassembly, not video decoding.
-        t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
-        t.advance_to(t.now + Duration::from_millis(100))?;
-        t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
-        let deadline = t.now + timeout;
-        t.write(1337.into(), 47_003, 2000, &[0x7c, 0x05, 0x22], false)?;
-        t.advance_to(t.now + completion_delay)?;
-        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-        assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-        t.write(1337.into(), 47_004, 2000, &[0x7c, 0x45, 0x33], true)?;
-        if completion_delay < timeout {
-            t.advance_to(deadline - Duration::from_nanos(1))?;
-            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-            assert_eq!(t.receiver.last, deadline);
-            assert_eq!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-            t.tick(deadline)?;
-        }
-        assert_eq!(
-            t.received_frames(),
-            [(47_000, 47_000, true), (47_002, 47_004, false)]
-        );
-        let data = t
-            .receiver
-            .events
-            .iter()
-            .find_map(|(_, event)| match event {
-                Event::MediaData(data) if **data.seq_range.start() == 47_002 => Some(data),
-                _ => None,
-            })
-            .unwrap();
-        assert_eq!(data.data.as_ref(), &[0, 0, 0, 1, 0x65, 0x11, 0x22, 0x33]);
-        assert_eq!(data.network_time, deadline - timeout);
-        assert!(matches!(data.codec_extra, CodecExtra::H264(e) if e.is_keyframe));
-        t.write(1337.into(), 47_005, 3000, &[0x61, 0x44], true)?;
-        t.advance_to(t.now + Duration::from_millis(100))?;
-        assert_eq!(t.received_frames().last(), Some(&(47_005, 47_005, true)));
-        assert_eq!(t.received_frames().len(), 3);
-        assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-    }
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+        false,
+        Codec::H264,
+    )?;
+    // Synthetic NAL/FU-A payloads exercise reassembly, not video decoding.
+    t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
+    t.advance_to(t.now + Duration::from_millis(100))?;
+    t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
+    let deadline = t.now + timeout;
+    t.write(1337.into(), 47_003, 2000, &[0x7c, 0x05, 0x22], false)?;
+    t.advance_to(t.now + Duration::from_millis(100))?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    t.write(1337.into(), 47_004, 2000, &[0x7c, 0x45, 0x33], true)?;
+    t.advance_to(deadline - Duration::from_nanos(1))?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_eq!(t.receiver.last, deadline);
+    assert_eq!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    t.tick(deadline)?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_002, 47_004, false)]
+    );
+    let data = t
+        .receiver
+        .events
+        .iter()
+        .find_map(|(_, event)| match event {
+            Event::MediaData(data) if **data.seq_range.start() == 47_002 => Some(data),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(data.data.as_ref(), &[0, 0, 0, 1, 0x65, 0x11, 0x22, 0x33]);
+    assert_eq!(data.network_time, deadline - timeout);
+    assert!(matches!(data.codec_extra, CodecExtra::H264(e) if e.is_keyframe));
+    t.write(1337.into(), 47_005, 3000, &[0x61, 0x44], true)?;
+    t.advance_to(t.now + Duration::from_millis(100))?;
+    assert_eq!(t.received_frames().last(), Some(&(47_005, 47_005, true)));
+    assert_eq!(t.received_frames().len(), 3);
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    Ok(())
+}
+
+/// An H264 fragment tail arriving after the frame deadline cannot revive it.
+#[test]
+fn video_reorder_timeout_h264_incomplete_frame_expires() -> Result<(), RtcError> {
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(250))),
+        false,
+        Codec::H264,
+    )?;
+    t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
+    t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
+    t.advance_to(t.now + Duration::from_millis(300))?;
+    t.write(1337.into(), 47_003, 2000, &[0x7c, 0x45, 0x33], true)?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    t.write(1337.into(), 47_004, 3000, &[0x61, 0x44], true)?;
+    t.advance_to(t.now + Duration::from_millis(600))?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_004, 47_004, false)]
+    );
     Ok(())
 }
 
@@ -709,9 +727,9 @@ fn video_reorder_timeout_rtx_after_release() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test None keeps waiting while zero releases a later VP8 frame only once complete.
+/// None preserves count-only waiting; zero discards each incomplete frame at once.
 #[test]
-fn video_reorder_timeout_none_zero_and_partial_frames() -> Result<(), RtcError> {
+fn video_reorder_timeout_none_and_zero_on_partial_frames() -> Result<(), RtcError> {
     for policy in [None, Some(Duration::ZERO)] {
         let mut t = VideoTest::new(Rtc::builder().set_reordering_timeout_video(policy), false)?;
         t.send_vp8_frame(47_000)?;
@@ -722,9 +740,11 @@ fn video_reorder_timeout_none_zero_and_partial_frames() -> Result<(), RtcError> 
         assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
         t.write(1337.into(), 47_004, 200, &[0x00, 0], true)?;
         if policy.is_some() {
+            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+            t.write(1337.into(), 47_005, 300, &[0x10, 0, 0], true)?;
             assert_eq!(
                 t.received_frames(),
-                [(47_000, 47_000, true), (47_003, 47_004, false)]
+                [(47_000, 47_000, true), (47_005, 47_005, false)]
             );
         } else {
             assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
@@ -762,43 +782,120 @@ fn video_reorder_timeout_earliest_across_media() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test stream pause discards buffered frames, including when a timeout is handled late.
+/// A frame can start before a stream pause and finish after its resume.
 #[test]
-fn video_reorder_timeout_pause_discards_pending_frame() -> Result<(), RtcError> {
-    for late_wakeup in [false, true] {
-        let timeout = if late_wakeup {
-            Duration::from_millis(250)
-        } else {
-            Duration::from_secs(2)
-        };
+fn video_frame_completes_across_pause() -> Result<(), RtcError> {
+    for policy in [None, Some(Duration::from_secs(2))] {
         let mut t = VideoTest::new(
-            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+            Rtc::builder()
+                .set_pause_threshold(Duration::from_millis(500))
+                .set_reordering_timeout_video(policy),
             false,
         )?;
-        t.send_vp8_frame(47_000)?;
-        t.advance_to(t.now + Duration::from_millis(100))?;
-        t.send_vp8_frame(47_002)?;
-        let paused = t.now + Duration::from_millis(1500);
-        if late_wakeup {
-            t.tick(paused)?;
-        } else {
-            t.advance_to(paused)?;
-        }
+        t.write(1337.into(), 47_000, 1000, &[0x10, 0, 0], false)?;
+        assert!(t.received_frames().is_empty());
+        t.advance_to(t.now + Duration::from_millis(650))?;
+        assert!(
+            t.receiver.events.iter().any(|(_, event)| {
+                matches!(event, Event::StreamPaused(paused) if paused.paused)
+            })
+        );
+        t.write(1337.into(), 47_001, 1000, &[0x00, 0], true)?;
+        assert_eq!(t.received_frames(), [(47_000, 47_001, true)]);
+        assert!(
+            t.receiver.events.iter().any(|(_, event)| {
+                matches!(event, Event::StreamPaused(paused) if !paused.paused)
+            })
+        );
+    }
+    Ok(())
+}
+
+/// A lost tail must not keep a fresh frame hidden for an entire reordering window
+/// after the receiver has reported a pause.
+#[test]
+fn video_new_frame_after_paused_incomplete_frame_makes_progress() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder().set_pause_threshold(Duration::from_millis(500)),
+        false,
+    )?;
+    t.write(1337.into(), 46_999, 500, &[0x10, 0, 0], true)?;
+    assert_eq!(t.received_frames(), [(46_999, 46_999, true)]);
+    t.write(1337.into(), 47_000, 1000, &[0x10, 0, 0], false)?;
+    t.advance_to(t.now + Duration::from_millis(650))?;
+    assert!(
+        t.receiver
+            .events
+            .iter()
+            .any(|(_, event)| { matches!(event, Event::StreamPaused(paused) if paused.paused) })
+    );
+
+    // Packet 47_001 (the old frame's tail) was lost. The sender resumes
+    // with a complete new frame, which should be delivered as noncontiguous
+    // within a bounded interval even if no more packets arrive.
+    t.write(1337.into(), 47_002, 2000, &[0x10, 0, 0], true)?;
+    t.advance_to(t.now + Duration::from_millis(2500))?;
+    assert_eq!(
+        t.received_frames(),
+        [(46_999, 46_999, true), (47_002, 47_002, false)]
+    );
+    Ok(())
+}
+
+/// A new frame after a pause must not implicitly complete the old frame's missing tail.
+#[test]
+fn video_new_frame_start_drops_paused_incomplete_frame() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder().set_pause_threshold(Duration::from_millis(500)),
+        false,
+    )?;
+    t.write(1337.into(), 46_999, 500, &[0x10, 0, 0], true)?;
+    t.write(1337.into(), 47_000, 1000, &[0x10, 0, 0], false)?;
+    t.advance_to(t.now + Duration::from_millis(650))?;
+
+    // Same SSRC and consecutive sequence numbers, but a new VP8 frame starts.
+    t.write(1337.into(), 47_001, 2000, &[0x10, 0, 0], false)?;
+    assert_eq!(t.received_frames(), [(46_999, 46_999, true)]);
+    t.write(1337.into(), 47_002, 2000, &[0x00, 0], true)?;
+    t.advance_to(t.now + Duration::from_millis(2200))?;
+    assert_eq!(
+        t.received_frames(),
+        [(46_999, 46_999, true), (47_001, 47_002, false)]
+    );
+    Ok(())
+}
+
+/// A restarted sender can keep its SSRC while starting its picture IDs over.
+#[test]
+fn video_same_ssrc_restart_after_pause_accepts_new_keyframe() -> Result<(), RtcError> {
+    for previous_picture_id in [40, 1] {
+        let mut t = VideoTest::new(
+            Rtc::builder().set_pause_threshold(Duration::from_millis(500)),
+            false,
+        )?;
+        let vp8_keyframe = |picture_id: u8| [0x90, 0xe0, picture_id, picture_id, 0, 0, 0, 0];
+        t.write(
+            1337.into(),
+            47_000,
+            1000,
+            &vp8_keyframe(previous_picture_id),
+            true,
+        )?;
+        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+        t.advance_to(t.now + Duration::from_millis(650))?;
         assert!(
             t.receiver
                 .events
                 .iter()
-                .any(|(_, event)| matches!(event, Event::StreamPaused(_)))
+                .any(|(_, event)| matches!(event, Event::StreamPaused(p) if p.paused))
         );
-        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-        t.advance_to(paused + timeout)?;
+
+        t.write(1337.into(), 47_001, 2000, &vp8_keyframe(1), true)?;
         assert_eq!(
-            t.received_frames().len(),
-            1,
-            "reset frames cannot be resurrected"
+            t.received_frames(),
+            [(47_000, 47_000, true), (47_001, 47_001, false)],
+            "keyframe after PictureID {previous_picture_id} was not emitted"
         );
-        t.send_vp8_frame(47_003)?;
-        assert_eq!(t.received_frames().last(), Some(&(47_003, 47_003, true)));
     }
     Ok(())
 }
@@ -829,7 +926,7 @@ fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Test video reordering timeouts leave audio's count-based waiting unchanged.
+/// Test a video reordering timeout does not change audio's separate timeout.
 #[test]
 fn video_reorder_timeout_does_not_change_audio() -> Result<(), RtcError> {
     let mut t = VideoTest::new(

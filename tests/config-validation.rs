@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::media::{Direction, MediaKind};
-use str0m::{Event, Rtc, RtcConfig, RtcError};
+use str0m::{Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -101,7 +101,14 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
 /// Test timeout defaults and configuration round-trips, including large durations.
 #[test]
 fn config_reordering_timeout_custom() {
-    assert_eq!(RtcConfig::new().reordering_timeout_video(), None);
+    assert_eq!(
+        RtcConfig::new().reordering_timeout_audio(),
+        Some(Duration::from_secs(1))
+    );
+    assert_eq!(
+        RtcConfig::new().reordering_timeout_video(),
+        Some(Duration::from_secs(2))
+    );
     for timeout in [
         None,
         Some(Duration::ZERO),
@@ -112,6 +119,9 @@ fn config_reordering_timeout_custom() {
         let config = RtcConfig::new().set_reordering_timeout_video(timeout);
         assert_eq!(config.reordering_timeout_video(), timeout);
         assert_eq!(config.clone().reordering_timeout_video(), timeout);
+        let config = RtcConfig::new().set_reordering_timeout_audio(timeout);
+        assert_eq!(config.reordering_timeout_audio(), timeout);
+        assert_eq!(config.clone().reordering_timeout_audio(), timeout);
     }
 }
 

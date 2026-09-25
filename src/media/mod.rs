@@ -684,12 +684,8 @@ impl Media {
             .find_map(|p| p.resend().map(|_| p.pt))
     }
 
-    pub(crate) fn reset_depayloader(&mut self, payload_type: Pt, rid: Option<Rid>) {
-        // Simply remove the depayloader, it will be re-created on the next RTP packet.
-        self.depayloaders.remove(&(payload_type, rid));
-    }
-
     pub(crate) fn reset_depayloaders_for_rid(&mut self, rid: Option<Rid>) {
+        // A replacement SSRC can use any negotiated payload type for this RID.
         self.depayloaders
             .retain(|(_, existing_rid), _| *existing_rid != rid);
     }
@@ -857,19 +853,14 @@ mod receive_timeout_test {
             media.poll_receive_timeout(timeout),
             Some(base + Duration::from_millis(250))
         );
-        media.reset_depayloader(pt2, rid1);
+        media.reset_depayloaders_for_rid(rid1);
         assert_eq!(
             media.poll_receive_timeout(timeout),
             Some(base + Duration::from_millis(300))
         );
         media.reset_depayloaders_for_rid(rid2);
-        assert_eq!(
-            media.poll_receive_timeout(timeout),
-            Some(base + Duration::from_millis(350))
-        );
-        assert_eq!(media.poll_receive_timeout(None), None);
-        media.reset_depayloaders_for_rid(rid1);
         assert_eq!(media.poll_receive_timeout(timeout), None);
+        assert_eq!(media.poll_receive_timeout(None), None);
         media.depayloaders.insert((pt1, rid1), blocked_buffer(base));
         assert_eq!(media.poll_receive_timeout(Some(Duration::ZERO)), Some(base));
     }

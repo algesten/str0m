@@ -159,6 +159,7 @@ pub(crate) struct Streams {
     /// Threshold above which an outgoing RTP packet triggers an MTU warning. Used as a
     /// hard cap when selecting RTX cache entries for spurious padding.
     mtu_warn: usize,
+    pause_threshold: Duration,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -175,7 +176,7 @@ struct RxLookup {
 }
 
 impl Streams {
-    pub(crate) fn new(enable_stats: bool, mtu_warn: usize) -> Self {
+    pub(crate) fn new(enable_stats: bool, mtu_warn: usize, pause_threshold: Duration) -> Self {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
@@ -188,6 +189,7 @@ impl Streams {
             any_nack_active: None,
             enable_stats,
             mtu_warn,
+            pause_threshold,
         }
     }
 
@@ -280,11 +282,10 @@ impl Streams {
                 // We got a change in main SSRC for this stream.
                 let did_change = self.change_stream_rx_ssrc(ssrc_from, ssrc_main);
 
-                // When the SSRCs changes the sequence number typically also does, the
-                // depayloader (if in use) relies on sequence numbers and will not handle a
-                // large jump correctly, reset it.
+                // When the SSRC changes, any payload type on this RID can start with
+                // a new sequence number. Reset all depayloaders for the RID.
                 if did_change {
-                    media.reset_depayloader(payload.pt(), midrid.rid());
+                    media.reset_depayloaders_for_rid(midrid.rid());
                 }
             }
 
@@ -316,7 +317,7 @@ impl Streams {
         let stream = self
             .streams_rx
             .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc, midrid, suppress_nack));
+            .or_insert_with(|| StreamRx::new(ssrc, midrid, suppress_nack, self.pause_threshold));
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);

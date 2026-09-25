@@ -23,6 +23,7 @@ impl Vp8Contiguity {
             next.picture_id,
             next.tl0_picture_id,
             Some(next.layer_index.into()),
+            next.is_keyframe,
             contiguous_seq,
         );
 

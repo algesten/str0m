@@ -71,6 +71,7 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
+    reordering_timeout_audio: Option<Duration>,
     reordering_timeout_video: Option<Duration>,
     intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
@@ -178,10 +179,11 @@ impl Session {
         Session {
             id,
             medias: vec![],
-            streams: Streams::new(enable_stats, *config.mtu.end()),
+            streams: Streams::new(enable_stats, *config.mtu.end(), config.pause_threshold),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
+            reordering_timeout_audio: config.reordering_timeout_audio,
             reordering_timeout_video: config.reordering_timeout_video,
             intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
@@ -985,13 +987,6 @@ impl Session {
         // This must be before pending_packet.take() since we need to emit the unpaused event
         // before the first packet causing the unpause.
         if let Some(paused) = self.streams.poll_stream_paused() {
-            if paused.paused {
-                if let Some(media) = self.medias.iter_mut().find(|m| m.mid() == paused.mid) {
-                    // Drop held partial depacketizer state so pre-pause fragments can't
-                    // complete into stale MediaData after the stream resumes.
-                    media.reset_depayloaders_for_rid(paused.rid);
-                }
-            }
             return Some(Event::StreamPaused(paused));
         }
 
@@ -1047,9 +1042,11 @@ impl Session {
         }
 
         for media in &mut self.medias {
-            let timeout = self
-                .reordering_timeout_video
-                .filter(|_| media.kind().is_video());
+            let timeout = if media.kind().is_video() {
+                self.reordering_timeout_video
+            } else {
+                self.reordering_timeout_audio
+            };
             if let Some(e) = media.poll_sample(&self.codec_config, now, timeout)? {
                 return Ok(Some(Event::MediaData(e)));
             }
@@ -1234,13 +1231,18 @@ impl Session {
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
         let packetize_at = self.medias.iter().filter_map(|m| m.poll_timeout()).min();
-        let receive_at = self.reordering_timeout_video.and_then(|timeout| {
-            self.medias
-                .iter_mut()
-                .filter(|m| m.kind().is_video())
-                .filter_map(|m| m.poll_receive_timeout(Some(timeout)))
-                .min()
-        });
+        let receive_at = self
+            .medias
+            .iter_mut()
+            .filter_map(|media| {
+                let timeout = if media.kind().is_video() {
+                    self.reordering_timeout_video
+                } else {
+                    self.reordering_timeout_audio
+                };
+                media.poll_receive_timeout(timeout)
+            })
+            .min();
         let paused_at = self.paused_at();
         let send_stream_at = self.streams.send_stream();
 
