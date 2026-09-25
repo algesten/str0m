@@ -791,6 +791,35 @@ fn video_frame_completes_across_pause() -> Result<(), RtcError> {
     Ok(())
 }
 
+/// A lost tail must not keep a fresh frame hidden for an entire reordering window
+/// after the receiver has reported a pause.
+#[test]
+fn video_new_frame_after_paused_incomplete_frame_makes_progress() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder().set_pause_threshold(Duration::from_millis(500)),
+        false,
+    )?;
+    t.write(1337.into(), 46_999, 500, &[0x10, 0, 0], true)?;
+    assert_eq!(t.received_frames(), [(46_999, 46_999, true)]);
+    t.write(1337.into(), 47_000, 1000, &[0x10, 0, 0], false)?;
+    t.advance_to(t.now + Duration::from_millis(650))?;
+    assert!(
+        t.receiver
+            .events
+            .iter()
+            .any(|(_, event)| { matches!(event, Event::StreamPaused(paused) if paused.paused) })
+    );
+
+    // Packet 47_001 (the old frame's tail) was lost. The sender resumes
+    // with a complete new frame, which should be delivered as noncontiguous.
+    t.write(1337.into(), 47_002, 2000, &[0x10, 0, 0], true)?;
+    assert_eq!(
+        t.received_frames(),
+        [(46_999, 46_999, true), (47_002, 47_002, false)]
+    );
+    Ok(())
+}
+
 /// Test video reordering timeouts leave RTP-mode packet delivery unchanged.
 #[test]
 fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
