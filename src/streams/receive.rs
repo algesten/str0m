@@ -153,7 +153,12 @@ pub(crate) struct StreamRxStats {
 }
 
 impl StreamRx {
-    pub(crate) fn new(ssrc: Ssrc, midrid: MidRid, suppress_nack: bool) -> Self {
+    pub(crate) fn new(
+        ssrc: Ssrc,
+        midrid: MidRid,
+        suppress_nack: bool,
+        pause_threshold: Duration,
+    ) -> Self {
         debug!("Create StreamRx for SSRC: {}", ssrc);
 
         StreamRx {
@@ -179,7 +184,7 @@ impl StreamRx {
             check_paused_at: None,
             paused: true,
             need_paused_event: false,
-            pause_threshold: Duration::from_millis(1500),
+            pause_threshold,
         }
     }
 
@@ -1008,7 +1013,12 @@ mod tests {
     #[test]
     fn paused_timestamp_repair_moves_time_forward() {
         let now = already_happened();
-        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let mut stream = StreamRx::new(
+            7.into(),
+            MidRid("mid".into(), None),
+            false,
+            Duration::from_millis(1500),
+        );
         let previous_time = 1;
         stream.last_time = Some(MediaTime::new(previous_time, Frequency::NINETY_KHZ));
         stream.paused = true;
@@ -1034,7 +1044,12 @@ mod tests {
     /// Feed packets `(seq, rtp_time)` into a fresh stream, as received on the wire.
     fn stream_with(packets: &[(u16, u32)]) -> StreamRx {
         let now = already_happened();
-        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let mut stream = StreamRx::new(
+            7.into(),
+            MidRid("mid".into(), None),
+            false,
+            Duration::from_millis(1500),
+        );
         for (seq, ts) in packets {
             let header = RtpHeader {
                 payload_type: Pt::new_with_value(111),
@@ -1121,7 +1136,12 @@ mod tests {
 
     #[test]
     fn receiver_report_uses_supplied_intervals() {
-        let mut stream = StreamRx::new(7.into(), MidRid("mid".into(), None), false);
+        let mut stream = StreamRx::new(
+            7.into(),
+            MidRid("mid".into(), None),
+            false,
+            Duration::from_millis(1500),
+        );
         let now = Instant::now();
         stream.last_receiver_report = now;
 

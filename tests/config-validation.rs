@@ -101,7 +101,10 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
 /// Test timeout defaults and configuration round-trips, including large durations.
 #[test]
 fn config_reordering_timeout_custom() {
-    assert_eq!(RtcConfig::new().reordering_timeout_video(), None);
+    assert_eq!(
+        RtcConfig::new().reordering_timeout_video(),
+        Some(Duration::from_millis(1500))
+    );
     for timeout in [
         None,
         Some(Duration::ZERO),

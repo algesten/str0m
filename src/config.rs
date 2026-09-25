@@ -559,7 +559,7 @@ impl RtcConfig {
 
     /// Sets how long a complete video frame waits for missing earlier packets.
     ///
-    /// `None` (default) keeps count-based waiting only. `Some(Duration::ZERO)`
+    /// The default is 1.5 seconds. `None` keeps count-based waiting only. `Some(Duration::ZERO)`
     /// skips missing earlier data on the next output poll once a complete frame
     /// is available. With a positive timeout, waiting ends at the deadline or
     /// the existing count limit, whichever comes first. The limit counts recognized
@@ -580,8 +580,8 @@ impl RtcConfig {
     /// checks still apply.
     ///
     /// Applies to all video streams in frame mode, not audio or
-    /// [`RTP mode`](RtcConfig::set_rtp_mode). Stream pauses and SSRC resets may
-    /// discard buffered data before the deadline.
+    /// [`RTP mode`](RtcConfig::set_rtp_mode). Stream pauses preserve buffered data;
+    /// an SSRC reset may discard it before the deadline.
     pub fn set_reordering_timeout_video(mut self, timeout: Option<Duration>) -> Self {
         self.reordering_timeout_video = timeout;
         self
@@ -593,8 +593,8 @@ impl RtcConfig {
     /// # use str0m::Rtc;
     /// let config = Rtc::builder();
     ///
-    /// // Defaults to None.
-    /// assert_eq!(config.reordering_timeout_video(), None);
+    /// // Defaults to 1.5 seconds.
+    /// assert_eq!(config.reordering_timeout_video(), Some(std::time::Duration::from_millis(1500)));
     /// ```
     ///
     /// `Some(Duration::ZERO)` is preserved distinctly from `None`.
@@ -849,7 +849,7 @@ impl Default for RtcConfig {
             bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
-            reordering_timeout_video: None,
+            reordering_timeout_video: Some(Duration::from_millis(1500)),
             pause_threshold: Duration::from_millis(1500),
             send_buffer_audio: 50,
             send_buffer_video: 1000,

@@ -315,11 +315,10 @@ impl Streams {
         // New stream might have enabled nacks.
         self.any_nack_active = None;
 
-        let stream = self.streams_rx.entry(ssrc).or_insert_with(|| {
-            let mut stream = StreamRx::new(ssrc, midrid, suppress_nack);
-            stream.set_pause_threshold(self.pause_threshold);
-            stream
-        });
+        let stream = self
+            .streams_rx
+            .entry(ssrc)
+            .or_insert_with(|| StreamRx::new(ssrc, midrid, suppress_nack, self.pause_threshold));
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);

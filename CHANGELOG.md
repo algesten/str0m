@@ -1,6 +1,7 @@
 # Unreleased
 
-  * Preserve in-progress frames and contiguity across stream pauses; make the pause threshold configurable #1057
+  * Preserve frames and contiguity across stream pauses #1057
+  * Configure the pause threshold; default video reordering to 1.5 s #1057
   * Send and receive telephone-event (DTMF) packets in frame mode with `Writer::telephone_event` #1050
   * Stop SSRC 0 probes from repeatedly scheduling an immediate RTCP feedback timeout #1052
   * Expose TWCC probing state and use named fields in bandwidth estimate events (breaking) #1048
