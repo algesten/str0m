@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Limit paced media bursts to 63 kB to avoid overfilling socket buffers at high bitrates #827
+
 # 0.24.0
 
   * Keep `a=simulcast`/`a=rid` for send simulcast in SDP after the first offer.
