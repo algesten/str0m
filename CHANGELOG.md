@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Limit paced media bursts to about 63 kB #1058
+
 # 0.24.0
 
   * Keep `a=simulcast`/`a=rid` for send simulcast in SDP after the first offer.
