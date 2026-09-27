@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Limit paced media bursts to 63 kB to avoid overfilling socket buffers at high bitrates #827
+  * Limit paced media bursts to about 63 kB #1058
 
 # 0.24.0
 
