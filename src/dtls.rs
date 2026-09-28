@@ -166,17 +166,24 @@ impl Dtls {
 
     /// Send application data over DTLS.
     pub fn handle_input(&mut self, data: &[u8]) -> Result<(), DtlsError> {
-        if !self.is_inited() {
-            panic!("DTLS should be started before attempting to send data");
+        fn make_handshake_pending_err() -> DtlsError {
+            DtlsError::Io(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                dimpl::Error::HandshakePending,
+            ))
         }
 
-        self.instance.send_application_data(data).map_err(|e| {
-            if matches!(e, dimpl::Error::HandshakePending) {
-                DtlsError::Io(io::Error::new(io::ErrorKind::WouldBlock, e))
-            } else {
-                DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e)))
-            }
-        })
+        // Don't rely on the inner instance for proper pre-init behavior.
+        if !self.is_inited() {
+            return Err(make_handshake_pending_err());
+        }
+
+        self.instance
+            .send_application_data(data)
+            .map_err(|e| match e {
+                dimpl::Error::HandshakePending => make_handshake_pending_err(),
+                e => DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))),
+            })
     }
 
     /// Handle a timeout event.
