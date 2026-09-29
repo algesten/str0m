@@ -11,12 +11,13 @@ fn next_timeout(rtc: &mut Rtc) -> (Instant, Reason) {
     panic!("str0m did not finish draining outputs within 32 polls");
 }
 
-fn receiver(ssrc: u32, now: Instant) -> Rtc {
+fn receiver(ssrc: u32, now: Instant, legacy_ssrc_zero_receiver_reports: bool) -> Rtc {
     let mut rtc = RtcConfig::new()
         .set_rtp_mode(true)
         .set_stats_interval(None)
         .set_rtcp_report_interval_audio(Duration::from_secs(1))
         .set_rtcp_report_interval_video(Duration::from_secs(1))
+        .set_legacy_ssrc_zero_receiver_reports(legacy_ssrc_zero_receiver_reports)
         .build(now);
 
     let mid: Mid = "audio".into();
@@ -31,7 +32,7 @@ fn receiver(ssrc: u32, now: Instant) -> Rtc {
 #[test]
 fn ordinary_receiver_advances_feedback_deadline() {
     let now = Instant::now();
-    let mut rtc = receiver(1234, now);
+    let mut rtc = receiver(1234, now, false);
     let expected = now + Duration::from_secs(1);
     let mut timeout = now;
     for _ in 0..32 {
@@ -50,7 +51,7 @@ fn ordinary_receiver_advances_feedback_deadline() {
 #[test]
 fn ssrc_zero_probe_does_not_rearm_immediate_feedback_forever() {
     let now = Instant::now();
-    let mut rtc = receiver(0, now);
+    let mut rtc = receiver(0, now, false);
     let mut due_timeouts = Vec::new();
     for _ in 0..3 {
         rtc.handle_input(Input::Timeout(now)).unwrap();
@@ -62,4 +63,17 @@ fn ssrc_zero_probe_does_not_rearm_immediate_feedback_forever() {
     }
 
     panic!("SSRC 0 never advances its timer after three timeout deliveries: {due_timeouts:?}");
+}
+
+#[test]
+fn legacy_ssrc_zero_receiver_reports_reproduce_immediate_feedback_loop() {
+    let now = Instant::now();
+    let mut rtc = receiver(0, now, true);
+
+    for _ in 0..3 {
+        rtc.handle_input(Input::Timeout(now)).unwrap();
+        let (deadline, reason) = next_timeout(&mut rtc);
+        assert_eq!(deadline, now);
+        assert_eq!(reason, Reason::Feedback);
+    }
 }

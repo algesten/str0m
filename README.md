@@ -11,6 +11,16 @@ calls of the public API.
 This is deliberately not a standard `RTCPeerConnection` API since that isn't a great fit for Rust.
 See more details in below section.
 
+## Upgrading to 0.24
+
+Roll out **0.24 on every server before enabling 0.24 on clients** when bandwidth estimation is on.
+
+0.24 clients send pre-media bandwidth probes on SSRC 0. A 0.23 server still schedules a receiver report for that SSRC, but it never emits the report, so the feedback timeout stays at "now". The server receive thread then busy-loops: `poll_output()` returns an already-due timeout, the thread calls `handle_input(Timeout(now))` without blocking on the socket, and CPU stays at 100%.
+
+This is not a DTLS negotiation failure. It happens with DTLS 1.2 on both sides. A 0.24 server excludes SSRC 0 from regular receiver-report scheduling, so the same probes do not pin the timeout. Do not enable a 0.24 client against a server that is still on 0.23.
+
+`tests/handshake-direct.rs` reproduces the stuck receive thread with two threads and real time.
+
 ## Join us
 
 We are discussing str0m things on Discord. Join us using this [invitation link][discord].

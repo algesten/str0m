@@ -43,6 +43,7 @@ pub struct RtcConfig {
     pub(crate) exts: ExtensionMap,
     pub(crate) stats_interval: Option<Duration>,
     pub(crate) intervals: RtcpReportIntervals,
+    pub(crate) legacy_ssrc_zero_receiver_reports: bool,
     pub(crate) bwe_config: Option<BweConfig>,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
@@ -459,6 +460,17 @@ impl RtcConfig {
         self.intervals.video
     }
 
+    /// Restores the pre-0.24 receiver-report scheduling behavior for SSRC 0.
+    ///
+    /// This exists to reproduce interoperability failures with legacy peers. Enabling it can
+    /// repeatedly schedule an already-expired feedback timeout after receiving an SSRC 0 BWE
+    /// probe, causing an event loop to spin without receiving more network input.
+    #[doc(hidden)]
+    pub fn set_legacy_ssrc_zero_receiver_reports(mut self, enabled: bool) -> Self {
+        self.legacy_ssrc_zero_receiver_reports = enabled;
+        self
+    }
+
     /// Enables estimation of available bandwidth (BWE).
     ///
     /// None disables the BWE. This is an estimation of the send bandwidth, not receive.
@@ -850,6 +862,7 @@ impl Default for RtcConfig {
                 audio: Duration::from_secs(5),
                 video: Duration::from_secs(1),
             },
+            legacy_ssrc_zero_receiver_reports: false,
             bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,

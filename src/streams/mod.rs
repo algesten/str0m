@@ -160,6 +160,8 @@ pub(crate) struct Streams {
     /// hard cap when selecting RTX cache entries for spurious padding.
     mtu_warn: usize,
     pause_threshold: Duration,
+    /// Restores pre-0.24 scheduling of receiver reports for SSRC 0 probes.
+    legacy_ssrc_zero_receiver_reports: bool,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -190,7 +192,12 @@ impl Streams {
             enable_stats,
             mtu_warn,
             pause_threshold,
+            legacy_ssrc_zero_receiver_reports: false,
         }
+    }
+
+    pub(crate) fn set_legacy_ssrc_zero_receiver_reports(&mut self, enabled: bool) {
+        self.legacy_ssrc_zero_receiver_reports = enabled;
     }
 
     pub(crate) fn map_dynamic_by_rid(
@@ -405,10 +412,11 @@ impl Streams {
     }
 
     pub(crate) fn regular_feedback_at(&self, i: RtcpReportIntervals) -> Option<Instant> {
+        let include_probe_streams = self.legacy_ssrc_zero_receiver_reports;
         let r = self
             .streams_rx
             .values()
-            .filter(|s| !s.ssrc().is_probe())
+            .filter(|s| include_probe_streams || !s.ssrc().is_probe())
             .map(|s| s.receiver_report_at(i));
         let s = self.streams_tx.values().map(|s| s.sender_report_at(i));
         r.chain(s).min()

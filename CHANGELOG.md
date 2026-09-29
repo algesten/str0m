@@ -14,6 +14,7 @@
   * Bound the depacketizing queue when incomplete frames keep arriving #1044
   * Add a configurable video frame reordering timeout via `RtcConfig` #1041
   * Support SSRC 0 bandwidth probing before media starts #1046
+  * Upgrade note: roll out 0.24 servers before enabling 0.24 clients with BWE. A 0.23 server busy-loops its receive thread on SSRC 0 probe receiver-report timeouts. See README.
   * Let `Rtc::accepts` recognize validated remote addresses in ICE-lite mode before nomination #1039
   * Remove SChannel and use only dimpl + CNG for Windows DTLS #1038
   * Move codec-specific packetization and RED send logic out of the payloader #1030
