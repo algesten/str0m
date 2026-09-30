@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Do not reflect the offer's `a=msid:-` "no MediaStream" sentinel in the answer
   * Limit paced media bursts to about 63 kB #1058
 
 # 0.24.0
