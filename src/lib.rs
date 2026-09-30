@@ -1638,6 +1638,11 @@ impl Rtc {
         // Poll DTLS output - collect packets, handle events
         let mut just_connected = false;
         loop {
+            // The DTLS backend can report that dtls_buf is too small for the next
+            // pending output. We can't resize inside the match, since the matched
+            // value borrows the buffer, so remember the size and grow it after.
+            let mut grow_dtls_buf_to = None;
+
             match self.dtls.poll_output(&mut self.dtls_buf) {
                 DtlsOutput::Packet(_) => {
                     unreachable!("We don't expect DTLS packets here since we use poll_packet");
@@ -1692,11 +1697,25 @@ impl Rtc {
                     self.start_close()?;
                     return Ok(Output::Event(Event::Closed));
                 }
+                DtlsOutput::BufferTooSmall { needed } => {
+                    grow_dtls_buf_to = Some(needed);
+                }
                 other => {
                     return Err(RtcError::Dtls(DtlsError::Io(std::io::Error::other(
                         format!("Unexpected DTLS output: {other:?}"),
                     ))));
                 }
+            }
+
+            // The output that didn't fit is still pending. Grow the buffer and
+            // let the next iteration poll for it again.
+            if let Some(needed) = grow_dtls_buf_to {
+                debug!(
+                    "Growing DTLS output buffer from {} to {} bytes",
+                    self.dtls_buf.len(),
+                    needed
+                );
+                self.dtls_buf.resize(needed, 0);
             }
         }
 
@@ -2236,6 +2255,39 @@ mod test {
     fn rtc_is_unwind_safe() {
         fn is_unwind_safe<T: UnwindSafe>(_t: T) {}
         is_unwind_safe(Rtc::new(Instant::now()));
+    }
+
+    // These providers expose dimpl's resize-and-retry output contract.
+    #[cfg(any(
+        feature = "aws-lc-rs",
+        feature = "rust-crypto",
+        feature = "openssl-dimpl",
+        feature = "wincrypto",
+        feature = "apple-crypto",
+    ))]
+    #[test]
+    fn dtls_output_grows_buffer_and_retries() {
+        for version in [config::DtlsVersion::Dtls12, config::DtlsVersion::Dtls13] {
+            let now = Instant::now();
+            let mut rtc = Rtc::builder().set_dtls_version(version).build(now);
+            rtc.dtls_buf.truncate(1);
+            rtc.direct_api().start_dtls(true).unwrap();
+
+            // The first ClientHello cannot fit. Querying the backend leaves
+            // that packet pending so poll_output must resize and retry it.
+            let needed = match rtc.dtls.poll_output(&mut rtc.dtls_buf) {
+                DtlsOutput::BufferTooSmall { needed } => needed,
+                other => panic!("expected BufferTooSmall, got {other:?}"),
+            };
+            assert!(needed > rtc.dtls_buf.len());
+
+            rtc.poll_output().unwrap();
+
+            assert_eq!(rtc.dtls_buf.len(), needed);
+            let packet = rtc.dtls.poll_packet().expect("ClientHello remains queued");
+            assert_eq!(packet.len(), needed);
+            assert!(rtc.is_alive());
+        }
     }
 
     #[test]
