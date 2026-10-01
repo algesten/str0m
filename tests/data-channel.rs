@@ -2,11 +2,12 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use netem::NetemConfig;
-use str0m::channel::ChannelConfig;
-use str0m::{Event, Input, Output, RtcError};
+use str0m::channel::{ChannelConfig, ChannelId};
+use str0m::{Event, Input, Output, Rtc, RtcConfig, RtcError};
 
 mod common;
-use common::{Peer, TestRtc, connect_l_r, init_crypto_default, init_log, progress};
+use common::{Peer, TestRtc, connect_l_r, connect_l_r_with_rtc};
+use common::{init_crypto_default, init_log, progress};
 
 /// Poll one peer while deliberately withholding all of its network output.
 ///
@@ -346,6 +347,97 @@ pub fn unconfirmed_reset_keeps_stream_id_reserved() -> Result<(), RtcError> {
     );
 
     Ok(())
+}
+
+/// Connects two peers built from `config` over the direct API and opens an out-of-band
+/// negotiated channel on both, so no DCEP message occupies the send buffer.
+fn connect_with_channel(
+    config: impl Fn(RtcConfig) -> RtcConfig,
+) -> Result<(TestRtc, TestRtc, ChannelId), RtcError> {
+    let build = |peer: Peer| {
+        let mut builder = Rtc::builder();
+        if let Some(crypto) = peer.crypto_provider() {
+            builder = builder.set_crypto_provider(crypto);
+        }
+        config(builder).build(Instant::now())
+    };
+    let (mut l, mut r) = connect_l_r_with_rtc(build(Peer::Left), build(Peer::Right));
+
+    let channel = ChannelConfig {
+        label: "data".into(),
+        negotiated: Some(1),
+        ..Default::default()
+    };
+    let cid = l.direct_api().create_data_channel(channel.clone());
+    r.direct_api().create_data_channel(channel);
+
+    loop {
+        progress(&mut l, &mut r)?;
+        let l_open = l
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelOpen(id, _) if *id == cid));
+        let r_open = r
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelOpen(_, _)));
+        if l_open && r_open {
+            return Ok((l, r, cid));
+        }
+        assert!(
+            l.duration() < Duration::from_secs(10),
+            "channel should open on both peers"
+        );
+    }
+}
+
+/// Bytes of `ChannelData` the peer has received so far.
+fn received_bytes(rtc: &TestRtc) -> usize {
+    rtc.events
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Event::ChannelData(d) => Some(d.data.len()),
+            _ => None,
+        })
+        .sum()
+}
+
+/// Keeps the send buffer full of 60 KiB messages for 3 seconds, then checks that all
+/// of them arrive. This makes SCTP hand DTLS many packets at once.
+fn keep_send_buffer_full(config: impl Fn(RtcConfig) -> RtcConfig) -> Result<(), RtcError> {
+    let (mut l, mut r, cid) = connect_with_channel(config)?;
+
+    let message = vec![0; 60 * 1024];
+    let mut accepted = 0;
+    let start = l.duration();
+    while l.duration() - start < Duration::from_secs(3) {
+        let mut chan = l.channel(cid).expect("open channel");
+        while chan.write(true, &message)? {
+            accepted += message.len();
+        }
+        progress(&mut l, &mut r)?;
+    }
+
+    while received_bytes(&r) < accepted {
+        progress(&mut l, &mut r)?;
+        assert!(
+            l.duration() - start < Duration::from_secs(10),
+            "accepted data should reach the remote peer"
+        );
+    }
+    assert_eq!(received_bytes(&r), accepted);
+
+    Ok(())
+}
+
+/// Handing DTLS the packets one stack frame per packet overflowed the stack of a debug
+/// build.
+#[test]
+pub fn data_channel_full_send_buffer() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    keep_send_buffer_full(|config| config)
 }
 
 #[test]

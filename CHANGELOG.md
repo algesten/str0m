@@ -1,6 +1,7 @@
 # Unreleased
 
   * Limit paced media bursts to about 63 kB #1058
+  * Fix a stack overflow when SCTP hands many packets to DTLS at once
 
 # 0.24.0
 
