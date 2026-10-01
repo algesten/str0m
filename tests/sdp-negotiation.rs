@@ -300,6 +300,10 @@ pub fn stop_media() {
         !offer_sdp.contains("a=msid:"),
         "Stopped m-line should not advertise an MSID:\n{offer_sdp}"
     );
+    assert!(
+        !offer_sdp.contains(" msid:"),
+        "Stopped m-line should not advertise an SSRC-level MSID:\n{offer_sdp}"
+    );
 
     // Test left side. Stopped, direction Inactive, PTs preserved.
     assert!(l.media(mid).unwrap().stopped());
@@ -324,6 +328,10 @@ pub fn stop_media() {
     assert!(
         !answer_sdp.contains("a=msid:"),
         "Stopped m-line should not advertise an MSID in the answer:\n{answer_sdp}"
+    );
+    assert!(
+        !answer_sdp.contains(" msid:"),
+        "Stopped m-line should not advertise an SSRC-level MSID in the answer:\n{answer_sdp}"
     );
 
     // L accepts the answer
