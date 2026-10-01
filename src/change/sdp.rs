@@ -1474,7 +1474,7 @@ impl AsSdpMediaLine for Media {
         Media::mid(self)
     }
     fn msid(&self) -> Option<&Msid> {
-        Some(Media::msid(self))
+        (!self.disabled()).then(|| Media::msid(self))
     }
     fn index(&self) -> usize {
         Media::index(self)
@@ -1505,7 +1505,9 @@ impl AsSdpMediaLine for Media {
         }
 
         attrs.push(self.direction().into());
-        attrs.push(MediaAttribute::Msid(self.msid().clone()));
+        if !self.disabled() {
+            attrs.push(MediaAttribute::Msid(self.msid().clone()));
+        }
         attrs.push(MediaAttribute::RtcpMux);
 
         // The effective params start from the Session::codec_config to retain the
