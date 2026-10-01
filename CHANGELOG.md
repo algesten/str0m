@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Make the SCTP send buffer limit configurable and fix polling stack overflow #1062
   * Do not reflect the offer's `a=msid:-` "no MediaStream" sentinel in the answer
   * Limit paced media bursts to about 63 kB #1058
 
