@@ -1,7 +1,7 @@
 # Unreleased
 
-  * Limit paced media bursts to about 63 kB #1058
   * Make the SCTP send buffer limit configurable and fix polling stack overflow #1062
+  * Limit paced media bursts to about 63 kB #1058
 
 # 0.24.0
 
