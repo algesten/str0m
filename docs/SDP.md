@@ -4,6 +4,35 @@
 
 str0m does not follow the exact specification for SDP negotiation, however, almost no one does.
 
+## MSID identity in offers and answers
+
+When a remote offer first creates an m-line, str0m normally copies its
+`a=msid` stream and track IDs into `Media`. These are exposed by
+`Media::stream_id()` and `Media::track_id()` and used in str0m's own offers and
+answers. If that offer has no `a=msid`, str0m generates both IDs. Media
+created locally uses the IDs supplied to `SdpApi::add_media()`, or generated
+defaults.
+
+The chosen IDs belong to that m-line for its lifetime. A later remote SDP
+cannot replace them. In particular, changing direction from `sendrecv` to
+`inactive` and back to `sendrecv` keeps the same `a=msid`. This follows the
+stability rule for non-stopped transceivers in [RFC 9429 sections 5.2.2 and
+5.3.2][rfc9429]: previously present `a=msid` lines stay the same in later
+locally generated offers and answers, regardless of direction or track changes.
+Stopping a transceiver is different: its m-line is rejected and its `a=msid`
+lines are removed. Reusing a rejected m-line for a new transceiver is outside
+this policy.
+
+An offered stream ID of `-` is the exception: it means the offered track has no
+MediaStream. For this case, generate a new stream and track ID rather than copy
+that sentinel into our answer. Those generated IDs then remain fixed for that
+m-line too.
+
+[RFC 8830 section 3.2.3][rfc8830] says that an offer's `a=msid` values do not
+influence the answer. Copying ordinary offered IDs is a deliberate departure
+from that procedure to preserve the existing `Media` API behavior. str0m does
+not maintain separate incoming and outgoing MSIDs.
+
 ## The SDP Offer/Answer spec
 
 These quotes are from the [spec section 6.1][sdpspec]:
@@ -202,3 +231,5 @@ m-line (max-bundle style).
 [quote]: https://mailarchive.ietf.org/arch/msg/mmusic/2N1_-eUTVrmciX3LpSjkjFH7oCU/
 [sdpspec]: https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
 [rfc8843]: https://datatracker.ietf.org/doc/html/rfc8843
+[rfc8830]: https://www.rfc-editor.org/rfc/rfc8830.html#section-3.2.3
+[rfc9429]: https://www.rfc-editor.org/rfc/rfc9429.html#section-5.2.2
