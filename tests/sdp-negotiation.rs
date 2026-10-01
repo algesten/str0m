@@ -296,6 +296,10 @@ pub fn stop_media() {
         "Stopped m-line should not be in BUNDLE group:\n{}",
         offer_sdp
     );
+    assert!(
+        !offer_sdp.contains("a=msid:"),
+        "Stopped m-line should not advertise an MSID:\n{offer_sdp}"
+    );
 
     // Test left side. Stopped, direction Inactive, PTs preserved.
     assert!(l.media(mid).unwrap().stopped());
@@ -316,6 +320,10 @@ pub fn stop_media() {
         answer_sdp.contains("m=video 0 UDP/TLS/RTP/SAVPF 100\r\n"),
         "Expected stopped m-line with port 0 and PT 100 in answer, got:\n{}",
         answer_sdp
+    );
+    assert!(
+        !answer_sdp.contains("a=msid:"),
+        "Stopped m-line should not advertise an MSID in the answer:\n{answer_sdp}"
     );
 
     // L accepts the answer
