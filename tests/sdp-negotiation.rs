@@ -779,6 +779,65 @@ fn h264_offer_with_higher_level_negotiates() {
     );
 }
 
+/// RFC 8830 3.2.3: "The answer is generated in exactly the same manner as the
+/// offer. `a=msid` values in the offer do not influence the answer."
+///
+/// The offer here uses the `-` stream id, which RFC 8830 defines as "no
+/// MediaStream". Reusing it would make the answer claim our own outgoing track
+/// belongs to no stream, leaving a receiver nothing to bind it to.
+#[test]
+fn answer_msid_is_not_taken_from_the_offer() {
+    init_log();
+    init_crypto_default();
+
+    let mut r = TestRtc::new_with_rtc(info_span!("R"), Rtc::builder().build(Instant::now()));
+
+    // An offer whose audio m-line is tagged with the "no MediaStream" id.
+    let remote_offer = "\
+        v=0\r\n\
+        o=- 123456789 2 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=group:BUNDLE 0\r\n\
+        a=msid-semantic:WMS *\r\n\
+        a=fingerprint:sha-256 00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00\r\n\
+        a=ice-ufrag:testufrag\r\n\
+        a=ice-pwd:testpassword12345678\r\n\
+        a=setup:actpass\r\n\
+        m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=mid:0\r\n\
+        a=sendrecv\r\n\
+        a=rtcp-mux\r\n\
+        a=rtpmap:111 opus/48000/2\r\n\
+        a=msid:- 4bdebdc4-2f42-4ca9-8326-d40bdbe30a8d\r\n\
+        a=ssrc:1111 cname:remote\r\n\
+        a=ssrc:1111 msid:- 4bdebdc4-2f42-4ca9-8326-d40bdbe30a8d\r\n\
+        ";
+
+    let offer = SdpOffer::from_sdp_string(remote_offer).expect("offer should parse");
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).expect("should accept"));
+
+    let answer_sdp = answer.to_sdp_string();
+
+    assert!(
+        !answer_sdp.contains("a=msid:- "),
+        "Answer must not adopt the offer's \"no MediaStream\" id:\n{answer_sdp}"
+    );
+    assert!(
+        !answer_sdp.contains("4bdebdc4-2f42-4ca9-8326-d40bdbe30a8d"),
+        "Answer must not adopt the offer's track id:\n{answer_sdp}"
+    );
+    assert!(
+        answer_sdp.contains("a=msid:"),
+        "Answer should still carry an msid of its own:\n{answer_sdp}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // SNAP (SCTP Negotiation Acceleration Protocol) tests
 // ---------------------------------------------------------------------------

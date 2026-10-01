@@ -655,9 +655,11 @@ impl MediaLine {
                             let mut iter = value.split(' ');
 
                             fn trim_and_no_minus(s: &str) -> Option<String> {
-                                let s = s.trim();
-
-                                if s == "-" { None } else { Some(s.into()) }
+                                if is_no_stream(s) {
+                                    None
+                                } else {
+                                    Some(s.trim().into())
+                                }
                             }
 
                             if let Some(stream_id) = iter.next() {
@@ -1338,6 +1340,12 @@ impl Deref for SimulcastGroups {
 pub struct Msid {
     pub stream_id: String,
     pub track_id: String,
+}
+
+/// RFC 8830's "no MediaStream" sentinel: a stream or track id of `-` means the
+/// media is not associated with a MediaStream.
+pub(crate) fn is_no_stream(s: &str) -> bool {
+    s.trim() == "-"
 }
 
 impl Msid {
