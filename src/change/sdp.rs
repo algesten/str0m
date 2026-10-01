@@ -1549,6 +1549,7 @@ impl AsSdpMediaLine for Media {
         }
 
         // Outgoing SSRCs
+        let ssrcs_tx: &[(Ssrc, Option<Ssrc>)] = if self.disabled() { &[] } else { ssrcs_tx };
         let msid = format!("{} {}", self.msid().stream_id, self.msid().track_id);
         for (ssrc, ssrc_rtx) in ssrcs_tx {
             attrs.push(MediaAttribute::Ssrc {
