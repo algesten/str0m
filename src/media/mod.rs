@@ -19,7 +19,7 @@ use str0m_proto::Id;
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
 use crate::sdp::Simulcast as SdpSimulcast;
-use crate::sdp::{MediaLine, Msid};
+use crate::sdp::{MediaLine, Msid, is_no_stream};
 use crate::streams::{RtpPacket, Streams};
 use crate::util::already_happened;
 
@@ -742,7 +742,10 @@ impl Media {
             index,
             // This is not reflected back, and thus added by add_pending_changes().
             // cname,
-            msid: l.msid().unwrap_or(Msid::random()),
+            msid: l
+                .msid()
+                .filter(|m| !is_no_stream(&m.stream_id))
+                .unwrap_or(Msid::random()),
             kind: l.typ.clone().into(),
             dir: if l.disabled {
                 Direction::Inactive
