@@ -440,6 +440,57 @@ pub fn data_channel_full_send_buffer() -> Result<(), RtcError> {
     keep_send_buffer_full(|config| config)
 }
 
+/// Writes 16 KiB messages without polling in between until `Channel::write` refuses
+/// one. Nothing is sent or acknowledged meanwhile, so the accepted bytes are exactly
+/// what the send buffer limit allows. Then checks that all of them arrive.
+fn fill_send_buffer(max_buffered_amount: Option<usize>) -> Result<usize, RtcError> {
+    const MESSAGE: usize = 16 * 1024;
+
+    let (mut l, mut r, cid) = connect_with_channel(|config| match max_buffered_amount {
+        Some(bytes) => config.set_sctp_max_buffered_amount(bytes),
+        None => config,
+    })?;
+
+    let mut chan = l.channel(cid).expect("open channel");
+    let mut accepted = 0;
+    while accepted < 64 * MESSAGE && chan.write(true, &[0; MESSAGE])? {
+        accepted += MESSAGE;
+    }
+
+    let start = l.duration();
+    while received_bytes(&r) < accepted {
+        progress(&mut l, &mut r)?;
+        assert!(
+            l.duration() - start < Duration::from_secs(10),
+            "accepted data should reach the remote peer"
+        );
+    }
+
+    Ok(accepted)
+}
+
+#[test]
+pub fn data_channel_max_buffered_amount() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    // The default limit is unchanged.
+    assert_eq!(fill_send_buffer(None)?, 128 * 1024);
+
+    // A raised limit lets more than the default be buffered.
+    assert_eq!(fill_send_buffer(Some(512 * 1024))?, 512 * 1024);
+
+    Ok(())
+}
+
+#[test]
+pub fn data_channel_full_large_send_buffer() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    keep_send_buffer_full(|config| config.set_sctp_max_buffered_amount(4 * 1024 * 1024))
+}
+
 #[test]
 pub fn data_channel_flood() -> Result<(), RtcError> {
     init_log();

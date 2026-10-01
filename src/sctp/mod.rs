@@ -26,8 +26,10 @@ use dcep::DcepOpen;
 mod error;
 pub use error::SctpError;
 
-/// Bytes that can be buffered inside str0m across all streams.
-const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
+/// Default bytes that can be buffered inside str0m across all streams.
+///
+/// Configured by `RtcConfig::set_sctp_max_buffered_amount`.
+pub(crate) const DEFAULT_MAX_BUFFERED_AMOUNT: usize = 128 * 1024;
 
 /// Maximum message size we advertise in SDP (what we can receive)
 pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
@@ -56,6 +58,8 @@ pub(crate) struct RtcSctp {
     remote_max_message_size: u32,
     snap_enabled: bool,
     snap_init: Option<SctpInitData>,
+    /// Bytes that can be buffered across all streams before `available()` is 0.
+    max_buffered_amount: usize,
     #[cfg(test)]
     max_payload_size: usize,
 }
@@ -313,6 +317,7 @@ impl RtcSctp {
             remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
             snap_enabled: false,
             snap_init: None,
+            max_buffered_amount: DEFAULT_MAX_BUFFERED_AMOUNT,
             #[cfg(test)]
             max_payload_size,
         }
@@ -420,6 +425,10 @@ impl RtcSctp {
     pub fn enable_snap(&mut self) {
         self.snap_enabled = true;
         self.snap_init.get_or_insert_with(SctpInitData::new);
+    }
+
+    pub fn set_max_buffered_amount(&mut self, max_buffered_amount: usize) {
+        self.max_buffered_amount = max_buffered_amount;
     }
 
     /// Whether local offers should opt in to SNAP.
@@ -606,7 +615,7 @@ impl RtcSctp {
             })
             .sum();
 
-        MAX_BUFFERED_ACROSS_STREAMS.saturating_sub(total)
+        self.max_buffered_amount.saturating_sub(total)
     }
 
     pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {

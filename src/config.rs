@@ -51,6 +51,7 @@ pub struct RtcConfig {
     pub(crate) pause_threshold: Duration,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
+    pub(crate) sctp_max_buffered_amount: usize,
     pub(crate) rtp_mode: bool,
     pub(crate) enable_raw_packets: bool,
     pub(crate) dtls_version: DtlsVersion,
@@ -680,6 +681,40 @@ impl RtcConfig {
         self.send_buffer_video
     }
 
+    /// Sets how many bytes the data channels can buffer for sending, summed over all channels.
+    ///
+    /// [`Channel::write()`][crate::channel::Channel::write()] does not accept a message (returns
+    /// `false`) that would take the total [buffered amount][crate::channel::Channel::buffered_amount()]
+    /// above this limit. A message larger than the limit is never accepted.
+    ///
+    /// Written data counts as buffered until the remote peer acknowledges it, including after it
+    /// has been sent. The limit therefore also caps the data in flight, and with it the data
+    /// channel throughput at about this many bytes per round trip. The SCTP congestion window
+    /// and the remote peer's advertised receive window can limit the data in flight further.
+    ///
+    /// Raising the limit helps a sender whose data rate times the round trip time exceeds it.
+    /// Beyond what the network path holds, a higher limit only adds queueing delay, and accepted
+    /// data is kept in memory until it is acknowledged.
+    ///
+    /// Defaults to 128 KiB.
+    pub fn set_sctp_max_buffered_amount(mut self, bytes: usize) -> Self {
+        self.sctp_max_buffered_amount = bytes;
+        self
+    }
+
+    /// Returns how many bytes the data channels can buffer for sending.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 128 KiB.
+    /// assert_eq!(config.sctp_max_buffered_amount(), 128 * 1024);
+    /// ```
+    pub fn sctp_max_buffered_amount(&self) -> usize {
+        self.sctp_max_buffered_amount
+    }
+
     /// Make the entire Rtc be in RTP mode.
     ///
     /// This means all media, read from [`RtpPacket`][crate::rtp::RtpPacket] and written to
@@ -858,6 +893,7 @@ impl Default for RtcConfig {
             pause_threshold: Duration::from_millis(1500),
             send_buffer_audio: 50,
             send_buffer_video: 1000,
+            sctp_max_buffered_amount: crate::sctp::DEFAULT_MAX_BUFFERED_AMOUNT,
             rtp_mode: false,
             enable_raw_packets: false,
             dtls_version: DtlsVersion::Dtls12,

@@ -1260,6 +1260,7 @@ impl Rtc {
         if config.snap_enabled {
             sctp.enable_snap();
         }
+        sctp.set_max_buffered_amount(config.sctp_max_buffered_amount);
 
         Ok(Rtc {
             state: RtcState::Alive,

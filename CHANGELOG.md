@@ -2,6 +2,7 @@
 
   * Limit paced media bursts to about 63 kB #1058
   * Fix a stack overflow when SCTP hands many packets to DTLS at once
+  * Make the data channel send buffer limit configurable via `RtcConfig::set_sctp_max_buffered_amount`
 
 # 0.24.0
 
