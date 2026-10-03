@@ -230,10 +230,10 @@ impl ReceiverRegister {
 
         let lost_interval = expected_interval - received_interval;
 
-        let lost = if expected_interval == 0 || lost_interval == 0 {
+        let lost = if expected_interval <= 0 || lost_interval <= 0 {
             0
         } else {
-            (lost_interval << 8) / expected_interval
+            ((lost_interval << 8) / expected_interval).min(255)
         } as u8;
 
         trace!("Reception fraction lost: {}", lost);
@@ -326,6 +326,21 @@ mod test {
         // after rounding to int.
         assert_eq!(report.jitter, 2);
         assert_eq!(report.jitter, r.jitter_in_rtp_ts());
+    }
+
+    #[test]
+    fn fraction_lost_is_zero_when_an_interval_receives_more_than_expected() {
+        let mut reg = ReceiverRegister::new(None);
+
+        assert_eq!(reg.fraction_lost(120, 118), 4);
+        assert_eq!(reg.fraction_lost(240, 240), 0);
+    }
+
+    #[test]
+    fn fraction_lost_saturates_when_everything_is_lost() {
+        let mut reg = ReceiverRegister::new(None);
+
+        assert_eq!(reg.fraction_lost(100, 0), 255);
     }
 
     #[test]
