@@ -2,11 +2,11 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use netem::{NetemConfig, Probability, RandomLoss};
-use str0m::RtcError;
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
 use str0m::rtp::{ExtensionValues, RawPacket, RtpWrite, SeqNo, Ssrc};
+use str0m::{Reason, RtcError};
 
 mod common;
 use common::{connect_l_r, init_crypto_default, init_log, progress};
@@ -308,6 +308,96 @@ pub fn nack_delay() -> Result<(), RtcError> {
     assert!(nacks_rx.iter().all(|f| f < &Duration::from_millis(200)));
 
     assert_eq!(nacks_rx.len(), nacks_tx.len());
+
+    Ok(())
+}
+
+/// A receiver whose NACK-enabled streams are paused (no RTP for `pause_threshold`) has nothing
+/// left to NACK, so it must not keep scheduling `NACK_MIN_INTERVAL` (33ms) wakeups. Previously
+/// `Session::nack_at` only checked whether *any* stream had NACK enabled, so an idle session woke
+/// ~30 times a second for as long as it lived. Once RTP resumes, the NACK timer must come back.
+#[test]
+pub fn nack_timer_stops_while_receive_paused() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let (mut l, mut r) = connect_l_r();
+
+    let mid = "vid".into();
+    let ssrc_tx: Ssrc = 42.into();
+    let ssrc_rtx: Ssrc = 44.into();
+
+    l.direct_api().declare_media(mid, MediaKind::Video);
+    l.direct_api()
+        .declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    r.direct_api().declare_media(mid, MediaKind::Video);
+    r.direct_api()
+        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    let pt = l.params_vp8().pt();
+
+    // Send media for a while and observe r's timeout reasons.
+    let write = |l: &mut common::TestRtc, index: usize| {
+        let wallclock = l.start + l.duration();
+        let mut direct = l.direct_api();
+        let stream = direct.stream_tx(&ssrc_tx).unwrap();
+        let time = (index * 1000 + 47_000_000) as u32;
+        let seq_no = (47_000 + index as u64).into();
+        stream.write_rtp(
+            RtpWrite::new(pt, seq_no, time, wallclock, [0x1, 0x2, 0x3, 0x4]).nackable(true),
+        );
+    };
+
+    let mut nack_while_receiving = 0;
+    for index in 0..100 {
+        write(&mut l, index);
+        progress(&mut l, &mut r)?;
+        if r.last_timeout_reason() == Reason::Nack {
+            nack_while_receiving += 1;
+        }
+    }
+    assert!(
+        nack_while_receiving > 0,
+        "NACK timer should be armed while receiving"
+    );
+
+    // Stop sending. Let the receive stream pass the (default 1.5s) pause threshold.
+    let paused_after = l.duration() + Duration::from_secs(3);
+    while l.duration() < paused_after {
+        progress(&mut l, &mut r)?;
+    }
+
+    // While paused, r must never be woken for NACK.
+    let idle_until = l.duration() + Duration::from_secs(10);
+    let mut nack_while_paused = 0;
+    while l.duration() < idle_until {
+        progress(&mut l, &mut r)?;
+        if r.last_timeout_reason() == Reason::Nack {
+            nack_while_paused += 1;
+        }
+    }
+    assert_eq!(
+        nack_while_paused, 0,
+        "NACK timer must not be armed while all NACK streams are paused"
+    );
+
+    // Resume sending: the NACK timer comes back.
+    let mut nack_after_resume = 0;
+    for index in 100..200 {
+        write(&mut l, index);
+        progress(&mut l, &mut r)?;
+        if r.last_timeout_reason() == Reason::Nack {
+            nack_after_resume += 1;
+        }
+    }
+    assert!(
+        nack_after_resume > 0,
+        "NACK timer should be re-armed when RTP resumes"
+    );
 
     Ok(())
 }

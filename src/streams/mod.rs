@@ -768,6 +768,15 @@ impl Streams {
         self.any_nack_active.unwrap()
     }
 
+    /// Whether any NACK-enabled receive stream is currently receiving (not paused).
+    ///
+    /// A paused stream has received nothing for `pause_threshold`, so it has nothing new to NACK.
+    pub(crate) fn any_nack_stream_receiving(&self) -> bool {
+        self.streams_rx
+            .values()
+            .any(|s| s.nack_enabled() && !s.is_paused())
+    }
+
     fn rx_lookup_at(&self) -> Instant {
         self.last_rx_lookup_cleanup + RX_LOOKUP_CLEANUP_INTERVAL
     }
