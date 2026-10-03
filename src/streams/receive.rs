@@ -795,6 +795,10 @@ impl StreamRx {
         !self.suppress_nack
     }
 
+    pub(crate) fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     pub(crate) fn maybe_create_nack(
         &mut self,
         sender_ssrc: Ssrc,

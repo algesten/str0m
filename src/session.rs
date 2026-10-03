@@ -1282,6 +1282,12 @@ impl Session {
             return None;
         }
 
+        // Paused streams have nothing new to NACK. Without this, an idle session with a
+        // NACK-enabled stream would wake every NACK_MIN_INTERVAL for as long as it lives.
+        if !self.streams.any_nack_stream_receiving() {
+            return None;
+        }
+
         Some(self.last_nack + NACK_MIN_INTERVAL)
     }
 
