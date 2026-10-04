@@ -92,75 +92,81 @@ impl VideoTest {
             .expect_stream_rx(ssrc, repair, mid, None);
     }
 
+    fn drain(
+        rtc: &mut common::TestRtc,
+        now: Instant,
+        is_sender: bool,
+        packets: &mut VecDeque<(bool, PendingPacket)>,
+    ) -> Result<(), RtcError> {
+        for _ in 0..1000 {
+            match rtc.poll_output()? {
+                Output::Timeout(at) => {
+                    rtc.last = at;
+                    return Ok(());
+                }
+                Output::Event(event) => rtc.events.push((now, event)),
+                Output::Transmit(v) => packets.push_back((
+                    is_sender,
+                    PendingPacket {
+                        proto: v.proto,
+                        source: v.source,
+                        destination: v.destination,
+                        contents: v.contents.to_vec(),
+                    },
+                )),
+            }
+        }
+        panic!("output polling did not quiesce");
+    }
+
     // Route all traffic, including NACK/RTX, without the common harness's forced ticks.
     fn flush(&mut self) -> Result<(), RtcError> {
-        for _ in 0..1000 {
-            let mut packets = Vec::new();
-            for (is_sender, rtc) in [(true, &mut self.sender), (false, &mut self.receiver)] {
-                let mut reached_timeout = false;
-                for _ in 0..1000 {
-                    match rtc.poll_output()? {
-                        Output::Timeout(at) => {
-                            rtc.last = at;
-                            reached_timeout = true;
-                            break;
-                        }
-                        Output::Event(event) => rtc.events.push((self.now, event)),
-                        Output::Transmit(v) => packets.push((
-                            is_sender,
-                            PendingPacket {
-                                proto: v.proto,
-                                source: v.source,
-                                destination: v.destination,
-                                contents: v.contents.to_vec(),
-                            },
-                        )),
-                    }
-                }
-                assert!(reached_timeout, "output polling did not quiesce");
-            }
-            if packets.is_empty() {
+        let mut packets = VecDeque::new();
+        Self::drain(&mut self.sender, self.now, true, &mut packets)?;
+        Self::drain(&mut self.receiver, self.now, false, &mut packets)?;
+        for _ in 0..10000 {
+            let Some((from_sender, packet)) = packets.pop_front() else {
                 return Ok(());
+            };
+            let bytes = &packet.contents;
+            // The fixed RTP header is unencrypted; match only the original stream.
+            if from_sender
+                && bytes.len() >= 12
+                && bytes[0] >> 6 == 2
+                && bytes[1] & 0x7f == *self.pt
+                && u32::from_be_bytes(bytes[8..12].try_into().unwrap()) == 1337
+                && self.drop_original == Some(u16::from_be_bytes([bytes[2], bytes[3]]))
+            {
+                self.drop_original = None;
+                self.dropped += 1;
+                continue;
             }
-            for (from_sender, packet) in packets {
-                let bytes = &packet.contents;
-                // The fixed RTP header is unencrypted; match only the original stream.
-                if from_sender
-                    && bytes.len() >= 12
-                    && bytes[0] >> 6 == 2
-                    && bytes[1] & 0x7f == *self.pt
-                    && u32::from_be_bytes(bytes[8..12].try_into().unwrap()) == 1337
-                    && self.drop_original == Some(u16::from_be_bytes([bytes[2], bytes[3]]))
-                {
-                    self.drop_original = None;
-                    self.dropped += 1;
-                    continue;
-                }
-                if from_sender
-                    && self.defer_rtx
-                    && bytes.len() >= 12
-                    && bytes[0] >> 6 == 2
-                    && Some(bytes[1] & 0x7f) == self.repair_pt.map(|pt| *pt)
-                    && u32::from_be_bytes(bytes[8..12].try_into().unwrap()) == 1338
-                {
-                    self.deferred_rtx.push(packet);
-                    continue;
-                }
-                let to = if from_sender {
-                    &mut self.receiver
-                } else {
-                    &mut self.sender
-                };
-                to.handle_input(Input::Receive(
-                    self.now,
-                    Receive {
-                        proto: packet.proto,
-                        source: packet.source,
-                        destination: packet.destination,
-                        contents: bytes.as_slice().try_into()?,
-                    },
-                ))?;
+            if from_sender
+                && self.defer_rtx
+                && bytes.len() >= 12
+                && bytes[0] >> 6 == 2
+                && Some(bytes[1] & 0x7f) == self.repair_pt.map(|pt| *pt)
+                && u32::from_be_bytes(bytes[8..12].try_into().unwrap()) == 1338
+            {
+                self.deferred_rtx.push(packet);
+                continue;
             }
+            let to = if from_sender {
+                &mut self.receiver
+            } else {
+                &mut self.sender
+            };
+            to.handle_input(Input::Receive(
+                self.now,
+                Receive {
+                    proto: packet.proto,
+                    source: packet.source,
+                    destination: packet.destination,
+                    contents: bytes.as_slice().try_into()?,
+                },
+            ))?;
+            // Drain the destination before delivering another packet to that peer.
+            Self::drain(to, self.now, !from_sender, &mut packets)?;
         }
         panic!("datagram exchange did not quiesce");
     }
@@ -169,6 +175,7 @@ impl VideoTest {
         assert!(now >= self.now);
         self.now = now;
         self.sender.handle_input(Input::Timeout(now))?;
+        self.flush()?;
         self.receiver.handle_input(Input::Timeout(now))?;
         self.flush()
     }
@@ -211,6 +218,7 @@ impl VideoTest {
                     .marker(marker)
                     .nackable(true),
             );
+        self.flush()?;
         self.sender.handle_input(Input::Timeout(self.now))?;
         self.flush()
     }
@@ -634,6 +642,90 @@ fn video_reorder_timeout_rtx_recovers() -> Result<(), RtcError> {
     );
     t.advance_to(deadline + Duration::from_millis(100))?;
     assert_eq!(t.received_frames().len(), 3);
+    Ok(())
+}
+
+/// RTX received in a later reporting interval can make that interval's loss negative.
+#[test]
+fn video_receiver_report_loss_after_delayed_rtx() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(Rtc::builder().set_rtp_mode(true), true)?;
+    t.defer_rtx = true;
+
+    // Receive 118 of 120 packets and hold the sender's repairs until after the RR.
+    for seq in 47_000..47_120 {
+        if [47_110, 47_111].contains(&seq) {
+            t.drop_original = Some(seq as u16);
+        }
+        t.send_vp8_frame(seq)?;
+    }
+    assert_eq!(t.dropped, 2);
+
+    // Inspect the RR received by the sender, exercising RTCP serialization too.
+    let next_report = |t: &mut VideoTest| -> Result<_, RtcError> {
+        let deadline = t.now + Duration::from_secs(5);
+        loop {
+            t.advance_to(t.now + Duration::from_millis(10))?;
+            if let Some(report) =
+                t.sender
+                    .events
+                    .iter()
+                    .find_map(|(_, event)| match event.as_raw_packet() {
+                        Some(RawPacket::RtcpRx(Rtcp::ReceiverReport(rr))) => {
+                            rr.reports.iter().find(|r| *r.ssrc == 1337).copied()
+                        }
+                        _ => None,
+                    })
+            {
+                return Ok(report);
+            }
+            assert!(t.now < deadline, "sender did not receive a receiver report");
+        }
+    };
+
+    let first = next_report(&mut t)?;
+    assert_eq!(first.max_seq, 47_119);
+    assert_eq!(first.packets_lost, 2);
+    assert_eq!(first.fraction_lost, 4);
+    assert!(!t.deferred_rtx.is_empty(), "sender must retransmit via RTX");
+    t.sender.events.clear();
+
+    t.defer_rtx = false;
+    for packet in std::mem::take(&mut t.deferred_rtx) {
+        t.receiver.handle_input(Input::Receive(
+            t.now,
+            Receive {
+                proto: packet.proto,
+                source: packet.source,
+                destination: packet.destination,
+                contents: packet.contents.as_slice().try_into()?,
+            },
+        ))?;
+        t.flush()?;
+    }
+
+    // The two repairs plus 120 new packets mean 122 received versus 120 expected.
+    for seq in 47_120..47_240 {
+        t.send_vp8_frame(seq)?;
+    }
+    let mut received: Vec<_> = t
+        .receiver
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::RtpPacket(packet) => Some(*packet.seq_no),
+            _ => None,
+        })
+        .collect();
+    received.sort_unstable();
+    assert_eq!(received, (47_000..47_240).collect::<Vec<_>>());
+
+    let second = next_report(&mut t)?;
+    assert_eq!(second.max_seq, 47_239);
+    assert_eq!(second.packets_lost, 0);
+    assert_eq!(
+        second.fraction_lost, 0,
+        "negative interval loss must be zero"
+    );
     Ok(())
 }
 

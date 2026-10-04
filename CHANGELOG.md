@@ -1,8 +1,14 @@
 # Unreleased
 
   * Stop scheduling the 33ms NACK timeout while all NACK-enabled receive streams are paused #1064
+  * Fix RTCP receiver report loss fraction wraparound #1065
+
+# 0.24.1
+
   * Make the SCTP send buffer limit configurable and fix polling stack overflow #1062
-  * Do not reflect the offer's `a=msid:-` "no MediaStream" sentinel in the answer
+  * Fix stopped m-line MSID signaling and document MSID identity #1063
+  * Do not reflect the offer's `a=msid:-` "no MediaStream" sentinel in the answer #1060
+  * Guard DTLS input/output and timeout handling before initialization
   * Limit paced media bursts to about 63 kB #1058
 
 # 0.24.0
