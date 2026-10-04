@@ -230,7 +230,7 @@ impl ReceiverRegister {
 
         let lost_interval = expected_interval - received_interval;
 
-        let lost = if expected_interval <= 0 || lost_interval <= 0 {
+        let lost = if expected_interval == 0 || lost_interval <= 0 {
             0
         } else {
             ((lost_interval << 8) / expected_interval).min(255)
