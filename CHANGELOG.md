@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Stop NACK timer wakeups for paused streams after pending retries #1064
   * Fix RTCP receiver report loss fraction wraparound #1065
 
 # 0.24.1

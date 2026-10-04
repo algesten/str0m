@@ -789,10 +789,25 @@ impl StreamRx {
         }
     }
 
+    /// Whether this stream should keep its NACK timer active.
+    ///
+    /// Paused streams finish pending retries before disabling NACK reports.
     pub(crate) fn nack_enabled(&self) -> bool {
         // Deliberately don't look at RTX is_some() here, since when using dynamic SSRC, we might need
         // to send NACK before discovering the remote RTX.
-        !self.suppress_nack
+        if self.suppress_nack {
+            return false;
+        }
+
+        if !self.paused {
+            return true;
+        }
+
+        let Some(register) = &self.register else {
+            return false;
+        };
+
+        register.has_pending_nacks()
     }
 
     pub(crate) fn maybe_create_nack(
@@ -1062,6 +1077,26 @@ mod tests {
             stream.update_register(now, &header, Frequency::FORTY_EIGHT_KHZ, false, seq_no);
         }
         stream
+    }
+
+    #[test]
+    fn paused_stream_finishes_pending_nack_retries() {
+        let mut stream = stream_with(&[(10, 0), (12, 1920)]);
+        stream.handle_timeout(stream.paused_at().unwrap());
+        assert!(stream.paused);
+
+        let mut feedback = VecDeque::new();
+        for _ in 0..5 {
+            assert!(stream.maybe_create_nack(1.into(), &mut feedback).is_some());
+        }
+        assert_eq!(feedback.len(), 5);
+        assert!(feedback.iter().all(|rtcp| {
+            matches!(rtcp, Rtcp::Nack(nack) if nack.reports.len() == 1 && nack.reports[0].pid == 11)
+        }));
+
+        assert!(!stream.nack_enabled());
+        assert!(stream.maybe_create_nack(1.into(), &mut feedback).is_none());
+        assert_eq!(feedback.len(), 5);
     }
 
     #[test]
