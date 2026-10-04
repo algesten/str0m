@@ -742,7 +742,7 @@ impl Streams {
 
     /// Whether any receive stream currently needs NACK reports (see [`StreamRx::nack_enabled`]).
     ///
-    /// Not cached: the answer changes whenever a stream pauses or resumes.
+    /// Not cached: the answer changes with pause state and pending NACK retries.
     pub(crate) fn any_nack_enabled(&self) -> bool {
         self.streams_rx.values().any(|s| s.nack_enabled())
     }

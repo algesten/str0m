@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Stop scheduling the 33ms NACK timeout while all NACK-enabled receive streams are paused #1064
+  * Stop scheduling idle 33ms NACK timeouts once paused receive streams have no pending retries #1064
   * Fix RTCP receiver report loss fraction wraparound #1065
 
 # 0.24.1

@@ -1278,8 +1278,8 @@ impl Session {
     }
 
     fn nack_at(&self) -> Option<Instant> {
-        // Paused streams don't count as NACK-enabled, so an idle session doesn't wake
-        // every NACK_MIN_INTERVAL for as long as it lives.
+        // Paused streams stop counting as NACK-enabled once their pending retries finish,
+        // so an idle session doesn't wake every NACK_MIN_INTERVAL for as long as it lives.
         if !self.streams.any_nack_enabled() {
             return None;
         }

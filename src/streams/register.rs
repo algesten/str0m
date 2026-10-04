@@ -104,6 +104,10 @@ impl ReceiverRegister {
         new
     }
 
+    pub fn has_pending_nacks(&self) -> bool {
+        self.nack.has_pending_nacks()
+    }
+
     /// Generates a NACK report
     pub fn nack_report(&mut self) -> Option<impl Iterator<Item = Nack>> {
         self.nack.nack_reports()

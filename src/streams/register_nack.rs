@@ -168,6 +168,15 @@ impl NackRegister {
         self.active.as_ref().map(|a| a.end)
     }
 
+    /// Whether a missing packet still has NACK attempts remaining.
+    pub fn has_pending_nacks(&self) -> bool {
+        let Some(active) = &self.active else {
+            return false;
+        };
+
+        (*active.start..=*active.end).any(|seq| self.packet(seq.into()).needs_nack())
+    }
+
     /// Create a new nack report
     ///
     /// This modifies the state as it counts how many times packets have been nacked
@@ -214,6 +223,30 @@ mod test {
     use crate::streams::register_nack::MAX_MISORDER;
 
     use super::NackRegister;
+
+    #[test]
+    fn pending_nacks_follow_repair_and_retry_exhaustion() {
+        let mut reg = NackRegister::new(None);
+        assert!(!reg.has_pending_nacks());
+
+        reg.update(10.into());
+        assert!(!reg.has_pending_nacks());
+
+        reg.update(12.into());
+        assert!(reg.has_pending_nacks());
+        reg.update(11.into());
+        assert!(!reg.has_pending_nacks());
+
+        reg.update(14.into());
+        for _ in 0..super::MAX_NACKS {
+            assert!(reg.has_pending_nacks());
+            let reports: Vec<_> = reg.nack_reports().expect("pending retry").collect();
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].reports[0].pid, 13);
+        }
+        assert!(!reg.has_pending_nacks());
+        assert!(reg.nack_reports().is_none());
+    }
 
     fn assert_update(
         reg: &mut NackRegister,

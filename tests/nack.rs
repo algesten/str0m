@@ -6,7 +6,7 @@ use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
 use str0m::rtp::{ExtensionValues, RawPacket, RtpWrite, SeqNo, Ssrc};
-use str0m::{Reason, RtcError};
+use str0m::{Event, Reason, RtcError};
 
 mod common;
 use common::{connect_l_r, init_crypto_default, init_log, progress};
@@ -312,8 +312,8 @@ pub fn nack_delay() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// A receiver whose NACK-enabled streams are paused (no RTP for `pause_threshold`) has nothing
-/// left to NACK, so it must not keep scheduling `NACK_MIN_INTERVAL` (33ms) wakeups. Previously
+/// A receiver whose NACK-enabled streams are paused and have no pending retries must not keep
+/// scheduling `NACK_MIN_INTERVAL` (33ms) wakeups. Previously
 /// `Session::nack_at` only checked whether *any* stream had NACK enabled, so an idle session woke
 /// ~30 times a second for as long as it lived. Once RTP resumes, the NACK timer must come back.
 #[test]
@@ -398,6 +398,77 @@ pub fn nack_timer_stops_while_receive_paused() -> Result<(), RtcError> {
         nack_after_resume > 0,
         "NACK timer should be re-armed when RTP resumes"
     );
+
+    Ok(())
+}
+
+#[test]
+pub fn nack_timer_finishes_pending_retries_after_pause() -> Result<(), RtcError> {
+    init_crypto_default();
+
+    let (mut l, mut r) = connect_l_r();
+    let mid = "vid".into();
+    let ssrc: Ssrc = 42.into();
+    let rtx: Ssrc = 44.into();
+
+    l.direct_api().declare_media(mid, MediaKind::Video);
+    l.direct_api().declare_stream_tx(ssrc, Some(rtx), mid, None);
+    r.direct_api().declare_media(mid, MediaKind::Video);
+    r.direct_api()
+        .expect_stream_rx(ssrc, Some(rtx), mid, None)
+        .set_pause_threshold(Duration::from_millis(50));
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+    let pt = l.params_vp8().pt();
+
+    // Leave a known gap and stop sending. Without a repair, all five NACK attempts
+    // must finish even though the receive stream is reported paused after 50ms.
+    for seq in [47_000_u64, 47_002] {
+        let wallclock = l.start + l.duration();
+        l.direct_api().stream_tx(&ssrc).unwrap().write_rtp(
+            RtpWrite::new(pt, seq.into(), seq as u32 * 1000, wallclock, [1, 2, 3, 4])
+                .nackable(false),
+        );
+        progress(&mut l, &mut r)?;
+    }
+
+    let until = l.duration() + Duration::from_millis(500);
+    while l.duration() < until {
+        progress(&mut l, &mut r)?;
+    }
+
+    let paused_at = r
+        .events
+        .iter()
+        .find_map(|(at, event)| match event {
+            Event::StreamPaused(p) if p.ssrc == ssrc && p.paused => Some(*at),
+            _ => None,
+        })
+        .expect("stream should be reported paused before retries finish");
+    let nacks = r
+        .events
+        .iter()
+        .filter_map(|(at, event)| match event.as_raw_packet() {
+            Some(RawPacket::RtcpTx(Rtcp::Nack(n)))
+                if n.reports.iter().any(|report| report.pid == 47_001) =>
+            {
+                Some(*at)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(nacks.len(), 5, "pausing must not discard pending retries");
+    assert!(nacks.iter().any(|at| *at > paused_at));
+
+    // Once the retry budget is exhausted, the paused stream must stop arming
+    // the NACK timer even though the packet remains missing.
+    let idle_until = l.duration() + Duration::from_millis(500);
+    while l.duration() < idle_until {
+        progress(&mut l, &mut r)?;
+        assert_ne!(r.last_timeout_reason(), Reason::Nack);
+    }
 
     Ok(())
 }
