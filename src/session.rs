@@ -1277,14 +1277,10 @@ impl Session {
         self.streams.paused_at()
     }
 
-    fn nack_at(&mut self) -> Option<Instant> {
+    fn nack_at(&self) -> Option<Instant> {
+        // Paused streams don't count as NACK-enabled, so an idle session doesn't wake
+        // every NACK_MIN_INTERVAL for as long as it lives.
         if !self.streams.any_nack_enabled() {
-            return None;
-        }
-
-        // Paused streams have nothing new to NACK. Without this, an idle session with a
-        // NACK-enabled stream would wake every NACK_MIN_INTERVAL for as long as it lives.
-        if !self.streams.any_nack_stream_receiving() {
             return None;
         }
 

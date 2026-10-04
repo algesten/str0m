@@ -305,7 +305,7 @@ impl<'a> Writer<'a> {
         let stream = self
             .session
             .streams
-            .stream_rx_by_midrid(midrid, false)
+            .stream_rx_by_midrid(midrid)
             .ok_or(RtcError::NoReceiverSource(rid))?;
 
         stream.request_keyframe(kind);

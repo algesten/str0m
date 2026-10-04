@@ -789,14 +789,13 @@ impl StreamRx {
         }
     }
 
+    /// Whether this stream needs NACK reports: NACK is configured and the stream is receiving.
+    ///
+    /// A paused stream has received nothing for `pause_threshold`, so it has nothing new to NACK.
     pub(crate) fn nack_enabled(&self) -> bool {
         // Deliberately don't look at RTX is_some() here, since when using dynamic SSRC, we might need
         // to send NACK before discovering the remote RTX.
-        !self.suppress_nack
-    }
-
-    pub(crate) fn is_paused(&self) -> bool {
-        self.paused
+        !self.suppress_nack && !self.paused
     }
 
     pub(crate) fn maybe_create_nack(
