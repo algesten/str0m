@@ -906,6 +906,7 @@ pub struct Rtc {
     ice: IceAgent,
     dtls: Dtls,
     dtls_connected: bool,
+    peer_cert_verified: bool,
     dtls_buf: Vec<u8>,
     next_dtls_timeout: Option<Instant>,
     sctp: RtcSctp,
@@ -1275,6 +1276,7 @@ impl Rtc {
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,
+            peer_cert_verified: false,
             dtls_buf: vec![0; 2000],
             next_dtls_timeout: None,
             session,
@@ -1585,6 +1587,17 @@ impl Rtc {
         Ok(o)
     }
 
+    // RFC 8827 §6.5, RFC 5763 §5: the remote certificate must match a=fingerprint. A DTLS
+    // server can complete the handshake with a client that sent an empty Certificate
+    // message, in which case there is no PeerCert to verify.
+    fn ensure_peer_cert_verified(&mut self) -> Result<(), RtcError> {
+        if self.fingerprint_verification && !self.peer_cert_verified {
+            self.disconnect();
+            return Err(RtcError::RemoteSdp("no remote DTLS certificate".into()));
+        }
+        Ok(())
+    }
+
     // Returns None when polling must restart after handling an SCTP packet.
     fn do_poll_output(&mut self) -> Result<Option<Output>, RtcError> {
         if self.state == RtcState::Closed {
@@ -1651,14 +1664,15 @@ impl Rtc {
                     unreachable!("We don't expect DTLS packets here since we use poll_packet");
                 }
                 DtlsOutput::Connected => {
+                    // The peer certificate is checked once the loop is done, since
+                    // some backends report Connected before PeerCert.
                     if !self.dtls_connected {
-                        debug!("DTLS connected");
-                        self.dtls_connected = true;
                         just_connected = true;
                     }
                 }
                 DtlsOutput::KeyingMaterial(km, profile) => {
                     use config::KeyingMaterial;
+                    self.ensure_peer_cert_verified()?;
                     let km_bytes = km.as_ref().to_vec();
                     debug!("DTLS set SRTP keying material and profile: {}", profile);
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
@@ -1688,6 +1702,7 @@ impl Rtc {
                         self.disconnect();
                         return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                     }
+                    self.peer_cert_verified = true;
                 }
                 DtlsOutput::ApplicationData(data) => {
                     self.sctp.handle_input(self.last_now, data);
@@ -1709,6 +1724,9 @@ impl Rtc {
         }
 
         if just_connected {
+            self.ensure_peer_cert_verified()?;
+            debug!("DTLS connected");
+            self.dtls_connected = true;
             return Ok(Some(Output::Event(Event::Connected)));
         }
 
