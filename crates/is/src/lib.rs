@@ -835,6 +835,7 @@ pub(crate) mod test {
             }
             progress(&mut a1, &mut a2);
         }
+        a2.events.clear();
 
         // Candidates arrive via signalling layer
         a2.add_remote_candidate(c1.clone());
@@ -845,10 +846,13 @@ pub(crate) mod test {
             progress(&mut a1, &mut a2);
         }
 
-        // We expect to not disconnect as part of this.
+        // We expect to not disconnect as part of this, nor to go back to checking:
+        // the replacing pair keeps the validated path of the peer-reflexive one.
         assert!(!a2.has_event(|e| matches!(
             e,
-            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Disconnected)
+            IceAgentEvent::IceConnectionStateChange(
+                IceConnectionState::Disconnected | IceConnectionState::Checking
+            )
         )));
     }
 
@@ -894,8 +898,10 @@ pub(crate) mod test {
         // The controlled side answers that request and then sends a reverse binding
         // request to confirm the nomination. The reply is queued when the request
         // arrives, then the reverse binding request is queued on the next timeout.
+        // The nominated pair is not valid until that request is answered (RFC 8445
+        // §7.3.1.5), so the controlled side is not connected yet.
         progress_without_network(&mut a2, &mut a1);
-        assert!(a2.state().is_connected());
+        assert!(!a2.state().is_connected());
 
         let nominate_reply = a2.poll_next_stun_message();
         assert!(nominate_reply.is_successful_binding_response);
@@ -907,7 +913,7 @@ pub(crate) mod test {
         a2.add_remote_candidate(c1);
         progress_without_network(&mut a2, &mut a1);
 
-        assert!(a2.state().is_connected());
+        assert!(!a2.state().is_connected());
         assert!(!a2.has_event(|e| matches!(
             e,
             IceAgentEvent::IceConnectionStateChange(IceConnectionState::Checking)
