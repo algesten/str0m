@@ -812,6 +812,7 @@ impl StreamRx {
 
     pub(crate) fn maybe_create_nack(
         &mut self,
+        now: Instant,
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
@@ -819,7 +820,10 @@ impl StreamRx {
             return None;
         }
 
-        let nacks = self.register.as_mut().and_then(|r| r.nack_report())?;
+        let nacks = self
+            .register
+            .as_mut()
+            .and_then(|r| r.nack_report(now, self.stats.rtt))?;
 
         for mut nack in nacks {
             nack.sender_ssrc = sender_ssrc;
@@ -1080,14 +1084,99 @@ mod tests {
     }
 
     #[test]
+    fn dlrr_for_local_ssrc_updates_receive_streams() {
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        for (ssrc, mid) in [(7, "video"), (8, "audio")] {
+            streams.expect_stream_rx(ssrc.into(), None, MidRid(mid.into(), None), false);
+        }
+        let default_ssrc = streams.first_ssrc_local();
+        streams.declare_stream_tx(9.into(), None, MidRid("send".into(), None));
+        let now = Instant::now();
+        let last_rr_time = ((now - Duration::from_millis(250))
+            .to_system_time()
+            .as_ntp_64()
+            >> 16) as u32;
+
+        // Ignore a sub-block addressed to the remote media source instead of us.
+        streams.handle_dlrr(
+            now,
+            DlrrItem {
+                ssrc: 7.into(),
+                last_rr_time,
+                last_rr_delay: 3276,
+            },
+        );
+        assert_eq!(streams.stream_rx(&7.into()).unwrap().stats.rtt, None);
+
+        // Accept both an active sender and the fallback SSRC used before it existed.
+        for local_ssrc in [9.into(), default_ssrc] {
+            for ssrc in [7, 8] {
+                streams.stream_rx(&ssrc.into()).unwrap().stats.rtt = None;
+            }
+            streams.handle_dlrr(
+                now,
+                DlrrItem {
+                    ssrc: local_ssrc,
+                    last_rr_time,
+                    last_rr_delay: 3276,
+                },
+            );
+            for ssrc in [7, 8] {
+                let rtt = streams.stream_rx(&ssrc.into()).unwrap().stats.rtt.unwrap();
+                assert!((Duration::from_millis(199)..=Duration::from_millis(201)).contains(&rtt));
+            }
+        }
+    }
+
+    #[test]
+    fn nack_retries_use_receive_stream_rtt() {
+        for rtt in [Duration::from_millis(20), Duration::from_millis(250)] {
+            let mut stream = stream_with(&[(10, 0), (12, 1920)]);
+            stream.stats.rtt = Some(rtt);
+            let now = Instant::now();
+            let mut feedback = VecDeque::new();
+            assert!(
+                stream
+                    .maybe_create_nack(now, 1.into(), &mut feedback)
+                    .is_some()
+            );
+            let due = now + rtt + Duration::from_millis(5);
+            assert!(
+                stream
+                    .maybe_create_nack(due - Duration::from_nanos(1), 1.into(), &mut feedback)
+                    .is_none()
+            );
+            assert_eq!(feedback.len(), 1);
+            assert!(
+                stream
+                    .maybe_create_nack(due, 1.into(), &mut feedback)
+                    .is_some()
+            );
+            assert_eq!(feedback.len(), 2);
+        }
+    }
+
+    #[test]
     fn paused_stream_finishes_pending_nack_retries() {
         let mut stream = stream_with(&[(10, 0), (12, 1920)]);
-        stream.handle_timeout(stream.paused_at().unwrap());
+        let mut now = stream.paused_at().unwrap();
+        stream.handle_timeout(now);
         assert!(stream.paused);
 
         let mut feedback = VecDeque::new();
         for _ in 0..5 {
-            assert!(stream.maybe_create_nack(1.into(), &mut feedback).is_some());
+            assert!(stream.nack_enabled());
+            assert!(
+                stream
+                    .maybe_create_nack(now, 1.into(), &mut feedback)
+                    .is_some()
+            );
+            assert!(
+                stream
+                    .maybe_create_nack(now, 1.into(), &mut feedback)
+                    .is_none()
+            );
+            now += Duration::from_millis(105);
         }
         assert_eq!(feedback.len(), 5);
         assert!(feedback.iter().all(|rtcp| {
@@ -1095,7 +1184,11 @@ mod tests {
         }));
 
         assert!(!stream.nack_enabled());
-        assert!(stream.maybe_create_nack(1.into(), &mut feedback).is_none());
+        assert!(
+            stream
+                .maybe_create_nack(now, 1.into(), &mut feedback)
+                .is_none()
+        );
         assert_eq!(feedback.len(), 5);
     }
 
@@ -1129,6 +1222,13 @@ mod tests {
     #[test]
     fn red_locate_seq_rejects_known_and_recovered_frames() {
         let mut stream = stream_with(&[(10, 0), (14, 3840)]);
+        let now = Instant::now();
+        let mut feedback = VecDeque::new();
+        assert!(
+            stream
+                .maybe_create_nack(now, 1.into(), &mut feedback)
+                .is_some()
+        );
 
         // A block for a frame we already have is not a recovery.
         assert_eq!(stream.red_locate_seq(14.into(), 0), None);
@@ -1142,7 +1242,7 @@ mod tests {
             .register
             .as_mut()
             .unwrap()
-            .nack_report()
+            .nack_report(now + Duration::from_millis(105), None)
             .into_iter()
             .flatten()
             .flat_map(|n| {

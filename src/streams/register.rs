@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp_::{Nack, ReceptionReport, SeqNo};
 
@@ -109,8 +109,12 @@ impl ReceiverRegister {
     }
 
     /// Generates a NACK report
-    pub fn nack_report(&mut self) -> Option<impl Iterator<Item = Nack>> {
-        self.nack.nack_reports()
+    pub fn nack_report(
+        &mut self,
+        now: Instant,
+        rtt: Option<Duration>,
+    ) -> Option<impl Iterator<Item = Nack>> {
+        self.nack.nack_reports(now, rtt)
     }
 
     /// Create a new reception report.
@@ -279,6 +283,21 @@ mod test {
     use std::time::{Duration, Instant};
 
     use crate::streams::register::{ReceiverRegister, expected, packets_lost};
+
+    #[test]
+    fn clearing_register_resets_nack_timing() {
+        let mut reg = ReceiverRegister::new(None);
+        let now = Instant::now();
+        reg.update(10.into(), now, 0, 90_000);
+        reg.update(12.into(), now, 3000, 90_000);
+        assert!(reg.nack_report(now, None).is_some());
+        assert!(reg.nack_report(now, None).is_none());
+        reg.clear(Some(10.into()));
+        assert!(!reg.has_pending_nacks());
+        reg.update(12.into(), now, 3000, 90_000);
+        let nacks: Vec<_> = reg.nack_report(now, None).expect("fresh loss").collect();
+        assert_eq!(nacks[0].reports[0].pid, 11);
+    }
 
     #[test]
     fn jitter_at_0() {
