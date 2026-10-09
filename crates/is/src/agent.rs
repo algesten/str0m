@@ -1912,9 +1912,8 @@ impl IceAgent {
 
         pair.record_binding_response(now, trans_id, valid_idx);
 
-        if self.controlling {
-            self.evaluate_nomination();
-        }
+        // For a controlled agent, a successful check can make a nominated pair valid.
+        self.evaluate_nomination();
 
         // State might change when we get a response.
         self.evaluate_state(now);
@@ -1932,10 +1931,13 @@ impl IceAgent {
                 .max_by_key(|p| p.prio())
         } else {
             // For controlled agents, we pick the best pair from what the controlling
-            // agent has indicated with USE-CANDIDATE stun attribute.
+            // agent has indicated with USE-CANDIDATE stun attribute. RFC 8445 §7.3.1.5
+            // lets us act on a nomination only once the pair is valid, i.e. our own
+            // check on it succeeded, so a pair the peer nominated but we cannot reach
+            // never becomes the send path.
             self.candidate_pairs
                 .iter_mut()
-                .filter(|p| p.is_nominated())
+                .filter(|p| p.is_nominated() && p.state() == CheckState::Succeeded)
                 .max_by_key(|p| p.prio())
         };
 
@@ -2038,7 +2040,10 @@ impl IceAgent {
         let mut any_still_possible = false;
 
         for p in &self.candidate_pairs {
-            if p.is_nominated() {
+            // A nominated pair counts once it is valid (RFC 8445 §8.1.1), which is
+            // also when `evaluate_nomination` can make it the send path. Until then
+            // it is just another pair being checked.
+            if p.is_nominated() && p.state() == CheckState::Succeeded {
                 any_nomination = true;
             } else if p.is_still_possible(now, &self.timing_config) {
                 any_still_possible = true;
@@ -2936,6 +2941,110 @@ mod test {
                 .any(|e| matches!(e, IceAgentEvent::NominatedSend { .. })),
             "a single binding request must not choose the send address"
         );
+    }
+
+    #[test]
+    fn controlled_sends_only_on_a_nominated_pair_whose_check_succeeded() {
+        // RFC 8445 §7.3.1.5: the controlled agent acts on USE-CANDIDATE only
+        // for a pair that is, or becomes, valid. Here the peer nominates the
+        // highest-priority pair first, but our checks on it are never
+        // answered (one-way connectivity). It then nominates a lower-priority
+        // pair whose check succeeds. Media must go to the second pair.
+        let mut agent = new_test_agent();
+        agent.set_controlling(false);
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+
+        let remote_creds = IceCreds::new();
+        agent.set_remote_credentials(remote_creds.clone());
+
+        let mut dead =
+            Candidate::from_sdp_string("candidate:1 1 udp 2130706431 3.4.5.6 5000 typ host")
+                .unwrap();
+        dead.set_ufrag(&remote_creds.ufrag);
+        let mut alive =
+            Candidate::from_sdp_string("candidate:2 1 udp 1694498815 4.5.6.7 5000 typ host")
+                .unwrap();
+        alive.set_ufrag(&remote_creds.ufrag);
+        let (dead_prio, alive_prio) = (dead.prio(), alive.prio());
+        assert!(dead_prio > alive_prio);
+        agent.add_remote_candidate(dead);
+        agent.add_remote_candidate(alive);
+
+        let nominate = |agent: &mut IceAgent, now: Instant, source: SocketAddr, prio: u32| {
+            let username = format!("{}:{}", agent.local_credentials.ufrag, remote_creds.ufrag);
+            let req = StunMessage::binding_request(&username, TransId::new(), true, 0, prio, true);
+            let req = serialize_stun_msg(req, &agent.local_credentials.pass);
+            assert!(agent.handle_packet(
+                now,
+                StunPacket {
+                    message: StunMessage::parse(&req).unwrap(),
+                    source,
+                    destination: ipv4_1(),
+                    proto: Protocol::Udp,
+                },
+            ));
+        };
+
+        // Answer our checks toward `alive` only; drop everything else.
+        let answer_alive = |agent: &mut IceAgent, now: Instant| {
+            let mut replies = vec![];
+            while let Some(t) = agent.poll_transmit() {
+                let msg = StunMessage::parse(&t.contents).unwrap();
+                if t.destination == ipv4_4() && msg.is_binding_request() {
+                    replies.push(make_authenticated_stun_reply(
+                        msg.trans_id(),
+                        ipv4_1(),
+                        &remote_creds.pass,
+                    ));
+                }
+            }
+            for reply in replies {
+                agent.handle_packet(
+                    now,
+                    StunPacket {
+                        message: StunMessage::parse(&reply).unwrap(),
+                        source: ipv4_4(),
+                        destination: ipv4_1(),
+                        proto: Protocol::Udp,
+                    },
+                );
+            }
+        };
+
+        let nominated_sends = |agent: &mut IceAgent| {
+            let mut v = vec![];
+            while let Some(e) = agent.poll_event() {
+                if let IceAgentEvent::NominatedSend { destination, .. } = e {
+                    v.push(destination);
+                }
+            }
+            v
+        };
+
+        let mut now = Instant::now();
+        agent.handle_timeout(now);
+
+        nominate(&mut agent, now, ipv4_3(), dead_prio);
+        for _ in 0..20 {
+            answer_alive(&mut agent, now);
+            now += Duration::from_millis(50);
+            agent.handle_timeout(now);
+        }
+        assert_eq!(
+            nominated_sends(&mut agent),
+            vec![],
+            "a nominated pair whose check has not succeeded must not be used"
+        );
+
+        nominate(&mut agent, now, ipv4_4(), alive_prio);
+        for _ in 0..20 {
+            answer_alive(&mut agent, now);
+            now += Duration::from_millis(50);
+            agent.handle_timeout(now);
+        }
+        assert_eq!(nominated_sends(&mut agent), vec![ipv4_4()]);
     }
 
     fn make_serialized_binding_request(

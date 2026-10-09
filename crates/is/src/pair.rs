@@ -262,6 +262,13 @@ impl CandidatePair {
                 self.nomination_state = NominationState::Nominated;
             }
         }
+
+        // The replacement has the same local base and remote address, so a check
+        // that succeeded on the old pair validated this path too. An in-progress
+        // check is not copied, for the same reason as Attempt above.
+        if other.state == CheckState::Succeeded {
+            self.state = CheckState::Succeeded;
+        }
     }
 
     /// Records a new binding request attempt.
