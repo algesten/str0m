@@ -1,10 +1,13 @@
 //! Tests for DTLS handshake edge cases and security.
 
 use std::net::Ipv4Addr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use str0m::Rtc;
-use str0m::RtcError;
+use str0m::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput};
+use str0m::crypto::dtls::{DtlsProvider, DtlsVersion, ProtocolVersion};
+use str0m::crypto::{CryptoError, CryptoProvider};
+use str0m::{Candidate, Event, Rtc, RtcError};
 
 mod common;
 use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
@@ -194,4 +197,188 @@ fn dtls_pregenerated_certificate_same_fingerprint() -> Result<(), RtcError> {
     );
 
     Ok(())
+}
+
+/// Test that a DTLS server refuses a client that never presented a certificate.
+///
+/// RFC 8827 §6.5 / RFC 5763 §5 require the peer certificate to match the
+/// a=fingerprint. A dimpl server accepts a client that answers the
+/// CertificateRequest with an empty Certificate message and then reports
+/// Connected and KeyingMaterial without PeerCert. R reproduces that here by
+/// hiding the peer certificate its DTLS backend reports.
+#[test]
+fn dtls_server_refuses_client_without_certificate() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let (mut l, mut r) = connect_to_server_without_peer_cert(true);
+
+    let err = loop {
+        if l.duration() > Duration::from_secs(5) {
+            panic!("R did not refuse the client without certificate");
+        }
+        if let Err(e) = progress(&mut l, &mut r) {
+            break e;
+        }
+    };
+
+    assert!(
+        matches!(&err, RtcError::RemoteSdp(msg) if msg == "no remote DTLS certificate"),
+        "Unexpected error: {err}"
+    );
+    assert!(!r.is_alive(), "R must disconnect");
+    assert!(!r.is_connected(), "R must not be connected");
+    assert!(
+        !r.events.iter().any(|(_, e)| matches!(e, Event::Connected)),
+        "R must not emit Event::Connected"
+    );
+
+    Ok(())
+}
+
+/// Test that disabling fingerprint verification still lets a client without
+/// certificate connect.
+#[test]
+fn dtls_server_without_fingerprint_verification_accepts_client_without_certificate()
+-> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let (mut l, mut r) = connect_to_server_without_peer_cert(false);
+
+    loop {
+        if l.is_connected() && r.is_connected() {
+            break;
+        }
+        if l.duration() > Duration::from_secs(5) {
+            panic!("Failed to connect without fingerprint verification");
+        }
+        progress(&mut l, &mut r)?;
+    }
+
+    Ok(())
+}
+
+/// Set up L as DTLS client and R as DTLS server whose backend never reports
+/// the peer certificate.
+fn connect_to_server_without_peer_cert(fingerprint_verification: bool) -> (TestRtc, TestRtc) {
+    let mut l = TestRtc::new(Peer::Left);
+
+    let base = Peer::Right
+        .crypto_provider()
+        .map(|c| (*c).clone())
+        .unwrap_or_else(str0m::crypto::from_feature_flags);
+    let dtls_provider: &'static dyn DtlsProvider =
+        Box::leak(Box::new(NoPeerCertProvider(base.dtls_provider)));
+    let crypto = CryptoProvider {
+        dtls_provider,
+        ..base
+    };
+    let rtc_r = Rtc::builder()
+        .set_crypto_provider(Arc::new(crypto))
+        .set_fingerprint_verification(fingerprint_verification)
+        .build(Instant::now());
+    let mut r = TestRtc::new_with_rtc(Peer::Right.span(), rtc_r);
+
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
+    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
+    l.add_local_candidate(host1.clone());
+    l.add_remote_candidate(host2.clone());
+    r.add_local_candidate(host2);
+    r.add_remote_candidate(host1);
+
+    let finger_l = l.direct_api().local_dtls_fingerprint().clone();
+    let finger_r = r.direct_api().local_dtls_fingerprint().clone();
+    l.direct_api().set_remote_fingerprint(finger_r);
+    r.direct_api().set_remote_fingerprint(finger_l);
+
+    let creds_l = l.direct_api().local_ice_credentials();
+    let creds_r = r.direct_api().local_ice_credentials();
+    l.direct_api().set_remote_ice_credentials(creds_r);
+    r.direct_api().set_remote_ice_credentials(creds_l);
+
+    l.direct_api().set_ice_controlling(true);
+    r.direct_api().set_ice_controlling(false);
+
+    l.direct_api().start_dtls(true).unwrap();
+    r.direct_api().start_dtls(false).unwrap();
+
+    (l, r)
+}
+
+/// DTLS provider whose instances never report the peer certificate.
+#[derive(Debug)]
+struct NoPeerCertProvider(&'static dyn DtlsProvider);
+
+impl DtlsProvider for NoPeerCertProvider {
+    fn generate_certificate(&self) -> Option<DtlsCert> {
+        self.0.generate_certificate()
+    }
+
+    fn new_dtls(
+        &self,
+        cert: &DtlsCert,
+        now: Instant,
+        dtls_version: DtlsVersion,
+        mtu: Option<usize>,
+    ) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+        let inner = self.0.new_dtls(cert, now, dtls_version, mtu)?;
+        Ok(Box::new(NoPeerCert { inner, start: now }))
+    }
+
+    fn is_test(&self) -> bool {
+        self.0.is_test()
+    }
+}
+
+#[derive(Debug)]
+struct NoPeerCert {
+    inner: Box<dyn DtlsInstance>,
+    start: Instant,
+}
+
+impl DtlsInstance for NoPeerCert {
+    fn set_active(&mut self, active: bool) {
+        self.inner.set_active(active)
+    }
+
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DtlsImplError> {
+        self.inner.handle_packet(packet)
+    }
+
+    fn poll_output<'a>(&mut self, buf: &'a mut [u8]) -> DtlsOutput<'a> {
+        match self.inner.poll_output(buf) {
+            // Drop the certificate and ask to be polled again straight away.
+            DtlsOutput::PeerCert(_) => DtlsOutput::Timeout(self.start),
+            output => output,
+        }
+    }
+
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), DtlsImplError> {
+        self.inner.handle_timeout(now)
+    }
+
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
+        self.inner.send_application_data(data)
+    }
+
+    fn is_active(&self) -> bool {
+        self.inner.is_active()
+    }
+
+    fn protocol_version(&self) -> Option<ProtocolVersion> {
+        self.inner.protocol_version()
+    }
+
+    fn is_closing(&self) -> bool {
+        self.inner.is_closing()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.inner.is_closed()
+    }
+
+    fn close(&mut self) -> Result<(), DtlsImplError> {
+        self.inner.close()
+    }
 }
