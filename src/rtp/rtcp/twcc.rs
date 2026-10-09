@@ -554,7 +554,18 @@ fn build_interims(
         };
 
         interims.push_back(ChunkInterim::Received(status, time));
-        prev = (r.seq, r.time);
+
+        // The next delta is relative to the time this delta REPORTS, not the
+        // true receive time: the receiver of the report sums the deltas, so
+        // carrying r.time would let each delta's truncation (up to 250us)
+        // accumulate across the report.
+        let reported = Duration::from_micros(250 * time.unsigned_abs() as u64);
+        let reported_time = if time < 0 {
+            prev.1.checked_sub(reported).unwrap_or(prev.1)
+        } else {
+            prev.1 + reported
+        };
+        prev = (r.seq, reported_time);
     }
 }
 
@@ -1600,6 +1611,111 @@ mod test {
         // 140 * 64 = 8960
         // So the first offset must be 40ms, i.e. 40_000us / 250us = 160
         assert_eq!(report2.delta[0], Small(160));
+    }
+
+    /// Reconstructs every receive time of a report the way its receiver does.
+    fn reported_times(report: Twcc, time_zero: Instant) -> Vec<Instant> {
+        report
+            .into_iter(time_zero, 0.into())
+            .filter_map(|(_, _, instant)| instant)
+            .collect()
+    }
+
+    #[test]
+    fn report_deltas_do_not_accumulate_truncation() {
+        let mut reg = TwccRecvRegister::new(200);
+        let now = Instant::now();
+
+        // 20.1 ms apart: every delta has a 100us remainder below the 250us
+        // resolution. Carried from the true time, 70 truncations would
+        // report the last packet ~7 ms early.
+        let truth: Vec<Instant> = (0..70_u64)
+            .map(|i| now + Duration::from_micros(i * 20_100))
+            .collect();
+        for (i, t) in truth.iter().enumerate() {
+            reg.update_seq((i as u64).into(), *t);
+        }
+
+        let report = reg.build_report(1500).unwrap();
+        assert_eq!(report.status_count, 70, "one report covers all packets");
+        let reported = reported_times(report, now);
+        assert_eq!(reported.len(), truth.len());
+        for (t, r) in truth.iter().zip(&reported) {
+            assert!(*r <= *t, "never reported later than received");
+            assert!(*t - *r < Duration::from_micros(250), "off by {:?}", *t - *r);
+        }
+    }
+
+    #[test]
+    fn report_deltas_do_not_accumulate_across_reordering() {
+        let mut reg = TwccRecvRegister::new(200);
+        let now = Instant::now();
+
+        // A reordered arrival makes a negative (large) delta; the error must
+        // stay within one tick on both sides of it.
+        let offsets_us = [0, 20_130, 40_270, 35_090, 60_410, 80_550, 100_690];
+        for (i, us) in offsets_us.iter().enumerate() {
+            reg.update_seq((i as u64).into(), now + Duration::from_micros(*us));
+        }
+
+        let reported = reported_times(reg.build_report(1500).unwrap(), now);
+        assert_eq!(reported.len(), offsets_us.len());
+        for (us, r) in offsets_us.iter().zip(&reported) {
+            let t = now + Duration::from_micros(*us);
+            let err = if *r > t { *r - t } else { t - *r };
+            assert!(err < Duration::from_micros(250), "off by {err:?} at {us}us");
+        }
+    }
+
+    /// Two interleaved 20 ms streams, every tenth adjacent pair swapped on
+    /// the wire, 249 packets before the first report: every reconstructed
+    /// time must stay within one tick of the truth.
+    #[test]
+    fn report_reconstructs_long_reordered_first_report() {
+        let mut reg = TwccRecvRegister::new(100);
+        let now = Instant::now();
+        let mut truth: Vec<(u64, Instant)> = Vec::new();
+        let mut seq = 0u64;
+        for i in 0..125u64 {
+            let a = now + Duration::from_micros(i * 20_000 + (i % 7) * 130);
+            let b = a + Duration::from_micros(6_840 + (i % 3) * 110);
+            truth.push((seq, a));
+            truth.push((seq + 1, b));
+            seq += 2;
+        }
+        truth.truncate(249);
+        // wire order: swap every tenth adjacent pair (the later seq arrives first)
+        let mut wire = truth.clone();
+        let mut k = 1;
+        while k + 1 < wire.len() {
+            wire.swap(k, k + 1);
+            // the swapped packets keep their arrival instants: the one with
+            // the higher seq now arrives earlier
+            let (s0, t0) = wire[k];
+            let (s1, t1) = wire[k + 1];
+            wire[k] = (s0, t1.min(t0));
+            wire[k + 1] = (s1, t1.max(t0));
+            k += 10;
+        }
+        let mut arrivals: Vec<(u64, Instant)> = wire.clone();
+        arrivals.sort_by_key(|(_, t)| *t);
+        for (s, t) in &arrivals {
+            reg.update_seq((*s).into(), *t);
+        }
+        let report = reg.build_report(1100).unwrap();
+        assert_eq!(report.status_count as usize, 249);
+        let mut expected: Vec<(u64, Instant)> = wire.clone();
+        expected.sort_by_key(|(s, _)| *s);
+        let reported: Vec<(u64, Instant)> = report
+            .into_iter(now, 0.into())
+            .filter_map(|(s, _, t)| t.map(|t| (*s, t)))
+            .collect();
+        assert_eq!(reported.len(), expected.len());
+        for ((s, t), (rs, r)) in expected.iter().zip(&reported) {
+            assert_eq!(s, rs);
+            let err = if *r > *t { *r - *t } else { *t - *r };
+            assert!(err < Duration::from_micros(250), "seq {s} off by {err:?}");
+        }
     }
 
     #[test]
