@@ -1142,6 +1142,8 @@ pub enum Reason {
     /// Sending of RTP NACK.
     ///
     /// When missing packets are discovered, a NACK is scheduled.
+    /// Retries for each packet wait for the receive-stream RTT plus 5 ms,
+    /// using a 100 ms RTT until a measurement is available.
     Nack,
 
     /// Reporting of TWCC (if enabled).
