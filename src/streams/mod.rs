@@ -13,9 +13,9 @@ use crate::packet::Vp8Patch;
 use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Bitrate, Pt};
+use crate::rtp_::{DlrrItem, Rtcp, RtcpFb, RtpHeader};
 use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
-use crate::rtp_::{Rtcp, RtpHeader};
 use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
@@ -450,7 +450,7 @@ impl Streams {
             }
 
             if do_nack {
-                stream.maybe_create_nack(sender_ssrc, feedback);
+                stream.maybe_create_nack(now, sender_ssrc, feedback);
             }
 
             stream.handle_timeout(now);
@@ -526,6 +526,20 @@ impl Streams {
 
     pub(crate) fn has_stream_tx(&self, ssrc: Ssrc) -> bool {
         self.streams_tx.contains_key(&ssrc)
+    }
+
+    pub(crate) fn handle_dlrr(&mut self, now: Instant, dlrr: DlrrItem) {
+        let is_default_ssrc = !self.default_ssrc_tx.is_probe() && dlrr.ssrc == self.default_ssrc_tx;
+        if !is_default_ssrc && !self.has_stream_tx(dlrr.ssrc) {
+            trace!("Ignoring DLRR for unknown local SSRC: {}", dlrr.ssrc);
+            return;
+        }
+
+        // DLRR identifies our RRTR sender, not a remote media SSRC. The measured
+        // round trip is shared by receive streams on this peer's transport.
+        for stream in self.streams_rx.values_mut() {
+            stream.handle_rtcp(now, RtcpFb::DlrrItem(dlrr));
+        }
     }
 
     pub(crate) fn streams_rx(&mut self) -> impl Iterator<Item = &mut StreamRx> {

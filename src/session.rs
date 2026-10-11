@@ -41,9 +41,8 @@ use crate::util::{Soonest, SystemTimeExt, already_happened, not_happening};
 use crate::{Reason, net};
 use crate::{RtcConfig, RtcError};
 
-/// Minimum time we delay between sending nacks. This should be
-/// set high enough to not cause additional problems in very bad
-/// network conditions.
+/// Minimum interval between NACK polls. Per-packet retries also wait for RTT.
+/// Keep this high enough to avoid additional problems in very bad network conditions.
 const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
@@ -915,6 +914,11 @@ impl Session {
                     }
                     self.pending_rrtrs.push_back((ssrc, entry));
                 }
+                continue;
+            }
+
+            if let RtcpFb::DlrrItem(dlrr) = fb {
+                self.streams.handle_dlrr(now, dlrr);
                 continue;
             }
 

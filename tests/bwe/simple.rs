@@ -75,9 +75,11 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
         description: "Wait for mid",
         duration: Duration::from_secs(60),
     };
+    // RTT-paced NACK retries can delay feedback after burst loss; let the
+    // estimator reach the existing 1 Mbps checkpoint.
     plan[5] = Step::Run {
         description: "Wait for top",
-        duration: Duration::from_secs(30),
+        duration: Duration::from_secs(40),
     };
 
     // Burst loss and jitter make the intermediate estimate conservative.

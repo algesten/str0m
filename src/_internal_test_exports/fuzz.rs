@@ -136,7 +136,9 @@ pub fn receive_register(data: &[u8]) -> Option<()> {
                 rr.update(seq.into(), arrival, rtp_time, clock_rate);
             }
             1 => {
-                rr.nack_report();
+                let now = start + Duration::from_micros(rng.u64(u64::MAX / 100)?);
+                let rtt = Duration::from_millis(rng.u64(1000)?);
+                rr.nack_report(now, Some(rtt));
             }
             2 => {
                 rr.reception_report();

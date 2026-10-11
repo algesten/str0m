@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::time::{Duration, Instant};
 
 use crate::rtp_::{Nack, NackEntry, ReportList, SeqNo};
 
@@ -7,6 +8,9 @@ const MAX_MISORDER: u64 = 100;
 
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
+
+const DEFAULT_RTT: Duration = Duration::from_millis(100);
+const NACK_RETRY_MARGIN: Duration = Duration::from_millis(5);
 
 /// Circular buffer size
 const BUFFER_SIZE: u64 = MAX_MISORDER + 1;
@@ -24,6 +28,7 @@ pub struct NackRegister {
 struct PacketStatus {
     received: bool,
     nack_count: u8,
+    last_nack_at: Option<Instant>,
 }
 
 impl PacketStatus {
@@ -31,15 +36,28 @@ impl PacketStatus {
         !self.received && self.nack_count < MAX_NACKS
     }
 
+    fn is_nack_due(&self, now: Instant, retry_interval: Duration) -> bool {
+        self.needs_nack()
+            && self
+                .last_nack_at
+                .is_none_or(|last| now.saturating_duration_since(last) >= retry_interval)
+    }
+
+    fn mark_nacked(&mut self, now: Instant) {
+        self.nack_count += 1;
+        self.last_nack_at = Some(now);
+    }
+
     fn mark_received(&mut self) -> bool {
         let new = !self.received;
         self.received = true;
+        self.nack_count = 0;
+        self.last_nack_at = None;
         new
     }
 
     fn reset(&mut self) {
-        self.received = false;
-        self.nack_count = 0;
+        *self = Self::default();
     }
 }
 
@@ -47,27 +65,32 @@ struct NackIterator<'a> {
     reg: &'a mut NackRegister,
     next: u64,
     end: u64,
+    now: Instant,
+    retry_interval: Duration,
 }
 
 impl<'a> Iterator for NackIterator<'a> {
     type Item = NackEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.next =
-            (self.next..=self.end).find(|s| self.reg.packet_mut((*s).into()).needs_nack())?;
+        self.next = (self.next..=self.end).find(|s| {
+            self.reg
+                .packet((*s).into())
+                .is_nack_due(self.now, self.retry_interval)
+        })?;
 
         let mut entry = NackEntry {
             pid: self.next as u16,
             blp: 0,
         };
 
-        self.reg.packet_mut(self.next.into()).nack_count += 1;
+        self.reg.packet_mut(self.next.into()).mark_nacked(self.now);
         self.next += 1;
 
         for (i, s) in (self.next..self.end).take(16).enumerate() {
             let packet = self.reg.packet_mut(s.into());
-            if packet.needs_nack() {
-                self.reg.packet_mut(self.next.into()).nack_count += 1;
+            if packet.is_nack_due(self.now, self.retry_interval) {
+                packet.mark_nacked(self.now);
                 entry.blp |= 1 << i
             }
             self.next += 1;
@@ -169,6 +192,8 @@ impl NackRegister {
     }
 
     /// Whether a missing packet still has NACK attempts remaining.
+    ///
+    /// Includes retries that are waiting for their RTT deadline.
     pub fn has_pending_nacks(&self) -> bool {
         let Some(active) = &self.active else {
             return false;
@@ -177,18 +202,27 @@ impl NackRegister {
         (*active.start..=*active.end).any(|seq| self.packet(seq.into()).needs_nack())
     }
 
-    /// Create a new nack report
+    /// Create NACK reports for packets whose requests are due.
     ///
-    /// This modifies the state as it counts how many times packets have been nacked
-    pub fn nack_reports(&mut self) -> Option<impl Iterator<Item = Nack>> {
+    /// First requests are immediately eligible. Retries wait one receive-stream RTT plus
+    /// 5 ms, using 100 ms until RTT is known. Only included packets consume an attempt.
+    pub fn nack_reports(
+        &mut self,
+        now: Instant,
+        rtt: Option<Duration>,
+    ) -> Option<impl Iterator<Item = Nack>> {
+        let retry_interval = rtt.unwrap_or(DEFAULT_RTT).saturating_add(NACK_RETRY_MARGIN);
         let Range { start, end } = self.active.clone()?;
-        let start = (*start..=*end).find(|s| self.packet_mut((*s).into()).needs_nack())?;
+        let start =
+            (*start..=*end).find(|s| self.packet((*s).into()).is_nack_due(now, retry_interval))?;
 
         Some(
             ReportList::lists_from_iter(NackIterator {
                 reg: self,
                 next: start,
                 end: *end,
+                now,
+                retry_interval,
             })
             .into_iter()
             .map(|reports| {
@@ -219,7 +253,9 @@ impl NackRegister {
 #[cfg(test)]
 mod test {
     use std::ops::Range;
+    use std::time::{Duration, Instant};
 
+    use crate::rtp_::NackEntry;
     use crate::streams::register_nack::MAX_MISORDER;
 
     use super::NackRegister;
@@ -238,14 +274,199 @@ mod test {
         assert!(!reg.has_pending_nacks());
 
         reg.update(14.into());
+        let mut now = Instant::now();
         for _ in 0..super::MAX_NACKS {
             assert!(reg.has_pending_nacks());
-            let reports: Vec<_> = reg.nack_reports().expect("pending retry").collect();
+            let reports: Vec<_> = reg
+                .nack_reports(now, None)
+                .expect("pending retry")
+                .collect();
             assert_eq!(reports.len(), 1);
             assert_eq!(reports[0].reports[0].pid, 13);
+            now += Duration::from_millis(105);
         }
         assert!(!reg.has_pending_nacks());
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(now, None).is_none());
+    }
+
+    fn nack_entries(reg: &mut NackRegister, now: Instant, rtt: Option<Duration>) -> Vec<NackEntry> {
+        reg.nack_reports(now, rtt)
+            .into_iter()
+            .flatten()
+            .flat_map(|nack| nack.reports)
+            .collect()
+    }
+
+    #[test]
+    fn nack_retry_deadlines_and_limit() {
+        for (rtt, interval_ms) in [
+            (None, 105),
+            (Some(Duration::ZERO), 5),
+            (Some(Duration::from_millis(20)), 25),
+            (Some(Duration::from_millis(250)), 255),
+        ] {
+            let mut reg = NackRegister::new(None);
+            reg.update(10.into());
+            reg.update(13.into());
+            let now = Instant::now();
+            let interval = Duration::from_millis(interval_ms);
+            let expected = [NackEntry { pid: 11, blp: 1 }];
+
+            for attempt in 0..super::MAX_NACKS {
+                let due = now + interval * u32::from(attempt);
+                if attempt > 0 {
+                    assert!(nack_entries(&mut reg, due - Duration::from_nanos(1), rtt).is_empty());
+                }
+                assert!(reg.has_pending_nacks());
+                assert_eq!(nack_entries(&mut reg, due, rtt), expected);
+                assert!(nack_entries(&mut reg, due, rtt).is_empty());
+                for seq in [11, 12] {
+                    let packet = reg.packet(seq.into());
+                    assert_eq!(packet.nack_count, attempt + 1);
+                    assert_eq!(packet.last_nack_at, Some(due));
+                }
+            }
+
+            assert!(!reg.has_pending_nacks());
+            assert!(nack_entries(&mut reg, now + interval * 10, rtt).is_empty());
+        }
+    }
+
+    #[test]
+    fn nack_new_losses_and_retries_have_independent_deadlines() {
+        let mut reg = NackRegister::new(None);
+        let now = Instant::now();
+        reg.update(10.into());
+        reg.update(12.into());
+        assert_eq!(
+            nack_entries(&mut reg, now, None),
+            [NackEntry { pid: 11, blp: 0 }]
+        );
+
+        reg.update(14.into());
+        assert_eq!(
+            nack_entries(&mut reg, now + Duration::from_millis(30), None),
+            [NackEntry { pid: 13, blp: 0 }]
+        );
+        assert_eq!(reg.packet(11.into()).last_nack_at, Some(now));
+
+        reg.update(16.into());
+        // 11 is due again and 15 is new, but 13 must not be included in the bitmask yet.
+        assert_eq!(
+            nack_entries(&mut reg, now + Duration::from_millis(105), None),
+            [NackEntry {
+                pid: 11,
+                blp: 0b1000
+            }]
+        );
+        assert_eq!(reg.packet(13.into()).nack_count, 1);
+        assert_eq!(
+            reg.packet(13.into()).last_nack_at,
+            Some(now + Duration::from_millis(30))
+        );
+        assert_eq!(
+            nack_entries(&mut reg, now + Duration::from_millis(135), None),
+            [NackEntry { pid: 13, blp: 0 }]
+        );
+        assert_eq!(
+            nack_entries(&mut reg, now + Duration::from_millis(210), None),
+            [NackEntry {
+                pid: 11,
+                blp: 0b1000
+            }]
+        );
+        assert_eq!(reg.packet(11.into()).nack_count, 3);
+        assert_eq!(reg.packet(15.into()).nack_count, 2);
+    }
+
+    #[test]
+    fn nack_retry_uses_updated_rtt() {
+        let mut reg = NackRegister::new(None);
+        reg.update(10.into());
+        reg.update(12.into());
+        let now = Instant::now();
+        assert_eq!(nack_entries(&mut reg, now, None).len(), 1);
+        assert_eq!(
+            nack_entries(
+                &mut reg,
+                now + Duration::from_millis(50),
+                Some(Duration::from_millis(20))
+            )
+            .len(),
+            1
+        );
+        let rtt = Some(Duration::from_millis(200));
+        assert!(nack_entries(&mut reg, now + Duration::from_millis(254), rtt).is_empty());
+        assert_eq!(
+            nack_entries(&mut reg, now + Duration::from_millis(255), rtt).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn nack_repair_clears_only_recovered_packet_state() {
+        let mut reg = NackRegister::new(None);
+        reg.update(10.into());
+        reg.update(14.into());
+        let now = Instant::now();
+        assert_eq!(
+            nack_entries(&mut reg, now, None),
+            [NackEntry { pid: 11, blp: 3 }]
+        );
+        reg.update(12.into());
+        let packet = reg.packet(12.into());
+        assert!(packet.received);
+        assert_eq!(packet.nack_count, 0);
+        assert_eq!(packet.last_nack_at, None);
+        assert_eq!(
+            nack_entries(&mut reg, now + Duration::from_millis(105), None),
+            [NackEntry { pid: 11, blp: 0b10 }]
+        );
+    }
+
+    #[test]
+    fn nack_window_reuse_clears_retry_state() {
+        let mut reg = NackRegister::new(None);
+        reg.update(10.into());
+        reg.update(12.into());
+        let now = Instant::now();
+        assert_eq!(nack_entries(&mut reg, now, None).len(), 1);
+        for seq in 13..112 {
+            reg.update(seq.into());
+        }
+        reg.update(113.into());
+        assert_eq!(reg.as_index(11.into()), reg.as_index(112.into()));
+        assert_eq!(reg.packet(112.into()).nack_count, 0);
+        assert_eq!(reg.packet(112.into()).last_nack_at, None);
+        assert_eq!(
+            nack_entries(&mut reg, now, None),
+            [NackEntry { pid: 112, blp: 0 }]
+        );
+        assert_not_dirty(&reg);
+    }
+
+    #[test]
+    fn nack_retry_timing_across_sequence_rollover() {
+        let mut reg = NackRegister::new(None);
+        reg.update(65_534.into());
+        reg.update(65_538.into());
+        let now = Instant::now();
+        assert_eq!(
+            nack_entries(&mut reg, now, None),
+            [NackEntry {
+                pid: 65_535,
+                blp: 3
+            }]
+        );
+        reg.update(65_536.into());
+        assert!(nack_entries(&mut reg, now + Duration::from_millis(104), None).is_empty());
+        assert_eq!(
+            nack_entries(&mut reg, now + Duration::from_millis(105), None),
+            [NackEntry {
+                pid: 65_535,
+                blp: 0b10
+            }]
+        );
     }
 
     fn assert_update(
@@ -287,7 +508,9 @@ mod test {
                 continue;
             }
             assert!(
-                !reg.packets[i].received && reg.packets[i].nack_count == 0,
+                !reg.packets[i].received
+                    && reg.packets[i].nack_count == 0
+                    && reg.packets[i].last_nack_at.is_none(),
                 "dirty state at index {} outside of nack window {:?}",
                 i,
                 active,
@@ -348,13 +571,13 @@ mod test {
     #[test]
     fn nack_report_none() {
         let mut reg = NackRegister::new(None);
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(110.into());
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(111.into());
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
     }
 
     #[test]
@@ -368,13 +591,16 @@ mod test {
     #[test]
     fn nack_report_one() {
         let mut reg = NackRegister::new(None);
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(110.into());
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(112.into());
-        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
+        let report = reg
+            .nack_reports(Instant::now(), None)
+            .map(Vec::from_iter)
+            .expect("some report");
         assert!(report.len() == 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 111);
@@ -384,13 +610,16 @@ mod test {
     #[test]
     fn nack_report_two() {
         let mut reg = NackRegister::new(None);
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(110.into());
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(113.into());
-        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
+        let report = reg
+            .nack_reports(Instant::now(), None)
+            .map(Vec::from_iter)
+            .expect("some report");
         assert!(report.len() == 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 111);
@@ -405,7 +634,10 @@ mod test {
             reg.update((*i).into());
         }
 
-        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
+        let report = reg
+            .nack_reports(Instant::now(), None)
+            .map(Vec::from_iter)
+            .expect("some report");
         assert!(report.len() == 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 102);
@@ -426,7 +658,10 @@ mod test {
             reg.update((*i).into());
         }
 
-        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
+        let report = reg
+            .nack_reports(Instant::now(), None)
+            .map(Vec::from_iter)
+            .expect("some report");
         assert_eq!(report.len(), 1);
         assert_eq!(report[0].reports.len(), 2);
         assert_eq!(report[0].reports[0].pid, 102);
@@ -447,7 +682,10 @@ mod test {
             reg.update((*i).into());
         }
 
-        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
+        let report = reg
+            .nack_reports(Instant::now(), None)
+            .map(Vec::from_iter)
+            .expect("some report");
         assert_eq!(report.len(), 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 102);
@@ -468,7 +706,7 @@ mod test {
             reg.update((*i).into());
         }
 
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
     }
 
     #[test]
@@ -479,7 +717,7 @@ mod test {
         ] {
             reg.update((*i).into());
         }
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 105);
 
@@ -488,13 +726,13 @@ mod test {
         ] {
             reg.update((*i).into());
         }
-        assert!(reg.nack_reports().is_some());
+        assert!(reg.nack_reports(Instant::now(), None).is_some());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 107);
 
         reg.update(107.into()); // Got 107 via RTX
 
-        let nacks = reg.nack_reports().map(Vec::from_iter);
+        let nacks = reg.nack_reports(Instant::now(), None).map(Vec::from_iter);
         assert!(
             nacks.is_none(),
             "Expected no NACKs to be generated after repairing the stream, got {nacks:?}"
@@ -547,7 +785,10 @@ mod test {
         reg.update(3000.into());
         reg.update(3001.into());
 
-        let reports = reg.nack_reports().map(Vec::from_iter).expect("some report");
+        let reports = reg
+            .nack_reports(Instant::now(), None)
+            .map(Vec::from_iter)
+            .expect("some report");
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].reports[0].pid, 2999);
         assert_eq!(reports[0].reports[0].blp, 4);
@@ -573,7 +814,10 @@ mod test {
         reg.update(5996.into());
         reg.update(5997.into());
 
-        let reports = reg.nack_reports().map(Vec::from_iter).expect("some report");
+        let reports = reg
+            .nack_reports(Instant::now(), None)
+            .map(Vec::from_iter)
+            .expect("some report");
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].reports[0].pid, 5995);
     }
@@ -593,7 +837,10 @@ mod test {
                 reg.update((*i).into());
             }
 
-            let reports = reg.nack_reports().map(Vec::from_iter).expect("some report");
+            let reports = reg
+                .nack_reports(Instant::now(), None)
+                .map(Vec::from_iter)
+                .expect("some report");
             let pid = reports[0].reports[0].pid;
             assert_eq!(pid, *expected);
         }
@@ -606,7 +853,7 @@ mod test {
             reg.update(i.into());
         }
 
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 3003);
 
@@ -614,7 +861,7 @@ mod test {
             reg.update(i.into());
         }
 
-        let report = reg.nack_reports().map(Vec::from_iter);
+        let report = reg.nack_reports(Instant::now(), None).map(Vec::from_iter);
         assert!(report.is_none(), "Expected empty NACKs got {:?}", report);
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 3008);
@@ -626,7 +873,7 @@ mod test {
         for i in 65500..=65534 {
             reg.update(i.into());
         }
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65534);
 
@@ -634,7 +881,7 @@ mod test {
             reg.update(i.into());
         }
 
-        assert!(reg.nack_reports().is_some());
+        assert!(reg.nack_reports(Instant::now(), None).is_some());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65535);
 
@@ -644,7 +891,7 @@ mod test {
 
         reg.update(65535.into());
 
-        assert!(reg.nack_reports().is_none());
+        assert!(reg.nack_reports(Instant::now(), None).is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65666);
     }
@@ -662,7 +909,7 @@ mod test {
         }
 
         let reports: Vec<_> = reg
-            .nack_reports()
+            .nack_reports(Instant::now(), None)
             .expect("should generate reports")
             .flat_map(|nack| nack.reports)
             .collect();
