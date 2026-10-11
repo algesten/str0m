@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Pace per-packet NACK retries by receive-side RTT and fix DLRR RTT routing #1070
   * Send on a nominated ICE pair only after its check succeeds #1066
   * Stop NACK timer wakeups for paused streams after pending retries #1064
   * Fix RTCP receiver report loss fraction wraparound #1065
