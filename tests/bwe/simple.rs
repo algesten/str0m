@@ -69,11 +69,11 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
         description: "Cellular conditions",
         config: NetemConfig::cellular().seed(42),
     };
-    // Probes now follow their own timers instead of an expired receiver-report timer.
-    // Allow the lossy cellular link time to collect enough feedback at that cadence.
+    // Burst loss and jitter make ramp-up sensitive to feedback timing.
+    // Allow time to reach the mid layer with quantized TWCC receive times.
     plan[2] = Step::Run {
         description: "Wait for mid",
-        duration: Duration::from_secs(60),
+        duration: Duration::from_secs(75),
     };
     // RTT-paced NACK retries can delay feedback after burst loss; let the
     // estimator reach the existing 1 Mbps checkpoint.
