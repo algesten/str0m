@@ -160,6 +160,7 @@ str0m-wincrypto = { workspace = true, optional = true }
 
 [dev-dependencies]
 rouille.workspace = true
+sha1.workspace = true
 str0m-rust-crypto.workspace = true
 tempfile.workspace = true
 url.workspace = true

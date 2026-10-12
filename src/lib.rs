@@ -1673,15 +1673,28 @@ impl Rtc {
                 }
                 DtlsOutput::PeerCert(der) => {
                     debug!("DTLS verify remote fingerprint");
-                    // Compute fingerprint from peer's DER certificate
-                    let fingerprint = crate::crypto::Fingerprint {
-                        hash_func: "sha-256".to_string(),
-                        bytes: self.crypto_provider.sha256_provider.sha256(der).to_vec(),
-                    };
+                    // Compute the fingerprint of the peer's DER certificate with the hash
+                    // function of the expected one (RFC 8122 §5): sha-256, or sha-1 as some
+                    // endpoints still announce. sha-256 when there is none to compare with.
+                    let sha256 = self.crypto_provider.sha256_provider;
+                    let matching = self.remote_fingerprint.as_ref().and_then(|expected| {
+                        crate::crypto::Fingerprint::of_certificate(der, &expected.hash_func, sha256)
+                    });
+                    let fingerprint = matching.clone().unwrap_or_else(|| {
+                        crate::crypto::Fingerprint::of_certificate(der, "sha-256", sha256)
+                            .expect("sha-256 is supported")
+                    });
                     self.dtls.set_remote_fingerprint(fingerprint.clone());
                     if let Some(expected) = &self.remote_fingerprint {
                         if !self.fingerprint_verification {
                             debug!("DTLS fingerprint verification disabled");
+                        } else if matching.is_none() {
+                            let message = format!(
+                                "unsupported fingerprint hash function: {}",
+                                expected.hash_func
+                            );
+                            self.disconnect();
+                            return Err(RtcError::RemoteSdp(message));
                         } else if fingerprint != *expected {
                             self.disconnect();
                             return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));

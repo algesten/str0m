@@ -2,6 +2,8 @@ use core::fmt;
 
 use subtle::ConstantTimeEq;
 
+use super::Sha256Provider;
+
 /// Certificate fingerprint.
 ///
 /// DTLS uses self signed certificates, and the fingerprint is communicated via
@@ -15,6 +17,32 @@ pub struct Fingerprint {
 
     /// Digest of the certificate by the algorithm in `hash_func`.
     pub bytes: Vec<u8>,
+}
+
+impl Fingerprint {
+    /// The fingerprint of a DER certificate made with `hash_func`, the hash
+    /// function the remote SDP names (RFC 8122 §5, case-insensitive). Only
+    /// `sha-256` and `sha-1` are supported; `None` for any other.
+    ///
+    /// The result keeps `hash_func` as given, so it compares equal to the
+    /// remote fingerprint when the digests match.
+    pub(crate) fn of_certificate(
+        der: &[u8],
+        hash_func: &str,
+        sha256: &dyn Sha256Provider,
+    ) -> Option<Fingerprint> {
+        let bytes = if hash_func.eq_ignore_ascii_case("sha-256") {
+            sha256.sha256(der).to_vec()
+        } else if hash_func.eq_ignore_ascii_case("sha-1") {
+            super::sha1::sha1(der).to_vec()
+        } else {
+            return None;
+        };
+        Some(Fingerprint {
+            hash_func: hash_func.to_owned(),
+            bytes,
+        })
+    }
 }
 
 impl PartialEq for Fingerprint {

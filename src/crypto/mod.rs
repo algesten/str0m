@@ -60,4 +60,6 @@ pub fn from_feature_flags() -> CryptoProvider {
 mod finger;
 pub use finger::Fingerprint;
 
+mod sha1;
+
 pub use str0m_proto::crypto::{CryptoError, DtlsError};

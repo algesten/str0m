@@ -1950,6 +1950,7 @@ dependencies = [
  "sctp-proto",
  "serde",
  "serde_json",
+ "sha1",
  "str0m-apple-crypto",
  "str0m-aws-lc-rs",
  "str0m-netem",
