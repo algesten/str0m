@@ -14,7 +14,7 @@ mod dimpl_provider;
 mod dtls;
 use dtls::WinCryptoDtlsProvider;
 
-use str0m_proto::crypto::CryptoProvider;
+use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
 
 pub use sys::WinCryptoError;
 
@@ -26,7 +26,7 @@ mod sys;
 /// - DTLS 1.2 and 1.3 for secure key exchange (using dimpl + Windows CNG)
 /// - SRTP for encrypted media (using Windows CNG)
 /// - SHA1-HMAC for STUN message integrity (using Windows CNG)
-/// - SHA-256 for certificate fingerprints (using Windows CNG)
+/// - SHA-1 and SHA-256 for certificate fingerprints (using Windows CNG)
 ///
 /// # Example
 ///
@@ -40,12 +40,14 @@ mod sys;
 pub fn default_provider() -> CryptoProvider {
     static SRTP: WinCryptoSrtpProvider = WinCryptoSrtpProvider;
     static SHA1_HMAC: WinCryptoSha1HmacProvider = WinCryptoSha1HmacProvider;
+    static SHA1: DefaultSha1Provider = DefaultSha1Provider;
     static SHA256: WinCryptoSha256Provider = WinCryptoSha256Provider;
     static DTLS: WinCryptoDtlsProvider = WinCryptoDtlsProvider;
 
     CryptoProvider {
         srtp_provider: &SRTP,
         sha1_hmac_provider: &SHA1_HMAC,
+        sha1_provider: &SHA1,
         sha256_provider: &SHA256,
         dtls_provider: &DTLS,
     }

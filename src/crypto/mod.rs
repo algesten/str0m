@@ -2,7 +2,7 @@ use str0m_proto::crypto as provider;
 
 pub use provider::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, AeadAes256GcmCipher};
 pub use provider::{Aes128CmSha1_80, Aes128CmSha1_80Cipher, CryptoProvider, CryptoSafe};
-pub use provider::{Sha1HmacProvider, Sha256Provider};
+pub use provider::{DefaultSha1Provider, Sha1HmacProvider, Sha1Provider, Sha256Provider};
 pub use provider::{SrtpProvider, SupportedAeadAes128Gcm};
 pub use provider::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
@@ -59,7 +59,5 @@ pub fn from_feature_flags() -> CryptoProvider {
 
 mod finger;
 pub use finger::Fingerprint;
-
-mod sha1;
 
 pub use str0m_proto::crypto::{CryptoError, DtlsError};

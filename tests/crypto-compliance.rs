@@ -44,6 +44,17 @@ macro_rules! hex_as_bytes {
     }};
 }
 
+mod sha1 {
+    #[test]
+    fn test_abc() {
+        let provider = super::get_provider().sha1_provider;
+        assert_eq!(
+            provider.sha1(b"abc"),
+            hex_as_bytes!(b"a9993e364706816aba3e25717850c26c9cd0d89d")
+        );
+    }
+}
+
 mod sha256 {
     fn verify_test_vector(input: &[u8], expected: &[u8; 32]) {
         let sha256_provider = super::get_provider().sha256_provider;

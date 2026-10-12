@@ -2,7 +2,7 @@ use core::fmt;
 
 use subtle::ConstantTimeEq;
 
-use super::Sha256Provider;
+use super::CryptoProvider;
 
 /// Certificate fingerprint.
 ///
@@ -41,12 +41,12 @@ impl Fingerprint {
     pub(crate) fn of_certificate(
         der: &[u8],
         hash_func: &str,
-        sha256: &dyn Sha256Provider,
+        provider: &CryptoProvider,
     ) -> Option<Fingerprint> {
         let bytes = if hash_func.eq_ignore_ascii_case("sha-256") {
-            sha256.sha256(der).to_vec()
+            provider.sha256_provider.sha256(der).to_vec()
         } else if hash_func.eq_ignore_ascii_case("sha-1") {
-            super::sha1::sha1(der).to_vec()
+            provider.sha1_provider.sha1(der).to_vec()
         } else {
             return None;
         };

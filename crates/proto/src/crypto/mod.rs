@@ -1,12 +1,15 @@
 mod provider;
 pub use provider::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, AeadAes256GcmCipher};
 pub use provider::{Aes128CmSha1_80, Aes128CmSha1_80Cipher, CryptoProvider, CryptoSafe};
-pub use provider::{DtlsVersion, Sha1HmacProvider, Sha256Provider};
+pub use provider::{DtlsVersion, Sha1HmacProvider, Sha1Provider, Sha256Provider};
 pub use provider::{SrtpProvider, SupportedAeadAes128Gcm};
 pub use provider::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
 mod error;
 pub use error::{CryptoError, DtlsError};
+
+mod sha1;
+pub use sha1::DefaultSha1Provider;
 
 /// DTLS related types and traits.
 pub mod dtls {

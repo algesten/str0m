@@ -10,10 +10,12 @@
 ))]
 
 use std::net::Ipv4Addr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use sha1::{Digest, Sha1};
-use str0m::crypto::Fingerprint;
+use str0m::crypto::{CryptoProvider, Fingerprint, Sha1Provider};
 use str0m::{Candidate, RtcConfig, RtcError};
 use tracing::info_span;
 
@@ -23,20 +25,36 @@ use common::{TestRtc, init_crypto_default, init_log, progress};
 /// Connects L to R, where L expects R's certificate to have the fingerprint
 /// `expected(R's DER certificate)`. Returns L's error, if any.
 fn connect(expected: impl Fn(&[u8]) -> Fingerprint) -> Result<(), RtcError> {
+    connect_with_provider(expected, str0m::crypto::from_feature_flags())
+}
+
+fn connect_with_provider(
+    expected: impl Fn(&[u8]) -> Fingerprint,
+    provider: CryptoProvider,
+) -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let cert = str0m::crypto::from_feature_flags()
+    let cert = provider
         .dtls_provider
         .generate_certificate()
         .expect("the provider generates certificates");
     let finger_r = expected(&cert.certificate);
 
     let now = Instant::now();
-    let mut l = TestRtc::new_with_rtc(info_span!("L"), RtcConfig::new().build(now));
+    let provider = Arc::new(provider);
+    let mut l = TestRtc::new_with_rtc(
+        info_span!("L"),
+        RtcConfig::new()
+            .set_crypto_provider(provider.clone())
+            .build(now),
+    );
     let mut r = TestRtc::new_with_rtc(
         info_span!("R"),
-        RtcConfig::new().set_dtls_cert(cert).build(now),
+        RtcConfig::new()
+            .set_crypto_provider(provider)
+            .set_dtls_cert(cert)
+            .build(now),
     );
 
     let host_l = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
@@ -80,6 +98,26 @@ fn sha1_fingerprint(hash_func: &str, der: &[u8]) -> Fingerprint {
 #[test]
 fn sha1_fingerprint_is_verified() -> Result<(), RtcError> {
     connect(|der| sha1_fingerprint("sha-1", der))
+}
+
+#[test]
+fn sha1_fingerprint_uses_configured_provider() -> Result<(), RtcError> {
+    #[derive(Debug)]
+    struct TrackingSha1(AtomicUsize);
+
+    impl Sha1Provider for TrackingSha1 {
+        fn sha1(&self, data: &[u8]) -> [u8; 20] {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Sha1::digest(data).into()
+        }
+    }
+
+    static SHA1: TrackingSha1 = TrackingSha1(AtomicUsize::new(0));
+    let mut provider = str0m::crypto::from_feature_flags();
+    provider.sha1_provider = &SHA1;
+    connect_with_provider(|der| sha1_fingerprint("sha-1", der), provider)?;
+    assert_eq!(SHA1.0.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
 #[test]

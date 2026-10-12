@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Support SHA-1 remote DTLS fingerprints #1072
+  * Support SHA-1 remote DTLS fingerprints via the crypto provider (breaking) #1072
   * Prevent accumulated rounding error in TWCC receive timing #1071
   * Pace per-packet NACK retries by receive-side RTT and fix DLRR RTT routing #1070
   * Send on a nominated ICE pair only after its check succeeds #1066

@@ -2,12 +2,24 @@
 //!
 //! RFC 8122 lets a peer announce its DTLS certificate fingerprint with any
 //! hash function from the IANA "Hash Function Textual Names" registry, and
-//! some deployed endpoints (e.g. media gateways) still use `sha-1`. The
-//! crypto providers only offer SHA-256, so this small implementation keeps
-//! sha-1 verification independent of the provider in use.
+//! some deployed endpoints (e.g. media gateways) still use `sha-1`.
+
+use super::Sha1Provider;
+
+/// Default SHA-1 provider for legacy certificate fingerprints.
+///
+/// Crypto providers can use this implementation or supply their own [`Sha1Provider`].
+#[derive(Debug)]
+pub struct DefaultSha1Provider;
+
+impl Sha1Provider for DefaultSha1Provider {
+    fn sha1(&self, data: &[u8]) -> [u8; 20] {
+        sha1(data)
+    }
+}
 
 /// The SHA-1 digest of `data` (FIPS 180-4).
-pub(crate) fn sha1(data: &[u8]) -> [u8; 20] {
+fn sha1(data: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [
         0x6745_2301,
         0xEFCD_AB89,
@@ -86,19 +98,21 @@ mod test {
 
     #[test]
     fn fips_180_vectors() {
-        assert_eq!(hex(&sha1(b"")), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
         assert_eq!(
-            hex(&sha1(b"abc")),
+            hex(&DefaultSha1Provider.sha1(b"")),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
+        assert_eq!(
+            hex(&DefaultSha1Provider.sha1(b"abc")),
             "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
         assert_eq!(
-            hex(&sha1(
-                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
-            )),
+            hex(&DefaultSha1Provider
+                .sha1(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
             "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
         );
         assert_eq!(
-            hex(&sha1(&[b'a'; 1_000_000])),
+            hex(&DefaultSha1Provider.sha1(&[b'a'; 1_000_000])),
             "34aa973cd4c4daa4f61eeb2bdbad27316534016f"
         );
     }
@@ -114,7 +128,11 @@ mod test {
             (65, "11655326c708d70319be2610e8a57d9a5b959d3b"),
         ];
         for (len, digest) in expected {
-            assert_eq!(hex(&sha1(&vec![b'a'; len])), digest, "length {len}");
+            assert_eq!(
+                hex(&DefaultSha1Provider.sha1(&vec![b'a'; len])),
+                digest,
+                "length {len}"
+            );
         }
     }
 }

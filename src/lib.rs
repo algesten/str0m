@@ -1676,12 +1676,16 @@ impl Rtc {
                     // Compute the fingerprint of the peer's DER certificate with the hash
                     // function of the expected one (RFC 8122 §5): sha-256, or sha-1 as some
                     // endpoints still announce. sha-256 when there is none to compare with.
-                    let sha256 = self.crypto_provider.sha256_provider;
+                    let provider = &self.crypto_provider;
                     let matching = self.remote_fingerprint.as_ref().and_then(|expected| {
-                        crate::crypto::Fingerprint::of_certificate(der, &expected.hash_func, sha256)
+                        crate::crypto::Fingerprint::of_certificate(
+                            der,
+                            &expected.hash_func,
+                            provider,
+                        )
                     });
                     let fingerprint = matching.clone().unwrap_or_else(|| {
-                        crate::crypto::Fingerprint::of_certificate(der, "sha-256", sha256)
+                        crate::crypto::Fingerprint::of_certificate(der, "sha-256", provider)
                             .expect("sha-256 is supported")
                     });
                     self.dtls.set_remote_fingerprint(fingerprint.clone());
