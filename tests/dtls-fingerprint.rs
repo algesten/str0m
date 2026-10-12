@@ -115,3 +115,62 @@ fn unsupported_hash_function_is_rejected() {
         "{error}"
     );
 }
+
+#[test]
+fn stronger_fingerprint_mismatch_must_be_rejected() {
+    init_log();
+    init_crypto_default();
+    let provider = str0m::crypto::from_feature_flags();
+    let cert = provider.dtls_provider.generate_certificate().unwrap();
+    let weak = Fingerprint {
+        hash_func: "sha-1".into(),
+        bytes: Sha1::digest(&cert.certificate).to_vec(),
+    };
+    let strong = Fingerprint {
+        hash_func: "sha-256".into(),
+        bytes: vec![0; 32],
+    };
+    let now = Instant::now();
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), RtcConfig::new().build(now));
+    let mut r = TestRtc::new_with_rtc(
+        info_span!("R"),
+        RtcConfig::new().set_dtls_cert(cert).build(now),
+    );
+    l.add_local_candidate(
+        Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap(),
+    )
+    .unwrap();
+    r.add_local_candidate(
+        Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap(),
+    )
+    .unwrap();
+    let mut change = l.sdp_api();
+    change.add_channel("test".into());
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.sdp_api().accept_offer(offer).unwrap();
+    let sdp = answer.to_sdp_string();
+    let rewritten = sdp
+        .lines()
+        .map(|line| {
+            if line.starts_with("a=fingerprint:") {
+                format!("a=fingerprint:{weak}\r\na=fingerprint:{strong}\r\n")
+            } else {
+                format!("{line}\r\n")
+            }
+        })
+        .collect::<String>();
+    l.sdp_api()
+        .accept_answer(
+            pending,
+            str0m::change::SdpAnswer::from_sdp_string(&rewritten).unwrap(),
+        )
+        .unwrap();
+    while !(l.is_connected() && r.is_connected()) {
+        assert!(l.duration() < Duration::from_secs(5));
+        if let Err(error) = progress(&mut l, &mut r) {
+            assert!(error.to_string().contains("remote fingerprint no match"));
+            return;
+        }
+    }
+    panic!("connected despite a mismatched offered SHA-256 fingerprint");
+}
