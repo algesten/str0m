@@ -20,6 +20,18 @@ pub struct Fingerprint {
 }
 
 impl Fingerprint {
+    /// Prefer SHA-256 to SHA-1, and supported algorithms to unsupported ones.
+    /// Lower values mean higher preference (RFC 8122 §5.1).
+    pub(crate) fn hash_preference(&self) -> u8 {
+        if self.hash_func.eq_ignore_ascii_case("sha-256") {
+            0
+        } else if self.hash_func.eq_ignore_ascii_case("sha-1") {
+            1
+        } else {
+            2
+        }
+    }
+
     /// The fingerprint of a DER certificate made with `hash_func`, the hash
     /// function the remote SDP names (RFC 8122 §5, case-insensitive). Only
     /// `sha-256` and `sha-1` are supported; `None` for any other.
