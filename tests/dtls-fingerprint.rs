@@ -14,7 +14,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use sha1::{Digest, Sha1};
 use str0m::crypto::{CryptoProvider, Fingerprint, Sha1Provider};
 use str0m::{Candidate, RtcConfig, RtcError};
 use tracing::info_span;
@@ -88,10 +87,16 @@ fn connect_with_provider(
     Ok(())
 }
 
+fn reference_sha1(data: &[u8]) -> [u8; 20] {
+    str0m_rust_crypto::default_provider()
+        .sha1_provider
+        .sha1(data)
+}
+
 fn sha1_fingerprint(hash_func: &str, der: &[u8]) -> Fingerprint {
     Fingerprint {
         hash_func: hash_func.into(),
-        bytes: Sha1::digest(der).to_vec(),
+        bytes: reference_sha1(der).to_vec(),
     }
 }
 
@@ -108,7 +113,7 @@ fn sha1_fingerprint_uses_configured_provider() -> Result<(), RtcError> {
     impl Sha1Provider for TrackingSha1 {
         fn sha1(&self, data: &[u8]) -> [u8; 20] {
             self.0.fetch_add(1, Ordering::SeqCst);
-            Sha1::digest(data).into()
+            reference_sha1(data)
         }
     }
 
@@ -162,7 +167,7 @@ fn stronger_fingerprint_mismatch_must_be_rejected() {
     let cert = provider.dtls_provider.generate_certificate().unwrap();
     let weak = Fingerprint {
         hash_func: "sha-1".into(),
-        bytes: Sha1::digest(&cert.certificate).to_vec(),
+        bytes: reference_sha1(&cert.certificate).to_vec(),
     };
     let strong = Fingerprint {
         hash_func: "sha-256".into(),
