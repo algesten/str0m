@@ -522,9 +522,10 @@ impl RtcConfig {
         self.reordering_size_audio
     }
 
-    /// Sets how long the oldest audio frame may wait to finish or for missing earlier packets.
+    /// Sets how long an audio frame waits for missing earlier packets.
     ///
-    /// On expiry, an incomplete frame is dropped; a complete frame can move past a gap.
+    /// A complete candidate's deadline starts at its earliest packet receipt.
+    /// At that deadline, it can move past a gap and discard earlier incomplete data.
     /// Later frames stay buffered and retain their own deadlines. The default is 1 second.
     /// `None` disables this deadline and keeps count-based waiting only.
     /// Applies to audio streams in frame mode, not RTP mode.
@@ -575,16 +576,16 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
-    /// Sets how long the oldest video frame may wait to finish or for missing earlier packets.
+    /// Sets how long a video frame waits for missing earlier packets.
     ///
-    /// Frames are considered in sequence order. Each deadline starts when that frame's first
-    /// packet arrives. On expiry, an incomplete frame is dropped; a complete frame can move
-    /// past a gap. Later frames remain buffered with their own deadlines. Reordering or RTX
-    /// can complete a frame before its deadline. The existing frame count limit can release
-    /// complete frames earlier.
+    /// Frames are considered in sequence order. A complete candidate's deadline is its
+    /// earliest packet receipt plus the timeout, not the arrival of older incomplete data.
+    /// At that deadline, it can move past a gap and discard earlier incomplete data.
+    /// A frame still arriving without a complete later candidate is not expired by this timeout.
+    /// The existing frame count and packet capacity limits still apply.
     ///
     /// The default is 2 seconds. `None` disables this deadline and keeps count-based waiting
-    /// only. `Some(Duration::ZERO)` expires an incomplete frame immediately. This setting
+    /// only. `Some(Duration::ZERO)` skips waiting once a complete later candidate exists. This setting
     /// applies to video streams in frame mode, not audio or
     /// [`RTP mode`](RtcConfig::set_rtp_mode).
     pub fn set_reordering_timeout_video(mut self, timeout: Option<Duration>) -> Self {

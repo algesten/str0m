@@ -301,8 +301,13 @@ impl DepacketizingBuffer {
         self.update_segments();
 
         if reordering_timeout.is_some() {
-            if let Some((end, first_received)) = self.first_incomplete_frame() {
-                if self.timeout_allows_progress(now, first_received, reordering_timeout) {
+            if let Some((end, _)) = self.first_incomplete_frame() {
+                if self
+                    .complete_segment_received_after(end)
+                    .is_some_and(|received| {
+                        self.timeout_allows_progress(now, received, reordering_timeout)
+                    })
+                {
                     let last = self.queue[end - 1].meta.seq_no;
                     self.queue.drain(0..end);
                     self.segments_dirty = true;
@@ -330,7 +335,12 @@ impl DepacketizingBuffer {
         // that fallback for count-only mode, but with a timeout the oldest
         // frame must expire before any later frame is considered.
         if reordering_timeout.is_some() && !self.queue[stop].tail {
-            if self.timeout_allows_progress(now, first_received, reordering_timeout) {
+            if self
+                .complete_segment_received_after(stop + 1)
+                .is_some_and(|received| {
+                    self.timeout_allows_progress(now, received, reordering_timeout)
+                })
+            {
                 let last = self.queue[stop].meta.seq_no;
                 self.consume_segment(stop);
                 self.last_processed = Some(LastProcessed::Expired(last));
@@ -422,14 +432,18 @@ impl DepacketizingBuffer {
         let timeout = reordering_timeout?;
         self.update_segments();
 
-        if let Some((_, first_received)) = self.first_incomplete_frame() {
-            return first_received.checked_add(timeout);
+        if let Some((end, _)) = self.first_incomplete_frame() {
+            return self
+                .complete_segment_received_after(end)?
+                .checked_add(timeout);
         }
 
         let (start, stop, first_received) = self.first_segment()?;
 
         if !self.queue[stop].tail {
-            return first_received.checked_add(timeout);
+            return self
+                .complete_segment_received_after(stop + 1)?
+                .checked_add(timeout);
         }
 
         let contiguous_seq = !matches!(self.last_processed, Some(LastProcessed::Expired(_)))
@@ -553,6 +567,13 @@ impl DepacketizingBuffer {
                 stop - self.segments_offset,
                 received,
             )
+        })
+    }
+
+    fn complete_segment_received_after(&self, end: usize) -> Option<Instant> {
+        self.segments.iter().find_map(|&(start, stop, received)| {
+            (start - self.segments_offset >= end && self.queue[stop - self.segments_offset].tail)
+                .then_some(received)
         })
     }
 
@@ -1419,7 +1440,7 @@ mod test {
         );
     }
 
-    /// A zero timeout drops an incomplete frame immediately; a later complete frame survives.
+    /// Even zero timeout waits until there is a complete later candidate.
     #[test]
     fn timeout_zero_drops_incomplete_then_emits_later_complete_frame() {
         let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
@@ -1436,9 +1457,15 @@ mod test {
             buf.pop(base + Duration::from_millis(100), Some(Duration::ZERO))
                 .is_none()
         );
-        assert!(buf.queue.is_empty());
+        assert_eq!(buf.queue.len(), 1);
+        assert_eq!(buf.poll_timeout(Some(Duration::ZERO)), None);
 
         buf.push(test_meta(base, 4, 4, 200), [1]);
+        assert_eq!(buf.poll_timeout(Some(Duration::ZERO)), None);
+        assert!(
+            buf.pop(base + Duration::from_millis(200), Some(Duration::ZERO))
+                .is_none()
+        );
         buf.push(test_meta(base, 5, 4, 200), [9]);
         let dep = buf
             .pop(base + Duration::from_millis(200), Some(Duration::ZERO))
@@ -1470,7 +1497,7 @@ mod test {
 
             buf.push(test_meta(base, 3, 3, 100), [1]);
             let deadline = base + Duration::from_millis(350);
-            assert_eq!(buf.poll_timeout(timeout), Some(deadline));
+            assert_eq!(buf.poll_timeout(timeout), None);
             assert!(
                 buf.pop(deadline - Duration::from_nanos(1), timeout)
                     .is_none()
@@ -1492,23 +1519,112 @@ mod test {
                 assert!(!dep.contiguous);
             } else {
                 assert!(buf.pop(deadline, timeout).is_none());
-                assert!(buf.queue.is_empty());
+                assert_eq!(buf.queue.len(), 1);
+                assert_eq!(buf.poll_timeout(timeout), None);
                 buf.push(test_meta(base, 4, 3, complete_ms), [9]);
-                assert_eq!(
-                    buf.poll_timeout(timeout),
-                    Some(base + Duration::from_millis(complete_ms + 250))
-                );
-                assert!(
-                    buf.pop(base + Duration::from_millis(complete_ms + 250), timeout)
-                        .is_none()
-                );
+                let dep = buf
+                    .pop(base + Duration::from_millis(complete_ms), timeout)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (3, 4));
+                assert!(!dep.contiguous);
                 assert_eq!(buf.poll_timeout(timeout), None);
             }
             assert_eq!(buf.poll_timeout(timeout), None);
         }
     }
 
-    /// An earlier incomplete frame expires before a later complete frame with reordered receipts.
+    #[test]
+    fn timeout_keeps_slow_in_order_frame_without_a_later_candidate() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        buf.push(test_meta(base, 2, 2, 100), [1]);
+        assert_eq!(buf.poll_timeout(timeout), None);
+        let late = base + Duration::from_millis(1000);
+        assert!(buf.pop(late, timeout).is_none());
+        assert_eq!(buf.queue.len(), 1);
+        assert_eq!(buf.poll_timeout(timeout), None);
+        buf.push(test_meta(base, 3, 2, 1000), [9]);
+        let dep = buf.pop(late, timeout).unwrap().unwrap();
+        assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (2, 3));
+        assert!(dep.contiguous);
+        assert_eq!(buf.poll_timeout(timeout), None);
+    }
+
+    #[test]
+    fn timeout_waits_for_later_frame_completion_with_or_without_sequence_gap() {
+        for later_start in [3, 4] {
+            let base = Instant::now();
+            let timeout = Some(Duration::from_millis(250));
+            let mut buf =
+                DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+            buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+            buf.pop(base, timeout).unwrap().unwrap();
+            buf.push(test_meta(base, 2, 2, 100), [1]);
+            buf.push(test_meta(base, later_start, 3, 200), [1]);
+            let late = base + Duration::from_millis(1000);
+            assert_eq!(buf.poll_timeout(timeout), None);
+            assert!(buf.pop(late, timeout).is_none());
+            assert_eq!(buf.queue.len(), 2);
+            assert_eq!(buf.poll_timeout(timeout), None);
+            buf.push(test_meta(base, later_start + 1, 3, 1000), [9]);
+            assert_eq!(
+                buf.poll_timeout(timeout),
+                Some(base + Duration::from_millis(450))
+            );
+            let dep = buf.pop(late, timeout).unwrap().unwrap();
+            assert_eq!(
+                (**dep.seq_range().start(), **dep.seq_range().end()),
+                (later_start, later_start + 1)
+            );
+            assert!(!dep.contiguous);
+            assert!(buf.queue.is_empty());
+            assert_eq!(buf.poll_timeout(timeout), None);
+        }
+    }
+
+    #[test]
+    fn timeout_grace_starts_at_later_candidate_not_old_incomplete_frame() {
+        let base = Instant::now();
+        let timeout = Some(Duration::from_millis(250));
+        let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
+        buf.push(test_meta(base, 1, 1, 0), [1, 9]);
+        buf.pop(base, timeout).unwrap().unwrap();
+        buf.push(test_meta(base, 2, 2, 100), [1]);
+        let later = base + Duration::from_millis(1000);
+        assert!(buf.pop(later, timeout).is_none());
+        assert_eq!(buf.poll_timeout(timeout), None);
+
+        buf.push(test_meta(base, 4, 3, 1000), [1, 9]);
+        assert_eq!(
+            buf.poll_timeout(timeout),
+            Some(base + Duration::from_millis(1250))
+        );
+        assert!(buf.pop(later, timeout).is_none());
+        assert_eq!(buf.queue.len(), 2);
+
+        // RTX can finish the older frame during the later candidate's grace period.
+        let recovered = base + Duration::from_millis(1100);
+        buf.push(test_meta(base, 3, 2, 1100), [9]);
+        let first = buf.pop(recovered, timeout).unwrap().unwrap();
+        assert_eq!(
+            (**first.seq_range().start(), **first.seq_range().end()),
+            (2, 3)
+        );
+        assert!(first.contiguous);
+        let next = buf.pop(recovered, timeout).unwrap().unwrap();
+        assert_eq!(
+            (**next.seq_range().start(), **next.seq_range().end()),
+            (4, 4)
+        );
+        assert!(next.contiguous);
+        assert_eq!(buf.poll_timeout(timeout), None);
+    }
+
+    /// The complete candidate's earliest receipt controls the grace period for older data.
     #[test]
     fn timeout_uses_earliest_receipt_with_reordered_packets() {
         for received_ms in [[100, 200, 150], [200, 100, 150], [200, 150, 100]] {
@@ -1530,21 +1646,13 @@ mod test {
                 buf.push(meta, data);
             }
 
-            let deadline = base + Duration::from_millis(275);
+            let deadline = base + Duration::from_millis(350);
             assert_eq!(buf.poll_timeout(timeout), Some(deadline));
             assert!(
                 buf.pop(deadline - Duration::from_nanos(1), timeout)
                     .is_none()
             );
-            assert!(buf.pop(deadline, timeout).is_none());
-            assert_eq!(
-                buf.poll_timeout(timeout),
-                Some(base + Duration::from_millis(350))
-            );
-            let dep = buf
-                .pop(base + Duration::from_millis(350), timeout)
-                .unwrap()
-                .unwrap();
+            let dep = buf.pop(deadline, timeout).unwrap().unwrap();
             assert_eq!((**dep.seq_range().start(), **dep.seq_range().end()), (4, 6));
             assert_eq!(dep.data, [1, 2, 9]);
             assert_eq!(dep.first_network_time(), base + Duration::from_millis(100));
@@ -1553,7 +1661,7 @@ mod test {
         }
     }
 
-    /// The next frame's timeout wins even when a later complete frame arrived earlier.
+    /// A complete candidate keeps its deadline when earlier incomplete data arrives later.
     #[test]
     fn timeout_drops_only_oldest_incomplete_frame() {
         let base = Instant::now();
@@ -1570,7 +1678,7 @@ mod test {
         buf.push(test_meta(base, 3, 3, 100), [1]);
         buf.push(test_meta(base, 4, 3, 150), [2]);
 
-        let deadline = base + Duration::from_millis(350);
+        let deadline = base + Duration::from_millis(300);
         assert_eq!(buf.poll_timeout(timeout), Some(deadline));
         assert!(
             buf.pop(deadline - Duration::from_nanos(1), timeout)
@@ -1586,7 +1694,7 @@ mod test {
     }
 
     #[test]
-    fn timeout_preserves_each_later_frame_until_its_own_deadline() {
+    fn timeout_preserves_incomplete_frames_until_complete_candidate_deadline() {
         let base = Instant::now();
         let timeout = Some(Duration::from_millis(250));
         let mut buf = DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepack)), 3);
@@ -1596,7 +1704,7 @@ mod test {
 
         assert_eq!(
             buf.poll_timeout(timeout),
-            Some(base + Duration::from_millis(250))
+            Some(base + Duration::from_millis(450))
         );
         assert!(
             buf.pop(base + Duration::from_millis(250), timeout)
@@ -1607,11 +1715,11 @@ mod test {
                 .iter()
                 .map(|entry| *entry.meta.seq_no)
                 .collect::<Vec<_>>(),
-            [2, 3]
+            [1, 2, 3]
         );
         assert_eq!(
             buf.poll_timeout(timeout),
-            Some(base + Duration::from_millis(350))
+            Some(base + Duration::from_millis(450))
         );
         assert!(
             buf.pop(base + Duration::from_millis(350), timeout)
@@ -1622,7 +1730,7 @@ mod test {
                 .iter()
                 .map(|entry| *entry.meta.seq_no)
                 .collect::<Vec<_>>(),
-            [3]
+            [1, 2, 3]
         );
         assert_eq!(
             buf.poll_timeout(timeout),

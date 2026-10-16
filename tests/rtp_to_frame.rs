@@ -530,9 +530,9 @@ fn video_reorder_timeout_h264_fragments() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// An H264 fragment tail arriving after the frame deadline cannot revive it.
+/// A slow H264 frame may complete after its deadline when no complete later frame exists.
 #[test]
-fn video_reorder_timeout_h264_incomplete_frame_expires() -> Result<(), RtcError> {
+fn video_reorder_timeout_h264_slow_frame_completes() -> Result<(), RtcError> {
     let mut t = VideoTest::with_codec(
         Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(250))),
         false,
@@ -541,13 +541,21 @@ fn video_reorder_timeout_h264_incomplete_frame_expires() -> Result<(), RtcError>
     t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
     t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
     t.advance_to(t.now + Duration::from_millis(300))?;
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
     t.write(1337.into(), 47_003, 2000, &[0x7c, 0x45, 0x33], true)?;
-    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_002, 47_003, false)]
+    );
     t.write(1337.into(), 47_004, 3000, &[0x61, 0x44], true)?;
     t.advance_to(t.now + Duration::from_millis(600))?;
     assert_eq!(
         t.received_frames(),
-        [(47_000, 47_000, true), (47_004, 47_004, false)]
+        [
+            (47_000, 47_000, true),
+            (47_002, 47_003, false),
+            (47_004, 47_004, true)
+        ]
     );
     Ok(())
 }
@@ -819,7 +827,7 @@ fn video_reorder_timeout_rtx_after_release() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// None preserves count-only waiting; zero discards each incomplete frame at once.
+/// Zero timeout skips an incomplete frame only after the later frame is complete.
 #[test]
 fn video_reorder_timeout_none_and_zero_on_partial_frames() -> Result<(), RtcError> {
     for policy in [None, Some(Duration::ZERO)] {
@@ -832,11 +840,9 @@ fn video_reorder_timeout_none_and_zero_on_partial_frames() -> Result<(), RtcErro
         assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
         t.write(1337.into(), 47_004, 200, &[0x00, 0], true)?;
         if policy.is_some() {
-            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-            t.write(1337.into(), 47_005, 300, &[0x10, 0, 0], true)?;
             assert_eq!(
                 t.received_frames(),
-                [(47_000, 47_000, true), (47_005, 47_005, false)]
+                [(47_000, 47_000, true), (47_003, 47_004, false)]
             );
         } else {
             assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
@@ -934,7 +940,7 @@ fn video_new_frame_after_paused_incomplete_frame_makes_progress() -> Result<(), 
     Ok(())
 }
 
-/// A new frame after a pause must not implicitly complete the old frame's missing tail.
+/// A new frame after a pause must complete before the old frame can expire.
 #[test]
 fn video_new_frame_start_drops_paused_incomplete_frame() -> Result<(), RtcError> {
     let mut t = VideoTest::new(
@@ -947,7 +953,9 @@ fn video_new_frame_start_drops_paused_incomplete_frame() -> Result<(), RtcError>
 
     // Same SSRC and consecutive sequence numbers, but a new VP8 frame starts.
     t.write(1337.into(), 47_001, 2000, &[0x10, 0, 0], false)?;
+    t.advance_to(t.now + Duration::from_millis(2200))?;
     assert_eq!(t.received_frames(), [(46_999, 46_999, true)]);
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
     t.write(1337.into(), 47_002, 2000, &[0x00, 0], true)?;
     t.advance_to(t.now + Duration::from_millis(2200))?;
     assert_eq!(
