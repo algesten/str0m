@@ -44,6 +44,54 @@ macro_rules! hex_as_bytes {
     }};
 }
 
+mod sha1 {
+    fn hash(input: &[u8]) -> String {
+        super::get_provider()
+            .sha1_provider
+            .sha1(input)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    #[test]
+    fn test_abc() {
+        let provider = super::get_provider().sha1_provider;
+        assert_eq!(
+            provider.sha1(b"abc"),
+            hex_as_bytes!(b"a9993e364706816aba3e25717850c26c9cd0d89d")
+        );
+    }
+
+    #[test]
+    fn fips_180_vectors() {
+        assert_eq!(hash(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(hash(b"abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+        assert_eq!(
+            hash(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
+        );
+        assert_eq!(
+            hash(&[b'a'; 1_000_000]),
+            "34aa973cd4c4daa4f61eeb2bdbad27316534016f"
+        );
+    }
+
+    #[test]
+    fn padding_boundaries() {
+        let expected = [
+            (55, "c1c8bbdc22796e28c0e15163d20899b65621d65a"),
+            (56, "c2db330f6083854c99d4b5bfb6e8f29f201be699"),
+            (63, "03f09f5b158a7a8cdad920bddc29b81c18a551f5"),
+            (64, "0098ba824b5c16427bd7a1122a5a442a25ec644d"),
+            (65, "11655326c708d70319be2610e8a57d9a5b959d3b"),
+        ];
+        for (len, digest) in expected {
+            assert_eq!(hash(&vec![b'a'; len]), digest, "length {len}");
+        }
+    }
+}
+
 mod sha256 {
     fn verify_test_vector(input: &[u8], expected: &[u8; 32]) {
         let sha256_provider = super::get_provider().sha256_provider;

@@ -1,10 +1,19 @@
-//! SHA1-HMAC implementation using OpenSSL.
+//! SHA-1 hash and HMAC implementations using OpenSSL.
 
 use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
 use openssl::sign::Signer;
 
-use str0m_proto::crypto::Sha1HmacProvider;
+use str0m_proto::crypto::{Sha1HmacProvider, Sha1Provider};
+
+#[derive(Debug)]
+pub(super) struct OsslSha1Provider;
+
+impl Sha1Provider for OsslSha1Provider {
+    fn sha1(&self, data: &[u8]) -> [u8; 20] {
+        openssl::sha::sha1(data)
+    }
+}
 
 // ============================================================================
 // SHA1 HMAC Provider Implementation

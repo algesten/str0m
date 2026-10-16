@@ -182,12 +182,14 @@ impl Session {
     }
 
     pub fn fingerprint(&self) -> Option<Fingerprint> {
-        for a in &self.attrs {
-            if let SessionAttribute::Fingerprint(v) = a {
-                return Some(v.clone());
-            }
-        }
-        None
+        self.attrs
+            .iter()
+            .filter_map(|a| match a {
+                SessionAttribute::Fingerprint(v) => Some(v),
+                _ => None,
+            })
+            .min_by_key(|v| v.hash_preference())
+            .cloned()
     }
 
     pub fn ice_lite(&self) -> bool {
@@ -548,12 +550,14 @@ impl MediaLine {
         })
     }
     pub fn fingerprint(&self) -> Option<Fingerprint> {
-        for a in &self.attrs {
-            if let MediaAttribute::Fingerprint(v) = a {
-                return Some(v.clone());
-            }
-        }
-        None
+        self.attrs
+            .iter()
+            .filter_map(|a| match a {
+                MediaAttribute::Fingerprint(v) => Some(v),
+                _ => None,
+            })
+            .min_by_key(|v| v.hash_preference())
+            .cloned()
     }
 
     /// This hoovers the ice candidates from all m-lines, lots of dupes.
@@ -1654,6 +1658,33 @@ mod test {
     use crate::rtp_::{Extension, Frequency};
 
     use super::*;
+
+    #[test]
+    fn fingerprint_hash_preference_at_session_and_media_level() {
+        for (hashes, expected) in [
+            (vec!["sha-1", "SHA-256"], "SHA-256"),
+            (vec!["sha-256", "SHA-1"], "sha-256"),
+            (vec!["sha-512", "SHA-1"], "SHA-1"),
+            (vec!["sha-512", "sha-256"], "sha-256"),
+            (vec!["sha-512", "md5"], "sha-512"),
+        ] {
+            for session_level in [false, true] {
+                let fingerprints = hashes
+                    .iter()
+                    .map(|hash| format!("a=fingerprint:{hash} 00:01\r\n"))
+                    .collect::<String>();
+                let header = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
+                let media = "m=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=mid:0\r\na=sendrecv\r\n";
+                let sdp = if session_level {
+                    format!("{header}{fingerprints}{media}")
+                } else {
+                    format!("{header}{media}{fingerprints}")
+                };
+                let parsed = Sdp::parse(&sdp).unwrap();
+                assert_eq!(parsed.fingerprint().unwrap().hash_func, expected);
+            }
+        }
+    }
 
     #[test]
     fn remote_twcc_feedback_is_explicit_and_per_payload_type() {

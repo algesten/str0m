@@ -7,7 +7,7 @@ mod sha256;
 mod srtp;
 
 use dtls::AwsLcRsDtlsProvider;
-use sha1::AwsLcRsSha1HmacProvider;
+use sha1::{AwsLcRsSha1HmacProvider, AwsLcRsSha1Provider};
 use sha256::AwsLcRsSha256Provider;
 use srtp::AwsLcRsSrtpProvider;
 use str0m_proto::crypto::CryptoProvider;
@@ -18,7 +18,7 @@ use str0m_proto::crypto::CryptoProvider;
 /// - DTLS 1.2 for secure key exchange (using dimpl protocol + AWS-LC-RS)
 /// - SRTP for encrypted media
 /// - SHA1-HMAC for STUN message integrity
-/// - SHA-256 for certificate fingerprints
+/// - SHA-1 and SHA-256 for certificate fingerprints
 ///
 /// # Supported SRTP Profiles
 ///
@@ -28,12 +28,14 @@ use str0m_proto::crypto::CryptoProvider;
 pub fn default_provider() -> CryptoProvider {
     static SRTP: AwsLcRsSrtpProvider = AwsLcRsSrtpProvider;
     static SHA1_HMAC: AwsLcRsSha1HmacProvider = AwsLcRsSha1HmacProvider;
+    static SHA1: AwsLcRsSha1Provider = AwsLcRsSha1Provider;
     static SHA256: AwsLcRsSha256Provider = AwsLcRsSha256Provider;
     static DTLS: AwsLcRsDtlsProvider = AwsLcRsDtlsProvider;
 
     CryptoProvider {
         srtp_provider: &SRTP,
         sha1_hmac_provider: &SHA1_HMAC,
+        sha1_provider: &SHA1,
         sha256_provider: &SHA256,
         dtls_provider: &DTLS,
     }
