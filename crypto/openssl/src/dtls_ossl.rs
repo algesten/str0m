@@ -13,10 +13,9 @@ use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::X509;
 
 use str0m_proto::DATAGRAM_MTU_TARGET;
-use str0m_proto::crypto::dtls::{
-    DtlsCert, DtlsCryptoError, DtlsCryptoOperation, KeyingMaterial, ProtocolVersion, SrtpProfile,
-};
+use str0m_proto::crypto::dtls::{DtlsCert, DtlsCryptoError, DtlsCryptoOperation};
 use str0m_proto::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::dtls::{KeyingMaterial, ProtocolVersion, SrtpProfile};
 use str0m_proto::crypto::{CryptoError, DtlsVersion};
 
 // ============================================================================

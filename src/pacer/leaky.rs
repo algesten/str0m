@@ -296,7 +296,7 @@ impl LeakyBucketPacer {
                     // buffers. Below ~12.6 Mbps this is PACING.
                     let burst_interval = PACING.min(MAX_BURST_SIZE / self.adjusted_bitrate);
                     let next_send_offset = if drain_debt_time >= burst_interval {
-                        // If we have incurred too much debt we need to wait to let it clear out before sending
+                        // If we have incurred too much debt, wait for it to clear before sending.
                         // again.
                         drain_debt_time
                     } else {

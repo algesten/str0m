@@ -12,7 +12,7 @@ impl H264ProfileLevel {
     // specifies Level3_1 to not break backwards compatibility and we copy them.
     // When libWebRTC updates we are probably safe to do the same.
     //
-    // See: https://webrtc.googlesource.com/src/+/refs/heads/main/api/video_codecs/h264_profile_level_id.cc#182
+    // See: https://webrtc.googlesource.com/src/+/main/api/video_codecs/h264_profile_level_id.cc#182
     pub(crate) const FALLBACK: Self = Self {
         profile: H264Profile::Baseline,
         level_idc: H264LevelIdc::Level3_1,

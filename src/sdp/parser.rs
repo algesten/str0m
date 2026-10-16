@@ -156,7 +156,8 @@ where
     // a=ice-options:trickle
     let ice_opt = attribute_line("ice-options", any_value()).map(SessionAttribute::IceOptions);
 
-    // a=fingerprint:sha-256 45:AD:5C:82:F8:BE:B5:2A:D1:74:A6:16:D0:50:CD:86:9C:97:9D:BD:06:8C:C9:85:C9:CD:AB:2B:A8:56:03:CD
+    // a=fingerprint:sha-256 45:AD:5C:82:F8:BE:B5:2A:D1:74:A6:16:D0:50:CD:86:9C:97:9D:BD:06:\
+    // 8C:C9:85:C9:CD:AB:2B:A8:56:03:CD
     // "sha-1" / "sha-224" / "sha-256" /
     // "sha-384" / "sha-512" /
     // "md5" / "md2"
@@ -449,7 +450,8 @@ where
     // a=ice-options:trickle
     let ice_opt = attribute_line("ice-options", any_value()).map(MediaAttribute::IceOptions);
 
-    // a=fingerprint:sha-256 45:AD:5C:82:F8:BE:B5:2A:D1:74:A6:16:D0:50:CD:86:9C:97:9D:BD:06:8C:C9:85:C9:CD:AB:2B:A8:56:03:CD
+    // a=fingerprint:sha-256 45:AD:5C:82:F8:BE:B5:2A:D1:74:A6:16:D0:50:CD:86:9C:97:9D:BD:06:\
+    // 8C:C9:85:C9:CD:AB:2B:A8:56:03:CD
     // "sha-1" / "sha-224" / "sha-256" /
     // "sha-384" / "sha-512" /
     // "md5" / "md2"
@@ -1161,7 +1163,9 @@ mod test {
             o=mozilla...THIS_IS_SDPARTA-83.0 7052848360639826063 0 IN IP4 0.0.0.0\r\n\
             s=-\r\n\
             t=0 0\r\n\
-            a=fingerprint:sha-256 37:FC:96:B5:73:98:E6:F9:C5:0B:D9:EE:B1:F8:D0:01:07:2E:75:E8:6C:A4:32:A7:DC:63:99:5E:68:5C:BF:FB\r\n\
+            a=fingerprint:sha-256 \
+                37:FC:96:B5:73:98:E6:F9:C5:0B:D9:EE:B1:F8:D0:01:07:2E:75:E8:6C:A4:32:A7:DC:63:\
+                99:5E:68:5C:BF:FB\r\n\
             a=ice-options:trickle\r\n\
             a=msid-semantic:WMS *\r\n";
 
@@ -1202,7 +1206,9 @@ mod test {
             o=mozilla...THIS_IS_SDPARTA-84.0 9033133899747520364 1 IN IP4 0.0.0.0\r\n\
             s=-\r\n\
             t=0 0\r\n\
-            a=fingerprint:sha-256 AE:DC:49:AE:CA:55:35:CB:4E:FA:FE:70:99:30:C0:14:C3:B8:06:80:1F:A9:DA:9A:7C:FB:B7:20:AB:83:60:45\r\n\
+            a=fingerprint:sha-256 \
+                AE:DC:49:AE:CA:55:35:CB:4E:FA:FE:70:99:30:C0:14:C3:B8:06:80:1F:A9:DA:9A:7C:FB:\
+                B7:20:AB:83:60:45\r\n\
             a=group:BUNDLE 0\r\n\
             a=ice-options:trickle\r\n\
             a=msid-semantic:WMS *\r\n\
@@ -1246,7 +1252,9 @@ mod test {
             a=ice-ufrag:S5hk\r\n\
             a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
             a=ice-options:trickle\r\n\
-            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=fingerprint:sha-256 \
+                8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27:96:CA:08:49:\
+                25:73:46:60:20:DC\r\n\
             a=setup:actpass\r\n\
             a=mid:0\r\n\
             a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n\
@@ -1274,7 +1282,8 @@ mod test {
             a=rtpmap:113 telephone-event/16000\r\n\
             a=rtpmap:126 telephone-event/8000\r\n\
             a=ssrc:3948621874 cname:xeXs3aE9AOBn00yJ\r\n\
-            a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
+            a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK \
+                f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=ssrc:3948621874 mslabel:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK\r\n\
             a=ssrc:3948621874 label:f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             ";
@@ -1356,7 +1365,9 @@ mod test {
         a=ice-ufrag:HhS+\r\n\
         a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW\r\n\
         a=ice-options:trickle\r\n\
-        a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23\r\n\
+        a=fingerprint:sha-256 \
+            B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:\
+            A5:23:46:94:23\r\n\
         a=setup:actpass\r\n\
         a=mid:0\r\n\
         a=sctp-port:5000\r\n\
@@ -1425,7 +1436,8 @@ mod test {
 
     #[test]
     fn parse_candidates() {
-        let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100 ufrag abc\r\n";
+        let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr \
+            203.0.113.100 rport 10100 ufrag abc\r\n";
 
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.ufrag(), Some("abc"));
@@ -1434,19 +1446,23 @@ mod test {
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.ufrag(), Some("abc"));
 
-        let a = "a=candidate:3684617590 1 udp 2122260223 10.217.229.219 50028 typ host generation 0 network-id 1 network-cost 900";
+        let a = "a=candidate:3684617590 1 udp 2122260223 10.217.229.219 50028 typ host \
+            generation 0 network-id 1 network-cost 900";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "10.217.229.219:50028".parse().unwrap());
 
-        let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 31267 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
+        let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 31267 typ srflx raddr \
+            10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "113.185.55.72:31267".parse().unwrap());
 
-        let a = "a=candidate:2501718406 1 tcp 1518280447 10.217.229.219 9 typ host tcptype active generation 0 network-id 1 network-cost 900";
+        let a = "a=candidate:2501718406 1 tcp 1518280447 10.217.229.219 9 typ host tcptype \
+            active generation 0 network-id 1 network-cost 900";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "10.217.229.219:9".parse().unwrap());
 
-        let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 41775 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
+        let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 41775 typ srflx raddr \
+            10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "113.185.55.72:41775".parse().unwrap());
 
@@ -1482,7 +1498,9 @@ mod test {
         o=mozilla...THIS_IS_SDPARTA-99.0 7710052215259647220 2 IN IP4 0.0.0.0\r\n\
         s=-\r\n\
         t=0 0\r\n\
-        a=fingerprint:sha-256 A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:7E:D4:0E:68:58:93:45:EC:99:F2:91:F7:19:72:E7:BB\r\n\
+        a=fingerprint:sha-256 \
+            A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:7E:D4:0E:68:58:93:45:EC:99:F2:91:\
+            F7:19:72:E7:BB\r\n\
         a=group:BUNDLE 0 hxI i1X mxk B3D kNI nbB xIZ bKm Hkn\r\n\
         a=ice-options:trickle\r\n\
         a=msid-semantic:WMS *\r\n\
@@ -1513,9 +1531,13 @@ mod test {
         m=application 9999 UDP/DTLS/SCTP webrtc-datachannel\r\n\
         a=mid:0\r\n\
         a=ice-options:ice2\r\n\
-        a=ice-ufrag:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1\r\n\
-        a=ice-pwd:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1\r\n\
-        a=fingerprint:sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF\r\n\
+        a=ice-ufrag:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1:\
+            libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1\r\n\
+        a=ice-pwd:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1:\
+            libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1\r\n\
+        a=fingerprint:sha-256 \
+            FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:\
+            FF:FF:FF:FF:FF\r\n\
         a=setup:actpass\r\n\
         a=sctp-port:5000\r\n\
         a=max-message-size:16384\r\n\
@@ -1628,7 +1650,8 @@ mod test {
 // a=ice-ufrag:CTNF
 // a=ice-pwd:XbIkl+k8mwLz60TFwb9crzbz
 // a=ice-options:trickle
-// a=fingerprint:sha-256 77:8C:32:B8:DA:4E:78:64:C8:4A:2A:E2:1D:60:2A:83:6B:51:B8:D5:EE:5A:ED:75:4E:C6:98:2D:78:4D:94:D8
+// a=fingerprint:sha-256 77:8C:32:B8:DA:4E:78:64:C8:4A:2A:E2:1D:60:2A:83:6B:51:B8:D5:EE:\
+// 5A:ED:75:4E:C6:98:2D:78:4D:94:D8
 // a=setup:actpass
 // a=mid:0
 // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
@@ -1668,7 +1691,8 @@ mod test {
 // a=ice-ufrag:Y28C
 // a=ice-pwd:W6fHYINgGi9QF0BHdM/kchTW
 // a=ice-options:trickle
-// a=fingerprint:sha-256 E0:C0:2D:52:8D:FA:14:69:A0:A5:5D:63:E0:82:92:DB:37:38:D2:F3:12:D0:1F:4E:E5:6F:1A:F5:C3:97:6B:32
+// a=fingerprint:sha-256 E0:C0:2D:52:8D:FA:14:69:A0:A5:5D:63:E0:82:92:DB:37:38:D2:F3:12:\
+// D0:1F:4E:E5:6F:1A:F5:C3:97:6B:32
 // a=setup:actpass
 // a=mid:0
 // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
@@ -1716,13 +1740,15 @@ mod test {
 // a=group:BUNDLE 0
 // a=extmap-allow-mixed
 // a=msid-semantic: WMS
-// m=video 9 UDP/TLS/RTP/SAVPF 96 97 102 103 104 105 106 107 108 109 127 125 39 40 45 46 98 99 100 101 112 113 114
+// m=video 9 UDP/TLS/RTP/SAVPF 96 97 102 103 104 105 106 107 108 109 127 125 39 40 45 46 98 99 100 101 112 113
+// 114
 // c=IN IP4 0.0.0.0
 // a=rtcp:9 IN IP4 0.0.0.0
 // a=ice-ufrag:numD
 // a=ice-pwd:L/hHurqERpVUACiI8To+vXLv
 // a=ice-options:trickle
-// a=fingerprint:sha-256 A5:79:72:59:3D:32:74:9C:44:70:DE:39:15:C3:99:51:32:6E:0D:F0:60:DD:2F:31:90:E5:96:B4:1D:CA:48:E1
+// a=fingerprint:sha-256 A5:79:72:59:3D:32:74:9C:44:70:DE:39:15:C3:99:51:32:6E:0D:F0:60:\
+// DD:2F:31:90:E5:96:B4:1D:CA:48:E1
 // a=setup:actpass
 // a=mid:0
 // a=extmap:1 urn:ietf:params:rtp-hdrext:toffset
@@ -1852,7 +1878,8 @@ mod test {
 // a=ice-ufrag:HhS+
 // a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW
 // a=ice-options:trickle
-// a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23
+// a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:\
+// 7D:D3:9D:1F:94:6E:A5:23:46:94:23
 // a=setup:actpass
 // a=mid:0
 // a=sctp-port:5000

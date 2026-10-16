@@ -22,22 +22,32 @@ How to release str0m and its workspace crates.
 
 ## Bumping rules
 
-- **str0m-proto**: bump minor (0.x.0) when `dimpl` workspace dep crosses a 0.x boundary, since `proto` re-exports dimpl types (`DtlsCert`, `KeyingMaterial`, `SrtpProfile`, etc.). Patch is fine for internal-only changes.
-- **Crypto crates** (`str0m-aws-lc-rs`, `str0m-rust-crypto`, `str0m-openssl`, `str0m-apple-crypto`, `str0m-wincrypto`): bump minor when `dimpl` crosses a 0.x boundary or when their dep on `str0m-proto` crosses a 0.x boundary.
-- **is**: bump minor when its dep on `str0m-proto` crosses a 0.x boundary. Patch for additive API or bug fixes that don't touch the public proto-derived surface.
+- **str0m-proto**: bump minor (0.x.0) when `dimpl` workspace dep crosses a 0.x boundary, since `proto`
+  re-exports dimpl types (`DtlsCert`, `KeyingMaterial`, `SrtpProfile`, etc.). Patch is fine for internal-only
+  changes.
+- **Crypto crates** (`str0m-aws-lc-rs`, `str0m-rust-crypto`, `str0m-openssl`, `str0m-apple-crypto`,
+  `str0m-wincrypto`): bump minor when `dimpl` crosses a 0.x boundary or when their dep on `str0m-proto`
+  crosses a 0.x boundary.
+- **is**: bump minor when its dep on `str0m-proto` crosses a 0.x boundary. Patch for additive API or bug fixes
+  that don't touch the public proto-derived surface.
 - **str0m**: minor bump per release that includes any breaking change or new public API.
 
 ## The trap: don't publish leaf crates ahead of a shared-dep bump
 
-If a release will bump `str0m-proto` (or `dimpl` such that proto must bump), **do not** publish `is` or any crypto crate against the old proto first. They'll get pinned to the old `^0.x` proto on the registry, and the next time you publish str0m it will pull two proto versions into the dep tree — types like `TcpType` won't unify and verification fails:
+If a release will bump `str0m-proto` (or `dimpl` such that proto must bump), **do not** publish `is` or any
+crypto crate against the old proto first. They'll get pinned to the old `^0.x` proto on the registry, and the
+next time you publish str0m it will pull two proto versions into the dep tree — types like `TcpType` won't
+unify and verification fails:
 
 ```
 expected `str0m_proto::net::TcpType`, found `TcpType`
 ```
 
-The only fix is another minor bump of the prematurely-published crate. We hit this in 0.19.0 — `is` had to go 0.8.0 → 0.8.1 → 0.9.0 in one release cycle.
+The only fix is another minor bump of the prematurely-published crate. We hit this in 0.19.0 — `is` had to go
+0.8.0 → 0.8.1 → 0.9.0 in one release cycle.
 
-**Rule:** decide up front whether `str0m-proto` is bumping in this release. If yes, bump it (and everything that depends on it) in a single batch.
+**Rule:** decide up front whether `str0m-proto` is bumping in this release. If yes, bump it (and everything
+that depends on it) in a single batch.
 
 ## Release procedure
 
@@ -66,9 +76,12 @@ The only fix is another minor bump of the prematurely-published crate. We hit th
 
 ## Notes on individual crates
 
-- **`str0m-wincrypto`** — verify step pulls the `windows` crate, which fails to build on macOS due to upstream issues. Use `--no-verify`. CI on Windows is the real verification.
-- **`str0m-netem`** — dev-only. Bump and republish only if its source changes; not required for a str0m release.
-- **`is`** — independent tags are allowed (`is-0.x.y`), but read "the trap" above before publishing one out of band.
+- **`str0m-wincrypto`** — verify step pulls the `windows` crate, which fails to build on macOS due to upstream
+  issues. Use `--no-verify`. CI on Windows is the real verification.
+- **`str0m-netem`** — dev-only. Bump and republish only if its source changes; not required for a str0m
+  release.
+- **`is`** — independent tags are allowed (`is-0.x.y`), but read "the trap" above before publishing one out of
+  band.
 
 ## Verifying state on crates.io
 

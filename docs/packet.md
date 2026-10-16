@@ -12,7 +12,10 @@ typically have a specific way it should be packaged into RTP, and such packaging
 * RTP Payload Format for AV1 Video https://aomediacodec.github.io/av1-rtp-spec/v1.0.0.html
 
 The implementations are originally from webrtc-rs and copied under the MIT/APACHE 2.0 license (see license
-files). The copy was from git ref [c30b5c1db4668bb1314f32e0121270e1bb1dac7a](https://github.com/webrtc-rs/webrtc/tree/c30b5c1db4668bb1314f32e0121270e1bb1dac7a/rtp/src/codecs).
+files). The copy was from git ref [c30b5c1db4668bb1314f32e0121270e1bb1dac7a][original-codecs].
+
+[original-codecs]:
+  https://github.com/webrtc-rs/webrtc/tree/c30b5c1db4668bb1314f32e0121270e1bb1dac7a/rtp/src/codecs
 
 Changes made:
 

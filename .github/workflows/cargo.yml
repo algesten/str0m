@@ -67,11 +67,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Binary assets have no text lines to format.
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !*.pcap
+            !*.png
+            !*.graffle
       - name: Martin's snowflake formatting rules
         uses: algesten/snowflake@v1.1.0
         with:
           check_diff: true
-          line_width_rules: "CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;*.lock:200;*.svg:1000;*.txt:9999;DEFAULT=110"
+          # SDP fixture strings must remain on one JSON line.
+          line_width_rules: "CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;chrome-sdp.json:150;*.md:110;*.rs:110;*.toml:110;*.lock:200;*.svg:1000;*.txt:9999;DEFAULT=110"
 
   pii:
     runs-on: ubuntu-latest

@@ -1,4 +1,7 @@
-//! <image src="https://user-images.githubusercontent.com/227204/226143511-66fe5264-6ab7-47b9-9551-90ba7e155b96.svg" alt="str0m logo" ></image>
+//! <image
+//! src="https://user-images.githubusercontent.com/227204/226143511-66fe5264-6ab7-47b9-9551-90ba7e155b96.svg"
+//!     alt="str0m logo" >
+//! </image>
 //!
 //! A Sans I/O WebRTC implementation in Rust.
 //!
@@ -13,7 +16,10 @@
 //!
 //! We are discussing str0m things on Discord. Join us using this [invitation link][discord].
 //!
-//! <image width="300px" src="https://user-images.githubusercontent.com/227204/209446544-f8a8d673-cb1b-4144-a0f2-42307b8d8869.gif" alt="silly clip showing video playing" ></image>
+//! <image width="300px"
+//! src="https://user-images.githubusercontent.com/227204/209446544-f8a8d673-cb1b-4144-a0f2-42307b8d8869.gif"
+//!     alt="silly clip showing video playing" >
+//! </image>
 //!
 //! # Usage
 //!
