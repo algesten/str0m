@@ -210,23 +210,11 @@ impl RtpWrite {
     ///
     /// * `pt` Payload type. Declared in the [`Media`][crate::media::Media] this
     ///        encoded stream belongs to.
-    /// * `seq_no` Sequence number to use for this packet. This is the
-    ///            **extended** sequence number: only the low 16 bits go on the
-    ///            wire, while the upper bits become the SRTP rollover counter
-    ///            (ROC) used to derive the per-packet IV and auth tag. The ROC
-    ///            is never transmitted, and a receiver seeing a stream for the
-    ///            first time starts at ROC 0 (RFC 3711 §3.3.1). The first
-    ///            packet written to a stream must therefore have
-    ///            `seq_no < 65_536`, or the receiver derives a different key
-    ///            and silently discards every packet: bytes are counted by the
-    ///            transport, but no RTP stream ever appears. This matters most
-    ///            when forwarding: an SFU must not pass an incoming stream's
-    ///            extended sequence number straight through to a newly
-    ///            negotiated outgoing stream, since a subscriber joining a
-    ///            publisher that has been sending for more than 65_536 packets
-    ///            would start past the first rollover. Rebasing by a whole
-    ///            number of rollovers fixes it and leaves the wire sequence
-    ///            number unchanged.
+    /// * `seq_no` Extended sequence number to use for this packet. Only the low
+    ///            16 bits are carried in the RTP header. The upper bits
+    ///            (`seq_no.roc()`) supply the SRTP rollover counter (ROC) used
+    ///            for the per-packet IV and authentication. See below for
+    ///            initializing a stream with a nonzero ROC.
     /// * `time` Time in whatever the clock rate is for the media in question
     ///          (normally 90_000 for video and 48_000 for audio).
     /// * `wallclock` Real world time that corresponds to the media time in the
@@ -246,6 +234,58 @@ impl RtpWrite {
     /// [`RtpWrite::nackable`] for packets that may answer incoming NACKs,
     /// [`RtpWrite::csrc`] for contributing source identifiers,
     /// [`RtpWrite::vp8_patch`] to apply a prevalidated VP8 payload descriptor patch during RTP serialization.
+    ///
+    /// # Initializing the rollover counter
+    ///
+    /// The ROC is not carried in the RTP header or transmitted by str0m in the
+    /// SRTP packet. A fresh receiver starts at ROC 0. To start a stream with a
+    /// higher ROC, the application must communicate that ROC and the stream's
+    /// SSRC to the receiver out of band, for example through its signaling
+    /// channel, and initialize the receiver before sending media. Otherwise,
+    /// sender and receiver use different packet indices and SRTP authentication
+    /// fails. See [RFC 3711 section 3.3.1][roc].
+    ///
+    /// On the sender, the extended sequence number determines the ROC:
+    ///
+    /// ```
+    /// # use std::time::Instant;
+    /// # use str0m::media::Pt;
+    /// # use str0m::rtp::{RtpWrite, SeqNo, StreamTx};
+    /// # fn send(stream: &mut StreamTx, pt: Pt, wallclock: Instant, payload: &[u8]) {
+    /// let seq_no: SeqNo = 100_000.into();
+    /// assert_eq!(seq_no.roc(), 1);
+    /// assert_eq!(seq_no.as_u16(), 34_464);
+    ///
+    /// // First communicate (stream.ssrc(), seq_no.roc()) out of band and
+    /// // arrange for the receiver to initialize its ROC as shown below.
+    /// stream.write_rtp(RtpWrite::new(pt, seq_no, 0, wallclock, payload));
+    /// # }
+    /// ```
+    ///
+    /// On a str0m receiver, use [`StreamRx::reset_roc`][crate::rtp::StreamRx::reset_roc]
+    /// with the signaled ROC before handling the first SRTP packet. This example
+    /// assumes the media identified by `mid` has already been declared:
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// # use str0m::media::Mid;
+    /// # use str0m::rtp::Ssrc;
+    /// # fn initialize_receiver(rtc: &mut Rtc, mid: Mid, ssrc: Ssrc, signaled_roc: u64) {
+    /// // `ssrc` and `signaled_roc` come from the application's signaling channel.
+    /// let mut direct = rtc.direct_api();
+    /// let stream = direct.expect_stream_rx(ssrc, None, mid, None);
+    /// stream.reset_roc(signaled_roc); // 1 for the sender example above.
+    /// # }
+    /// ```
+    ///
+    /// Continue supplying extended sequence numbers on the sender across
+    /// rollovers; the receiver tracks subsequent rollovers automatically.
+    /// Without out-of-band ROC initialization, start the outgoing stream with
+    /// `seq_no < 65_536`. In particular, forwarding a long-running source's
+    /// extended sequence numbers to a new receiver requires either signaling
+    /// its initial ROC or rebasing the outgoing sequence numbers for that receiver.
+    ///
+    /// [roc]: https://www.rfc-editor.org/rfc/rfc3711.html#section-3.3.1
     pub fn new(
         pt: Pt,
         seq_no: SeqNo,

@@ -929,6 +929,10 @@ impl StreamRx {
     /// This is used in scenarios where we use a single sequence number across all
     /// receivers of the same stream (as opposed to a sequence number unique per peer).
     ///
+    /// The ROC is not carried in the RTP header. Obtain it through out-of-band
+    /// signaling and call this before handling the first SRTP packet for the stream.
+    /// See [`RtpWrite::new`][crate::rtp::RtpWrite::new] for sender and receiver examples.
+    ///
     /// [RFC3711](https://datatracker.ietf.org/doc/html/rfc3711#section-3.3.1):
     ///
     /// > Receivers joining an on-going session MUST be given the
