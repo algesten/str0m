@@ -128,6 +128,7 @@ impl Belongs {
 
 #[derive(Debug, Default)]
 pub struct ArrivalGroupAccumulator {
+    send_time_origin: Option<Instant>,
     previous_group: Option<ArrivalGroup>,
     current_group: ArrivalGroup,
 }
@@ -138,7 +139,28 @@ impl ArrivalGroupAccumulator {
     ///
     /// If adding this packet produced a new delay delta it is returned.
     pub fn accumulate_packet(&mut self, packet: &AckedPacket) -> Option<InterGroupDelayDelta> {
-        let need_new_group = self.current_group.add_packet(packet);
+        // Channel outages can queue packets and release them in a compressed burst. Tiny
+        // send-time differences can split that burst into extra delay observations and
+        // contribute to false overuse detections. Millisecond send times let the zero-delta
+        // rule in belongs_to_group keep packets sent together in the same group.
+        // GCC's motivation for burst grouping:
+        // https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02#section-5.2
+        //
+        // Match libwebrtc's nearest-millisecond precision, including rounding half up:
+        // Clock::TimeInMilliseconds -> Timestamp::ms -> UnitBase::ToFraction uses
+        // DivideRoundToNearest. See rtc_base/units/unit_base.h:152 in this pinned revision:
+        // https://webrtc.googlesource.com/src/+/bef233bc69712a4976442f980b1355b990c1107b
+        // Use one origin across groups so rounding boundaries stay fixed. Our origin
+        // differs from WebRTC's clock epoch, so individual group boundaries may differ.
+        let origin = *self.send_time_origin.get_or_insert(packet.local_send_time);
+        let elapsed = packet.local_send_time.checked_duration_since(origin)?;
+        let rounded_ms = (elapsed.as_micros() + 500) / 1000;
+        let packet = AckedPacket {
+            local_send_time: origin + Duration::from_millis(rounded_ms as u64),
+            ..*packet
+        };
+
+        let need_new_group = self.current_group.add_packet(&packet);
 
         if !need_new_group {
             return None;
@@ -152,7 +174,7 @@ impl ArrivalGroupAccumulator {
         let current_group = mem::take(&mut self.current_group);
         self.previous_group = Some(current_group);
 
-        self.current_group.add_packet(packet);
+        self.current_group.add_packet(&packet);
 
         Some(InterGroupDelayDelta {
             send_delta: send_delta?,
@@ -193,6 +215,92 @@ mod test {
     use crate::rtp_::DataSize;
 
     use super::{AckedPacket, ArrivalGroup, ArrivalGroupAccumulator, Belongs, TimeDelta};
+
+    #[test]
+    fn send_timestamps_round_to_nearest_millisecond() {
+        let now = Instant::now();
+        let mut groups = ArrivalGroupAccumulator::default();
+        for (seq, send_us, rounded_ms) in [
+            (0, 0, 0),
+            (1, 499, 0),
+            (2, 500, 1),
+            (3, 1499, 1),
+            (4, 1500, 2),
+        ] {
+            groups.accumulate_packet(&AckedPacket {
+                seq_no: seq.into(),
+                size: DataSize::ZERO,
+                local_send_time: now + Duration::from_micros(send_us),
+                remote_recv_time: now + Duration::from_micros(send_us),
+                local_recv_time: now + Duration::from_millis(100),
+            });
+            assert_eq!(
+                groups.current_group.local_send_time(),
+                now + Duration::from_millis(rounded_ms)
+            );
+        }
+    }
+
+    #[test]
+    fn compressed_burst_ignores_submillisecond_send_gaps() {
+        let now = Instant::now();
+        let mut groups = ArrivalGroupAccumulator::default();
+        let packet = |seq: u64, send_us, receive_us| AckedPacket {
+            seq_no: seq.into(),
+            size: DataSize::ZERO,
+            local_send_time: now + Duration::from_micros(send_us),
+            remote_recv_time: now + Duration::from_micros(receive_us),
+            local_recv_time: now + Duration::from_millis(100),
+        };
+
+        // The 29 us send gap becomes zero at millisecond precision. The 250 us
+        // receive gap must not split the compressed burst into another observation.
+        for (seq, send_us, receive_us) in [(0, 0, 0), (1, 6684, 1000), (2, 6713, 1250)] {
+            assert!(
+                groups
+                    .accumulate_packet(&packet(seq, send_us, receive_us))
+                    .is_none()
+            );
+        }
+        assert_eq!(groups.current_group.size, 3);
+
+        assert!(
+            groups
+                .accumulate_packet(&packet(3, 20_000, 20_000))
+                .is_none()
+        );
+        let delta = groups
+            .accumulate_packet(&packet(4, 30_000, 30_000))
+            .unwrap();
+        assert_eq!(delta.send_delta, TimeDelta::from_millis(13));
+        assert_eq!(delta.arrival_delta, Duration::from_micros(18_750));
+    }
+
+    #[test]
+    fn millisecond_send_origin_is_shared_between_groups() {
+        let now = Instant::now();
+        let mut groups = ArrivalGroupAccumulator::default();
+        let mut delta = None;
+
+        for (seq, send_us, receive_us) in [
+            (0, 0, 0),
+            (1, 20_490, 12_000),
+            (2, 26_499, 13_000),
+            (3, 26_501, 14_250),
+        ] {
+            delta = groups.accumulate_packet(&AckedPacket {
+                seq_no: seq.into(),
+                size: DataSize::ZERO,
+                local_send_time: now + Duration::from_micros(send_us),
+                remote_recv_time: now + Duration::from_micros(receive_us),
+                local_recv_time: now + Duration::from_millis(100),
+            });
+        }
+
+        let delta = delta.unwrap();
+        assert_eq!(delta.send_delta, TimeDelta::from_millis(26));
+        assert_eq!(delta.arrival_delta, TimeDelta::from_millis(13));
+    }
 
     #[test]
     fn test_arrival_group_all_packets_belong_to_empty_group() {
