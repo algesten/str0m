@@ -1,10 +1,24 @@
 use super::WinCryptoError;
 use windows::Win32::Security::Cryptography::BCRYPT_HASH_HANDLE;
 use windows::Win32::Security::Cryptography::BCRYPT_HMAC_SHA1_ALG_HANDLE;
+use windows::Win32::Security::Cryptography::BCRYPT_SHA1_ALG_HANDLE;
 use windows::Win32::Security::Cryptography::BCryptCreateHash;
 use windows::Win32::Security::Cryptography::BCryptFinishHash;
+use windows::Win32::Security::Cryptography::BCryptHash;
 use windows::Win32::Security::Cryptography::BCryptHashData;
 use windows::core::Owned;
+
+/// Compute an unkeyed SHA-1 digest using Windows CNG.
+pub fn sha1(data: &[u8]) -> Result<[u8; 20], WinCryptoError> {
+    let mut hash = [0u8; 20];
+    // SAFETY: BCryptHash borrows the input and output buffers for the duration of
+    // the call. The SHA-1 algorithm handle is predefined and needs no cleanup.
+    // Docs: https://learn.microsoft.com/windows/win32/api/bcrypt/nf-bcrypt-bcrypthash
+    unsafe {
+        WinCryptoError::from_ntstatus(BCryptHash(BCRYPT_SHA1_ALG_HANDLE, None, data, &mut hash))?;
+    }
+    Ok(hash)
+}
 
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
     // SAFETY: The Windows APIs accept references, so normal borrow checker

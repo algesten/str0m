@@ -5,7 +5,7 @@ mod srtp;
 use srtp::WinCryptoSrtpProvider;
 
 mod sha1;
-use sha1::WinCryptoSha1HmacProvider;
+use sha1::{WinCryptoSha1HmacProvider, WinCryptoSha1Provider};
 
 mod sha256;
 use sha256::WinCryptoSha256Provider;
@@ -14,7 +14,7 @@ mod dimpl_provider;
 mod dtls;
 use dtls::WinCryptoDtlsProvider;
 
-use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
+use str0m_proto::crypto::CryptoProvider;
 
 pub use sys::WinCryptoError;
 
@@ -40,7 +40,7 @@ mod sys;
 pub fn default_provider() -> CryptoProvider {
     static SRTP: WinCryptoSrtpProvider = WinCryptoSrtpProvider;
     static SHA1_HMAC: WinCryptoSha1HmacProvider = WinCryptoSha1HmacProvider;
-    static SHA1: DefaultSha1Provider = DefaultSha1Provider;
+    static SHA1: WinCryptoSha1Provider = WinCryptoSha1Provider;
     static SHA256: WinCryptoSha256Provider = WinCryptoSha256Provider;
     static DTLS: WinCryptoDtlsProvider = WinCryptoDtlsProvider;
 

@@ -7,10 +7,10 @@ mod sha256;
 mod srtp;
 
 use dtls::RustCryptoDtlsProvider;
-use sha1::RustCryptoSha1HmacProvider;
+use sha1::{RustCryptoSha1HmacProvider, RustCryptoSha1Provider};
 use sha256::RustCryptoSha256Provider;
 use srtp::RustCryptoSrtpProvider;
-use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
+use str0m_proto::crypto::CryptoProvider;
 
 /// Create the default RustCrypto crypto provider.
 ///
@@ -28,7 +28,7 @@ use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
 pub fn default_provider() -> CryptoProvider {
     static SRTP: RustCryptoSrtpProvider = RustCryptoSrtpProvider;
     static SHA1_HMAC: RustCryptoSha1HmacProvider = RustCryptoSha1HmacProvider;
-    static SHA1: DefaultSha1Provider = DefaultSha1Provider;
+    static SHA1: RustCryptoSha1Provider = RustCryptoSha1Provider;
     static SHA256: RustCryptoSha256Provider = RustCryptoSha256Provider;
     static DTLS: RustCryptoDtlsProvider = RustCryptoDtlsProvider;
 

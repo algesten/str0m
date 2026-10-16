@@ -1,6 +1,15 @@
-//! SHA1-HMAC provider implementation using Windows CNG.
+//! SHA-1 hash and HMAC provider implementations using Windows CNG.
 
-use str0m_proto::crypto::Sha1HmacProvider;
+use str0m_proto::crypto::{Sha1HmacProvider, Sha1Provider};
+
+#[derive(Debug)]
+pub(super) struct WinCryptoSha1Provider;
+
+impl Sha1Provider for WinCryptoSha1Provider {
+    fn sha1(&self, data: &[u8]) -> [u8; 20] {
+        crate::sys::sha1(data).expect("SHA-1 computation")
+    }
+}
 
 #[derive(Debug)]
 pub(super) struct WinCryptoSha1HmacProvider;

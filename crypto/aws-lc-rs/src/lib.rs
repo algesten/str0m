@@ -7,10 +7,10 @@ mod sha256;
 mod srtp;
 
 use dtls::AwsLcRsDtlsProvider;
-use sha1::AwsLcRsSha1HmacProvider;
+use sha1::{AwsLcRsSha1HmacProvider, AwsLcRsSha1Provider};
 use sha256::AwsLcRsSha256Provider;
 use srtp::AwsLcRsSrtpProvider;
-use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
+use str0m_proto::crypto::CryptoProvider;
 
 /// Create the default AWS-LC-RS crypto provider.
 ///
@@ -28,7 +28,7 @@ use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
 pub fn default_provider() -> CryptoProvider {
     static SRTP: AwsLcRsSrtpProvider = AwsLcRsSrtpProvider;
     static SHA1_HMAC: AwsLcRsSha1HmacProvider = AwsLcRsSha1HmacProvider;
-    static SHA1: DefaultSha1Provider = DefaultSha1Provider;
+    static SHA1: AwsLcRsSha1Provider = AwsLcRsSha1Provider;
     static SHA256: AwsLcRsSha256Provider = AwsLcRsSha256Provider;
     static DTLS: AwsLcRsDtlsProvider = AwsLcRsDtlsProvider;
 

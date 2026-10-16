@@ -39,8 +39,6 @@ pub struct CryptoProvider {
     /// SHA1 HMAC provider for STUN message integrity.
     pub sha1_hmac_provider: &'static dyn Sha1HmacProvider,
     /// SHA-1 hash provider for legacy certificate fingerprints.
-    ///
-    /// [`super::DefaultSha1Provider`] supplies a portable implementation.
     pub sha1_provider: &'static dyn Sha1Provider,
     /// SHA-256 hash provider.
     pub sha256_provider: &'static dyn Sha256Provider,

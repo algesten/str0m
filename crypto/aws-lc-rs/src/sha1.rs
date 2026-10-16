@@ -1,8 +1,20 @@
-//! SHA1-HMAC implementation using AWS-LC-RS.
+//! SHA-1 hash and HMAC implementations using AWS-LC-RS.
 
-use aws_lc_rs::hmac;
+use aws_lc_rs::{digest, hmac};
 
-use str0m_proto::crypto::Sha1HmacProvider;
+use str0m_proto::crypto::{Sha1HmacProvider, Sha1Provider};
+
+#[derive(Debug)]
+pub(super) struct AwsLcRsSha1Provider;
+
+impl Sha1Provider for AwsLcRsSha1Provider {
+    fn sha1(&self, data: &[u8]) -> [u8; 20] {
+        let digest = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, data);
+        let mut output = [0u8; 20];
+        output.copy_from_slice(digest.as_ref());
+        output
+    }
+}
 
 // ============================================================================
 // SHA1 HMAC Provider Implementation

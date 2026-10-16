@@ -12,10 +12,10 @@ mod sha256;
 mod srtp;
 
 use dtls::OsslDtlsProvider;
-use sha1::OsslSha1HmacProvider;
+use sha1::{OsslSha1HmacProvider, OsslSha1Provider};
 use sha256::OsslSha256Provider;
 use srtp::OsslSrtpProvider;
-use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
+use str0m_proto::crypto::CryptoProvider;
 
 #[cfg(not(feature = "dimpl"))]
 #[macro_use]
@@ -37,7 +37,7 @@ extern crate tracing;
 pub fn default_provider() -> CryptoProvider {
     static SRTP: OsslSrtpProvider = OsslSrtpProvider;
     static SHA1_HMAC: OsslSha1HmacProvider = OsslSha1HmacProvider;
-    static SHA1: DefaultSha1Provider = DefaultSha1Provider;
+    static SHA1: OsslSha1Provider = OsslSha1Provider;
     static SHA256: OsslSha256Provider = OsslSha256Provider;
     static DTLS: OsslDtlsProvider = OsslDtlsProvider;
 

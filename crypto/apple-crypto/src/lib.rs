@@ -13,10 +13,10 @@ mod sha1;
 mod sha256;
 mod srtp;
 
-use str0m_proto::crypto::{CryptoProvider, DefaultSha1Provider};
+use str0m_proto::crypto::CryptoProvider;
 
 use dtls::AppleCryptoDtlsProvider;
-use sha1::AppleCryptoSha1HmacProvider;
+use sha1::{AppleCryptoSha1HmacProvider, AppleCryptoSha1Provider};
 use sha256::AppleCryptoSha256Provider;
 use srtp::AppleCryptoSrtpProvider;
 
@@ -36,7 +36,7 @@ use srtp::AppleCryptoSrtpProvider;
 pub fn default_provider() -> CryptoProvider {
     static SRTP: AppleCryptoSrtpProvider = AppleCryptoSrtpProvider;
     static SHA1_HMAC: AppleCryptoSha1HmacProvider = AppleCryptoSha1HmacProvider;
-    static SHA1: DefaultSha1Provider = DefaultSha1Provider;
+    static SHA1: AppleCryptoSha1Provider = AppleCryptoSha1Provider;
     static SHA256: AppleCryptoSha256Provider = AppleCryptoSha256Provider;
     static DTLS: AppleCryptoDtlsProvider = AppleCryptoDtlsProvider;
 
