@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Bump dimpl to 0.7.6 and sctp-proto to 0.10.6 #1075
   * Round BWE send timestamps to milliseconds to reduce recovery-burst fragmentation #1074
   * Support SHA-1 remote DTLS fingerprints via the crypto provider (breaking) #1072
   * Prevent accumulated rounding error in TWCC receive timing #1071
