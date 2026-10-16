@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Round BWE send timestamps to milliseconds to reduce recovery-burst fragmentation #1074
   * Support SHA-1 remote DTLS fingerprints via the crypto provider (breaking) #1072
   * Prevent accumulated rounding error in TWCC receive timing #1071
   * Pace per-packet NACK retries by receive-side RTT and fix DLRR RTT routing #1070
