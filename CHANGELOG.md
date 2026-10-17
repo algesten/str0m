@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Support single-channel AMR-WB audio in octet-aligned and bandwidth-efficient modes
+  * Parse SDP fmtp parameter names case-insensitively
   * Handle STUN MESSAGE-INTEGRITY as the first attribute and prevent integrity verification panics #1073
   * Bump dimpl to 0.7.6 and sctp-proto to 0.10.6 #1075
   * Round BWE send timestamps to milliseconds to reduce recovery-burst fragmentation #1074

@@ -21,6 +21,7 @@ pub enum PacketError {
     ErrAv1CorruptedPacket,
     ErrRedCorruptedPacket,
     InvalidTelephoneEvent(&'static str),
+    ErrAmrWbCorruptedPacket,
 }
 
 impl fmt::Display for PacketError {
@@ -51,6 +52,7 @@ impl fmt::Display for PacketError {
             PacketError::InvalidTelephoneEvent(reason) => {
                 write!(f, "Invalid telephone event: {reason}")
             }
+            PacketError::ErrAmrWbCorruptedPacket => write!(f, "AMR-WB corrupted packet"),
         }
     }
 }
