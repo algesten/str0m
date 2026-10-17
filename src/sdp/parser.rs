@@ -904,6 +904,11 @@ where
     choice((crlf().map(|_| ()), newline().map(|_| ()), eof()))
 }
 
+// Parameter tokens exclude horizontal whitespace, line endings, and their delimiter.
+fn is_param_char(c: char, delimiter: char) -> bool {
+    c != delimiter && !matches!(c, ' ' | '\t' | '\r' | '\n')
+}
+
 // minptime=10
 fn key_val<Input>() -> impl Parser<Input, Output = (String, String)>
 where
@@ -912,13 +917,9 @@ where
 {
     (
         skip_many(satisfy(|c| c == ' ' || c == '\t')),
-        many1(satisfy(|c| {
-            c != '=' && c != ' ' && c != '\t' && c != '\r' && c != '\n'
-        })),
+        many1(satisfy(|c| is_param_char(c, '='))),
         token('='),
-        many1(satisfy(|c| {
-            c != ';' && c != ' ' && c != '\t' && c != '\r' && c != '\n'
-        })),
+        many1(satisfy(|c| is_param_char(c, ';'))),
     )
         .map(|(_, key, _, val)| (key, val))
 }
