@@ -603,13 +603,13 @@ where
     let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
         .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
-    // Tolerate spaces around `;` and a trailing `;`.
+    // Tolerate horizontal whitespace around `;` and a trailing `;`.
     let fmtp_param = (
         sep_end_by1(
             attempt(key_val()),
-            attempt((skip_many(token(' ')), token(';'))),
+            attempt((skip_many(satisfy(|c| c == ' ' || c == '\t')), token(';'))),
         ),
-        skip_many(token(' ')),
+        skip_many(satisfy(|c| c == ' ' || c == '\t')),
     )
         .map(|(pairs, _)| FormatParam::parse_pairs(pairs));
 
@@ -911,10 +911,14 @@ where
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
     (
-        skip_many(token(' ')),
-        many1(satisfy(|c| c != '=' && c != ' ' && c != '\r' && c != '\n')),
+        skip_many(satisfy(|c| c == ' ' || c == '\t')),
+        many1(satisfy(|c| {
+            c != '=' && c != ' ' && c != '\t' && c != '\r' && c != '\n'
+        })),
         token('='),
-        many1(satisfy(|c| c != ';' && c != ' ' && c != '\r' && c != '\n')),
+        many1(satisfy(|c| {
+            c != ';' && c != ' ' && c != '\t' && c != '\r' && c != '\n'
+        })),
     )
         .map(|(_, key, _, val)| (key, val))
 }
@@ -985,6 +989,48 @@ mod test {
                 ""
             ))
         );
+    }
+
+    #[test]
+    fn media_attribute_line_fmtp_horizontal_whitespace() {
+        let expected = MediaAttribute::Fmtp {
+            pt: 111.into(),
+            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+        };
+        for params in [
+            "minptime=10;\tuseinbandfec=1",
+            "\tminptime=10;useinbandfec=1",
+            "minptime=10\t;useinbandfec=1",
+            "minptime=10;useinbandfec=1\t",
+            " \tminptime=10 \t; \tuseinbandfec=1 \t; \t",
+        ] {
+            for end in ["\r\n", "\n", ""] {
+                let next = if end.is_empty() { "" } else { "a=mid:0" };
+                let line = format!("a=fmtp:111 {params}{end}{next}");
+                assert_eq!(
+                    media_attribute_line().parse(line.as_str()),
+                    Ok((expected.clone(), next)),
+                    "{line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn media_attribute_line_fmtp_preserves_next_line() {
+        for end in ["\r\n", "\n"] {
+            for next in ["a=mid:0", "a=sendrecv"] {
+                let line = format!("a=fmtp:111 minptime=10;useinbandfec=1;{end}{next}");
+                let expected = MediaAttribute::Fmtp {
+                    pt: 111.into(),
+                    values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+                };
+                assert_eq!(
+                    media_attribute_line().parse(line.as_str()),
+                    Ok((expected, next))
+                );
+            }
+        }
     }
 
     #[test]
