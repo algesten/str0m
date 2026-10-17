@@ -603,7 +603,15 @@ where
     let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
         .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
-    let fmtp_param = sep_by1(key_val(), token(';')).map(FormatParam::parse_pairs);
+    // Tolerate spaces around `;` and a trailing `;`.
+    let fmtp_param = (
+        sep_end_by1(
+            attempt(key_val()),
+            attempt((skip_many(token(' ')), token(';'))),
+        ),
+        skip_many(token(' ')),
+    )
+        .map(|(pairs, _)| FormatParam::parse_pairs(pairs));
 
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1
@@ -903,7 +911,7 @@ where
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
     (
-        optional(spaces()),
+        skip_many(token(' ')),
         many1(satisfy(|c| c != '=' && c != ' ' && c != '\r' && c != '\n')),
         token('='),
         many1(satisfy(|c| c != ';' && c != ' ' && c != '\r' && c != '\n')),
@@ -977,6 +985,26 @@ mod test {
                 ""
             ))
         );
+    }
+
+    #[test]
+    fn media_attribute_line_fmtp_separator_whitespace() {
+        let expected = MediaAttribute::Fmtp {
+            pt: 111.into(),
+            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+        };
+        for line in [
+            "a=fmtp:111 minptime=10;useinbandfec=1;\r\na=rtcp-fb:111 nack",
+            "a=fmtp:111 minptime=10;useinbandfec=1 \r\na=rtcp-fb:111 nack",
+            "a=fmtp:111 minptime=10 ;useinbandfec=1\r\na=rtcp-fb:111 nack",
+            "a=fmtp:111 minptime=10; useinbandfec=1; \r\na=rtcp-fb:111 nack",
+        ] {
+            assert_eq!(
+                media_attribute_line().parse(line),
+                Ok((expected.clone(), "a=rtcp-fb:111 nack")),
+                "{line:?}"
+            );
+        }
     }
 
     #[test]
