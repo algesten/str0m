@@ -605,11 +605,8 @@ where
 
     // Tolerate horizontal whitespace around `;` and a trailing `;`.
     let fmtp_param = (
-        sep_end_by1(
-            attempt(key_val()),
-            attempt((skip_many(satisfy(|c| c == ' ' || c == '\t')), token(';'))),
-        ),
-        skip_many(satisfy(|c| c == ' ' || c == '\t')),
+        sep_end_by1(attempt(key_val()), attempt((spaces(false), token(';')))),
+        spaces(false),
     )
         .map(|(pairs, _)| FormatParam::parse_pairs(pairs));
 
@@ -911,12 +908,23 @@ where
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
     (
-        skip_many(satisfy(|c| c == ' ' || c == '\t')),
+        spaces(false),
         many1(satisfy(|c| is_param_char(c, '='))),
         token('='),
         many1(satisfy(|c| is_param_char(c, ';'))),
     )
         .map(|(_, key, _, val)| (key, val))
+}
+
+/// Skip spaces and tabs, optionally including CR and LF.
+fn spaces<Input>(newline: bool) -> impl Parser<Input, Output = ()>
+where
+    Input: Stream<Token = char>,
+    Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
+{
+    skip_many(satisfy(move |c| {
+        matches!(c, ' ' | '\t') || (newline && matches!(c, '\r' | '\n'))
+    }))
 }
 
 // Parameter tokens exclude horizontal whitespace, line endings, and their delimiter.
@@ -929,6 +937,19 @@ mod test {
     use super::*;
     use crate::format::Codec;
     use crate::io::Protocol;
+
+    #[test]
+    fn spaces_preserve_or_consume_line_endings() {
+        for end in ["\r\n", "\n", "\r"] {
+            let input = format!(" \t{end}next");
+            let remaining = format!("{end}next");
+            assert_eq!(
+                spaces(false).parse(input.as_str()),
+                Ok(((), remaining.as_str()))
+            );
+            assert_eq!(spaces(true).parse(input.as_str()), Ok(((), "next")));
+        }
+    }
 
     #[test]
     fn line_a() {
