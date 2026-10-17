@@ -603,7 +603,12 @@ where
     let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
         .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
-    let fmtp_param = sep_by1(key_val(), token(';')).map(FormatParam::parse_pairs);
+    // Tolerate horizontal whitespace around `;` and a trailing `;`.
+    let fmtp_param = (
+        sep_end_by1(attempt(key_val()), attempt((spaces(false), token(';')))),
+        spaces(false),
+    )
+        .map(|(pairs, _)| FormatParam::parse_pairs(pairs));
 
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1
@@ -903,12 +908,28 @@ where
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
     (
-        optional(spaces()),
-        many1(satisfy(|c| c != '=' && c != ' ' && c != '\r' && c != '\n')),
+        spaces(false),
+        many1(satisfy(|c| is_param_char(c, '='))),
         token('='),
-        many1(satisfy(|c| c != ';' && c != ' ' && c != '\r' && c != '\n')),
+        many1(satisfy(|c| is_param_char(c, ';'))),
     )
         .map(|(_, key, _, val)| (key, val))
+}
+
+/// Skip spaces and tabs, optionally including CR and LF.
+fn spaces<Input>(newline: bool) -> impl Parser<Input, Output = ()>
+where
+    Input: Stream<Token = char>,
+    Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
+{
+    skip_many(satisfy(move |c| {
+        matches!(c, ' ' | '\t') || (newline && matches!(c, '\r' | '\n'))
+    }))
+}
+
+// Parameter tokens exclude horizontal whitespace, line endings, and their delimiter.
+fn is_param_char(c: char, delimiter: char) -> bool {
+    c != delimiter && !matches!(c, ' ' | '\t' | '\r' | '\n')
 }
 
 #[cfg(test)]
@@ -916,6 +937,19 @@ mod test {
     use super::*;
     use crate::format::Codec;
     use crate::io::Protocol;
+
+    #[test]
+    fn spaces_preserve_or_consume_line_endings() {
+        for end in ["\r\n", "\n", "\r"] {
+            let input = format!(" \t{end}next");
+            let remaining = format!("{end}next");
+            assert_eq!(
+                spaces(false).parse(input.as_str()),
+                Ok(((), remaining.as_str()))
+            );
+            assert_eq!(spaces(true).parse(input.as_str()), Ok(((), "next")));
+        }
+    }
 
     #[test]
     fn line_a() {
@@ -977,6 +1011,68 @@ mod test {
                 ""
             ))
         );
+    }
+
+    #[test]
+    fn media_attribute_line_fmtp_horizontal_whitespace() {
+        let expected = MediaAttribute::Fmtp {
+            pt: 111.into(),
+            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+        };
+        for params in [
+            "minptime=10;\tuseinbandfec=1",
+            "\tminptime=10;useinbandfec=1",
+            "minptime=10\t;useinbandfec=1",
+            "minptime=10;useinbandfec=1\t",
+            " \tminptime=10 \t; \tuseinbandfec=1 \t; \t",
+        ] {
+            for end in ["\r\n", "\n", ""] {
+                let next = if end.is_empty() { "" } else { "a=mid:0" };
+                let line = format!("a=fmtp:111 {params}{end}{next}");
+                assert_eq!(
+                    media_attribute_line().parse(line.as_str()),
+                    Ok((expected.clone(), next)),
+                    "{line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn media_attribute_line_fmtp_preserves_next_line() {
+        for end in ["\r\n", "\n"] {
+            for next in ["a=mid:0", "a=sendrecv"] {
+                let line = format!("a=fmtp:111 minptime=10;useinbandfec=1;{end}{next}");
+                let expected = MediaAttribute::Fmtp {
+                    pt: 111.into(),
+                    values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+                };
+                assert_eq!(
+                    media_attribute_line().parse(line.as_str()),
+                    Ok((expected, next))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn media_attribute_line_fmtp_separator_whitespace() {
+        let expected = MediaAttribute::Fmtp {
+            pt: 111.into(),
+            values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)],
+        };
+        for line in [
+            "a=fmtp:111 minptime=10;useinbandfec=1;\r\na=rtcp-fb:111 nack",
+            "a=fmtp:111 minptime=10;useinbandfec=1 \r\na=rtcp-fb:111 nack",
+            "a=fmtp:111 minptime=10 ;useinbandfec=1\r\na=rtcp-fb:111 nack",
+            "a=fmtp:111 minptime=10; useinbandfec=1; \r\na=rtcp-fb:111 nack",
+        ] {
+            assert_eq!(
+                media_attribute_line().parse(line),
+                Ok((expected.clone(), "a=rtcp-fb:111 nack")),
+                "{line:?}"
+            );
+        }
     }
 
     #[test]
