@@ -80,7 +80,7 @@ pub(crate) use tele::duration_from_units;
 use tele::{TelephoneEventDepacketizer, TelephoneEventPacketizer};
 
 mod buffer_rx;
-pub(crate) use buffer_rx::{DepacketizingBuffer, Reordering, RtpMeta};
+pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
 
 mod contiguity;
 mod contiguity_vp8;

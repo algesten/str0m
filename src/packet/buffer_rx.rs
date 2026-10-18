@@ -12,33 +12,6 @@ use super::contiguity_vp8::Vp8Contiguity;
 use super::contiguity_vp9::Vp9Contiguity;
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
-/// Receive policy shared by delivery and timer scheduling.
-#[derive(Clone, Copy)]
-pub(crate) enum Reordering<'a> {
-    Fixed(Option<Duration>),
-    Recovery(Option<&'a crate::streams::StreamRx>),
-}
-
-impl From<Option<Duration>> for Reordering<'_> {
-    fn from(timeout: Option<Duration>) -> Self {
-        Self::Fixed(timeout)
-    }
-}
-
-impl Reordering<'_> {
-    fn is_some(self) -> bool {
-        !matches!(self, Self::Fixed(None))
-    }
-
-    fn is_none(self) -> bool {
-        !self.is_some()
-    }
-
-    fn is_recovery(self) -> bool {
-        matches!(self, Self::Recovery(_))
-    }
-}
-
 // Bound incomplete frames as well as complete frames waiting for reordering.
 // 4,096 packets allow roughly 5 MB of payload at a typical 1,200-byte packet size.
 const MAX_BUFFERED_PACKETS: usize = 4096;
@@ -181,6 +154,10 @@ impl LastProcessed {
 #[derive(Debug)]
 pub struct DepacketizingBuffer {
     hold_back: usize,
+
+    // Session supplies the recovery deadline for video. None means keep waiting.
+    wait_for_recovery: bool,
+    recovery_deadline: Option<Instant>,
     depack: CodecDepacketizer,
     queue: VecDeque<Entry>,
     // Segment indices are relative to the queue at the last rebuild.
@@ -215,6 +192,8 @@ impl DepacketizingBuffer {
 
         DepacketizingBuffer {
             hold_back,
+            wait_for_recovery: false,
+            recovery_deadline: None,
             depack,
             queue: VecDeque::new(),
             segments: VecDeque::new(),
@@ -306,12 +285,38 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn pop<'a>(
+    /// The next complete candidate and the sequence range it would skip.
+    pub(crate) fn recovery_candidate(&mut self) -> Option<(Range<SeqNo>, Instant)> {
+        self.update_segments();
+        let (start, received) = self.segments.iter().find_map(|&(start, stop, received)| {
+            self.queue[stop - self.segments_offset]
+                .tail
+                .then_some((start - self.segments_offset, received))
+        })?;
+        if start == 0
+            && !matches!(self.last_processed, Some(LastProcessed::Expired(_)))
+            && self.is_following_last(start)
+        {
+            return None;
+        }
+        let first = self
+            .last_processed
+            .map_or(self.queue.front()?.meta.seq_no, |last| {
+                (*last.seq_no()).saturating_add(1).into()
+            });
+        Some((first..self.queue[start].meta.seq_no, received))
+    }
+
+    pub(crate) fn set_recovery_deadline(&mut self, deadline: Option<Instant>) {
+        self.wait_for_recovery = true;
+        self.recovery_deadline = deadline;
+    }
+
+    pub fn pop(
         &mut self,
         now: Instant,
-        reordering_timeout: impl Into<Reordering<'a>>,
+        reordering_timeout: Option<Duration>,
     ) -> Option<Result<Depacketized, PacketError>> {
-        let reordering_timeout = reordering_timeout.into();
         loop {
             let queued = self.queue.len();
             let result = self.pop_frame(now, reordering_timeout);
@@ -325,7 +330,7 @@ impl DepacketizingBuffer {
     fn pop_frame(
         &mut self,
         now: Instant,
-        reordering_timeout: Reordering<'_>,
+        reordering_timeout: Option<Duration>,
     ) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
@@ -385,12 +390,10 @@ impl DepacketizingBuffer {
         };
 
         // If we have contiguity of seq numbers we emit right away,
-        // Otherwise, fixed policy waits up to `hold_back` frames. Recovery policy
-        // waits for the relevant NACK budget and grace period instead.
-        // Re-evaluate contiguity based on codec specific information.
+        // Otherwise, we wait for retransmissions up to `hold_back` frames
+        // and re-evaluate contiguity based on codec specific information
 
-        let more_than_hold_back =
-            !reordering_timeout.is_recovery() && self.segments.len() >= self.hold_back;
+        let more_than_hold_back = self.segments.len() >= self.hold_back;
         let expired = matches!(self.last_processed, Some(LastProcessed::Expired(_)));
         let contiguous_seq = !expired && self.is_following_last(start);
         let wait_for_contiguity = !contiguous_seq
@@ -449,18 +452,12 @@ impl DepacketizingBuffer {
         self.depack_cache = None;
     }
 
-    pub(crate) fn poll_timeout<'a>(
-        &mut self,
-        reordering_timeout: impl Into<Reordering<'a>>,
-    ) -> Option<Instant> {
-        let reordering_timeout = reordering_timeout.into();
+    pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
+        let timeout = reordering_timeout?;
         self.update_segments();
-        if let Reordering::Recovery(stream) = reordering_timeout {
-            return self.recovery_deadline(stream);
+        if self.wait_for_recovery {
+            return self.recovery_deadline;
         }
-        let Reordering::Fixed(Some(timeout)) = reordering_timeout else {
-            return None;
-        };
 
         if let Some((_, first_received)) = self.first_incomplete_frame() {
             return first_received.checked_add(timeout);
@@ -529,39 +526,18 @@ impl DepacketizingBuffer {
         }
     }
 
-    fn recovery_deadline(&self, stream: Option<&crate::streams::StreamRx>) -> Option<Instant> {
-        let (start, _, received) = self.segments.iter().find_map(|&(start, stop, received)| {
-            let start = start - self.segments_offset;
-            let stop = stop - self.segments_offset;
-            self.queue[stop].tail.then_some((start, stop, received))
-        })?;
-        let expired = matches!(self.last_processed, Some(LastProcessed::Expired(_)));
-        if start == 0 && !expired && self.is_following_last(start) {
-            return None;
-        }
-        let first = self
-            .last_processed
-            .map_or(self.queue.front()?.meta.seq_no, |last| {
-                (*last.seq_no()).saturating_add(1).into()
-            });
-        match stream {
-            Some(stream) => {
-                stream.recovery_deadline(first..self.queue[start].meta.seq_no, received)
-            }
-            None => received.checked_add(Duration::from_millis(300)),
-        }
-    }
-
     fn timeout_allows_progress(
         &self,
         now: Instant,
         first_received: Instant,
-        reordering_timeout: Reordering<'_>,
+        reordering_timeout: Option<Duration>,
     ) -> bool {
-        if let Reordering::Recovery(stream) = reordering_timeout {
-            return self.recovery_deadline(stream).is_some_and(|at| now >= at);
+        if self.wait_for_recovery {
+            return self
+                .recovery_deadline
+                .is_some_and(|deadline| now >= deadline);
         }
-        let Reordering::Fixed(Some(timeout)) = reordering_timeout else {
+        let Some(timeout) = reordering_timeout else {
             return false;
         };
 
@@ -650,6 +626,10 @@ impl DepacketizingBuffer {
     }
 
     fn consume_segment(&mut self, stop: usize) {
+        if self.queue[stop].tail {
+            // A following candidate needs its own deadline from Session.
+            self.recovery_deadline = None;
+        }
         // Removing the first segment leaves later boundaries intact. Advance the
         // index origin instead of rescanning packets or shifting every segment.
         self.queue.drain(0..=stop);

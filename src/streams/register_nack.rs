@@ -242,9 +242,10 @@ impl NackRegister {
         range: Range<SeqNo>,
         candidate_received: Instant,
         rtt: Option<Duration>,
+        timeout: Duration,
     ) -> Option<Instant> {
         let grace = rtt.unwrap_or(DEFAULT_RTT).saturating_mul(3);
-        let fallback = candidate_received.checked_add(grace);
+        let fallback = candidate_received.checked_add(timeout);
         let Some(active) = &self.active else {
             return fallback;
         };
@@ -262,11 +263,7 @@ impl NackRegister {
         }
         // Gaps outside the bounded NACK window and missing tail markers have no final
         // request to time from. Give them a candidate-relative grace period instead.
-        if range.start < active.start || deadline.is_none() {
-            let fallback = fallback?;
-            deadline = Some(deadline.map_or(fallback, |at| at.max(fallback)));
-        }
-        deadline
+        deadline.or(fallback)
     }
 
     fn as_index(&self, seq: SeqNo) -> usize {
@@ -302,67 +299,43 @@ mod test {
             Some(Duration::from_millis(400)),
         ] {
             let base = Instant::now();
-            let effective_rtt = rtt.unwrap_or(Duration::from_millis(100));
+            let measured = rtt.unwrap_or(Duration::from_millis(100));
+            let fallback = Duration::from_secs(2);
             let mut reg = NackRegister::new(None);
             reg.update(10.into());
             reg.update(12.into());
-            let range = || 11.into()..12.into();
-            assert_eq!(reg.recovery_deadline(range(), base, rtt), None);
             let mut now = base;
             for attempt in 0..5 {
+                assert_eq!(
+                    reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
+                    None
+                );
                 assert_eq!(nack_entries(&mut reg, now, rtt).len(), 1);
                 if attempt < 4 {
-                    assert_eq!(reg.recovery_deadline(range(), base, rtt), None);
-                    now += effective_rtt + Duration::from_millis(5);
+                    now += measured + Duration::from_millis(5);
                 }
             }
+            let deadline = Some(now + measured * 3);
+            // Include a received packet before the active window; it must not add a fallback wait.
             assert_eq!(
-                reg.recovery_deadline(range(), base, rtt),
-                Some(now + effective_rtt * 3)
+                reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
+                deadline
             );
-            // A later missing packet must not hold this candidate back.
             reg.update(14.into());
             assert_eq!(
-                reg.recovery_deadline(range(), base, rtt),
-                Some(now + effective_rtt * 3)
+                reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
+                deadline
             );
-            assert_eq!(reg.recovery_deadline(11.into()..14.into(), base, rtt), None);
-            // Recovery removes the exhausted packet's deadline.
+            assert_eq!(
+                reg.recovery_deadline(10.into()..14.into(), base, rtt, fallback),
+                None
+            );
             reg.update(11.into());
             assert_eq!(
-                reg.recovery_deadline(range(), base, rtt),
-                Some(base + effective_rtt * 3)
+                reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
+                Some(base + fallback)
             );
         }
-    }
-
-    #[test]
-    fn recovery_untracked_gaps_and_reset_use_candidate_grace() {
-        let base = Instant::now();
-        let mut reg = NackRegister::new(None);
-        reg.update(10.into());
-        reg.update(12.into());
-        assert_eq!(
-            reg.recovery_deadline(11.into()..12.into(), base, None),
-            None
-        );
-        // Moving the window makes the old gap unrecoverable, without inheriting a
-        // recycled slot's NACK attempts or waiting forever.
-        reg.update(200.into());
-        let deadline = Some(base + Duration::from_millis(300));
-        assert_eq!(
-            reg.recovery_deadline(11.into()..12.into(), base, None),
-            deadline
-        );
-        assert_eq!(
-            reg.recovery_deadline(200.into()..200.into(), base, None),
-            deadline
-        );
-        reg = NackRegister::new(None);
-        assert_eq!(
-            reg.recovery_deadline(11.into()..12.into(), base, None),
-            deadline
-        );
     }
 
     #[test]

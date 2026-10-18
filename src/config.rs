@@ -28,12 +28,6 @@ use crate::rtp_::{Bitrate, Extension, ExtensionMap};
 /// # }
 /// ```
 ///
-/// Video frame recovery adapts to the receive stream's RTT. Incomplete frames remain
-/// buffered until a complete successor is available and the missing packets' NACK
-/// attempts plus a three-RTT grace period are exhausted. The default RTT estimate is
-/// 100 ms. With no complete successor there is no age limit, allowing large screen-share
-/// frames to finish over slow networks. The packet-capacity limit still applies.
-///
 /// Configs implement [`Clone`] to help create multiple `Rtc` instances.
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
@@ -552,11 +546,18 @@ impl RtcConfig {
         self.reordering_timeout_audio
     }
 
-    /// Sets the video reordering buffer's retention window. Defaults to 30.
+    /// Sets the number of packets held back for reordering video packets.
     ///
-    /// This controls padding retention and, when nonzero, rejects packets older than
-    /// already emitted media. Video frames wait for NACK recovery and three RTTs before
-    /// passing a gap, independently of this value.
+    /// Str0m tries to deliver the frames in order. This number determines how many
+    /// packets to "wait" before releasing media with gaps.
+    ///
+    /// This must be at least as big as the number of packets the biggest keyframe
+    /// can be split over.
+    ///
+    /// WARNING: video is very different to audio. Setting this value too low will result in
+    /// missing video data. The 0 (as described for audio) is not relevant for video.
+    ///
+    /// Default: 30
     ///
     /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
     /// packets can arrive out of order.
@@ -582,25 +583,34 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
-    /// Retains the legacy video timeout value for source compatibility.
+    /// Sets the fallback wait for missing video packets that cannot be NACKed.
     ///
-    /// This value no longer controls video delivery. Video frames use RTT-based recovery:
-    /// incomplete data is retained until a complete successor is available and the relevant
-    /// missing packets have exhausted their NACK attempts plus three receive-stream RTTs.
-    /// Until RTT is known, 100 ms is used. Untracked gaps, missing markers, and suppressed
-    /// NACKs use three RTTs from the complete candidate's earliest packet receipt instead.
+    /// Incomplete frames wait until a complete successor is available. Missing packets
+    /// before that candidate get all NACK attempts plus three receive-stream RTTs after
+    /// the final NACK (100 ms RTT until measured). If NACKs are suppressed, the gap is
+    /// outside the NACK window, or a tail marker is missing, this timeout starts at the
+    /// complete candidate's earliest packet receipt instead.
     ///
-    /// The packet-capacity limit still applies. Without a complete successor there is no
-    /// age limit: a very late packet can complete and deliver old media. Audio and RTP mode
-    /// are unaffected.
-    #[deprecated(note = "video frame recovery now follows NACK attempts and RTT automatically")]
+    /// The default is 2 seconds. `None` keeps count-based waiting only. Zero skips the
+    /// fallback wait once a complete candidate exists. Frame-count and packet-capacity
+    /// limits still apply. Without a complete successor, an incomplete frame has no age
+    /// deadline and can finish much later. Applies to video in frame mode only.
     pub fn set_reordering_timeout_video(mut self, timeout: Option<Duration>) -> Self {
         self.reordering_timeout_video = timeout;
         self
     }
 
-    /// Returns the legacy video timeout value, which no longer controls video delivery.
-    #[deprecated(note = "video frame recovery now follows NACK attempts and RTT automatically")]
+    /// Returns the configured video reordering timeout.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 2 seconds.
+    /// assert_eq!(config.reordering_timeout_video(), Some(std::time::Duration::from_secs(2)));
+    /// ```
+    ///
+    /// `Some(Duration::ZERO)` is preserved distinctly from `None`.
     pub fn reordering_timeout_video(&self) -> Option<Duration> {
         self.reordering_timeout_video
     }

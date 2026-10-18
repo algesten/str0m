@@ -8,7 +8,7 @@ use crate::RtcError;
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
 
-use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader, Reordering};
+use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader};
 use crate::packet::{RedSender, RedSink, RtpMeta};
 use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
@@ -349,18 +349,9 @@ impl Media {
         params: &[PayloadParams],
         now: Instant,
         reordering_timeout: Option<Duration>,
-        streams: &mut Streams,
     ) -> Result<Option<MediaData>, RtcError> {
         for ((pt, rid), buf) in &mut self.depayloaders {
-            let policy = if self.kind.is_video() {
-                let stream = streams
-                    .stream_rx_by_midrid(MidRid(self.mid, *rid))
-                    .map(|stream| &*stream);
-                Reordering::Recovery(stream)
-            } else {
-                Reordering::Fixed(reordering_timeout)
-            };
-            if let Some(r) = buf.pop(now, policy) {
+            if let Some(r) = buf.pop(now, reordering_timeout) {
                 let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
@@ -572,24 +563,21 @@ impl Media {
             .map(|p| p.not_before.unwrap_or_else(already_happened))
     }
 
+    pub(crate) fn receive_buffers(
+        &mut self,
+    ) -> impl Iterator<Item = (Option<Rid>, &mut DepacketizingBuffer)> {
+        self.depayloaders
+            .iter_mut()
+            .map(|((_, rid), buf)| (*rid, buf))
+    }
+
     pub(crate) fn poll_receive_timeout(
         &mut self,
         reordering_timeout: Option<Duration>,
-        streams: &mut Streams,
     ) -> Option<Instant> {
         self.depayloaders
-            .iter_mut()
-            .filter_map(|((_, rid), buf)| {
-                let policy = if self.kind.is_video() {
-                    let stream = streams
-                        .stream_rx_by_midrid(MidRid(self.mid, *rid))
-                        .map(|stream| &*stream);
-                    Reordering::Recovery(stream)
-                } else {
-                    Reordering::Fixed(reordering_timeout)
-                };
-                buf.poll_timeout(policy)
-            })
+            .values_mut()
+            .filter_map(|buf| buf.poll_timeout(reordering_timeout))
             .min()
     }
 
@@ -861,7 +849,6 @@ mod receive_timeout_test {
     /// Test the earliest deadline covers all payload types and RIDs and changes after buffer resets.
     #[test]
     fn deadlines_cover_payload_types_rids_and_resets() {
-        let mut streams = Streams::new(false, 1200, Duration::from_secs(2));
         let base = Instant::now();
         let mut media = Media::default();
         let pt1 = Pt::new_with_value(96);
@@ -879,21 +866,18 @@ mod receive_timeout_test {
         );
         let timeout = Some(Duration::from_millis(250));
         assert_eq!(
-            media.poll_receive_timeout(timeout, &mut streams),
-            Some(base + Duration::from_millis(300))
+            media.poll_receive_timeout(timeout),
+            Some(base + Duration::from_millis(250))
         );
         media.reset_depayloaders_for_rid(rid1);
         assert_eq!(
-            media.poll_receive_timeout(timeout, &mut streams),
-            Some(base + Duration::from_millis(350))
-        );
-        media.reset_depayloaders_for_rid(rid2);
-        assert_eq!(media.poll_receive_timeout(timeout, &mut streams), None);
-        assert_eq!(media.poll_receive_timeout(None, &mut streams), None);
-        media.depayloaders.insert((pt1, rid1), blocked_buffer(base));
-        assert_eq!(
-            media.poll_receive_timeout(Some(Duration::ZERO), &mut streams),
+            media.poll_receive_timeout(timeout),
             Some(base + Duration::from_millis(300))
         );
+        media.reset_depayloaders_for_rid(rid2);
+        assert_eq!(media.poll_receive_timeout(timeout), None);
+        assert_eq!(media.poll_receive_timeout(None), None);
+        media.depayloaders.insert((pt1, rid1), blocked_buffer(base));
+        assert_eq!(media.poll_receive_timeout(Some(Duration::ZERO)), Some(base));
     }
 }

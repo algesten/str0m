@@ -89,7 +89,8 @@ impl VideoTest {
             .declare_media(mid, MediaKind::Video);
         self.receiver
             .direct_api()
-            .expect_stream_rx(ssrc, repair, mid, None);
+            .expect_stream_rx(ssrc, repair, mid, None)
+            .suppress_nack(!rtx);
     }
 
     fn drain(
@@ -233,34 +234,6 @@ impl VideoTest {
         )
     }
 
-    fn suppress_nacks(&mut self) {
-        self.receiver
-            .direct_api()
-            .stream_rx(&1337.into())
-            .unwrap()
-            .suppress_nack(true);
-    }
-
-    fn wait_for_final_nack(&mut self, seq: u16) -> Result<Instant, RtcError> {
-        for _ in 0..2000 {
-            let requests: Vec<_> = self
-                .receiver
-                .events
-                .iter()
-                .filter_map(|(at, e)| {
-                    matches!(e.as_raw_packet(), Some(RawPacket::RtcpTx(Rtcp::Nack(n)))
-                    if n.reports.iter().any(|r| r.pid == seq))
-                    .then_some(*at)
-                })
-                .collect();
-            if requests.len() == 5 {
-                return Ok(*requests.last().unwrap());
-            }
-            self.advance_to(self.now + Duration::from_millis(1))?;
-        }
-        panic!("five NACK attempts were not sent");
-    }
-
     fn received_frames(&self) -> Vec<(u64, u64, bool)> {
         self.receiver
             .events
@@ -374,11 +347,13 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
 
 /// Test permanent packet loss releases video at the deadline and reports the gap.
 #[test]
-pub fn video_recovery_permanent_loss() -> Result<(), RtcError> {
-    let timeout = Duration::from_millis(300);
+pub fn video_reorder_timeout_permanent_loss() -> Result<(), RtcError> {
+    let timeout = Duration::from_millis(250);
     for cadence in [Duration::from_millis(200), Duration::from_secs(1)] {
-        let mut t = VideoTest::new(Rtc::builder(), false)?;
-        t.suppress_nacks();
+        let mut t = VideoTest::new(
+            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+            false,
+        )?;
         t.send_vp8_frame(47_000)?;
         assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
         t.advance_to(t.now + cadence)?;
@@ -408,11 +383,14 @@ pub fn video_recovery_permanent_loss() -> Result<(), RtcError> {
 
 /// Test timeout expiry preserves VP8/VP9 temporal-layer dependency checks.
 #[test]
-fn video_recovery_temporal_dependencies() -> Result<(), RtcError> {
-    let timeout = Duration::from_millis(300);
+fn video_reorder_timeout_temporal_dependencies() -> Result<(), RtcError> {
+    let timeout = Duration::from_millis(250);
     for codec in [Codec::Vp8, Codec::Vp9] {
-        let mut t = VideoTest::with_codec(Rtc::builder(), false, codec)?;
-        t.suppress_nacks();
+        let mut t = VideoTest::with_codec(
+            Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+            false,
+            codec,
+        )?;
         // Parser-valid synthetic payloads, not complete encoded video bitstreams.
         let payload = |picture: u8, tl0: u8, layer: u8, keyframe: bool| match codec {
             // X/S, I/L/T, PictureID, TL0PICIDX, TID/Y, payload header.
@@ -450,7 +428,8 @@ fn video_recovery_temporal_dependencies() -> Result<(), RtcError> {
         assert_eq!(t.received_frames(), initial);
         assert_eq!(t.receiver.last, deadline);
         assert_eq!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-        t.tick(deadline)?;
+        // A rejected candidate requires Session to compute the following candidate's deadline.
+        t.advance_to(deadline)?;
         assert_eq!(
             t.received_frames(),
             [
@@ -507,10 +486,13 @@ fn video_recovery_temporal_dependencies() -> Result<(), RtcError> {
 
 /// Test H264 FU-A reassembly waits for completion and uses the first fragment's receipt time.
 #[test]
-fn video_recovery_h264_fragments() -> Result<(), RtcError> {
-    let timeout = Duration::from_millis(300);
-    let mut t = VideoTest::with_codec(Rtc::builder(), false, Codec::H264)?;
-    t.suppress_nacks();
+fn video_reorder_timeout_h264_fragments() -> Result<(), RtcError> {
+    let timeout = Duration::from_millis(250);
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+        false,
+        Codec::H264,
+    )?;
     // Synthetic NAL/FU-A payloads exercise reassembly, not video decoding.
     t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
     t.advance_to(t.now + Duration::from_millis(100))?;
@@ -550,14 +532,17 @@ fn video_recovery_h264_fragments() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// A slow H264 frame survives until it completes, even across a sequence gap.
+/// A slow H264 frame survives until it completes when no complete successor exists.
 #[test]
-fn video_recovery_h264_tail_after_legacy_timeout() -> Result<(), RtcError> {
-    let mut t = VideoTest::with_codec(Rtc::builder(), false, Codec::H264)?;
-    t.suppress_nacks();
+fn video_reorder_timeout_h264_slow_frame_completes() -> Result<(), RtcError> {
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(250))),
+        false,
+        Codec::H264,
+    )?;
     t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
     t.write(1337.into(), 47_002, 2000, &[0x7c, 0x85, 0x11], false)?;
-    t.advance_to(t.now + Duration::from_millis(300))?;
+    t.advance_to(t.now + Duration::from_secs(5))?;
     t.write(1337.into(), 47_003, 2000, &[0x7c, 0x45, 0x33], true)?;
     assert_eq!(
         t.received_frames(),
@@ -578,10 +563,13 @@ fn video_recovery_h264_tail_after_legacy_timeout() -> Result<(), RtcError> {
 
 /// Test H264 can release a later NAL after earlier fragments of the same picture are lost.
 #[test]
-fn video_recovery_h264_same_timestamp_gap() -> Result<(), RtcError> {
-    let timeout = Duration::from_millis(300);
-    let mut t = VideoTest::with_codec(Rtc::builder(), false, Codec::H264)?;
-    t.suppress_nacks();
+fn video_reorder_timeout_h264_same_timestamp_gap() -> Result<(), RtcError> {
+    let timeout = Duration::from_millis(250);
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+        false,
+        Codec::H264,
+    )?;
     t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
     t.write(1337.into(), 47_001, 2000, &[0x7c, 0x81, 0x11], false)?;
     // Missing FU-A fragment 47002; another NAL in the same picture is a new head.
@@ -615,9 +603,12 @@ fn video_recovery_h264_same_timestamp_gap() -> Result<(), RtcError> {
 
 /// Test NACK/RTX recovery fills the gap before expiry and preserves frame continuity.
 #[test]
-fn video_recovery_rtx_recovers() -> Result<(), RtcError> {
+fn video_reorder_timeout_rtx_recovers() -> Result<(), RtcError> {
     let timeout = Duration::from_millis(250);
-    let mut t = VideoTest::new(Rtc::builder(), true)?;
+    let mut t = VideoTest::new(
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+        true,
+    )?;
     t.send_vp8_frame(47_000)?;
     t.advance_to(t.now + Duration::from_millis(100))?;
     t.drop_original = Some(47_001);
@@ -749,8 +740,12 @@ fn video_receiver_report_loss_after_delayed_rtx() -> Result<(), RtcError> {
 
 /// Test RTX arriving after timeout release cannot resurrect an older frame.
 #[test]
-fn video_recovery_rtx_after_release() -> Result<(), RtcError> {
-    let mut t = VideoTest::new(Rtc::builder(), true)?;
+fn video_reorder_timeout_rtx_after_release() -> Result<(), RtcError> {
+    let timeout = Duration::from_millis(250);
+    let mut t = VideoTest::new(
+        Rtc::builder().set_reordering_timeout_video(Some(timeout)),
+        true,
+    )?;
     t.defer_rtx = true;
     t.send_vp8_frame(47_000)?;
     t.advance_to(t.now + Duration::from_millis(100))?;
@@ -759,7 +754,27 @@ fn video_recovery_rtx_after_release() -> Result<(), RtcError> {
     assert_eq!(t.dropped, 1);
     t.advance_to(t.now + Duration::from_millis(100))?;
     t.send_vp8_frame(47_002)?;
-    let deadline = t.wait_for_final_nack(47_001)? + Duration::from_millis(300);
+    let mut last_nack = None;
+    for _ in 0..200 {
+        let requests: Vec<_> = t
+            .receiver
+            .events
+            .iter()
+            .filter_map(|(at, e)| {
+                matches!(e.as_raw_packet(), Some(RawPacket::RtcpTx(Rtcp::Nack(n)))
+                if n.reports.iter().any(|r| r.pid == 47_001))
+                .then_some(*at)
+            })
+            .collect();
+        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+        if requests.len() == 5 {
+            last_nack = requests.last().copied();
+            break;
+        }
+        assert!(requests.len() < 5);
+        t.advance_to(t.now + Duration::from_millis(10))?;
+    }
+    let deadline = last_nack.expect("five NACK attempts") + Duration::from_millis(300);
     t.advance_to(deadline - Duration::from_nanos(1))?;
     assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
     assert!(
@@ -833,38 +848,38 @@ fn video_recovery_rtx_after_release() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Legacy None and zero values cannot bypass the default recovery policy.
+/// None preserves count-only waiting; zero skips waiting once a successor is complete.
 #[test]
-#[allow(deprecated)]
-fn video_recovery_ignores_legacy_none_and_zero_timeouts() -> Result<(), RtcError> {
+fn video_reorder_timeout_none_and_zero_on_partial_frames() -> Result<(), RtcError> {
     for policy in [None, Some(Duration::ZERO)] {
         let mut t = VideoTest::new(Rtc::builder().set_reordering_timeout_video(policy), false)?;
-        t.suppress_nacks();
         t.send_vp8_frame(47_000)?;
+        t.advance_to(t.now + Duration::from_millis(100))?;
         t.write(1337.into(), 47_001, 100, &[0x10, 0, 0], false)?;
         t.write(1337.into(), 47_003, 200, &[0x10, 0, 0], false)?;
-        t.advance_to(t.now + Duration::from_secs(3))?;
+        t.advance_to(t.now + Duration::from_millis(100))?;
         assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
         t.write(1337.into(), 47_004, 200, &[0x00, 0], true)?;
-        assert_eq!(
-            t.received_frames(),
-            [(47_000, 47_000, true), (47_003, 47_004, false)]
-        );
+        if policy.is_some() {
+            assert_eq!(
+                t.received_frames(),
+                [(47_000, 47_000, true), (47_003, 47_004, false)]
+            );
+        } else {
+            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+        }
     }
     Ok(())
 }
 
 /// Test the earliest video deadline wins across media, regardless of iteration order.
 #[test]
-fn video_recovery_earliest_across_media() -> Result<(), RtcError> {
-    let mut t = VideoTest::new(Rtc::builder(), false)?;
-    t.suppress_nacks();
+fn video_reorder_timeout_earliest_across_media() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder().set_reordering_timeout_video(Some(Duration::from_millis(250))),
+        false,
+    )?;
     t.add_video("other".into(), 2337.into(), false);
-    t.receiver
-        .direct_api()
-        .stream_rx(&2337.into())
-        .unwrap()
-        .suppress_nack(true);
     t.send_vp8_frame(47_000)?;
     t.write(2337.into(), 48_000, 1000, &[0x10, 0, 0], true)?;
     let base = t.now;
@@ -873,13 +888,13 @@ fn video_recovery_earliest_across_media() -> Result<(), RtcError> {
     t.write(2337.into(), 48_002, 2000, &[0x10, 0, 0], true)?;
     t.advance_to(base + Duration::from_millis(150))?;
     t.send_vp8_frame(47_002)?;
-    t.advance_to(base + Duration::from_millis(399))?;
+    t.advance_to(base + Duration::from_millis(349))?;
     assert_eq!(t.received_frames().len(), 2);
-    assert_eq!(t.receiver.last, base + Duration::from_millis(400));
+    assert_eq!(t.receiver.last, base + Duration::from_millis(350));
     t.tick(t.receiver.last)?;
     assert_eq!(t.received_frames().last(), Some(&(48_002, 48_002, false)));
-    t.advance_to(base + Duration::from_millis(449))?;
-    assert_eq!(t.receiver.last, base + Duration::from_millis(450));
+    t.advance_to(base + Duration::from_millis(399))?;
+    assert_eq!(t.receiver.last, base + Duration::from_millis(400));
     t.tick(t.receiver.last)?;
     assert_eq!(t.received_frames().last(), Some(&(47_002, 47_002, false)));
     assert_eq!(t.received_frames().len(), 4);
@@ -889,9 +904,11 @@ fn video_recovery_earliest_across_media() -> Result<(), RtcError> {
 /// A frame can start before a stream pause and finish after its resume.
 #[test]
 fn video_frame_completes_across_pause() -> Result<(), RtcError> {
-    for pause_ms in [100, 500] {
+    for policy in [None, Some(Duration::from_secs(2))] {
         let mut t = VideoTest::new(
-            Rtc::builder().set_pause_threshold(Duration::from_millis(pause_ms)),
+            Rtc::builder()
+                .set_pause_threshold(Duration::from_millis(500))
+                .set_reordering_timeout_video(policy),
             false,
         )?;
         t.write(1337.into(), 47_000, 1000, &[0x10, 0, 0], false)?;
@@ -1002,10 +1019,15 @@ fn video_same_ssrc_restart_after_pause_accepts_new_keyframe() -> Result<(), RtcE
     Ok(())
 }
 
-/// Video recovery leaves RTP-mode packet delivery unchanged.
+/// Test video reordering timeouts leave RTP-mode packet delivery unchanged.
 #[test]
-fn video_recovery_does_not_change_rtp_mode() -> Result<(), RtcError> {
-    let mut t = VideoTest::new(Rtc::builder().set_rtp_mode(true), false)?;
+fn video_reorder_timeout_does_not_change_rtp_mode() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder()
+            .set_rtp_mode(true)
+            .set_reordering_timeout_video(Some(Duration::ZERO)),
+        false,
+    )?;
     t.send_vp8_frame(47_000)?;
     t.send_vp8_frame(47_002)?;
     assert!(t.received_frames().is_empty());
@@ -1023,10 +1045,13 @@ fn video_recovery_does_not_change_rtp_mode() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Video recovery does not change audio's separate timeout.
+/// Test a video reordering timeout does not change audio's separate timeout.
 #[test]
-fn video_recovery_does_not_change_audio() -> Result<(), RtcError> {
-    let mut t = VideoTest::new(Rtc::builder(), false)?;
+fn video_reorder_timeout_does_not_change_audio() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(
+        Rtc::builder().set_reordering_timeout_video(Some(Duration::ZERO)),
+        false,
+    )?;
     let mid = "audio".into();
     let ssrc = 3337.into();
     let pt = t.sender.params_opus().pt();
@@ -1047,132 +1072,5 @@ fn video_recovery_does_not_change_audio() -> Result<(), RtcError> {
     t.advance_to(t.now + Duration::from_millis(500))?;
     assert_eq!(t.received_frames(), [(100, 100, true)]);
     assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-    Ok(())
-}
-
-/// Slow in-order keyframes must survive the old two-second deadline.
-#[test]
-fn video_recovery_keeps_slow_frame_without_complete_successor() -> Result<(), RtcError> {
-    let mut t = VideoTest::with_codec(Rtc::builder(), false, Codec::H264)?;
-    t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
-    t.write(1337.into(), 47_001, 2000, &[0x7c, 0x85, 0x11], false)?;
-    t.advance_to(t.now + Duration::from_secs(5))?;
-    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-    t.write(1337.into(), 47_002, 2000, &[0x7c, 0x45, 0x33], true)?;
-    assert_eq!(
-        t.received_frames(),
-        [(47_000, 47_000, true), (47_001, 47_002, true)]
-    );
-    Ok(())
-}
-
-/// Real NACK/RTX exchange: count and fixed timeout cannot bypass recovery.
-#[test]
-fn video_recovery_waits_for_nacks_then_releases_or_repairs() -> Result<(), RtcError> {
-    for repair in [false, true] {
-        let mut t = VideoTest::new(Rtc::builder().set_reordering_size_video(0), true)?;
-        t.defer_rtx = true;
-        t.send_vp8_frame(47_000)?;
-        t.drop_original = Some(47_001);
-        t.send_vp8_frame(47_001)?;
-        t.send_vp8_frame(47_002)?;
-        let last_nack = t.wait_for_final_nack(47_001)?;
-        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-        // No DLRR RTT estimate yet; recovery uses the 100 ms default.
-        let deadline = last_nack + Duration::from_millis(300);
-        t.advance_to(deadline - Duration::from_nanos(1))?;
-        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-        assert!(!t.deferred_rtx.is_empty());
-        if repair {
-            for packet in std::mem::take(&mut t.deferred_rtx) {
-                t.receiver.handle_input(Input::Receive(
-                    t.now,
-                    Receive {
-                        proto: packet.proto,
-                        source: packet.source,
-                        destination: packet.destination,
-                        contents: packet.contents.as_slice().try_into()?,
-                    },
-                ))?;
-            }
-            t.flush()?;
-            assert_eq!(
-                t.received_frames(),
-                [
-                    (47_000, 47_000, true),
-                    (47_001, 47_001, true),
-                    (47_002, 47_002, true),
-                ]
-            );
-        } else {
-            assert_eq!(t.receiver.last, deadline);
-            assert_eq!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-            t.tick(deadline)?;
-            assert_eq!(
-                t.received_frames(),
-                [(47_000, 47_000, true), (47_002, 47_002, false)]
-            );
-            // Late repair cannot resurrect the abandoned frame.
-            for packet in std::mem::take(&mut t.deferred_rtx) {
-                t.receiver.handle_input(Input::Receive(
-                    t.now,
-                    Receive {
-                        proto: packet.proto,
-                        source: packet.source,
-                        destination: packet.destination,
-                        contents: packet.contents.as_slice().try_into()?,
-                    },
-                ))?;
-            }
-            t.flush()?;
-            assert_eq!(
-                t.received_frames(),
-                [(47_000, 47_000, true), (47_002, 47_002, false)]
-            );
-        }
-        t.advance_to(deadline + Duration::from_millis(100))?;
-        assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-    }
-    Ok(())
-}
-
-#[test]
-fn video_recovery_missing_marker_waits_for_complete_successor() -> Result<(), RtcError> {
-    let mut t = VideoTest::new(Rtc::builder(), false)?;
-    t.send_vp8_frame(47_000)?;
-    t.write(1337.into(), 47_001, 1000, &[0x10, 0, 0], false)?;
-    t.write(1337.into(), 47_002, 2000, &[0x10, 0, 0], false)?;
-    t.advance_to(t.now + Duration::from_secs(3))?;
-    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
-    t.write(1337.into(), 47_003, 2000, &[0x00, 0], true)?;
-    assert_eq!(
-        t.received_frames(),
-        [(47_000, 47_000, true), (47_002, 47_003, false)]
-    );
-    Ok(())
-}
-
-/// Suppressed feedback must not leave the frame waiting for NACKs that will never be sent.
-#[test]
-fn video_recovery_suppressed_nacks_use_candidate_grace() -> Result<(), RtcError> {
-    let mut t = VideoTest::new(Rtc::builder(), false)?;
-    t.receiver
-        .direct_api()
-        .stream_rx(&1337.into())
-        .unwrap()
-        .suppress_nack(true);
-    t.send_vp8_frame(47_000)?;
-    t.send_vp8_frame(47_002)?;
-    let deadline = t.now + Duration::from_millis(300);
-    t.advance_to(deadline - Duration::from_nanos(1))?;
-    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
-    assert_eq!(t.receiver.last, deadline);
-    t.tick(deadline)?;
-    assert_eq!(
-        t.received_frames(),
-        [(47_000, 47_000, true), (47_002, 47_002, false)]
-    );
     Ok(())
 }
