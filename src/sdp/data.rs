@@ -1023,26 +1023,15 @@ pub enum FormatParam {
     /// Bare slash-separated payload list, interpreted only with a RED rtpmap.
     BarePtList(Pt),
 
-    /// AMR-WB octet-aligned (`1`) or bandwidth-efficient (`0`, default) payloads (RFC 4867).
+    /// AMR-WB octet-aligned (`1`) or bandwidth-efficient (`0`, default) payloads.
     OctetAlign(bool),
 
-    /// AMR-WB allowed speech modes as a bitmask (RFC 4867).
+    /// AMR-WB allowed speech modes as a bitmask.
     ModeSet(u16),
 
-    /// AMR-WB frame-blocks between mode changes the receiver requires (RFC 4867).
-    ModeChangePeriod(u8),
-
-    /// AMR-WB maximum redundancy delay in milliseconds (RFC 4867).
-    MaxRed(u16),
-
-    /// AMR-WB per-frame payload CRCs (RFC 4867).
-    Crc(bool),
-
-    /// AMR-WB robust payload sorting (RFC 4867).
-    RobustSorting(bool),
-
-    /// AMR-WB maximum interleaving-group size (RFC 4867).
-    Interleaving(u16),
+    /// An AMR-WB parameter that needs a feature str0m lacks, such as `crc=1`.
+    /// Declines the payload type.
+    AmrWbUnsupported,
 
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
@@ -1097,11 +1086,9 @@ impl FormatParam {
                 .map(SpropMaxDonDiff),
             "octet-align" => Some(OctetAlign(v == "1")),
             "mode-set" => parse_amr_wb_mode_set(v).map(ModeSet),
-            "mode-change-period" => v.parse().map(ModeChangePeriod).ok(),
-            "max-red" => v.parse().map(MaxRed).ok(),
-            "crc" => Some(Crc(v == "1")),
-            "robust-sorting" => Some(RobustSorting(v == "1")),
-            "interleaving" => v.parse().map(Interleaving).ok(),
+            "crc" | "robust-sorting" if v == "1" => Some(AmrWbUnsupported),
+            "mode-change-period" if v == "2" => Some(AmrWbUnsupported),
+            "interleaving" => Some(AmrWbUnsupported),
             "apt" => v.parse::<u8>().map(|v| Apt(Pt::from(v))).ok(),
             _ => None,
         }
@@ -1207,11 +1194,7 @@ impl fmt::Display for FormatParam {
                 }
                 Ok(())
             }
-            ModeChangePeriod(v) => write!(f, "mode-change-period={v}"),
-            MaxRed(v) => write!(f, "max-red={v}"),
-            Crc(v) => write!(f, "crc={}", i32::from(*v)),
-            RobustSorting(v) => write!(f, "robust-sorting={}", i32::from(*v)),
-            Interleaving(v) => write!(f, "interleaving={v}"),
+            AmrWbUnsupported => Ok(()),
             Apt(v) => write!(f, "apt={v}"),
             Red(v) => write!(f, "{v}/{v}"),
             Unknown => Ok(()),

@@ -37,7 +37,6 @@ fn amr_wb_config(octet_align: Option<bool>) -> impl FnOnce(RtcConfig) -> RtcConf
             Some(1),
             FormatParams {
                 octet_align,
-                max_red: Some(0),
                 ..Default::default()
             },
         );
@@ -133,7 +132,7 @@ fn amr_wb_default_config_negotiates_octet_aligned() {
 
     let offer_sdp = offer.to_sdp_string();
     assert!(offer_sdp.contains("a=rtpmap:122 AMR-WB/16000/1\r\n"));
-    assert!(offer_sdp.contains("a=fmtp:122 octet-align=1;max-red=0\r\n"));
+    assert!(offer_sdp.contains("a=fmtp:122 octet-align=1\r\n"));
 
     let answer = r.rtc.sdp_api().accept_offer(offer).unwrap();
     l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
@@ -143,9 +142,9 @@ fn amr_wb_default_config_negotiates_octet_aligned() {
     }
 }
 
-/// RFC 4867 §8.3.1: the answer repeats the offer's transport parameters and
-/// mode-set unmodified, drops what we don't claim, and the mode-set then binds
-/// both peers.
+/// RFC 4867 §8.3.1: the answer repeats the offer's octet-align, channels and
+/// mode-set, drops parameters str0m doesn't use, and the mode-set then binds both
+/// peers.
 #[test]
 fn amr_wb_answer_echoes_offer_and_mode_set_binds_both_sides() {
     init_log();
@@ -157,23 +156,17 @@ fn amr_wb_answer_echoes_offer_and_mode_set_binds_both_sides() {
     let mut change = l.sdp_api();
     change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     let (offer, pending) = change.apply().unwrap();
-    let offer_sdp = offer
-        .to_sdp_string()
-        .replace("AMR-WB/16000/1", "AMR-WB/16000")
-        .replace(
-            "a=fmtp:122 max-red=0",
-            "a=fmtp:122 Octet-Align=0;Mode-Set=0,1,2;Mode-Change-Capability=2;\
-             Max-Red=0;CRC=0;Robust-Sorting=0",
-        );
+    let offer_sdp = offer.to_sdp_string().replace(
+        "a=rtpmap:122 AMR-WB/16000/1\r\n",
+        "a=rtpmap:122 AMR-WB/16000\r\n\
+         a=fmtp:122 Octet-Align=0;Mode-Set=0,1,2;Mode-Change-Capability=2;\
+         Max-Red=0;CRC=0;Robust-Sorting=0\r\n",
+    );
     let offer = SdpOffer::from_sdp_string(&offer_sdp).unwrap();
 
     let answer_sdp = r.rtc.sdp_api().accept_offer(offer).unwrap().to_sdp_string();
     assert!(answer_sdp.contains("a=rtpmap:122 AMR-WB/16000\r\n"));
-    assert!(
-        answer_sdp.contains(
-            "a=fmtp:122 octet-align=0;mode-set=0,1,2;max-red=0;crc=0;robust-sorting=0\r\n"
-        )
-    );
+    assert!(answer_sdp.contains("a=fmtp:122 octet-align=0;mode-set=0,1,2\r\n"));
 
     let answer = SdpAnswer::from_sdp_string(&answer_sdp).unwrap();
     l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
@@ -189,10 +182,10 @@ fn amr_wb_unsupported_offers_are_declined() {
     init_crypto_default();
 
     for (from, to) in [
-        ("max-red=0", "max-red=0;crc=1"),
-        ("max-red=0", "max-red=0;robust-sorting=1"),
-        ("max-red=0", "max-red=0;interleaving=30"),
-        ("max-red=0", "max-red=0;mode-change-period=2"),
+        ("octet-align=1", "octet-align=1;crc=1"),
+        ("octet-align=1", "octet-align=1;robust-sorting=1"),
+        ("octet-align=1", "octet-align=1;interleaving=30"),
+        ("octet-align=1", "octet-align=1;mode-change-period=2"),
         ("AMR-WB/16000/1", "AMR-WB/16000/2"),
     ] {
         let mut l = TestRtc::new_with_config(Peer::Left, |c| c.clear_codecs().enable_amr_wb(true));

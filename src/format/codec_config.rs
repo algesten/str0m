@@ -66,7 +66,7 @@ pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(62);
 pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(61);
 pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(60);
 
-/// Default payload type for AMR-WB (RFC 4867).
+/// Default payload type for AMR-WB.
 pub(crate) const PT_AMR_WB: Pt = Pt::new_with_value(122);
 
 /// Session config for all codecs.
@@ -278,11 +278,7 @@ impl CodecConfig {
         self.add_static_config(PT_COMFORT_NOISE);
     }
 
-    /// Enable the AMR-WB (Adaptive Multi-Rate Wideband) audio codec.
-    ///
-    /// Adds a 16 kHz mono payload type using the octet-aligned RFC 4867 layout
-    /// without redundancy (`octet-align=1;max-red=0`). See [`Codec::AmrWb`] for
-    /// the media format. Disabled by default.
+    /// Add a default AMR-WB payload type.
     pub fn enable_amr_wb(&mut self, enabled: bool) {
         self.params.retain(|c| c.spec.codec != Codec::AmrWb);
         if !enabled {
@@ -296,7 +292,6 @@ impl CodecConfig {
             Some(1),
             FormatParams {
                 octet_align: Some(true),
-                max_red: Some(0),
                 ..Default::default()
             },
         );

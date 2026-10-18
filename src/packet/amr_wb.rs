@@ -1,12 +1,29 @@
 //! AMR-WB RTP payload format, [RFC 4867](https://datatracker.ietf.org/doc/html/rfc4867).
 //!
-//! The application exchanges frames in the 3GPP IF / storage format (RFC 4867 §5.3):
-//! a header octet `(FT << 3) | (Q << 2)` followed by the speech bits, zero-padded to a
-//! whole octet. The packetizer sends one such frame per RTP payload; the depacketizer
-//! emits every frame of a payload back to back.
+//! str0m doesn't encode or decode AMR-WB. The application exchanges frames in the
+//! 3GPP IF / storage format (RFC 4867 §5.3): a header octet `(FT << 3) | (Q << 2)`
+//! followed by the frame's speech bits, zero-padded to a whole octet.
 //!
-//! Octet-aligned and bandwidth-efficient single-channel payloads are supported. CRCs,
-//! robust sorting, interleaving and multiple channels are declined in SDP negotiation.
+//! Sending: write exactly one 20 ms frame per call. It goes out as one RTP payload
+//! with codec mode request 15 (no request). NO_DATA frames aren't sent.
+//!
+//! Receiving: `MediaData` holds every frame of an RTP payload back to back, 20 ms
+//! apart starting at `MediaData::time`. Peers may resend earlier frames for
+//! redundancy (RFC 4867 §4.1), so the same frame time can arrive more than once.
+//! The codec mode request is ignored and padding bits are ignored. Payloads with
+//! reserved frame types, missing speech bits, or more bytes than their table of
+//! contents describes are dropped.
+//!
+//! Supported in SDP negotiation:
+//! - Mono payloads in the octet-aligned (`octet-align=1`, used by `enable_amr_wb`)
+//!   or bandwidth-efficient layout. Both sides must use the same layout.
+//! - `mode-set`, from either side. It applies to both directions, so the
+//!   application must only write frames in those modes.
+//!
+//! Declined: CRCs (`crc=1`), robust sorting (`robust-sorting=1`), interleaving,
+//! more than one channel, and `mode-change-period=2`, which str0m can't enforce on
+//! application frames. Other AMR-WB parameters, such as `max-red` and
+//! `mode-change-capability`, are ignored and left out of answers.
 
 use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 

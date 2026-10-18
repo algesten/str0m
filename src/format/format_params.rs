@@ -117,33 +117,15 @@ pub struct FormatParams {
     /// type across the session.
     pub telephone_event_max: Option<u8>,
 
-    /// AMR-WB `octet-align` (RFC 4867). `Some(true)` selects the octet-aligned
-    /// payload layout, otherwise the bandwidth-efficient default is used.
+    /// AMR-WB `octet-align`. `Some(true)` selects the octet-aligned payload
+    /// layout, otherwise bandwidth-efficient is used.
     pub octet_align: Option<bool>,
 
-    /// AMR-WB `mode-set` (RFC 4867) as a bitmask of the allowed speech modes 0..=8.
+    /// AMR-WB `mode-set`, a bitmask of the allowed speech modes 0..=8.
     ///
-    /// A mode set signalled by either peer binds both directions. str0m does not
-    /// encode audio, so the application must only write frames in these modes.
+    /// A mode set from either peer applies to both directions, so only write
+    /// frames in these modes.
     pub mode_set: Option<u16>,
-
-    /// AMR-WB `mode-change-period` (RFC 4867). str0m can't ensure that application
-    /// frames change mode only every other frame, so it never claims
-    /// `mode-change-capability=2` and declines `2`.
-    pub mode_change_period: Option<u8>,
-
-    /// AMR-WB `max-red` (RFC 4867), the longest delay in milliseconds of any
-    /// redundant frame this side sends. str0m itself never sends redundancy.
-    pub max_red: Option<u16>,
-
-    /// AMR-WB `crc` (RFC 4867). Payload CRCs are not supported, so `crc=1` is declined.
-    pub crc: Option<bool>,
-
-    /// AMR-WB `robust-sorting` (RFC 4867). Not supported, so `robust-sorting=1` is declined.
-    pub robust_sorting: Option<bool>,
-
-    /// AMR-WB `interleaving` (RFC 4867). Not supported, so any value is declined.
-    pub interleaving: Option<u16>,
 }
 
 #[cfg(feature = "drv")]
@@ -170,6 +152,10 @@ impl FormatParams {
         } else {
             for line in lines {
                 for param in line {
+                    // Decline AMR-WB payload types that need features str0m lacks.
+                    if codec == Codec::AmrWb && *param == FormatParam::AmrWbUnsupported {
+                        return None;
+                    }
                     if !matches!(param, FormatParam::TelephoneEvents(_)) {
                         params.set_param(param);
                     }
@@ -233,11 +219,7 @@ impl FormatParams {
             BareRange(_) | BarePtList(_) => {}
             OctetAlign(v) => self.octet_align = Some(*v),
             ModeSet(v) => self.mode_set = Some(*v),
-            ModeChangePeriod(v) => self.mode_change_period = Some(*v),
-            MaxRed(v) => self.max_red = Some(*v),
-            Crc(v) => self.crc = Some(*v),
-            RobustSorting(v) => self.robust_sorting = Some(*v),
-            Interleaving(v) => self.interleaving = Some(*v),
+            AmrWbUnsupported => {}
             Apt(_) => {}
             Red(_) => {}
             Unknown => {}
@@ -303,21 +285,6 @@ impl FormatParams {
         }
         if let Some(v) = self.mode_set {
             r.push(ModeSet(v));
-        }
-        if let Some(v) = self.mode_change_period {
-            r.push(ModeChangePeriod(v));
-        }
-        if let Some(v) = self.max_red {
-            r.push(MaxRed(v));
-        }
-        if let Some(v) = self.crc {
-            r.push(Crc(v));
-        }
-        if let Some(v) = self.robust_sorting {
-            r.push(RobustSorting(v));
-        }
-        if let Some(v) = self.interleaving {
-            r.push(Interleaving(v));
         }
 
         r
@@ -438,25 +405,33 @@ mod test {
     }
 
     #[test]
-    fn amr_wb_fmtp_roundtrip() {
+    fn amr_wb_fmtp() {
         let f = FormatParams::parse_line("Octet-Align=1; mode-set=0, 1,2;max-red=220");
-        assert_eq!(f.octet_align, Some(true));
-        assert_eq!(f.mode_set, Some(0b111));
-        assert_eq!(f.max_red, Some(220));
-        assert_eq!(FormatParams::parse_line("mode-set=0,9").mode_set, None);
-        // We never claim the capability, so a remote's value is dropped.
+        assert_eq!(f.to_string(), "octet-align=1;mode-set=0,1,2");
         assert_eq!(
-            FormatParams::parse_line("mode-change-capability=2"),
+            FormatParams::parse_line("mode-set=0,9"),
             FormatParams::default()
         );
 
-        for line in [
-            "max-red=0",
-            "octet-align=1;mode-set=0,2,8;mode-change-period=2;max-red=0",
-            "octet-align=0;crc=0;robust-sorting=0",
-            "octet-align=1;crc=1;robust-sorting=1;interleaving=30",
+        let declined = |codec, k: &str, v: &str| {
+            let line = [FormatParam::parse(k, v)];
+            FormatParams::from_sdp_fmtp(codec, [&line[..]].into_iter()).is_none()
+        };
+        for (k, v) in [
+            ("crc", "1"),
+            ("robust-sorting", "1"),
+            ("interleaving", "30"),
+            ("mode-change-period", "2"),
         ] {
-            assert_eq!(FormatParams::parse_line(line).to_string(), line);
+            assert!(declined(Codec::AmrWb, k, v), "{k}={v}");
+            assert!(!declined(Codec::Opus, k, v), "{k}={v}");
+        }
+        for (k, v) in [
+            ("crc", "0"),
+            ("robust-sorting", "0"),
+            ("mode-change-period", "1"),
+        ] {
+            assert!(!declined(Codec::AmrWb, k, v), "{k}={v}");
         }
     }
 }

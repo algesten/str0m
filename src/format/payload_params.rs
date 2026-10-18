@@ -431,21 +431,11 @@ impl PayloadParams {
     }
 
     fn match_amr_wb_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
-        // Only single-channel payloads without CRCs, robust sorting or interleaving
-        // are implemented, and mode changes of application frames can't be held to
-        // every other frame-block (mode-change-period=2).
-        let supported = |c: &CodecSpec| {
-            c.channels.unwrap_or(1) == 1
-                && c.format.crc != Some(true)
-                && c.format.robust_sorting != Some(true)
-                && c.format.interleaving.is_none()
-                && c.format.mode_change_period != Some(2)
-        };
-        if !supported(&c0) || !supported(&c1) {
+        // Only mono is implemented, and octet-aligned and bandwidth-efficient
+        // payloads are not interchangeable.
+        if c0.channels.unwrap_or(1) != 1 || c1.channels.unwrap_or(1) != 1 {
             return None;
         }
-
-        // Octet-aligned and bandwidth-efficient payloads are not interchangeable.
         if c0.format.octet_align.unwrap_or(false) != c1.format.octet_align.unwrap_or(false) {
             return None;
         }
@@ -747,15 +737,12 @@ impl PayloadParams {
         // `level-asymmetry-allowed` is not set the answer should use the lower
         // level.
 
-        // RFC 4867 §8.3.1: an answer repeats the offer's octet-align, crc,
-        // robust-sorting and channels unmodified (interleaving never matches), and a
-        // mode-set from either side applies to both directions.
+        // RFC 4867 §8.3.1: an answer repeats the offer's octet-align and channels,
+        // and a mode-set from either side applies to both directions.
         if self.spec.codec == Codec::AmrWb {
             let remote = first.spec;
             self.spec.channels = remote.channels;
             self.spec.format.octet_align = remote.format.octet_align;
-            self.spec.format.crc = remote.format.crc;
-            self.spec.format.robust_sorting = remote.format.robust_sorting;
             self.spec.format.mode_set = self.spec.format.mode_set.or(remote.format.mode_set);
         }
 
@@ -2087,13 +2074,6 @@ mod test {
 
             assert!(score(local).is_some());
             assert!(score(amr_wb(None, octet_aligned())).is_some());
-            let hints = FormatParams {
-                max_red: Some(220),
-                crc: Some(false),
-                robust_sorting: Some(false),
-                ..octet_aligned()
-            };
-            assert!(score(amr_wb(Some(1), hints)).is_some());
             assert!(score(amr_wb(Some(1), FormatParams::default())).is_none());
 
             let bandwidth_efficient = FormatParams {
@@ -2115,66 +2095,24 @@ mod test {
             assert!(score(restricted).is_some_and(|s| Some(s) < score(local)));
             assert!(restricted.match_score(&amr_wb(None, modes(0b11))).is_none());
 
-            for format in [
-                FormatParams {
-                    crc: Some(true),
-                    ..octet_aligned()
-                },
-                FormatParams {
-                    robust_sorting: Some(true),
-                    ..octet_aligned()
-                },
-                FormatParams {
-                    interleaving: Some(30),
-                    ..octet_aligned()
-                },
-                FormatParams {
-                    mode_change_period: Some(2),
-                    ..octet_aligned()
-                },
-            ] {
-                let unsupported = amr_wb(Some(1), format);
-                assert!(score(unsupported).is_none(), "{format:?}");
-                assert!(
-                    unsupported.match_score(&unsupported).is_none(),
-                    "{format:?}"
-                );
-            }
-
             let stereo = amr_wb(Some(2), octet_aligned());
             assert!(stereo.match_score(&stereo).is_none());
         }
 
         #[test]
-        fn update_param_mirrors_transport_parameters_and_mode_set() {
-            let local_format = FormatParams {
-                max_red: Some(0),
+        fn update_param_mirrors_layout_channels_and_mode_set() {
+            let mut local = amr_wb(Some(1), FormatParams::default());
+            let remote_format = FormatParams {
+                octet_align: Some(false),
+                mode_set: Some(0b111),
                 ..Default::default()
             };
-            let mut local = amr_wb(Some(1), local_format);
-            let remote = amr_wb(
-                None,
-                FormatParams {
-                    octet_align: Some(false),
-                    crc: Some(false),
-                    robust_sorting: Some(false),
-                    mode_set: Some(0b111),
-                    max_red: Some(220),
-                    ..Default::default()
-                },
-            );
+            let remote = amr_wb(None, remote_format);
 
             local.update_param(&[remote], &mut [false; 128], false, &mut HashSet::new());
 
-            let expected = FormatParams {
-                octet_align: Some(false),
-                crc: Some(false),
-                robust_sorting: Some(false),
-                mode_set: Some(0b111),
-                ..local_format
-            };
             assert_eq!(local.spec.channels, None);
-            assert_eq!(local.spec.format, expected);
+            assert_eq!(local.spec.format, remote_format);
         }
     }
 }

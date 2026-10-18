@@ -55,18 +55,6 @@ pub enum Codec {
     G722,
     /// Comfort Noise payload, per RFC 3389.
     CN,
-    /// AMR-WB (Adaptive Multi-Rate Wideband), per RFC 4867.
-    ///
-    /// Media is exchanged in the 3GPP IF / storage format (RFC 4867 §5.3): each
-    /// frame is a header octet `(FT << 3) | (Q << 2)` followed by its speech bits,
-    /// zero-padded to a whole octet. Write exactly one 20 ms frame per call;
-    /// NO_DATA frames are not sent. Received [`MediaData`][crate::media::MediaData]
-    /// holds every frame of an RTP payload back to back, 20 ms apart starting at
-    /// `MediaData::time`. Peers may resend earlier frames for redundancy
-    /// (RFC 4867 §4.1), so the same frame time can arrive more than once.
-    ///
-    /// Only single-channel octet-aligned or bandwidth-efficient payloads are
-    /// negotiated. If a `mode-set` is negotiated, only write frames in those modes.
     AmrWb,
     H264,
     // TODO show this when we support h265.
