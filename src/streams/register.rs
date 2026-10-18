@@ -104,6 +104,15 @@ impl ReceiverRegister {
         new
     }
 
+    pub fn recovery_deadline(
+        &self,
+        range: std::ops::Range<SeqNo>,
+        candidate_received: Instant,
+        rtt: Option<Duration>,
+    ) -> Option<Instant> {
+        self.nack.recovery_deadline(range, candidate_received, rtt)
+    }
+
     pub fn has_pending_nacks(&self) -> bool {
         self.nack.has_pending_nacks()
     }

@@ -1047,3 +1047,158 @@ fn video_reorder_timeout_does_not_change_audio() -> Result<(), RtcError> {
     assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
     Ok(())
 }
+
+/// Slow in-order keyframes must survive the old two-second deadline.
+#[test]
+fn video_recovery_keeps_slow_frame_without_complete_successor() -> Result<(), RtcError> {
+    let mut t = VideoTest::with_codec(
+        Rtc::builder().set_reordering_recovery_video(true),
+        false,
+        Codec::H264,
+    )?;
+    t.write(1337.into(), 47_000, 1000, &[0x65, 0xaa], true)?;
+    t.write(1337.into(), 47_001, 2000, &[0x7c, 0x85, 0x11], false)?;
+    t.advance_to(t.now + Duration::from_secs(5))?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    t.write(1337.into(), 47_002, 2000, &[0x7c, 0x45, 0x33], true)?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_001, 47_002, true)]
+    );
+    Ok(())
+}
+
+/// Real NACK/RTX exchange: count and fixed timeout cannot bypass recovery.
+#[test]
+fn video_recovery_waits_for_nacks_then_releases_or_repairs() -> Result<(), RtcError> {
+    for repair in [false, true] {
+        let mut t = VideoTest::new(
+            Rtc::builder()
+                .set_reordering_recovery_video(true)
+                .set_reordering_size_video(0)
+                .set_reordering_timeout_video(Some(Duration::ZERO)),
+            true,
+        )?;
+        t.defer_rtx = true;
+        t.send_vp8_frame(47_000)?;
+        t.drop_original = Some(47_001);
+        t.send_vp8_frame(47_001)?;
+        t.send_vp8_frame(47_002)?;
+        // Reach the fifth request without assuming the session's NACK polling phase.
+        let mut last_nack = None;
+        for _ in 0..1000 {
+            let requests: Vec<_> = t
+                .receiver
+                .events
+                .iter()
+                .filter_map(|(at, e)| {
+                    matches!(e.as_raw_packet(), Some(RawPacket::RtcpTx(Rtcp::Nack(n)))
+                    if n.reports.iter().any(|r| r.pid == 47_001))
+                    .then_some(*at)
+                })
+                .collect();
+            assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+            if requests.len() == 5 {
+                last_nack = requests.last().copied();
+                break;
+            }
+            t.advance_to(t.now + Duration::from_millis(1))?;
+        }
+        // No DLRR RTT estimate yet; recovery uses the 100 ms default.
+        let deadline = last_nack.expect("five NACK attempts") + Duration::from_millis(300);
+        t.advance_to(deadline - Duration::from_nanos(1))?;
+        assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+        assert!(!t.deferred_rtx.is_empty());
+        if repair {
+            for packet in std::mem::take(&mut t.deferred_rtx) {
+                t.receiver.handle_input(Input::Receive(
+                    t.now,
+                    Receive {
+                        proto: packet.proto,
+                        source: packet.source,
+                        destination: packet.destination,
+                        contents: packet.contents.as_slice().try_into()?,
+                    },
+                ))?;
+            }
+            t.flush()?;
+            assert_eq!(
+                t.received_frames(),
+                [
+                    (47_000, 47_000, true),
+                    (47_001, 47_001, true),
+                    (47_002, 47_002, true),
+                ]
+            );
+        } else {
+            assert_eq!(t.receiver.last, deadline);
+            assert_eq!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+            t.tick(deadline)?;
+            assert_eq!(
+                t.received_frames(),
+                [(47_000, 47_000, true), (47_002, 47_002, false)]
+            );
+            // Late repair cannot resurrect the abandoned frame.
+            for packet in std::mem::take(&mut t.deferred_rtx) {
+                t.receiver.handle_input(Input::Receive(
+                    t.now,
+                    Receive {
+                        proto: packet.proto,
+                        source: packet.source,
+                        destination: packet.destination,
+                        contents: packet.contents.as_slice().try_into()?,
+                    },
+                ))?;
+            }
+            t.flush()?;
+            assert_eq!(
+                t.received_frames(),
+                [(47_000, 47_000, true), (47_002, 47_002, false)]
+            );
+        }
+        t.advance_to(deadline + Duration::from_millis(100))?;
+        assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    }
+    Ok(())
+}
+
+#[test]
+fn video_recovery_missing_marker_waits_for_complete_successor() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(Rtc::builder().set_reordering_recovery_video(true), false)?;
+    t.send_vp8_frame(47_000)?;
+    t.write(1337.into(), 47_001, 1000, &[0x10, 0, 0], false)?;
+    t.write(1337.into(), 47_002, 2000, &[0x10, 0, 0], false)?;
+    t.advance_to(t.now + Duration::from_secs(3))?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_ne!(t.receiver.last_timeout_reason(), Reason::ReceiveReorder);
+    t.write(1337.into(), 47_003, 2000, &[0x00, 0], true)?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_002, 47_003, false)]
+    );
+    Ok(())
+}
+
+/// Suppressed feedback must not leave the frame waiting for NACKs that will never be sent.
+#[test]
+fn video_recovery_suppressed_nacks_use_candidate_grace() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(Rtc::builder().set_reordering_recovery_video(true), false)?;
+    t.receiver
+        .direct_api()
+        .stream_rx(&1337.into())
+        .unwrap()
+        .suppress_nack(true);
+    t.send_vp8_frame(47_000)?;
+    t.send_vp8_frame(47_002)?;
+    let deadline = t.now + Duration::from_millis(300);
+    t.advance_to(deadline - Duration::from_nanos(1))?;
+    assert_eq!(t.received_frames(), [(47_000, 47_000, true)]);
+    assert_eq!(t.receiver.last, deadline);
+    t.tick(deadline)?;
+    assert_eq!(
+        t.received_frames(),
+        [(47_000, 47_000, true), (47_002, 47_002, false)]
+    );
+    Ok(())
+}

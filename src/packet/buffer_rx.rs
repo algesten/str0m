@@ -12,6 +12,33 @@ use super::contiguity_vp8::Vp8Contiguity;
 use super::contiguity_vp9::Vp9Contiguity;
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
+/// Receive policy shared by delivery and timer scheduling.
+#[derive(Clone, Copy)]
+pub(crate) enum Reordering<'a> {
+    Fixed(Option<Duration>),
+    Recovery(&'a crate::streams::StreamRx),
+}
+
+impl From<Option<Duration>> for Reordering<'_> {
+    fn from(timeout: Option<Duration>) -> Self {
+        Self::Fixed(timeout)
+    }
+}
+
+impl Reordering<'_> {
+    fn is_some(self) -> bool {
+        !matches!(self, Self::Fixed(None))
+    }
+
+    fn is_none(self) -> bool {
+        !self.is_some()
+    }
+
+    fn is_recovery(self) -> bool {
+        matches!(self, Self::Recovery(_))
+    }
+}
+
 // Bound incomplete frames as well as complete frames waiting for reordering.
 // 4,096 packets allow roughly 5 MB of payload at a typical 1,200-byte packet size.
 const MAX_BUFFERED_PACKETS: usize = 4096;
@@ -279,11 +306,12 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn pop(
+    pub fn pop<'a>(
         &mut self,
         now: Instant,
-        reordering_timeout: Option<Duration>,
+        reordering_timeout: impl Into<Reordering<'a>>,
     ) -> Option<Result<Depacketized, PacketError>> {
+        let reordering_timeout = reordering_timeout.into();
         loop {
             let queued = self.queue.len();
             let result = self.pop_frame(now, reordering_timeout);
@@ -297,7 +325,7 @@ impl DepacketizingBuffer {
     fn pop_frame(
         &mut self,
         now: Instant,
-        reordering_timeout: Option<Duration>,
+        reordering_timeout: Reordering<'_>,
     ) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
@@ -357,10 +385,12 @@ impl DepacketizingBuffer {
         };
 
         // If we have contiguity of seq numbers we emit right away,
-        // Otherwise, we wait for retransmissions up to `hold_back` frames
-        // and re-evaluate contiguity based on codec specific information
+        // Otherwise, fixed policy waits up to `hold_back` frames. Recovery policy
+        // waits for the relevant NACK budget and grace period instead.
+        // Re-evaluate contiguity based on codec specific information.
 
-        let more_than_hold_back = self.segments.len() >= self.hold_back;
+        let more_than_hold_back =
+            !reordering_timeout.is_recovery() && self.segments.len() >= self.hold_back;
         let expired = matches!(self.last_processed, Some(LastProcessed::Expired(_)));
         let contiguous_seq = !expired && self.is_following_last(start);
         let wait_for_contiguity = !contiguous_seq
@@ -419,9 +449,18 @@ impl DepacketizingBuffer {
         self.depack_cache = None;
     }
 
-    pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
-        let timeout = reordering_timeout?;
+    pub(crate) fn poll_timeout<'a>(
+        &mut self,
+        reordering_timeout: impl Into<Reordering<'a>>,
+    ) -> Option<Instant> {
+        let reordering_timeout = reordering_timeout.into();
         self.update_segments();
+        if let Reordering::Recovery(stream) = reordering_timeout {
+            return self.recovery_deadline(stream);
+        }
+        let Reordering::Fixed(Some(timeout)) = reordering_timeout else {
+            return None;
+        };
 
         if let Some((_, first_received)) = self.first_incomplete_frame() {
             return first_received.checked_add(timeout);
@@ -490,13 +529,34 @@ impl DepacketizingBuffer {
         }
     }
 
+    fn recovery_deadline(&self, stream: &crate::streams::StreamRx) -> Option<Instant> {
+        let (start, _, received) = self.segments.iter().find_map(|&(start, stop, received)| {
+            let start = start - self.segments_offset;
+            let stop = stop - self.segments_offset;
+            self.queue[stop].tail.then_some((start, stop, received))
+        })?;
+        let expired = matches!(self.last_processed, Some(LastProcessed::Expired(_)));
+        if start == 0 && !expired && self.is_following_last(start) {
+            return None;
+        }
+        let first = self
+            .last_processed
+            .map_or(self.queue.front()?.meta.seq_no, |last| {
+                (*last.seq_no()).saturating_add(1).into()
+            });
+        stream.recovery_deadline(first..self.queue[start].meta.seq_no, received)
+    }
+
     fn timeout_allows_progress(
         &self,
         now: Instant,
         first_received: Instant,
-        reordering_timeout: Option<Duration>,
+        reordering_timeout: Reordering<'_>,
     ) -> bool {
-        let Some(timeout) = reordering_timeout else {
+        if let Reordering::Recovery(stream) = reordering_timeout {
+            return self.recovery_deadline(stream).is_some_and(|at| now >= at);
+        }
+        let Reordering::Fixed(Some(timeout)) = reordering_timeout else {
             return false;
         };
 

@@ -48,6 +48,7 @@ pub struct RtcConfig {
     pub(crate) reordering_size_video: usize,
     pub(crate) reordering_timeout_audio: Option<Duration>,
     pub(crate) reordering_timeout_video: Option<Duration>,
+    pub(crate) reordering_recovery_video: bool,
     pub(crate) pause_threshold: Duration,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
@@ -594,7 +595,8 @@ impl RtcConfig {
     /// The default is 2 seconds. `None` disables this deadline and keeps count-based waiting
     /// only. `Some(Duration::ZERO)` expires an incomplete frame immediately. This setting
     /// applies to video streams in frame mode, not audio or
-    /// [`RTP mode`](RtcConfig::set_rtp_mode).
+    /// [`RTP mode`](RtcConfig::set_rtp_mode). It is overridden when
+    /// [`set_reordering_recovery_video`](Self::set_reordering_recovery_video) is enabled.
     pub fn set_reordering_timeout_video(mut self, timeout: Option<Duration>) -> Self {
         self.reordering_timeout_video = timeout;
         self
@@ -613,6 +615,29 @@ impl RtcConfig {
     /// `Some(Duration::ZERO)` is preserved distinctly from `None`.
     pub fn reordering_timeout_video(&self) -> Option<Duration> {
         self.reordering_timeout_video
+    }
+
+    /// Enable RTT-based video frame recovery instead of fixed time/count-based waiting.
+    ///
+    /// This is disabled by default. When enabled, incomplete frames are retained until a
+    /// later complete frame is available. Missing packets before that candidate get all
+    /// NACK attempts, followed by three receive-stream RTTs after the final NACK. Until
+    /// RTT is known, 100 ms is used. Untracked gaps, missing markers, or suppressed NACKs
+    /// use three RTTs from the complete candidate's earliest packet receipt instead.
+    ///
+    /// This overrides both the video reordering timeout (including `None` and zero) and
+    /// frame-count release. The packet-capacity limit still applies. Without a complete
+    /// successor there is no age limit: a very late packet can complete and deliver old
+    /// media. This policy is useful for low-bandwidth screen sharing where a large frame
+    /// can take seconds to arrive. Audio and RTP mode are unaffected.
+    pub fn set_reordering_recovery_video(mut self, enabled: bool) -> Self {
+        self.reordering_recovery_video = enabled;
+        self
+    }
+
+    /// Whether RTT-based video frame recovery is enabled.
+    pub fn reordering_recovery_video(&self) -> bool {
+        self.reordering_recovery_video
     }
 
     /// Sets how long an incoming stream may receive no packets before it is reported paused.
@@ -898,6 +923,7 @@ impl Default for RtcConfig {
             reordering_size_video: 30,
             reordering_timeout_audio: Some(Duration::from_secs(1)),
             reordering_timeout_video: Some(Duration::from_secs(2)),
+            reordering_recovery_video: false,
             pause_threshold: Duration::from_millis(1500),
             send_buffer_audio: 50,
             send_buffer_video: 1000,

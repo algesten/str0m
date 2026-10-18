@@ -793,6 +793,20 @@ impl StreamRx {
         }
     }
 
+    pub(crate) fn recovery_deadline(
+        &self,
+        range: std::ops::Range<SeqNo>,
+        candidate_received: Instant,
+    ) -> Option<Instant> {
+        if !self.suppress_nack {
+            if let Some(register) = &self.register {
+                return register.recovery_deadline(range, candidate_received, self.stats.rtt);
+            }
+        }
+        let rtt = self.stats.rtt.unwrap_or(Duration::from_millis(100));
+        candidate_received.checked_add(rtt.saturating_mul(3))
+    }
+
     /// Whether this stream should keep its NACK timer active.
     ///
     /// Paused streams finish pending retries before disabling NACK reports.
@@ -1161,6 +1175,70 @@ mod tests {
                     .is_some()
             );
             assert_eq!(feedback.len(), 2);
+        }
+    }
+
+    #[test]
+    fn frame_recovery_schedules_receive_stream_rtt_deadline() {
+        use crate::format::Codec;
+        use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Reordering, RtpMeta};
+
+        for rtt in [
+            Duration::ZERO,
+            Duration::from_millis(20),
+            Duration::from_millis(400),
+        ] {
+            let base = Instant::now();
+            let mut stream = stream_with(&[(10, 0), (11, 1000), (13, 2000)]);
+            stream.stats.rtt = Some(rtt);
+            let mut buf = DepacketizingBuffer::new(CodecDepacketizer::from(Codec::H264), 0);
+            let meta = |seq: SeqNo, timestamp| RtpMeta {
+                received: base,
+                time: MediaTime::new(timestamp, Frequency::NINETY_KHZ),
+                seq_no: seq,
+                header: RtpHeader {
+                    marker: *seq != 11,
+                    ..Default::default()
+                },
+                last_sender_info: None,
+            };
+            buf.push(meta(10.into(), 0), [0x65, 0xaa]);
+            buf.pop(base, Reordering::Recovery(&stream))
+                .unwrap()
+                .unwrap();
+            // An incomplete H264 frame followed by a complete candidate.
+            buf.push(meta(11.into(), 1000), [0x7c, 0x85, 0x11]);
+            buf.push(meta(13.into(), 2000), [0x61, 0x44]);
+            let mut now = base;
+            for attempt in 0..5 {
+                assert_eq!(buf.poll_timeout(Reordering::Recovery(&stream)), None);
+                assert!(buf.pop(now, Reordering::Recovery(&stream)).is_none());
+                stream
+                    .maybe_create_nack(now, 1.into(), &mut VecDeque::new())
+                    .unwrap();
+                if attempt < 4 {
+                    now += rtt + Duration::from_millis(5);
+                }
+            }
+            let deadline = now + rtt * 3;
+            assert_eq!(
+                buf.poll_timeout(Reordering::Recovery(&stream)),
+                Some(deadline)
+            );
+            assert!(
+                buf.pop(
+                    deadline - Duration::from_nanos(1),
+                    Reordering::Recovery(&stream)
+                )
+                .is_none()
+            );
+            let dep = buf
+                .pop(deadline, Reordering::Recovery(&stream))
+                .unwrap()
+                .unwrap();
+            assert_eq!(dep.seq_range(), 13.into()..=13.into());
+            assert!(!dep.contiguous);
+            assert_eq!(buf.poll_timeout(Reordering::Recovery(&stream)), None);
         }
     }
 
