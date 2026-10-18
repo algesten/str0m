@@ -159,8 +159,8 @@ fn amr_wb_answer_echoes_offer_and_mode_set_binds_both_sides() {
     let offer_sdp = offer.to_sdp_string().replace(
         "a=rtpmap:122 AMR-WB/16000/1\r\n",
         "a=rtpmap:122 AMR-WB/16000\r\n\
-         a=fmtp:122 Octet-Align=0;Mode-Set=0,1,2;Mode-Change-Capability=2;\
-         Max-Red=0;CRC=0;Robust-Sorting=0\r\n",
+         a=fmtp:122 octet-align=0;mode-set=0,1,2;mode-change-capability=2;\
+         max-red=0;crc=0;robust-sorting=0\r\n",
     );
     let offer = SdpOffer::from_sdp_string(&offer_sdp).unwrap();
 

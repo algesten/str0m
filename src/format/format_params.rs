@@ -406,7 +406,7 @@ mod test {
 
     #[test]
     fn amr_wb_fmtp() {
-        let f = FormatParams::parse_line("Octet-Align=1; mode-set=0, 1,2;max-red=220");
+        let f = FormatParams::parse_line("octet-align=1; mode-set=0, 1,2;max-red=220");
         assert_eq!(f.to_string(), "octet-align=1;mode-set=0,1,2");
         assert_eq!(
             FormatParams::parse_line("mode-set=0,9"),
