@@ -642,6 +642,14 @@ impl PayloadParams {
     ) {
         let Some((first, _)) = remote_pts
             .iter()
+            // One unrestricted AMR-WB payload can match several local mode sets.
+            // Leave the other alternatives unlocked once its PT has been claimed.
+            .filter(|p| {
+                self.spec.codec != Codec::AmrWb
+                    || self.locked
+                    || local_is_controlling
+                    || !claimed.is_claimed(p.pt)
+            })
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
             .max_by_key(|(_, s)| *s)
         else {

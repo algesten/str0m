@@ -1047,7 +1047,7 @@ pub enum FormatParam {
 fn parse_amr_wb_mode_set(value: &str) -> Option<u16> {
     value.split(',').try_fold(0u16, |mask, mode| {
         let mode: u8 = mode.trim().parse().ok()?;
-        (mode <= 8).then_some(mask | (1 << mode))
+        (mode <= 8).then(|| mask | (1 << mode))
     })
 }
 
