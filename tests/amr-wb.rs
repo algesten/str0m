@@ -204,3 +204,70 @@ fn amr_wb_unsupported_offers_are_declined() {
         );
     }
 }
+
+#[test]
+fn amr_wb_out_of_range_mode_set_is_ignored() {
+    for mode in [9, 15, 16, 31, 32, 255] {
+        assert_eq!(
+            FormatParams::parse_line(&format!("mode-set={mode}")).mode_set,
+            None,
+            "invalid speech mode {mode}"
+        );
+    }
+}
+
+#[test]
+fn amr_wb_invalid_mode_set_in_other_codec_sdp_does_not_panic() {
+    init_crypto_default();
+
+    let mut l = TestRtc::new_with_config(Peer::Left, |c| c);
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, _) = change.apply().unwrap();
+    let offer_sdp = offer.to_sdp_string().replace(
+        "a=rtpmap:111 opus/48000/2\r\n",
+        "a=rtpmap:111 opus/48000/2\r\na=fmtp:111 mode-set=16\r\n",
+    );
+    assert!(offer_sdp.contains("mode-set=16"));
+
+    SdpOffer::from_sdp_string(&offer_sdp).unwrap();
+}
+
+#[test]
+fn amr_wb_alternative_mode_sets_accept_one_unrestricted_remote_payload() {
+    init_crypto_default();
+
+    let mut l = TestRtc::new_with_config(Peer::Left, |c| c.clear_codecs().enable_amr_wb(true));
+    let mut r = TestRtc::new_with_config(Peer::Right, |c| {
+        let mut c = c.clear_codecs();
+        for (pt, mode_set) in [(122, 0b111), (123, 0b111000)] {
+            c.codec_config().add_config(
+                pt.into(),
+                None,
+                Codec::AmrWb,
+                Frequency::SIXTEEN_KHZ,
+                Some(1),
+                FormatParams {
+                    octet_align: Some(true),
+                    mode_set: Some(mode_set),
+                    ..Default::default()
+                },
+            );
+        }
+        c
+    });
+
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.rtc.sdp_api().accept_offer(offer).unwrap();
+    let answer_sdp = answer.to_sdp_string();
+
+    // The offer has no mode-set, so RFC 4867 §8.3.1 lets the answerer choose
+    // either local alternative for the one offered payload type.
+    assert_eq!(answer_sdp.matches("AMR-WB/16000/1").count(), 1);
+    assert!(["0,1,2", "3,4,5"].iter().any(|modes| {
+        answer_sdp.contains(&format!("a=fmtp:122 octet-align=1;mode-set={modes}\r\n"))
+    }));
+    l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+}
