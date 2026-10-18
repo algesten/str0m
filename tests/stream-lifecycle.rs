@@ -191,7 +191,6 @@ fn pause_preserves_video_contiguity_history() -> Result<(), RtcError> {
         config
             .set_pause_threshold(Duration::from_millis(500))
             .set_reordering_size_video(1)
-            .set_reordering_timeout_video(Some(Duration::from_millis(100)))
     });
     assert_eq!(
         Rtc::builder().pause_threshold(),
@@ -236,6 +235,8 @@ fn pause_preserves_video_contiguity_history() -> Result<(), RtcError> {
     // must report the gap even though the stream was reported paused.
     advance_both(&mut l, &mut r, Duration::from_millis(650))?;
     send_vp8(&mut l, &mut r, mid, pt, 13, 360_000)?;
+    // The complete successor waits for NACK exhaustion and the RTT grace period.
+    advance_both(&mut l, &mut r, Duration::from_secs(1))?;
     assert_frame_contiguity(&r, 13, false);
 
     Ok(())

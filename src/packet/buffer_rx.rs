@@ -16,7 +16,7 @@ use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 #[derive(Clone, Copy)]
 pub(crate) enum Reordering<'a> {
     Fixed(Option<Duration>),
-    Recovery(&'a crate::streams::StreamRx),
+    Recovery(Option<&'a crate::streams::StreamRx>),
 }
 
 impl From<Option<Duration>> for Reordering<'_> {
@@ -529,7 +529,7 @@ impl DepacketizingBuffer {
         }
     }
 
-    fn recovery_deadline(&self, stream: &crate::streams::StreamRx) -> Option<Instant> {
+    fn recovery_deadline(&self, stream: Option<&crate::streams::StreamRx>) -> Option<Instant> {
         let (start, _, received) = self.segments.iter().find_map(|&(start, stop, received)| {
             let start = start - self.segments_offset;
             let stop = stop - self.segments_offset;
@@ -544,7 +544,12 @@ impl DepacketizingBuffer {
             .map_or(self.queue.front()?.meta.seq_no, |last| {
                 (*last.seq_no()).saturating_add(1).into()
             });
-        stream.recovery_deadline(first..self.queue[start].meta.seq_no, received)
+        match stream {
+            Some(stream) => {
+                stream.recovery_deadline(first..self.queue[start].meta.seq_no, received)
+            }
+            None => received.checked_add(Duration::from_millis(300)),
+        }
     }
 
     fn timeout_allows_progress(

@@ -349,15 +349,14 @@ impl Media {
         params: &[PayloadParams],
         now: Instant,
         reordering_timeout: Option<Duration>,
-        recovery: bool,
         streams: &mut Streams,
     ) -> Result<Option<MediaData>, RtcError> {
         for ((pt, rid), buf) in &mut self.depayloaders {
-            let policy = if recovery {
-                streams
+            let policy = if self.kind.is_video() {
+                let stream = streams
                     .stream_rx_by_midrid(MidRid(self.mid, *rid))
-                    .map(|stream| Reordering::Recovery(&*stream))
-                    .unwrap_or(Reordering::Fixed(reordering_timeout))
+                    .map(|stream| &*stream);
+                Reordering::Recovery(stream)
             } else {
                 Reordering::Fixed(reordering_timeout)
             };
@@ -576,17 +575,16 @@ impl Media {
     pub(crate) fn poll_receive_timeout(
         &mut self,
         reordering_timeout: Option<Duration>,
-        recovery: bool,
         streams: &mut Streams,
     ) -> Option<Instant> {
         self.depayloaders
             .iter_mut()
             .filter_map(|((_, rid), buf)| {
-                let policy = if recovery {
-                    streams
+                let policy = if self.kind.is_video() {
+                    let stream = streams
                         .stream_rx_by_midrid(MidRid(self.mid, *rid))
-                        .map(|stream| Reordering::Recovery(&*stream))
-                        .unwrap_or(Reordering::Fixed(reordering_timeout))
+                        .map(|stream| &*stream);
+                    Reordering::Recovery(stream)
                 } else {
                     Reordering::Fixed(reordering_timeout)
                 };
@@ -881,24 +879,21 @@ mod receive_timeout_test {
         );
         let timeout = Some(Duration::from_millis(250));
         assert_eq!(
-            media.poll_receive_timeout(timeout, false, &mut streams),
-            Some(base + Duration::from_millis(250))
+            media.poll_receive_timeout(timeout, &mut streams),
+            Some(base + Duration::from_millis(300))
         );
         media.reset_depayloaders_for_rid(rid1);
         assert_eq!(
-            media.poll_receive_timeout(timeout, false, &mut streams),
-            Some(base + Duration::from_millis(300))
+            media.poll_receive_timeout(timeout, &mut streams),
+            Some(base + Duration::from_millis(350))
         );
         media.reset_depayloaders_for_rid(rid2);
-        assert_eq!(
-            media.poll_receive_timeout(timeout, false, &mut streams),
-            None
-        );
-        assert_eq!(media.poll_receive_timeout(None, false, &mut streams), None);
+        assert_eq!(media.poll_receive_timeout(timeout, &mut streams), None);
+        assert_eq!(media.poll_receive_timeout(None, &mut streams), None);
         media.depayloaders.insert((pt1, rid1), blocked_buffer(base));
         assert_eq!(
-            media.poll_receive_timeout(Some(Duration::ZERO), false, &mut streams),
-            Some(base)
+            media.poll_receive_timeout(Some(Duration::ZERO), &mut streams),
+            Some(base + Duration::from_millis(300))
         );
     }
 }

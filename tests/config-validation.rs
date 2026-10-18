@@ -100,6 +100,7 @@ fn config_reordering_size_custom() -> Result<(), RtcError> {
 
 /// Test timeout defaults and configuration round-trips, including large durations.
 #[test]
+#[allow(deprecated)]
 fn config_reordering_timeout_custom() {
     assert_eq!(
         RtcConfig::new().reordering_timeout_audio(),

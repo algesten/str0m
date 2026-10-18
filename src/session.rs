@@ -71,8 +71,6 @@ pub(crate) struct Session {
     reordering_size_audio: usize,
     reordering_size_video: usize,
     reordering_timeout_audio: Option<Duration>,
-    reordering_timeout_video: Option<Duration>,
-    reordering_recovery_video: bool,
     intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
     pub send_buffer_video: usize,
@@ -184,8 +182,6 @@ impl Session {
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
             reordering_timeout_audio: config.reordering_timeout_audio,
-            reordering_timeout_video: config.reordering_timeout_video,
-            reordering_recovery_video: config.reordering_recovery_video,
             intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
@@ -1048,16 +1044,10 @@ impl Session {
         }
 
         for media in &mut self.medias {
-            let timeout = if media.kind().is_video() {
-                self.reordering_timeout_video
-            } else {
-                self.reordering_timeout_audio
-            };
             if let Some(e) = media.poll_sample(
                 &self.codec_config,
                 now,
-                timeout,
-                self.reordering_recovery_video && media.kind().is_video(),
+                self.reordering_timeout_audio,
                 &mut self.streams,
             )? {
                 return Ok(Some(Event::MediaData(e)));
@@ -1247,16 +1237,7 @@ impl Session {
             .medias
             .iter_mut()
             .filter_map(|media| {
-                let timeout = if media.kind().is_video() {
-                    self.reordering_timeout_video
-                } else {
-                    self.reordering_timeout_audio
-                };
-                media.poll_receive_timeout(
-                    timeout,
-                    self.reordering_recovery_video && media.kind().is_video(),
-                    &mut self.streams,
-                )
+                media.poll_receive_timeout(self.reordering_timeout_audio, &mut self.streams)
             })
             .min();
         let paused_at = self.paused_at();

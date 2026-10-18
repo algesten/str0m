@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Add opt-in RTT-based video frame recovery for slow screen sharing #1078
+  * Use RTT-based video frame recovery for slow screen sharing and deprecate fixed video timeouts #1078
 
   * Send pending keyframe and REMB requests without waiting for unrelated timers #1081
   * Bump dimpl to 0.8.0 and sctp-proto to 0.10.7; return accepted DTLS write byte counts (breaking) #1080

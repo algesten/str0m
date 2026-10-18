@@ -1203,7 +1203,7 @@ mod tests {
                 last_sender_info: None,
             };
             buf.push(meta(10.into(), 0), [0x65, 0xaa]);
-            buf.pop(base, Reordering::Recovery(&stream))
+            buf.pop(base, Reordering::Recovery(Some(&stream)))
                 .unwrap()
                 .unwrap();
             // An incomplete H264 frame followed by a complete candidate.
@@ -1211,8 +1211,8 @@ mod tests {
             buf.push(meta(13.into(), 2000), [0x61, 0x44]);
             let mut now = base;
             for attempt in 0..5 {
-                assert_eq!(buf.poll_timeout(Reordering::Recovery(&stream)), None);
-                assert!(buf.pop(now, Reordering::Recovery(&stream)).is_none());
+                assert_eq!(buf.poll_timeout(Reordering::Recovery(Some(&stream))), None);
+                assert!(buf.pop(now, Reordering::Recovery(Some(&stream))).is_none());
                 stream
                     .maybe_create_nack(now, 1.into(), &mut VecDeque::new())
                     .unwrap();
@@ -1222,23 +1222,23 @@ mod tests {
             }
             let deadline = now + rtt * 3;
             assert_eq!(
-                buf.poll_timeout(Reordering::Recovery(&stream)),
+                buf.poll_timeout(Reordering::Recovery(Some(&stream))),
                 Some(deadline)
             );
             assert!(
                 buf.pop(
                     deadline - Duration::from_nanos(1),
-                    Reordering::Recovery(&stream)
+                    Reordering::Recovery(Some(&stream))
                 )
                 .is_none()
             );
             let dep = buf
-                .pop(deadline, Reordering::Recovery(&stream))
+                .pop(deadline, Reordering::Recovery(Some(&stream)))
                 .unwrap()
                 .unwrap();
             assert_eq!(dep.seq_range(), 13.into()..=13.into());
             assert!(!dep.contiguous);
-            assert_eq!(buf.poll_timeout(Reordering::Recovery(&stream)), None);
+            assert_eq!(buf.poll_timeout(Reordering::Recovery(Some(&stream))), None);
         }
     }
 
