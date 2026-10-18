@@ -25,7 +25,7 @@
 //! application frames. Other AMR-WB parameters, such as `max-red` and
 //! `mode-change-capability`, are ignored and left out of answers.
 
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 /// Speech bits per frame type (RFC 4867 Table 1a). `None` marks the reserved types.
 const FRAME_BITS: [Option<usize>; 16] = [
@@ -75,12 +75,30 @@ impl Packetizer for AmrWbPacketizer {
             return Ok(vec![]);
         }
 
-        let (toc_at, speech_at) = if self.octet_align { (8, 16) } else { (4, 10) };
-        let mut payload = vec![0; (speech_at + bits).div_ceil(8)];
-        payload[0] = CMR_NO_REQUEST;
         // A ToC entry F|FT|Q with F=0 (last frame) is the IF header without its P bits.
-        copy_bits(&[header & 0x7c], 0, &mut payload, toc_at, 6);
-        copy_bits(speech, 0, &mut payload, speech_at, bits);
+        let toc = header & 0x7c;
+        let (mut payload, header_bits) = if self.octet_align {
+            // CMR and 4 reserved bits, the ToC entry and 2 padding bits, then the
+            // speech bits, which are already octet-aligned in the IF frame.
+            ([&[CMR_NO_REQUEST, toc][..], speech].concat(), 16)
+        } else {
+            // The 4-bit CMR and 6-bit ToC entry put the speech bits 2 bits to the
+            // right of where they are in the IF frame.
+            let mut payload = vec![CMR_NO_REQUEST | (toc >> 4)];
+            let mut carry = toc << 4;
+            for &byte in speech {
+                payload.push(carry | (byte >> 2));
+                carry = byte << 6;
+            }
+            payload.push(carry);
+            (payload, 10)
+        };
+        payload.truncate((header_bits + bits).div_ceil(8));
+
+        // Clear the trailing padding bits, which the IF frame may leave set.
+        let padding = (8 - (header_bits + bits) % 8) % 8;
+        let last = payload.len() - 1;
+        payload[last] &= 0xff << padding;
 
         if payload.len() > mtu {
             return Err(PacketError::ErrPayloadTooLarge);
@@ -123,20 +141,19 @@ impl Depacketizer for AmrWbDepacketizer {
             return Ok(());
         }
 
-        let len = packet.len() * 8;
-        let (mut pos, toc_bits) = if self.octet_align { (8, 8) } else { (4, 6) };
+        // Skip the codec mode request, and its 4 reserved bits when octet-aligned.
+        let mut reader: (&[u8], usize) = (packet, if self.octet_align { 8 } else { 4 });
 
         // Table of contents: an F|FT|Q entry per frame, where F=1 means another follows.
         let mut headers = Vec::new();
         loop {
-            if pos + toc_bits > len {
-                return Err(PacketError::ErrShortPacket);
+            let entry = reader.get_bits(6).ok_or(PacketError::ErrShortPacket)?;
+            if self.octet_align {
+                reader.get_bits(2).ok_or(PacketError::ErrShortPacket)?;
             }
-            let mut entry = [0];
-            copy_bits(packet, pos, &mut entry, 0, 6);
-            pos += toc_bits;
-            headers.push(entry[0] & 0x7c);
-            if entry[0] & 0x80 == 0 {
+            // The IF frame header holds the entry's FT and Q.
+            headers.push((entry << 2) & 0x7c);
+            if entry & 0x20 == 0 {
                 break;
             }
         }
@@ -144,22 +161,23 @@ impl Depacketizer for AmrWbDepacketizer {
         for header in headers {
             let bits =
                 FRAME_BITS[(header >> 3) as usize].ok_or(PacketError::ErrAmrWbCorruptedPacket)?;
-            if pos + bits > len {
-                return Err(PacketError::ErrShortPacket);
-            }
             out.push(header);
-            let start = out.len();
-            out.resize(start + bits.div_ceil(8), 0);
-            copy_bits(packet, pos, &mut out[start..], 0, bits);
-            pos += bits;
+            for _ in 0..bits / 8 {
+                out.push(reader.get_u8().ok_or(PacketError::ErrShortPacket)?);
+            }
+            let rest = bits % 8;
+            if rest > 0 {
+                let tail = reader.get_bits(rest).ok_or(PacketError::ErrShortPacket)?;
+                out.push(tail << (8 - rest));
+            }
             if self.octet_align {
-                pos = pos.next_multiple_of(8);
+                reader.1 = reader.1.next_multiple_of(8);
             }
         }
 
         // RFC 4867 §4.5.1: discard payloads longer than the ToC describes. At most
         // seven padding bits may remain, and their values are ignored.
-        if len - pos >= 8 {
+        if reader.remaining_bits() >= 8 {
             return Err(PacketError::ErrAmrWbCorruptedPacket);
         }
 
@@ -172,16 +190,6 @@ impl Depacketizer for AmrWbDepacketizer {
 
     fn is_partition_tail(&self, _marker: bool, _packet: &[u8]) -> bool {
         true
-    }
-}
-
-/// Copies `n` bits, most significant first, from bit offset `from` in `src` to bit
-/// offset `to` in `dst`. The destination bits must be zero.
-fn copy_bits(src: &[u8], from: usize, dst: &mut [u8], to: usize, n: usize) {
-    for i in 0..n {
-        let (s, d) = (from + i, to + i);
-        let bit = (src[s / 8] >> (7 - s % 8)) & 1;
-        dst[d / 8] |= bit << (7 - d % 8);
     }
 }
 
@@ -234,19 +242,20 @@ mod test {
 
     #[test]
     fn payload_layout_matches_rfc_4867() {
-        let frame = if_frame(8, 0xff);
+        let frame = if_frame(8, 0xa5);
 
         // CMR=15 and reserved bits, ToC F=0 FT=8 Q=1, then the octet-aligned frame.
         let payload = packetize(true, &frame);
         assert_eq!(payload[..2], [0xf0, 0x44]);
         assert_eq!(payload[2..], frame[1..]);
 
-        // 4-bit CMR, 6-bit ToC, 477 speech bits and one padding bit.
+        // 4-bit CMR and 6-bit ToC, then the 477 speech bits shifted 2 bits right, so
+        // each 0xa5 becomes 0x69, and one padding bit.
         let payload = packetize(false, &frame);
         assert_eq!(payload.len(), 61);
-        assert_eq!(payload[..2], [0xf4, 0x7f]);
-        assert!(payload[2..60].iter().all(|&b| b == 0xff));
-        assert_eq!(payload[60], 0xfe);
+        assert_eq!(payload[0], 0xf4);
+        assert!(payload[1..60].iter().all(|&b| b == 0x69));
+        assert_eq!(payload[60], 0x68);
     }
 
     #[test]

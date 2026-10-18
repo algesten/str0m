@@ -209,6 +209,8 @@ pub(crate) trait BitRead {
     fn byte_offset(&self) -> usize;
     fn get_u8(&mut self) -> Option<u8>;
     fn get_u16(&mut self) -> Option<u16>;
+    /// Reads `count` bits, at most 8, right-aligned in the result.
+    fn get_bits(&mut self, count: usize) -> Option<u8>;
     fn get_remaining(&mut self) -> &[u8];
     fn get_bytes(&mut self, count: usize) -> Option<&[u8]>;
     fn get_leb128(&mut self) -> Option<usize>;
@@ -256,6 +258,22 @@ impl BitRead for (&[u8], usize) {
             return None;
         }
         Some(u16::from_be_bytes([self.get_u8()?, self.get_u8()?]))
+    }
+
+    fn get_bits(&mut self, count: usize) -> Option<u8> {
+        if count > 8 || self.remaining_bits() < count {
+            return None;
+        }
+        if count == 0 {
+            return Some(0);
+        }
+
+        let offs = self.1 / 8;
+        let next = self.0.get(offs + 1).copied().unwrap_or(0);
+        let window = u16::from_be_bytes([self.0[offs], next]) << (self.1 % 8);
+        self.1 += count;
+
+        Some((window >> (16 - count)) as u8)
     }
 
     fn get_remaining(&mut self) -> &[u8] {
@@ -602,6 +620,17 @@ impl fmt::Display for MediaKind {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn bit_read_get_bits() {
+        let mut reader: (&[u8], usize) = (&[0b1010_1100, 0b0101_0000], 4);
+        assert_eq!(reader.get_bits(6), Some(0b110001));
+        assert_eq!(reader.get_bits(3), Some(0b010));
+        assert_eq!(reader.get_bits(9), None);
+        assert_eq!(reader.get_bits(4), None);
+        assert_eq!(reader.get_bits(3), Some(0));
+        assert_eq!(reader.get_bits(0), Some(0));
+    }
 
     #[test]
     fn comfort_noise_packetizer_preserves_payload_and_clears_marker() {
