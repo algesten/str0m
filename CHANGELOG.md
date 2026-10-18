@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Support single-channel AMR-WB audio in octet-aligned and bandwidth-efficient modes #995
   * Match SDP fmtp parameter names case-insensitively #1077
   * Tolerate spaces and a trailing semicolon in fmtp parameters #1076
   * Handle STUN MESSAGE-INTEGRITY as the first attribute and prevent integrity verification panics #1073

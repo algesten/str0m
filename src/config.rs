@@ -305,6 +305,14 @@ impl RtcConfig {
         self
     }
 
+    /// Enable AMR-WB audio codec.
+    ///
+    /// Disabled by default.
+    pub fn enable_amr_wb(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_amr_wb(enabled);
+        self
+    }
+
     /// Enable VP8 video codec.
     ///
     /// Enabled by default.

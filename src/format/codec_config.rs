@@ -66,6 +66,9 @@ pub(crate) const PT_G722_RED: Pt = Pt::new_with_value(62);
 pub(crate) const PT_PCMU_RED: Pt = Pt::new_with_value(61);
 pub(crate) const PT_PCMA_RED: Pt = Pt::new_with_value(60);
 
+/// Default payload type for AMR-WB.
+pub(crate) const PT_AMR_WB: Pt = Pt::new_with_value(122);
+
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
@@ -273,6 +276,25 @@ impl CodecConfig {
             return;
         }
         self.add_static_config(PT_COMFORT_NOISE);
+    }
+
+    /// Add a default AMR-WB payload type.
+    pub fn enable_amr_wb(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::AmrWb);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            PT_AMR_WB,
+            None,
+            Codec::AmrWb,
+            Frequency::SIXTEEN_KHZ,
+            Some(1),
+            FormatParams {
+                octet_align: Some(true),
+                ..Default::default()
+            },
+        );
     }
 
     /// Add a default OPUS payload type, optionally with RFC 2198 RED.
@@ -959,6 +981,30 @@ mod test {
             for b in &pts[i + 1..] {
                 assert_ne!(a, b, "RED payload types must be distinct");
             }
+        }
+    }
+
+    #[test]
+    fn enable_amr_wb_uses_a_free_default_pt() {
+        let mut config = CodecConfig::new_with_defaults();
+
+        config.enable_amr_wb(true);
+
+        let amr_wb = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::AmrWb)
+            .expect("AMR-WB should be enabled");
+        assert_eq!(amr_wb.pt(), PT_AMR_WB);
+
+        let mut seen = std::collections::HashSet::new();
+        for pt in config
+            .params()
+            .iter()
+            .flat_map(|p| [Some(p.pt()), p.resend(), p.red()])
+            .flatten()
+        {
+            assert!(seen.insert(pt), "duplicate PT {pt}");
         }
     }
 

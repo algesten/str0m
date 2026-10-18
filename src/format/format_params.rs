@@ -116,6 +116,16 @@ pub struct FormatParams {
     /// library default `0-16`. Negotiation takes the smaller maximum per payload
     /// type across the session.
     pub telephone_event_max: Option<u8>,
+
+    /// AMR-WB `octet-align`. `Some(true)` selects the octet-aligned payload
+    /// layout, otherwise bandwidth-efficient is used.
+    pub octet_align: Option<bool>,
+
+    /// AMR-WB `mode-set`, a bitmask of the allowed speech modes 0..=8.
+    ///
+    /// A mode set from either peer applies to both directions, so only write
+    /// frames in these modes.
+    pub mode_set: Option<u16>,
 }
 
 #[cfg(feature = "drv")]
@@ -142,6 +152,10 @@ impl FormatParams {
         } else {
             for line in lines {
                 for param in line {
+                    // Decline AMR-WB payload types that need features str0m lacks.
+                    if codec == Codec::AmrWb && *param == FormatParam::AmrWbUnsupported {
+                        return None;
+                    }
                     if !matches!(param, FormatParam::TelephoneEvents(_)) {
                         params.set_param(param);
                     }
@@ -203,6 +217,9 @@ impl FormatParams {
             SpropMaxDonDiff(v) => self.sprop_max_don_diff = Some(*v),
             TelephoneEvents(v) => self.telephone_event_max = Some(*v),
             BareRange(_) | BarePtList(_) => {}
+            OctetAlign(v) => self.octet_align = Some(*v),
+            ModeSet(v) => self.mode_set = Some(*v),
+            AmrWbUnsupported => {}
             Apt(_) => {}
             Red(_) => {}
             Unknown => {}
@@ -262,6 +279,12 @@ impl FormatParams {
         }
         if let Some(v) = self.telephone_event_max {
             r.push(TelephoneEvents(v));
+        }
+        if let Some(v) = self.octet_align {
+            r.push(OctetAlign(v));
+        }
+        if let Some(v) = self.mode_set {
+            r.push(ModeSet(v));
         }
 
         r
@@ -379,5 +402,36 @@ mod test {
         let parsed = FormatParams::parse_line(&fmtp_str);
         assert_eq!(parsed.h266_profile_tier_level, Some(ptl));
         assert_eq!(parsed.sprop_max_don_diff, Some(32));
+    }
+
+    #[test]
+    fn amr_wb_fmtp() {
+        let f = FormatParams::parse_line("octet-align=1; mode-set=0, 1,2;max-red=220");
+        assert_eq!(f.to_string(), "octet-align=1;mode-set=0,1,2");
+        assert_eq!(
+            FormatParams::parse_line("mode-set=0,9"),
+            FormatParams::default()
+        );
+
+        let declined = |codec, k: &str, v: &str| {
+            let line = [FormatParam::parse(k, v)];
+            FormatParams::from_sdp_fmtp(codec, [&line[..]].into_iter()).is_none()
+        };
+        for (k, v) in [
+            ("crc", "1"),
+            ("robust-sorting", "1"),
+            ("interleaving", "30"),
+            ("mode-change-period", "2"),
+        ] {
+            assert!(declined(Codec::AmrWb, k, v), "{k}={v}");
+            assert!(!declined(Codec::Opus, k, v), "{k}={v}");
+        }
+        for (k, v) in [
+            ("crc", "0"),
+            ("robust-sorting", "0"),
+            ("mode-change-period", "1"),
+        ] {
+            assert!(!declined(Codec::AmrWb, k, v), "{k}={v}");
+        }
     }
 }

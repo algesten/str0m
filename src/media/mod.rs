@@ -441,6 +441,11 @@ impl Media {
                 }
             }
 
+            // RFC 4867: without octet-align=1 the payload is bandwidth-efficient.
+            if let CodecDepacketizer::AmrWb(ref mut amr) = depack {
+                amr.octet_align = params.spec.format.octet_align.unwrap_or(false);
+            }
+
             let buffer = DepacketizingBuffer::new(depack, hold_back);
 
             self.depayloaders.insert((pt, rid), buffer);
