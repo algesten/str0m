@@ -1079,7 +1079,12 @@ impl FormatParam {
     /// Parse multiple format parameters from key-value pairs.
     /// Handles the H.265/H.266 special case where three params combine into
     /// one composite ProfileTierLevel.
-    pub fn parse_pairs(pairs: Vec<(String, String)>) -> Vec<FormatParam> {
+    pub fn parse_pairs(mut pairs: Vec<(String, String)>) -> Vec<FormatParam> {
+        // Parameter names are case-insensitive (RFC 4855 §3).
+        for (k, _) in &mut pairs {
+            k.make_ascii_lowercase();
+        }
+
         // Check if this looks like H.265/H.266 by presence of tier-flag or level-id.
         // Both codecs use the same three fmtp keys (RFC 7798 / RFC 9328);
         // their level-id value spaces are disjoint (H.265: 30×level, e.g. 93;
@@ -1725,6 +1730,29 @@ mod test {
                 ..Default::default()
             };
             assert_eq!(f.to_string(), "minptime=10;stereo=1;useinbandfec=1");
+        }
+
+        #[test]
+        fn fmtp_param_names_are_case_insensitive() {
+            let pairs = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect()
+            };
+
+            let opus = pairs(&[("MinPTime", "10"), ("UseInbandFEC", "1")]);
+            assert_eq!(
+                FormatParam::parse_pairs(opus),
+                [FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)]
+            );
+
+            let h265 = pairs(&[("Profile-Id", "1"), ("TIER-FLAG", "0"), ("Level-Id", "93")]);
+            let ptl = H265ProfileTierLevel::new(1, 0, 93).unwrap();
+            assert_eq!(
+                FormatParam::parse_pairs(h265),
+                [FormatParam::H265ProfileTierLevel(ptl)]
+            );
         }
     }
 
