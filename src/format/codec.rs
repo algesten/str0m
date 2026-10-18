@@ -24,6 +24,18 @@ pub struct CodecSpec {
 }
 
 impl CodecSpec {
+    /// Normalize codec defaults for matching and reject unsupported AMR-WB channels.
+    pub(crate) fn normalized_for_matching(mut self) -> Option<Self> {
+        if self.codec == Codec::AmrWb {
+            if self.channels.unwrap_or(1) != 1 {
+                return None;
+            }
+            self.channels = Some(1);
+            self.format.octet_align = Some(self.format.octet_align.unwrap_or(false));
+        }
+        Some(self)
+    }
+
     /// The RTP clock rate used on the wire for this codec.
     ///
     /// For most codecs this is the same as [`CodecSpec::clock_rate`]. G722 is a
