@@ -21,6 +21,7 @@ pub use crate::packet::{H266Level, H266Profile, H266ProfileTierLevel, H266Tier};
 mod codec;
 mod codec_config;
 mod format_params;
+mod matching;
 mod payload_params;
 
 pub use codec::{Codec, CodecSpec};

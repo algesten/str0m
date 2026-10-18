@@ -279,22 +279,26 @@ impl PayloadParams {
 
     pub(crate) fn match_score(&self, o: &PayloadParams) -> Option<usize> {
         // we don't want to compare PT
-        let c0 = self.spec.normalized_for_matching()?;
-        let c1 = o.spec.normalized_for_matching()?;
+        let c0 = self.spec;
+        let c1 = o.spec;
 
-        if c0 == c1 {
-            // Exact match
-            return Some(Self::EXACT_MATCH_SCORE);
-        }
-
-        // Attempt fuzzy matching, since we don't have an exact match
-        if c0.codec != c1.codec || (c0.codec == Codec::Unknown && c1.codec == Codec::Unknown) {
-            // Codecs must match
+        if c0.codec != c1.codec || c0.clock_rate != c1.clock_rate {
             return None;
         }
 
-        if c0.clock_rate != c1.clock_rate {
-            // Clock rates must match
+        let rules = c0.codec.matching_rules();
+        let channels0 = c0.channels.or(rules.default_channels);
+        let channels1 = c1.channels.or(rules.default_channels);
+        if !rules.supports_channels(channels0) || !rules.supports_channels(channels1) {
+            return None;
+        }
+
+        let format_penalty = rules.format_penalty(&c0.format, &c1.format);
+        if channels0 == channels1 && format_penalty == Some(0) {
+            return Some(Self::EXACT_MATCH_SCORE);
+        }
+
+        if c0.codec == Codec::Unknown {
             return None;
         }
 
@@ -303,13 +307,9 @@ impl PayloadParams {
             return Some(Self::EXACT_MATCH_SCORE);
         }
 
-        if c0.channels != c1.channels {
+        if channels0 != channels1 {
             // Channels must match
             return None;
-        }
-
-        if c0.codec == Codec::AmrWb {
-            return Self::match_amr_wb_score(c0, c1);
         }
 
         if c0.codec.is_audio() && c0.codec == Codec::Opus {
@@ -336,10 +336,7 @@ impl PayloadParams {
             return Self::match_av1_score(c0, c1);
         }
 
-        // TODO: Fuzzy matching for any other audio codecs
-        // TODO: Fuzzy matching for video
-
-        None
+        format_penalty.map(|penalty| Self::EXACT_MATCH_SCORE.saturating_sub(penalty))
     }
 
     fn match_opus_score(c0: CodecSpec, c1: CodecSpec) -> usize {
@@ -426,21 +423,6 @@ impl PayloadParams {
         }
 
         Some(Self::EXACT_MATCH_SCORE)
-    }
-
-    fn match_amr_wb_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
-        // Octet-aligned and bandwidth-efficient payloads are not interchangeable.
-        if c0.format.octet_align != c1.format.octet_align {
-            return None;
-        }
-
-        // A mode-set binds both peers (RFC 4867 §8.3.1). Identical sets are a
-        // stronger match than accepting a restriction from either peer.
-        match (c0.format.mode_set, c1.format.mode_set) {
-            (a, b) if a == b => Some(Self::EXACT_MATCH_SCORE),
-            (Some(_), Some(_)) => None,
-            _ => Some(Self::EXACT_MATCH_SCORE - 1),
-        }
     }
 
     pub(crate) fn match_h264_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
