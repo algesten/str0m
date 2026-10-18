@@ -5,34 +5,6 @@ use crate::packet::MediaKind;
 use crate::rtp_::Frequency;
 
 use super::format_params::FormatParams;
-use super::matching::{FormatRule, MatchingRules};
-use crate::sdp::FormatParam;
-
-const DEFAULT_MATCHING_RULES: MatchingRules = MatchingRules {
-    default_channels: None,
-    max_channels: None,
-    format: None,
-};
-
-const CODEC_MATCHING_RULES: &[(Codec, MatchingRules)] = &[(
-    Codec::AmrWb,
-    MatchingRules {
-        default_channels: Some(1),
-        max_channels: Some(1),
-        format: Some(&[
-            FormatRule {
-                value: |p| p.octet_align.map(FormatParam::OctetAlign),
-                default: Some(FormatParam::OctetAlign(false)),
-                allow_unspecified: false,
-            },
-            FormatRule {
-                value: |p| p.mode_set.map(FormatParam::ModeSet),
-                default: None,
-                allow_unspecified: true,
-            },
-        ]),
-    },
-)];
 
 /// Codec specification
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,13 +99,6 @@ pub enum Codec {
 crate::drv_identity_copy!(Codec, CodecSpec);
 
 impl Codec {
-    pub(crate) fn matching_rules(self) -> &'static MatchingRules {
-        CODEC_MATCHING_RULES
-            .iter()
-            .find_map(|(codec, rules)| (*codec == self).then_some(rules))
-            .unwrap_or(&DEFAULT_MATCHING_RULES)
-    }
-
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {
         use Codec::*;

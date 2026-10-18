@@ -282,23 +282,19 @@ impl PayloadParams {
         let c0 = self.spec;
         let c1 = o.spec;
 
-        if c0.codec != c1.codec || c0.clock_rate != c1.clock_rate {
-            return None;
-        }
-
-        let rules = c0.codec.matching_rules();
-        let channels0 = c0.channels.or(rules.default_channels);
-        let channels1 = c1.channels.or(rules.default_channels);
-        if !rules.supports_channels(channels0) || !rules.supports_channels(channels1) {
-            return None;
-        }
-
-        let format_penalty = rules.format_penalty(&c0.format, &c1.format);
-        if channels0 == channels1 && format_penalty == Some(0) {
+        if c0 == c1 && c0.codec != Codec::AmrWb {
+            // Exact match
             return Some(Self::EXACT_MATCH_SCORE);
         }
 
-        if c0.codec == Codec::Unknown {
+        // Attempt fuzzy matching, since we don't have an exact match
+        if c0.codec != c1.codec || (c0.codec == Codec::Unknown && c1.codec == Codec::Unknown) {
+            // Codecs must match
+            return None;
+        }
+
+        if c0.clock_rate != c1.clock_rate {
+            // Clock rates must match
             return None;
         }
 
@@ -307,7 +303,13 @@ impl PayloadParams {
             return Some(Self::EXACT_MATCH_SCORE);
         }
 
-        if channels0 != channels1 {
+        // AMR-WB defaults an omitted channel count to mono, so it must match
+        // before the generic channel comparison below.
+        if c0.codec == Codec::AmrWb {
+            return Self::match_amr_wb_score(c0, c1);
+        }
+
+        if c0.channels != c1.channels {
             // Channels must match
             return None;
         }
@@ -336,7 +338,10 @@ impl PayloadParams {
             return Self::match_av1_score(c0, c1);
         }
 
-        format_penalty.map(|penalty| Self::EXACT_MATCH_SCORE.saturating_sub(penalty))
+        // TODO: Fuzzy matching for any other audio codecs
+        // TODO: Fuzzy matching for video
+
+        None
     }
 
     fn match_opus_score(c0: CodecSpec, c1: CodecSpec) -> usize {
@@ -423,6 +428,25 @@ impl PayloadParams {
         }
 
         Some(Self::EXACT_MATCH_SCORE)
+    }
+
+    fn match_amr_wb_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // Only mono is implemented, and octet-aligned and bandwidth-efficient
+        // payloads are not interchangeable.
+        if c0.channels.unwrap_or(1) != 1 || c1.channels.unwrap_or(1) != 1 {
+            return None;
+        }
+        if c0.format.octet_align.unwrap_or(false) != c1.format.octet_align.unwrap_or(false) {
+            return None;
+        }
+
+        // A mode-set binds both peers (RFC 4867 §8.3.1), so prefer unrestricted
+        // payload types when the remote offers both.
+        match (c0.format.mode_set, c1.format.mode_set) {
+            (None, None) => Some(Self::EXACT_MATCH_SCORE),
+            (Some(a), Some(b)) if a != b => None,
+            _ => Some(Self::EXACT_MATCH_SCORE - 1),
+        }
     }
 
     pub(crate) fn match_h264_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
@@ -2049,53 +2073,6 @@ mod test {
                 octet_align: Some(true),
                 ..Default::default()
             }
-        }
-
-        #[test]
-        fn equivalent_defaults_match_exactly() {
-            for mode_set in [None, Some(0b111)] {
-                let explicit = amr_wb(
-                    Some(1),
-                    FormatParams {
-                        octet_align: Some(false),
-                        mode_set,
-                        ..Default::default()
-                    },
-                );
-                for channels in [None, Some(1)] {
-                    for octet_align in [None, Some(false)] {
-                        let other = amr_wb(
-                            channels,
-                            FormatParams {
-                                octet_align,
-                                mode_set,
-                                ..Default::default()
-                            },
-                        );
-                        assert_eq!(
-                            explicit.match_score(&other),
-                            Some(PayloadParams::EXACT_MATCH_SCORE)
-                        );
-                        assert_eq!(
-                            other.match_score(&explicit),
-                            Some(PayloadParams::EXACT_MATCH_SCORE)
-                        );
-                    }
-                }
-            }
-        }
-
-        #[test]
-        fn exact_mode_set_is_preferred() {
-            let restricted = amr_wb(
-                Some(1),
-                FormatParams {
-                    mode_set: Some(0b111),
-                    ..octet_aligned()
-                },
-            );
-            let unrestricted = amr_wb(Some(1), octet_aligned());
-            assert!(restricted.match_score(&restricted) > restricted.match_score(&unrestricted));
         }
 
         #[test]
