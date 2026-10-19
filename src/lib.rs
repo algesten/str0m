@@ -2258,6 +2258,18 @@ mod test {
     use super::*;
 
     #[test]
+    fn new_mid_does_not_reuse_data_channel_mid() {
+        let mut rtc = Rtc::new(Instant::now());
+        fastrand::seed(42);
+        let app_mid = Mid::new();
+        rtc.session.set_app(app_mid, 0).unwrap();
+
+        // Force the first candidate to collide with the negotiated data-channel MID.
+        fastrand::seed(42);
+        assert_ne!(rtc.new_mid(), app_mid);
+    }
+
+    #[test]
     fn rtc_is_send() {
         fn is_send<T: Send>(_t: T) {}
         fn is_sync<T: Sync>(_t: T) {}
