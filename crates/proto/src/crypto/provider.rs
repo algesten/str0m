@@ -193,7 +193,12 @@ pub trait DtlsInstance: CryptoSafe {
     fn handle_timeout(&mut self, now: Instant) -> Result<(), DtlsImplError>;
 
     /// Send application data over DTLS.
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError>;
+    ///
+    /// Returns the number of bytes accepted for buffering or transmission.
+    /// Accepts either the entire slice or none of it; retain unaccepted data
+    /// and retry after the handshake progresses. An empty slice returns zero
+    /// on success and does not indicate handshake readiness.
+    fn send_application_data(&mut self, data: &[u8]) -> Result<usize, DtlsImplError>;
 
     /// Return true if the instance is operating in the client role.
     fn is_active(&self) -> bool;
