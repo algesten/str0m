@@ -363,8 +363,8 @@ impl H265Packetizer {
         let original_hdr = H265NALUHeader::new(nalu[0], nalu[1]);
         let original_type = original_hdr.nalu_type();
 
-        // Ignore AUD/filler.
-        if original_type == H265NALU_AUD_NALU_TYPE || original_type == H265NALU_FILLER_NALU_TYPE {
+        // Ignore AUD.
+        if original_type == H265NALU_AUD_NALU_TYPE {
             return;
         }
 
@@ -3207,6 +3207,30 @@ mod test {
             assert_eq!(out.len(), 2);
             assert_eq!(out[0], nalu1);
             assert_eq!(out[1], nalu2);
+
+            Ok(())
+        }
+
+        /// Test packetizer dropping AUD NAL units and keeping filler NAL units.
+        #[test]
+        fn test_h265_packetizer_drops_aud_keeps_filler() -> Result<()> {
+            let mut p = H265Packetizer::default();
+
+            // AUD (type 35), non-parameter-set NALU, filler (type 38).
+            let aud = b"\x46\x01\x50".to_vec();
+            let nalu = b"\x02\x01\x11\x22\x33".to_vec();
+            let fd = b"\x4c\x01\xff\xff\x80".to_vec();
+
+            let mut bytestream = Vec::new();
+            for n in [&aud, &nalu, &fd] {
+                bytestream.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+                bytestream.extend_from_slice(n);
+            }
+
+            let out = p.packetize(1200, &bytestream)?;
+            assert_eq!(out.len(), 2);
+            assert_eq!(out[0], nalu);
+            assert_eq!(out[1], fd);
 
             Ok(())
         }

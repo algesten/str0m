@@ -8,8 +8,8 @@
 //!
 //! The two-byte NAL unit header is `F(1) | Z(1) | LayerId(6) || Type(5) |
 //! TID(3)` (§1.1.4) — the NAL type lives in the SECOND byte, upper 5 bits.
-//! Parameter sets: VPS=14, SPS=15, PPS=16. Skipped on send: AUD=20,
-//! Filler(FD)=25. IRAP (keyframe) NAL types: IDR_W_RADL=7, IDR_N_LP=8, CRA=9.
+//! Parameter sets: VPS=14, SPS=15, PPS=16. Skipped on send: AUD=20.
+//! IRAP (keyframe) NAL types: IDR_W_RADL=7, IDR_N_LP=8, CRA=9.
 //!
 //! Profile/tier/level fmtp negotiation (RFC 9328 §7.2) is implemented in
 //! `h266_profile.rs` and the format layer. DONL (`sprop-max-don-diff`,
@@ -36,7 +36,8 @@ const H266NALU_VPS_NALU_TYPE: u8 = 14;
 const H266NALU_SPS_NALU_TYPE: u8 = 15;
 const H266NALU_PPS_NALU_TYPE: u8 = 16;
 const H266NALU_AUD_NALU_TYPE: u8 = 20;
-const H266NALU_FILLER_NALU_TYPE: u8 = 25; // FD_NUT
+#[allow(dead_code)] // FD_NUT; referenced by tests.
+const H266NALU_FILLER_NALU_TYPE: u8 = 25;
 
 // RFC 9328 RTP packet types.
 const H266NALU_AGGREGATION_PACKET_TYPE: u8 = 28;
@@ -334,8 +335,8 @@ impl H266Packetizer {
         let original_hdr = H266NALUHeader::new(nalu[0], nalu[1]);
         let original_type = original_hdr.nalu_type();
 
-        // Ignore AUD/filler.
-        if original_type == H266NALU_AUD_NALU_TYPE || original_type == H266NALU_FILLER_NALU_TYPE {
+        // Ignore AUD.
+        if original_type == H266NALU_AUD_NALU_TYPE {
             return;
         }
 
@@ -1395,9 +1396,9 @@ mod test {
             Ok(())
         }
 
-        /// AUD and filler NALs are dropped by the packetizer.
+        /// AUD NALs are dropped by the packetizer, filler NALs are kept.
         #[test]
-        fn test_h266_packetizer_drops_aud_and_filler() -> Result<()> {
+        fn test_h266_packetizer_drops_aud_keeps_filler() -> Result<()> {
             let aud = make_nal(H266NALU_AUD_NALU_TYPE, 4);
             let fd = make_nal(H266NALU_FILLER_NALU_TYPE, 10);
             let trail = make_nal(0, 8);
@@ -1405,8 +1406,9 @@ mod test {
 
             let mut pck = H266Packetizer::default();
             let packets = pck.packetize(1200, &payload)?;
-            assert_eq!(packets.len(), 1);
+            assert_eq!(packets.len(), 2);
             assert_eq!(packets[0], trail);
+            assert_eq!(packets[1], fd);
             Ok(())
         }
 
