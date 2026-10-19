@@ -3,13 +3,9 @@
   * Avoid reusing data-channel MIDs during media renegotiation #1078
   * Remove the fixed video reordering timeout setting (breaking) #1078
   * Wait for NACK recovery and a complete successor before expiring incomplete video frames #1078
-<<<<<<< HEAD
-
   * Send pending keyframe and REMB requests without waiting for unrelated timers #1081
   * Bump dimpl to 0.8.0 and sctp-proto to 0.10.7; return accepted DTLS write byte counts (breaking) #1080
   * Preserve filler data NAL units when sending H264, H265, and H266 video #1079
-=======
->>>>>>> 9d4ade83 (Avoid reusing data-channel MIDs during renegotiation)
   * Support single-channel AMR-WB audio in octet-aligned and bandwidth-efficient modes #995
   * Match SDP fmtp parameter names case-insensitively #1077
   * Tolerate spaces and a trailing semicolon in fmtp parameters #1076
