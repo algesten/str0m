@@ -32,6 +32,7 @@ pub const IDR_NALU_TYPE: u8 = 5;
 pub const SPS_NALU_TYPE: u8 = 7;
 pub const PPS_NALU_TYPE: u8 = 8;
 pub const AUD_NALU_TYPE: u8 = 9;
+#[allow(dead_code)] // Referenced by tests.
 pub const FILLER_NALU_TYPE: u8 = 12;
 
 pub const FUA_HEADER_SIZE: usize = 2;
@@ -126,7 +127,7 @@ impl H264Packetizer {
         let nalu_type = nalu[0] & NALU_TYPE_BITMASK;
         let nalu_ref_idc = nalu[0] & NALU_REF_IDC_BITMASK;
 
-        if nalu_type == AUD_NALU_TYPE || nalu_type == FILLER_NALU_TYPE {
+        if nalu_type == AUD_NALU_TYPE {
             return;
         } else if nalu_type == SPS_NALU_TYPE {
             self.sps_nalu = Some(nalu.to_vec());
@@ -482,10 +483,15 @@ mod test {
             "FU-A packetization failed"
         );
 
-        // Nalu type 9 or 12
+        // Nalu type 9
         let small_payload2 = &[0x09, 0x00, 0x00];
         let result = pck.packetize(5, small_payload2)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
+
+        // Nalu type 12
+        let filler_payload = &[FILLER_NALU_TYPE, 0xff, 0x80];
+        let result = pck.packetize(5, filler_payload)?;
+        assert_eq!(result, vec![filler_payload], "Filler NALU should be kept");
 
         Ok(())
     }

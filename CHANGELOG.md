@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Preserve filler data NAL units when sending H264, H265, and H266 video #1079
   * Support single-channel AMR-WB audio in octet-aligned and bandwidth-efficient modes #995
   * Match SDP fmtp parameter names case-insensitively #1077
   * Tolerate spaces and a trailing semicolon in fmtp parameters #1076
