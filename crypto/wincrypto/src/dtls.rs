@@ -91,7 +91,7 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         self.dtls.handle_timeout(now)
     }
 
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
+    fn send_application_data(&mut self, data: &[u8]) -> Result<usize, DtlsImplError> {
         self.dtls.send_application_data(data)
     }
 

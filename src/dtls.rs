@@ -169,7 +169,7 @@ impl Dtls {
         fn make_handshake_pending_err() -> DtlsError {
             DtlsError::Io(io::Error::new(
                 io::ErrorKind::WouldBlock,
-                dimpl::Error::HandshakePending,
+                "DTLS handshake pending",
             ))
         }
 
@@ -178,12 +178,15 @@ impl Dtls {
             return Err(make_handshake_pending_err());
         }
 
-        self.instance
-            .send_application_data(data)
-            .map_err(|e| match e {
-                dimpl::Error::HandshakePending => make_handshake_pending_err(),
-                e => DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))),
-            })
+        let accepted = self.instance.send_application_data(data).map_err(|e| {
+            DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e)))
+        })?;
+
+        if accepted != data.len() {
+            return Err(make_handshake_pending_err());
+        }
+
+        Ok(())
     }
 
     /// Handle a timeout event.
@@ -202,5 +205,110 @@ impl Dtls {
         self.instance
             .close()
             .map_err(|e| DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn new_dtls(now: Instant, version: DtlsVersion) -> Dtls {
+        let provider = crate::crypto::test_default_provider();
+        let cert = provider.dtls_provider.generate_certificate().unwrap();
+        Dtls::new(
+            &cert,
+            provider.dtls_provider,
+            provider.sha256_provider,
+            now,
+            version,
+            1200..=1500,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn input_before_initialization_would_block() {
+        let mut dtls = new_dtls(Instant::now(), DtlsVersion::Dtls12);
+        let err = dtls.handle_input(b"application data").unwrap_err();
+        assert!(is_would_block(&err));
+    }
+
+    #[test]
+    #[cfg(any(
+        feature = "aws-lc-rs",
+        feature = "rust-crypto",
+        feature = "openssl-dimpl",
+        feature = "wincrypto",
+        feature = "apple-crypto",
+    ))]
+    fn auto_client_retries_unaccepted_application_data() {
+        fn exchange(
+            from: &mut Dtls,
+            to: &mut Dtls,
+            now: Instant,
+            received: &mut Vec<Vec<u8>>,
+        ) -> bool {
+            from.handle_timeout(now).unwrap();
+            let mut connected = false;
+            let mut buf = [0; 2048];
+            loop {
+                let timeout = match from.poll_output(&mut buf) {
+                    DtlsOutput::Connected => {
+                        connected = true;
+                        false
+                    }
+                    DtlsOutput::ApplicationData(data) => {
+                        received.push(data.to_vec());
+                        false
+                    }
+                    DtlsOutput::Timeout(_) => true,
+                    _ => false,
+                };
+                if let Some(packet) = from.poll_packet() {
+                    to.handle_receive(&packet).unwrap();
+                } else if timeout {
+                    break;
+                }
+            }
+            connected
+        }
+
+        let now = Instant::now();
+        let mut client = new_dtls(now, DtlsVersion::Auto);
+        let mut server = new_dtls(now, DtlsVersion::Dtls12);
+        client.set_active(true);
+        server.set_active(false);
+        client.handle_timeout(now).unwrap();
+        server.handle_timeout(now).unwrap();
+
+        let data = b"retry after auto-sense";
+        let err = client.handle_input(data).unwrap_err();
+        assert!(is_would_block(&err));
+        // An empty write succeeds even though its accepted byte count is zero.
+        client.handle_input(b"").unwrap();
+
+        let mut received = Vec::new();
+        let mut client_connected = false;
+        let mut server_connected = false;
+        for _ in 0..20 {
+            client_connected |= exchange(&mut client, &mut server, now, &mut received);
+            server_connected |= exchange(&mut server, &mut client, now, &mut received);
+            if client_connected && server_connected {
+                break;
+            }
+        }
+        assert!(client_connected && server_connected);
+        assert!(received.is_empty());
+        assert_eq!(client.protocol_version(), Some(ProtocolVersion::DTLS1_2));
+        assert_eq!(server.protocol_version(), Some(ProtocolVersion::DTLS1_2));
+
+        client.handle_input(data).unwrap();
+        exchange(&mut client, &mut server, now, &mut received);
+        exchange(&mut server, &mut client, now, &mut received);
+        assert_eq!(received, vec![data.to_vec()]);
+
+        client.close().unwrap();
+        let err = client.handle_input(data).unwrap_err();
+        assert!(!is_would_block(&err));
     }
 }

@@ -630,11 +630,11 @@ impl DtlsInstance for OsslDtlsInstance {
         Ok(())
     }
 
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
+    fn send_application_data(&mut self, data: &[u8]) -> Result<usize, DtlsImplError> {
         // If handshake not complete, queue for later
         if !self.inner.is_connected() {
             self.queued_app_data.push_back(data.to_vec());
-            return Ok(());
+            return Ok(data.len());
         }
 
         // Flush any queued data first
@@ -646,7 +646,7 @@ impl DtlsInstance for OsslDtlsInstance {
         }
 
         self.collect_output();
-        Ok(())
+        Ok(data.len())
     }
 
     fn is_active(&self) -> bool {
