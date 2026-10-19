@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use sctp_proto::{Association, AssociationHandle, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
-use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig, TransportConfig};
+use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
 
 use snap::{b64_encode, webrtc_transport_config};
 
@@ -31,7 +31,7 @@ pub use error::SctpError;
 /// Configured by `RtcConfig::set_sctp_max_buffered_amount`.
 pub(crate) const DEFAULT_MAX_BUFFERED_AMOUNT: usize = 128 * 1024;
 
-/// Maximum message size we advertise in SDP (what we can receive)
+/// Default maximum message size we advertise in SDP (what we can receive).
 pub const LOCAL_MAX_MESSAGE_SIZE: u32 = 256 * 1024;
 
 /// Default max message size if remote doesn't advertise
@@ -55,6 +55,7 @@ pub(crate) struct RtcSctp {
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
     client: bool,
+    local_max_message_size: u32,
     remote_max_message_size: u32,
     snap_enabled: bool,
     snap_init: Option<SctpInitData>,
@@ -289,7 +290,7 @@ const _: () = assert!(
 );
 
 impl RtcSctp {
-    pub fn new(mtu: usize) -> Self {
+    pub fn new(mtu: usize, local_max_message_size: u32) -> Self {
         let mut config = EndpointConfig::default();
         let max_payload = mtu
             .saturating_sub(crate::io::MAX_DTLS_OVERHEAD)
@@ -298,7 +299,7 @@ impl RtcSctp {
         #[cfg(test)]
         let max_payload_size = max_payload;
         let mut server_config = ServerConfig::default();
-        server_config.transport = webrtc_transport_config();
+        server_config.transport = webrtc_transport_config(local_max_message_size);
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
         let fake_addr = "1.1.1.1:5000".parse().unwrap();
 
@@ -314,6 +315,7 @@ impl RtcSctp {
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
             client: false,
+            local_max_message_size,
             remote_max_message_size: DEFAULT_REMOTE_MAX_MESSAGE_SIZE,
             snap_enabled: false,
             snap_init: None,
@@ -368,7 +370,7 @@ impl RtcSctp {
                 )));
             }
 
-            let config = snap_data.into_client_config();
+            let config = snap_data.into_client_config(self.local_max_message_size);
             debug!(
                 "New {} association (out-of-band: true)",
                 if client { "local" } else { "server" },
@@ -391,21 +393,14 @@ impl RtcSctp {
             set_state(&mut self.state, RtcSctpState::Established);
         } else if client {
             // Normal client path: initiate the SCTP association.
-            let mut config = SctpInitData::default().into_client_config();
-
-            config.transport = Arc::new(
-                TransportConfig::default()
-                    .with_max_init_retransmits(None)
-                    .with_max_data_retransmits(None)
-                    .with_max_receive_message_size(LOCAL_MAX_MESSAGE_SIZE)
-                    .with_max_send_message_size(self.remote_max_message_size),
-            );
+            let config = SctpInitData::default().into_client_config(self.local_max_message_size);
 
             debug!("New local association (out-of-band: false)");
-            let (handle, assoc) = self
+            let (handle, mut assoc) = self
                 .endpoint
                 .connect(config, self.fake_addr)
                 .map_err(|e| SctpError::Proto(ProtoError::Other(e.to_string())))?;
+            assoc.set_max_send_message_size(self.remote_max_message_size);
             self.handle = handle;
             self.assoc = Some(assoc);
             set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
@@ -419,6 +414,10 @@ impl RtcSctp {
 
     pub fn is_client(&self) -> bool {
         self.client
+    }
+
+    pub fn local_max_message_size(&self) -> u32 {
+        self.local_max_message_size
     }
 
     /// Enable SNAP by pre-populating the init data.
@@ -1402,7 +1401,7 @@ mod tests {
     #[test]
     fn partial_snap_init_requires_both_chunks() {
         let now = Instant::now();
-        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET);
+        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
         let mut init_data = SctpInitData::new();
 
         init_data.local_init_chunk().unwrap();
@@ -1416,7 +1415,7 @@ mod tests {
 
     #[test]
     fn malformed_remote_snap_does_not_disable_local_opt_in() {
-        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET);
+        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
         sctp.enable_snap();
 
         assert!(!sctp.set_remote_snap_init_string("!!!not-valid-base64!!!"));
@@ -1428,8 +1427,8 @@ mod tests {
     /// Helper to connect a client and server RtcSctp pair to Established state.
     fn connect_client_server() -> (RtcSctp, RtcSctp) {
         let now = Instant::now();
-        let mut client = RtcSctp::new(DATAGRAM_MTU_TARGET);
-        let mut server = RtcSctp::new(DATAGRAM_MTU_TARGET);
+        let mut client = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
+        let mut server = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
 
         client.init(true, now, None, None).unwrap();
         server.init(false, now, None, None).unwrap();
@@ -1750,13 +1749,13 @@ mod tests {
     fn max_payload_size_matches_mtu_minus_overhead() {
         let overhead = crate::io::MAX_DTLS_OVERHEAD + SCTP_OVERHEAD;
 
-        let default_sctp = RtcSctp::new(DATAGRAM_MTU_TARGET);
+        let default_sctp = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
         assert_eq!(
             default_sctp.max_payload_size(),
             DATAGRAM_MTU_TARGET - overhead
         );
 
-        let small_sctp = RtcSctp::new(900);
+        let small_sctp = RtcSctp::new(900, LOCAL_MAX_MESSAGE_SIZE);
         assert_eq!(small_sctp.max_payload_size(), 900 - overhead);
     }
 }
