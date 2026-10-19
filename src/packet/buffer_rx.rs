@@ -320,10 +320,9 @@ impl DepacketizingBuffer {
         loop {
             let queued = self.queue.len();
             let result = self.pop_frame(now, reordering_timeout);
-            if result.is_some()
-                || (!self.wait_for_recovery && reordering_timeout.is_none())
-                || self.queue.len() == queued
-            {
+            let count_only = !self.wait_for_recovery && reordering_timeout.is_none();
+            let queue_unchanged = self.queue.len() == queued;
+            if result.is_some() || count_only || queue_unchanged {
                 return result;
             }
             // A discarded frame must not leave later frames waiting for new input.
