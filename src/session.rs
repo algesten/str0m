@@ -1249,6 +1249,7 @@ impl Session {
             .min();
         let paused_at = self.paused_at();
         let send_stream_at = self.streams.send_stream();
+        let request_at = self.streams.pending_request();
 
         // Gives us built-in reason
         let bwe_at = self
@@ -1259,6 +1260,7 @@ impl Session {
             .unwrap_or((None, Reason::BweDelayControl));
 
         (feedback_at, Reason::Feedback)
+            .soonest((request_at, Reason::Feedback))
             .soonest((nack_at, Reason::Nack))
             .soonest((twcc_at, Reason::Twcc))
             .soonest(pacing_at)

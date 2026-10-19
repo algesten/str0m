@@ -338,6 +338,10 @@ impl StreamRx {
         self.check_paused_at
     }
 
+    pub(crate) fn has_pending_request(&self) -> bool {
+        self.pending_request_keyframe.is_some() || self.pending_request_remb.is_some()
+    }
+
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
         // No scheduled paused check?
         if self.check_paused_at.is_none() {

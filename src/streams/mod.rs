@@ -418,6 +418,14 @@ impl Streams {
         }
     }
 
+    pub(crate) fn pending_request(&self) -> Option<Instant> {
+        if self.streams_rx.values().any(|s| s.has_pending_request()) {
+            Some(already_happened())
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn is_receiving(&self) -> bool {
         !self.streams_rx.is_empty()
     }
