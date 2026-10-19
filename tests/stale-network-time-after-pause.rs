@@ -13,13 +13,10 @@ use common::{Peer, PendingPacket, TestRtc, init_crypto_default, init_log, progre
 fn connect_direct() -> Result<(TestRtc, TestRtc), RtcError> {
     let now = Instant::now();
     let mut l = TestRtc::new_with_rtc(Peer::Left.span(), Rtc::new(now));
-    // These tests hold a fragment across pauses longer than the default frame deadline.
+    // These tests hold a fragment across long pauses before completing it.
     let mut r = TestRtc::new_with_rtc(
         Peer::Right.span(),
-        Rtc::builder()
-            .set_reordering_size_video(10)
-            .set_reordering_timeout_video(None)
-            .build(now),
+        Rtc::builder().set_reordering_size_video(10).build(now),
     );
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?.clone();

@@ -47,7 +47,6 @@ pub struct RtcConfig {
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
     pub(crate) reordering_timeout_audio: Option<Duration>,
-    pub(crate) reordering_timeout_video: Option<Duration>,
     pub(crate) pause_threshold: Duration,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
@@ -557,6 +556,11 @@ impl RtcConfig {
     /// WARNING: video is very different to audio. Setting this value too low will result in
     /// missing video data. The 0 (as described for audio) is not relevant for video.
     ///
+    /// Video recovery waits for a complete successor and missing packets' NACK attempts
+    /// plus three RTTs. When NACK timing is unavailable, it waits three RTTs from the
+    /// complete candidate's earliest receipt instead (100 ms RTT until measured).
+    /// An incomplete frame without a complete successor has no age deadline.
+    ///
     /// Default: 30
     ///
     /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
@@ -581,38 +585,6 @@ impl RtcConfig {
     /// packets can arrive out of order.
     pub fn reordering_size_video(&self) -> usize {
         self.reordering_size_video
-    }
-
-    /// Sets how long the oldest video frame may wait to finish or for missing earlier packets.
-    ///
-    /// Frames are considered in sequence order. Each deadline starts when that frame's first
-    /// packet arrives. On expiry, an incomplete frame is dropped; a complete frame can move
-    /// past a gap. Later frames remain buffered with their own deadlines. Reordering or RTX
-    /// can complete a frame before its deadline. The existing frame count limit can release
-    /// complete frames earlier.
-    ///
-    /// The default is 2 seconds. `None` disables this deadline and keeps count-based waiting
-    /// only. `Some(Duration::ZERO)` expires an incomplete frame immediately. This setting
-    /// applies to video streams in frame mode, not audio or
-    /// [`RTP mode`](RtcConfig::set_rtp_mode).
-    pub fn set_reordering_timeout_video(mut self, timeout: Option<Duration>) -> Self {
-        self.reordering_timeout_video = timeout;
-        self
-    }
-
-    /// Returns the configured video reordering timeout.
-    ///
-    /// ```
-    /// # use str0m::Rtc;
-    /// let config = Rtc::builder();
-    ///
-    /// // Defaults to 2 seconds.
-    /// assert_eq!(config.reordering_timeout_video(), Some(std::time::Duration::from_secs(2)));
-    /// ```
-    ///
-    /// `Some(Duration::ZERO)` is preserved distinctly from `None`.
-    pub fn reordering_timeout_video(&self) -> Option<Duration> {
-        self.reordering_timeout_video
     }
 
     /// Sets how long an incoming stream may receive no packets before it is reported paused.
@@ -897,7 +869,6 @@ impl Default for RtcConfig {
             reordering_size_audio: 15,
             reordering_size_video: 30,
             reordering_timeout_audio: Some(Duration::from_secs(1)),
-            reordering_timeout_video: Some(Duration::from_secs(2)),
             pause_threshold: Duration::from_millis(1500),
             send_buffer_audio: 50,
             send_buffer_video: 1000,
