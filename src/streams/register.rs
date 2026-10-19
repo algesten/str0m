@@ -109,9 +109,8 @@ impl ReceiverRegister {
         range: std::ops::Range<SeqNo>,
         received: Instant,
         rtt: Option<Duration>,
-        timeout: Duration,
     ) -> Option<Instant> {
-        self.nack.recovery_deadline(range, received, rtt, timeout)
+        self.nack.recovery_deadline(range, received, rtt)
     }
 
     pub fn has_pending_nacks(&self) -> bool {

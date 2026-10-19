@@ -320,7 +320,10 @@ impl DepacketizingBuffer {
         loop {
             let queued = self.queue.len();
             let result = self.pop_frame(now, reordering_timeout);
-            if result.is_some() || reordering_timeout.is_none() || self.queue.len() == queued {
+            if result.is_some()
+                || (!self.wait_for_recovery && reordering_timeout.is_none())
+                || self.queue.len() == queued
+            {
                 return result;
             }
             // A discarded frame must not leave later frames waiting for new input.
@@ -334,7 +337,7 @@ impl DepacketizingBuffer {
     ) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
-        if reordering_timeout.is_some() {
+        if self.wait_for_recovery || reordering_timeout.is_some() {
             if let Some((end, first_received)) = self.first_incomplete_frame() {
                 if self.timeout_allows_progress(now, first_received, reordering_timeout) {
                     let last = self.queue[end - 1].meta.seq_no;
@@ -363,7 +366,7 @@ impl DepacketizingBuffer {
         // A timestamp change can delimit a frame without a tail marker. Keep
         // that fallback for count-only mode, but with a timeout the oldest
         // frame must expire before any later frame is considered.
-        if reordering_timeout.is_some() && !self.queue[stop].tail {
+        if (self.wait_for_recovery || reordering_timeout.is_some()) && !self.queue[stop].tail {
             if self.timeout_allows_progress(now, first_received, reordering_timeout) {
                 let last = self.queue[stop].meta.seq_no;
                 self.consume_segment(stop);
@@ -453,11 +456,11 @@ impl DepacketizingBuffer {
     }
 
     pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
-        let timeout = reordering_timeout?;
         self.update_segments();
         if self.wait_for_recovery {
             return self.recovery_deadline;
         }
+        let timeout = reordering_timeout?;
 
         if let Some((_, first_received)) = self.first_incomplete_frame() {
             return first_received.checked_add(timeout);

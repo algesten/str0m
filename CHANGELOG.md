@@ -1,6 +1,7 @@
 # Unreleased
 
   * Avoid reusing data-channel MIDs during media renegotiation #1078
+  * Remove the fixed video reordering timeout setting (breaking) #1078
   * Wait for NACK recovery and a complete successor before expiring incomplete video frames #1078
 <<<<<<< HEAD
 

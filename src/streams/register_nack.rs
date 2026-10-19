@@ -9,7 +9,7 @@ const MAX_MISORDER: u64 = 100;
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
 
-const DEFAULT_RTT: Duration = Duration::from_millis(100);
+pub(super) const DEFAULT_RTT: Duration = Duration::from_millis(100);
 const NACK_RETRY_MARGIN: Duration = Duration::from_millis(5);
 
 /// Circular buffer size
@@ -242,10 +242,9 @@ impl NackRegister {
         range: Range<SeqNo>,
         candidate_received: Instant,
         rtt: Option<Duration>,
-        timeout: Duration,
     ) -> Option<Instant> {
         let grace = rtt.unwrap_or(DEFAULT_RTT).saturating_mul(3);
-        let fallback = candidate_received.checked_add(timeout);
+        let fallback = candidate_received.checked_add(grace);
         let Some(active) = &self.active else {
             return fallback;
         };
@@ -300,16 +299,12 @@ mod test {
         ] {
             let base = Instant::now();
             let measured = rtt.unwrap_or(Duration::from_millis(100));
-            let fallback = Duration::from_secs(2);
             let mut reg = NackRegister::new(None);
             reg.update(10.into());
             reg.update(12.into());
             let mut now = base;
             for attempt in 0..5 {
-                assert_eq!(
-                    reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
-                    None
-                );
+                assert_eq!(reg.recovery_deadline(10.into()..12.into(), base, rtt), None);
                 assert_eq!(nack_entries(&mut reg, now, rtt).len(), 1);
                 if attempt < 4 {
                     now += measured + Duration::from_millis(5);
@@ -318,22 +313,19 @@ mod test {
             let deadline = Some(now + measured * 3);
             // Include a received packet before the active window; it must not add a fallback wait.
             assert_eq!(
-                reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
+                reg.recovery_deadline(10.into()..12.into(), base, rtt),
                 deadline
             );
             reg.update(14.into());
             assert_eq!(
-                reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
+                reg.recovery_deadline(10.into()..12.into(), base, rtt),
                 deadline
             );
-            assert_eq!(
-                reg.recovery_deadline(10.into()..14.into(), base, rtt, fallback),
-                None
-            );
+            assert_eq!(reg.recovery_deadline(10.into()..14.into(), base, rtt), None);
             reg.update(11.into());
             assert_eq!(
-                reg.recovery_deadline(10.into()..12.into(), base, rtt, fallback),
-                Some(base + fallback)
+                reg.recovery_deadline(10.into()..12.into(), base, rtt),
+                Some(base + measured * 3)
             );
         }
     }
