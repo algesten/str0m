@@ -665,7 +665,7 @@ impl Session {
         // The decrypted plaintext borrows from the SRTP scratch buffer. We
         // narrow it down to the actual payload via slicing only, then build
         // the final `Arc<[u8]>` in a single allocation at the end.
-        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+        let data = match srtp.unprotect_rtp(now, buf, &header, *seq_no) {
             Some(d) => d,
             None => {
                 trace!(
@@ -859,7 +859,7 @@ impl Session {
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
         let srtp: &mut SrtpContext = self.srtp_rx.as_mut()?;
-        let unprotected = srtp.unprotect_rtcp(buf)?;
+        let unprotected = srtp.unprotect_rtcp(now, buf)?;
 
         Rtcp::read_packet(&unprotected, &mut self.feedback_rx);
         let mut need_configure_pacer = false;
