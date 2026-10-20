@@ -610,7 +610,8 @@ impl Session {
 
         // Early repair padding has no main stream yet, but still needs transport feedback.
         let mapped = self.mid_and_ssrc_for_header(now, &header);
-        if mapped.is_none() && !self.is_early_rtx_padding(&header) {
+        let can_receive = mapped.is_some() || self.is_early_rtx_padding(&header);
+        if !can_receive {
             trace!("No mid/SSRC for header: {:?}", header);
             return;
         }
@@ -643,32 +644,24 @@ impl Session {
         let clock_rate = params.spec().rtp_clock_rate();
         let pt = params.pt();
         let is_red = params.red() == Some(header.payload_type);
-        let is_repair = stream
-            .as_ref()
-            .is_some_and(|s| s.rtx() == Some(header.ssrc))
-            || (!is_red && pt != header.payload_type);
+        // RTX padding may use the main payload type, so an associated RTX SSRC takes precedence.
+        let repair_ssrc = stream.as_ref().and_then(|s| s.rtx());
+        let is_repair = repair_ssrc == Some(header.ssrc) || (!is_red && pt != header.payload_type);
+        let history = self.max_rx_seq_lookup.get(&header.ssrc);
         let mut seq_no = if let Some(stream) = &mut stream {
-            stream.extend_seq(
-                &header,
-                is_repair,
-                make_max_seq_lookup(&self.max_rx_seq_lookup),
-            )
+            let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
+            stream.extend_seq(&header, is_repair, max_seq_lookup)
         } else {
-            header.sequence_number(
-                self.max_rx_seq_lookup
-                    .get(&header.ssrc)
-                    .map(|s| s.max_seq()),
-            )
+            let max_seq = history.map(|s| s.max_seq());
+            header.sequence_number(max_seq)
         };
+        let is_repair_padding = is_repair && header.has_padding;
         let is_new = match &stream {
-            Some(stream) if !(is_repair && header.has_padding) => {
-                stream.is_new_packet(is_repair, seq_no)
-            }
-            // Padding uses the same replay window before and after main-SSRC discovery.
-            _ => self
-                .max_rx_seq_lookup
-                .get(&header.ssrc)
-                .is_none_or(|history| history.accepts(seq_no)),
+            Some(stream) if !is_repair_padding => stream.is_new_packet(is_repair, seq_no),
+            // A newly discovered stream restores only the RTX maximum and blocks older packets.
+            // Keep using the session bitmap for padding so unseen reordered packets still count,
+            // while padding already received before discovery remains protected against replay.
+            _ => history.is_none_or(|history| history.accepts(seq_no)),
         };
         if !is_new {
             trace!(
@@ -710,6 +703,8 @@ impl Session {
             data
         };
 
+        // The header padding flag alone does not mean the packet contains only padding.
+        // Authenticate and unpad first; media payload needs a mapped stream to be processed.
         if stream.is_none() && !data.is_empty() {
             return;
         }
@@ -883,6 +878,12 @@ impl Session {
         }
     }
 
+    /// Identifies candidates for padding receipt before the main SSRC is discovered.
+    ///
+    /// MID and repair RID must identify a negotiated simulcast layer, and the codec must
+    /// support RTX. This limits the fallback to expected repair traffic instead of accepting
+    /// arbitrary unmapped SSRCs. These header checks do not authenticate the packet or prove
+    /// it contains only padding; the receive path verifies both before recording a receipt.
     fn is_early_rtx_padding(&self, header: &RtpHeader) -> bool {
         let Some(mid) = header.ext_vals.mid else {
             return false;
@@ -890,14 +891,12 @@ impl Session {
         let Some(media) = self.medias.iter().find(|m| m.mid() == mid) else {
             return false;
         };
-        header.has_padding
-            && header.ext_vals.rid.is_none()
-            && main_payload_params(&self.codec_config, header.payload_type)
-                .is_some_and(|p| p.resend().is_some())
-            && header
-                .ext_vals
-                .rid_repair
-                .is_some_and(|rid| media.rids_rx().contains(rid))
+        let params = main_payload_params(&self.codec_config, header.payload_type);
+        let has_rtx = params.is_some_and(|p| p.resend().is_some());
+        let repair_rid = header.ext_vals.rid_repair;
+        let is_expected_rid = repair_rid.is_some_and(|rid| media.rids_rx().contains(rid));
+        // A regular RID identifies primary traffic, which must go through normal stream discovery.
+        header.has_padding && header.ext_vals.rid.is_none() && has_rtx && is_expected_rid
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -1337,6 +1336,8 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Option<Instant> {
+        // Early RTX padding can create transport receipts before any receive stream exists.
+        // Scheduling by pending receipts ensures that padding still receives timely feedback.
         if self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
@@ -1638,10 +1639,9 @@ mod tests {
                         session.handle_rtp_receive(now, &packet);
                     }
 
-                    assert_eq!(
-                        feedback(&mut session, now + TWCC_INTERVAL),
-                        [(40, true), (41, true), (42, true), (43, true), (44, true)]
-                    );
+                    let received = feedback(&mut session, now + TWCC_INTERVAL);
+                    let expected = [(40, true), (41, true), (42, true), (43, true), (44, true)];
+                    assert_eq!(received, expected);
                     let mut stats = StatsSnapshot::new(now);
                     session.visit_stats(now, &mut stats);
                     assert_eq!(stats.ingress_loss_fraction, Some(0.0));
@@ -1684,10 +1684,8 @@ mod tests {
                 }
                 session.handle_rtp_receive(now, &packet);
             }
-            assert_eq!(
-                feedback(&mut session, now + TWCC_INTERVAL),
-                [(40, true), (41, false), (42, false), (43, true)]
-            );
+            let received = feedback(&mut session, now + TWCC_INTERVAL);
+            assert_eq!(received, [(40, true), (41, false), (42, false), (43, true)]);
             let mut stats = StatsSnapshot::new(now);
             session.visit_stats(now, &mut stats);
             assert_eq!(stats.ingress_loss_fraction, Some(0.5));
@@ -1708,11 +1706,9 @@ mod tests {
                     5 => {}
                     _ => unreachable!(),
                 }
-                let payload: &[u8] = if case == 5 {
-                    &[0, 101, 0, 1]
-                } else {
-                    &[0, 0, 0, 4]
-                };
+                let media: &[u8] = &[0, 101, 0, 1];
+                let padding: &[u8] = &[0, 0, 0, 4];
+                let payload = if case == 5 { media } else { padding };
                 let packet = protect(&mut session, &header, 100, payload);
                 session.handle_rtp_receive(now, &packet);
             }
@@ -1759,10 +1755,8 @@ mod tests {
             session.handle_rtp_receive(now, &early_packet);
             assert_eq!(session.raw_packets.as_ref().unwrap().len(), raw_count);
             assert!(session.pending_packet.is_none());
-            assert_eq!(
-                feedback(&mut session, now + TWCC_INTERVAL),
-                [(39, true), (40, true), (41, true), (42, true)]
-            );
+            let received = feedback(&mut session, now + TWCC_INTERVAL);
+            assert_eq!(received, [(39, true), (40, true), (41, true), (42, true)]);
         }
 
         fn receiver(rtp_mode: bool, profile: SrtpProfile) -> (Session, Mid) {
@@ -1807,26 +1801,20 @@ mod tests {
                 SrtpProfile::AEAD_AES_256_GCM => 88,
                 _ => unreachable!(),
             };
-            receiver.session.set_keying_material(
-                KeyingMaterial::new(&vec![42; len]),
-                crypto,
-                profile,
-                false,
-            );
-            assert!(receiver.session.streams.streams_rx().next().is_none());
-            (receiver.session, mid)
+            let keying_material = KeyingMaterial::new(&vec![42; len]);
+            let mut session = receiver.session;
+            session.set_keying_material(keying_material, crypto, profile, false);
+            assert!(session.streams.streams_rx().next().is_none());
+            (session, mid)
         }
 
         fn header(mid: Mid, repair: bool, seq: u16, twcc: u16) -> RtpHeader {
+            let ssrc = if repair { RTX_SSRC } else { MAIN_SSRC };
             RtpHeader {
                 has_extension: true,
                 has_padding: repair,
                 marker: true,
-                ssrc: if repair {
-                    RTX_SSRC.into()
-                } else {
-                    MAIN_SSRC.into()
-                },
+                ssrc: ssrc.into(),
                 payload_type: if repair { 97.into() } else { 96.into() },
                 sequence_number: seq,
                 timestamp: 3000,
@@ -1848,27 +1836,19 @@ mod tests {
             let mut header = header.clone();
             header.header_len = header_len;
             // Both directions use the same test key material.
-            session.srtp_tx.as_mut().unwrap().protect_rtp(
-                &buf[..header_len + payload.len()],
-                &header,
-                seq,
-            )
+            let srtp = session.srtp_tx.as_mut().unwrap();
+            let packet = &buf[..header_len + payload.len()];
+            srtp.protect_rtp(packet, &header, seq)
         }
 
         fn feedback(session: &mut Session, now: Instant) -> Vec<(u64, bool)> {
-            assert!(
-                session.twcc_at().is_some(),
-                "early receipt must schedule feedback"
-            );
+            let is_scheduled = session.twcc_at().is_some();
+            assert!(is_scheduled, "early receipt must schedule feedback");
             session.handle_timeout(now).unwrap();
-            assert!(
-                session
-                    .feedback_tx
-                    .iter()
-                    .all(|p| !matches!(p, Rtcp::Nack(_)))
-            );
-            session
-                .feedback_tx
+            let feedback = &mut session.feedback_tx;
+            let has_nacks = feedback.iter().any(|p| matches!(p, Rtcp::Nack(_)));
+            assert!(!has_nacks);
+            feedback
                 .drain(..)
                 .filter_map(|p| match p {
                     Rtcp::Twcc(twcc) => Some(twcc),
