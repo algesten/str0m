@@ -2071,4 +2071,50 @@ mod test {
         assert_eq!(res0before.data, res0after.data);
         assert_eq!(res1before.data, res1after.data);
     }
+
+    #[test]
+    fn vp9_late_frame_before_picture_id_wrap() {
+        fn frame(pid: u16, tl0: u8) -> [u8; 6] {
+            // I=1 P=1 L=1 B=1 E=1, 15-bit picture id, TID=0, tl0picidx
+            [0xEC, 0x80 | (pid >> 8) as u8, pid as u8, 0x00, tl0, 0x84]
+        }
+        fn picture_id(dep: &Depacketized) -> Option<u64> {
+            let CodecExtra::Vp9(extra) = dep.codec_extra else {
+                panic!("expected VP9 codec extra");
+            };
+            extra.picture_id
+        }
+
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 3);
+        let base = Instant::now();
+        let push = |buf: &mut DepacketizingBuffer, seq: u64, data: [u8; 6]| {
+            let mut meta = test_meta(base, seq, seq * 3000, 0);
+            meta.header.marker = true;
+            buf.push(meta, data);
+        };
+
+        push(&mut buf, 0, frame(0x7FFE, 254));
+        let dep = buf.pop(base, None).unwrap().unwrap();
+        assert_eq!(picture_id(&dep), Some(0x7FFE));
+
+        // The frame after the wrap is depacketized ahead while the late frame is missing.
+        push(&mut buf, 2, frame(0, 0));
+        assert!(buf.pop(base, None).is_none());
+        assert!(buf.depack_cache.is_some());
+
+        push(&mut buf, 1, frame(0x7FFF, 255));
+        let dep = buf.pop(base, None).unwrap().unwrap();
+        assert_eq!(picture_id(&dep), Some(0x7FFF));
+        assert!(dep.contiguous);
+
+        let dep = buf.pop(base, None).unwrap().unwrap();
+        assert_eq!(picture_id(&dep), Some(0x8000));
+        assert!(dep.contiguous);
+
+        push(&mut buf, 3, frame(1, 1));
+        let dep = buf.pop(base, None).unwrap().unwrap();
+        assert_eq!(picture_id(&dep), Some(0x8001));
+        assert!(dep.contiguous);
+    }
 }

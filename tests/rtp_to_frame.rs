@@ -456,8 +456,8 @@ fn video_reorder_timeout_temporal_dependencies() -> Result<(), RtcError> {
                         e.is_keyframe,
                     ),
                     CodecExtra::Vp9(e) => (
-                        u64::from(e.pid),
-                        u64::from(e.tl0_picture_id.unwrap()),
+                        e.picture_id.unwrap(),
+                        e.tl0_picture_id.unwrap(),
                         e.tid.unwrap(),
                         e.is_keyframe,
                     ),
