@@ -161,11 +161,6 @@ struct LastRrtr {
     received_at: Instant,
 }
 
-struct UnassociatedRtx {
-    ssrc: Ssrc,
-    register: ReceiverRegister,
-}
-
 impl Session {
     pub fn new(config: &RtcConfig) -> Self {
         let mut id = SessionId::new();
@@ -612,94 +607,6 @@ impl Session {
         }
     }
 
-    fn handle_unassociated_rtx(
-        &mut self,
-        now: Instant,
-        header: &RtpHeader,
-        buf: &[u8],
-    ) -> Option<()> {
-        let params = main_payload_params(&self.codec_config, header.payload_type)?;
-        let clock_rate = params.spec().rtp_clock_rate();
-
-        let midrid = self
-            .unassociated_rtx
-            .iter()
-            .find(|(_, pending)| pending.ssrc == header.ssrc)
-            .map(|(midrid, _)| *midrid)
-            .or_else(|| {
-                let mid = header.ext_vals.mid?;
-                let media = self.medias.iter().find(|m| m.mid() == mid)?;
-                let rid = header.ext_vals.rid_repair;
-                if header.ext_vals.rid.is_some() || params.resend().is_none() {
-                    return None;
-                }
-                if let Some(rid) = rid {
-                    if !media.rids_rx().contains(rid) {
-                        return None;
-                    }
-                } else if media.rids_rx().is_specific()
-                    || params.resend() != Some(header.payload_type)
-                {
-                    return None;
-                }
-                Some(MidRid(mid, rid))
-            })?;
-
-        let pending = self
-            .unassociated_rtx
-            .get(&midrid)
-            .filter(|p| p.ssrc == header.ssrc);
-        let previous = pending
-            .and_then(|p| p.register.max_seq())
-            .or_else(|| self.max_rx_seq_lookup.get(&header.ssrc).copied());
-        let seq_no = header.sequence_number(previous);
-        let is_new = pending.map_or_else(
-            || previous.is_none_or(|previous| seq_no > previous),
-            |pending| pending.register.accepts(seq_no),
-        );
-        if !is_new {
-            return None;
-        }
-
-        let data = self.srtp_rx.as_mut()?.unprotect_rtp(buf, header, *seq_no)?;
-        let data = if header.has_padding {
-            RtpHeader::unpad_payload(data)?
-        } else {
-            data
-        };
-
-        // Only authenticated packets with valid padding may affect receive accounting.
-        if let Some(raw_packets) = &mut self.raw_packets {
-            raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.to_vec())));
-        }
-        if let Some(transport_cc) = header.ext_vals.transport_cc {
-            let prev = self.twcc_rx_register.max_seq();
-            let extended = extend_u16(prev.map(|s| *s), transport_cc);
-            self.twcc_rx_register.update_seq(extended.into(), now);
-        }
-
-        let pending = self
-            .unassociated_rtx
-            .entry(midrid)
-            .or_insert_with(|| UnassociatedRtx {
-                ssrc: header.ssrc,
-                register: ReceiverRegister::new(previous),
-            });
-        if pending.ssrc != header.ssrc {
-            *pending = UnassociatedRtx {
-                ssrc: header.ssrc,
-                register: ReceiverRegister::new(previous),
-            };
-        }
-        pending
-            .register
-            .update(seq_no, now, header.timestamp, clock_rate.get());
-        update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
-
-        // Even nonempty RTX cannot be delivered until its main SSRC is known.
-        Some(())
-    }
-
     pub(crate) fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
         // Rewrite absolute-send-time (if present) to be relative to now.
         header.ext_vals.update_absolute_send_time(now);
@@ -962,6 +869,94 @@ impl Session {
                 &self.codec_config,
             );
         }
+    }
+
+    fn handle_unassociated_rtx(
+        &mut self,
+        now: Instant,
+        header: &RtpHeader,
+        buf: &[u8],
+    ) -> Option<()> {
+        let params = main_payload_params(&self.codec_config, header.payload_type)?;
+        let clock_rate = params.spec().rtp_clock_rate();
+
+        let midrid = self
+            .unassociated_rtx
+            .iter()
+            .find(|(_, pending)| pending.ssrc == header.ssrc)
+            .map(|(midrid, _)| *midrid)
+            .or_else(|| {
+                let mid = header.ext_vals.mid?;
+                let media = self.medias.iter().find(|m| m.mid() == mid)?;
+                let rid = header.ext_vals.rid_repair;
+                if header.ext_vals.rid.is_some() || params.resend().is_none() {
+                    return None;
+                }
+                if let Some(rid) = rid {
+                    if !media.rids_rx().contains(rid) {
+                        return None;
+                    }
+                } else if media.rids_rx().is_specific()
+                    || params.resend() != Some(header.payload_type)
+                {
+                    return None;
+                }
+                Some(MidRid(mid, rid))
+            })?;
+
+        let pending = self
+            .unassociated_rtx
+            .get(&midrid)
+            .filter(|p| p.ssrc == header.ssrc);
+        let previous = pending
+            .and_then(|p| p.register.max_seq())
+            .or_else(|| self.max_rx_seq_lookup.get(&header.ssrc).copied());
+        let seq_no = header.sequence_number(previous);
+        let is_new = pending.map_or_else(
+            || previous.is_none_or(|previous| seq_no > previous),
+            |pending| pending.register.accepts(seq_no),
+        );
+        if !is_new {
+            return None;
+        }
+
+        let data = self.srtp_rx.as_mut()?.unprotect_rtp(buf, header, *seq_no)?;
+        let data = if header.has_padding {
+            RtpHeader::unpad_payload(data)?
+        } else {
+            data
+        };
+
+        // Only authenticated packets with valid padding may affect receive accounting.
+        if let Some(raw_packets) = &mut self.raw_packets {
+            raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.to_vec())));
+        }
+        if let Some(transport_cc) = header.ext_vals.transport_cc {
+            let prev = self.twcc_rx_register.max_seq();
+            let extended = extend_u16(prev.map(|s| *s), transport_cc);
+            self.twcc_rx_register.update_seq(extended.into(), now);
+        }
+
+        let pending = self
+            .unassociated_rtx
+            .entry(midrid)
+            .or_insert_with(|| UnassociatedRtx {
+                ssrc: header.ssrc,
+                register: ReceiverRegister::new(previous),
+            });
+        if pending.ssrc != header.ssrc {
+            *pending = UnassociatedRtx {
+                ssrc: header.ssrc,
+                register: ReceiverRegister::new(previous),
+            };
+        }
+        pending
+            .register
+            .update(seq_no, now, header.timestamp, clock_rate.get());
+        update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
+
+        // Even nonempty RTX cannot be delivered until its main SSRC is known.
+        Some(())
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -1583,6 +1578,11 @@ impl Session {
     }
 }
 
+struct UnassociatedRtx {
+    ssrc: Ssrc,
+    register: ReceiverRegister,
+}
+
 pub struct PacketReceipt {
     pub header: RtpHeader,
     pub seq_no: SeqNo,
@@ -1678,118 +1678,6 @@ mod tests {
 
         const RTX_SSRC: u32 = 426592647;
         const MAIN_SSRC: u32 = 2869047233;
-
-        fn receiver(rtp_mode: bool, simulcast: bool, profile: SrtpProfile) -> (Session, Mid) {
-            let crypto = crate::crypto::test_default_provider();
-            let config = RtcConfig::new()
-                .set_crypto_provider(Arc::new(crypto.clone()))
-                .clear_codecs()
-                .enable_vp8(true)
-                .set_rtp_mode(rtp_mode)
-                .set_reordering_size_video(0)
-                .enable_raw_packets(true);
-            let now = Instant::now();
-            let mut sender = config.clone().build(now);
-            let mut receiver = config.build(now);
-            let simulcast = simulcast.then(|| {
-                let mut layers = Simulcast::new();
-                for rid in ["l", "m", "h"] {
-                    layers.add_send_layer(SimulcastLayer::new(rid));
-                }
-                layers
-            });
-            let mut change = sender.sdp_api();
-            let mid =
-                change.add_media(MediaKind::Video, Direction::SendOnly, None, None, simulcast);
-            let (offer, pending) = change.apply().unwrap();
-            // Browsers can leave SSRC discovery entirely to MID/RID header extensions.
-            let sdp = offer
-                .to_sdp_string()
-                .lines()
-                .filter(|l| !l.starts_with("a=ssrc"))
-                .collect::<Vec<_>>()
-                .join("\r\n");
-            let offer = SdpOffer::from_sdp_string(&(sdp + "\r\n")).unwrap();
-            let answer = receiver.sdp_api().accept_offer(offer).unwrap();
-            sender.sdp_api().accept_answer(pending, answer).unwrap();
-
-            let len = match profile {
-                SrtpProfile::AES128_CM_SHA1_80 => 60,
-                SrtpProfile::AEAD_AES_128_GCM => 56,
-                SrtpProfile::AEAD_AES_256_GCM => 88,
-                _ => unreachable!(),
-            };
-            receiver.session.set_keying_material(
-                KeyingMaterial::new(&vec![42; len]),
-                crypto,
-                profile,
-                false,
-            );
-            assert!(receiver.session.streams.streams_rx().next().is_none());
-            (receiver.session, mid)
-        }
-
-        fn header(mid: Mid, repair: bool, simulcast: bool, seq: u16, twcc: u16) -> RtpHeader {
-            RtpHeader {
-                has_extension: true,
-                has_padding: repair,
-                marker: true,
-                ssrc: if repair {
-                    RTX_SSRC.into()
-                } else {
-                    MAIN_SSRC.into()
-                },
-                payload_type: if repair { 97.into() } else { 96.into() },
-                sequence_number: seq,
-                timestamp: 3000,
-                ext_vals: ExtensionValues {
-                    mid: Some(mid),
-                    rid: (simulcast && !repair).then(|| "h".into()),
-                    rid_repair: (simulcast && repair).then(|| "h".into()),
-                    transport_cc: Some(twcc),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        }
-
-        fn protect(session: &mut Session, header: &RtpHeader, seq: u64, payload: &[u8]) -> Vec<u8> {
-            let mut buf = vec![0; 1500];
-            let header_len = header.write_to(&mut buf, &session.exts);
-            buf[header_len..header_len + payload.len()].copy_from_slice(payload);
-            let mut header = header.clone();
-            header.header_len = header_len;
-            // Both directions use the same test key material.
-            session.srtp_tx.as_mut().unwrap().protect_rtp(
-                &buf[..header_len + payload.len()],
-                &header,
-                seq,
-            )
-        }
-
-        fn feedback(session: &mut Session, now: Instant) -> Vec<(u64, bool)> {
-            assert!(
-                session.twcc_at().is_some(),
-                "early receipt must schedule feedback"
-            );
-            session.handle_timeout(now).unwrap();
-            assert!(
-                session
-                    .feedback_tx
-                    .iter()
-                    .all(|p| !matches!(p, Rtcp::Nack(_)))
-            );
-            session
-                .feedback_tx
-                .drain(..)
-                .filter_map(|p| match p {
-                    Rtcp::Twcc(twcc) => Some(twcc),
-                    _ => None,
-                })
-                .flat_map(|twcc| twcc.into_iter(now, 0.into()))
-                .map(|(seq, _, received)| (*seq, received.is_some()))
-                .collect()
-        }
 
         #[test]
         fn authenticated_padding_is_reported_before_main_ssrc_discovery() {
@@ -1948,6 +1836,118 @@ mod tests {
                     [(40, true), (41, true), (42, true)]
                 );
             }
+        }
+
+        fn receiver(rtp_mode: bool, simulcast: bool, profile: SrtpProfile) -> (Session, Mid) {
+            let crypto = crate::crypto::test_default_provider();
+            let config = RtcConfig::new()
+                .set_crypto_provider(Arc::new(crypto.clone()))
+                .clear_codecs()
+                .enable_vp8(true)
+                .set_rtp_mode(rtp_mode)
+                .set_reordering_size_video(0)
+                .enable_raw_packets(true);
+            let now = Instant::now();
+            let mut sender = config.clone().build(now);
+            let mut receiver = config.build(now);
+            let simulcast = simulcast.then(|| {
+                let mut layers = Simulcast::new();
+                for rid in ["l", "m", "h"] {
+                    layers.add_send_layer(SimulcastLayer::new(rid));
+                }
+                layers
+            });
+            let mut change = sender.sdp_api();
+            let mid =
+                change.add_media(MediaKind::Video, Direction::SendOnly, None, None, simulcast);
+            let (offer, pending) = change.apply().unwrap();
+            // Browsers can leave SSRC discovery entirely to MID/RID header extensions.
+            let sdp = offer
+                .to_sdp_string()
+                .lines()
+                .filter(|l| !l.starts_with("a=ssrc"))
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            let offer = SdpOffer::from_sdp_string(&(sdp + "\r\n")).unwrap();
+            let answer = receiver.sdp_api().accept_offer(offer).unwrap();
+            sender.sdp_api().accept_answer(pending, answer).unwrap();
+
+            let len = match profile {
+                SrtpProfile::AES128_CM_SHA1_80 => 60,
+                SrtpProfile::AEAD_AES_128_GCM => 56,
+                SrtpProfile::AEAD_AES_256_GCM => 88,
+                _ => unreachable!(),
+            };
+            receiver.session.set_keying_material(
+                KeyingMaterial::new(&vec![42; len]),
+                crypto,
+                profile,
+                false,
+            );
+            assert!(receiver.session.streams.streams_rx().next().is_none());
+            (receiver.session, mid)
+        }
+
+        fn header(mid: Mid, repair: bool, simulcast: bool, seq: u16, twcc: u16) -> RtpHeader {
+            RtpHeader {
+                has_extension: true,
+                has_padding: repair,
+                marker: true,
+                ssrc: if repair {
+                    RTX_SSRC.into()
+                } else {
+                    MAIN_SSRC.into()
+                },
+                payload_type: if repair { 97.into() } else { 96.into() },
+                sequence_number: seq,
+                timestamp: 3000,
+                ext_vals: ExtensionValues {
+                    mid: Some(mid),
+                    rid: (simulcast && !repair).then(|| "h".into()),
+                    rid_repair: (simulcast && repair).then(|| "h".into()),
+                    transport_cc: Some(twcc),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        }
+
+        fn protect(session: &mut Session, header: &RtpHeader, seq: u64, payload: &[u8]) -> Vec<u8> {
+            let mut buf = vec![0; 1500];
+            let header_len = header.write_to(&mut buf, &session.exts);
+            buf[header_len..header_len + payload.len()].copy_from_slice(payload);
+            let mut header = header.clone();
+            header.header_len = header_len;
+            // Both directions use the same test key material.
+            session.srtp_tx.as_mut().unwrap().protect_rtp(
+                &buf[..header_len + payload.len()],
+                &header,
+                seq,
+            )
+        }
+
+        fn feedback(session: &mut Session, now: Instant) -> Vec<(u64, bool)> {
+            assert!(
+                session.twcc_at().is_some(),
+                "early receipt must schedule feedback"
+            );
+            session.handle_timeout(now).unwrap();
+            assert!(
+                session
+                    .feedback_tx
+                    .iter()
+                    .all(|p| !matches!(p, Rtcp::Nack(_)))
+            );
+            session
+                .feedback_tx
+                .drain(..)
+                .filter_map(|p| match p {
+                    Rtcp::Twcc(twcc) => Some(twcc),
+                    _ => None,
+                })
+                .flat_map(|twcc| twcc.into_iter(now, 0.into()))
+                .map(|(seq, _, received)| (*seq, received.is_some()))
+                .collect()
         }
     }
 }
