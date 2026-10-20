@@ -30,6 +30,7 @@ use crate::rtp_::Pli;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
+use crate::rtp_::SeqNoWindow;
 use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb};
 use crate::rtp_::{Dlrr, DlrrItem, ExtendedReport, ReportBlock};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
@@ -94,7 +95,7 @@ pub(crate) struct Session {
     twcc: u64,
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
-    max_rx_seq_lookup: HashMap<Ssrc, SeqNo>,
+    max_rx_seq_lookup: HashMap<Ssrc, SeqNoWindow>,
 
     bwe: Option<Bwe>,
     bwe_last_event: Option<(Bitrate, bool)>,
@@ -607,11 +608,13 @@ impl Session {
 
         trace!("Handle RTP: {:?}", header);
 
-        // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
-        let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(now, &header) else {
-            debug!("No mid/SSRC for header: {:?}", header);
+        // Early repair padding has no main stream yet, but still needs transport feedback.
+        let mapped = self.mid_and_ssrc_for_header(now, &header);
+        let can_receive = mapped.is_some() || self.is_early_rtx_padding(&header);
+        if !can_receive {
+            trace!("No mid/SSRC for header: {:?}", header);
             return;
-        };
+        }
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -621,11 +624,8 @@ impl Session {
             }
         };
 
-        // mid_and_ssrc_for_header guarantees stream exists.
-        // Media may not exist for internal probe streams (SSRC 0).
-        let stream = self.streams.stream_rx(&ssrc).unwrap();
-
-        let maybe_params = if ssrc.is_probe() {
+        let mut stream = mapped.and_then(|(_, ssrc)| self.streams.stream_rx(&ssrc));
+        let maybe_params = if header.ssrc.is_probe() {
             self.probe_payload_params.as_ref()
         } else {
             main_payload_params(&self.codec_config, header.payload_type)
@@ -644,20 +644,32 @@ impl Session {
         let clock_rate = params.spec().rtp_clock_rate();
         let pt = params.pt();
         let is_red = params.red() == Some(header.payload_type);
-        let is_repair = !is_red && pt != header.payload_type;
-
-        let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
-
-        // is_repair controls whether update is updating the main register or the RTX register.
-        // Either way we get a seq_no_outer which is used to decrypt the SRTP.
-        let mut seq_no = stream.extend_seq(&header, is_repair, max_seq_lookup);
-
-        if !stream.is_new_packet(is_repair, seq_no) {
-            // Dupe packet. This could be a potential SRTP replay attack, which means
-            // we should not spend any CPU cycles towards decrypting it.
+        // RTX padding may use the main payload type, so an associated RTX SSRC takes precedence.
+        let repair_ssrc = stream.as_ref().and_then(|s| s.rtx());
+        let is_repair = repair_ssrc == Some(header.ssrc) || (!is_red && pt != header.payload_type);
+        let history = self.max_rx_seq_lookup.get(&header.ssrc);
+        let mut seq_no = if let Some(stream) = &mut stream {
+            let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
+            stream.extend_seq(&header, is_repair, max_seq_lookup)
+        } else {
+            let max_seq = history.map(|s| s.max_seq());
+            header.sequence_number(max_seq)
+        };
+        let is_repair_padding = is_repair && header.has_padding;
+        let use_session_history = is_repair_padding || stream.is_none();
+        // A newly discovered stream restores only the RTX maximum and blocks older packets.
+        // Keep using the session bitmap for padding so unseen reordered packets still count,
+        // while padding already received before discovery remains protected against replay.
+        let is_new = if use_session_history {
+            history.is_none_or(|history| history.accepts(seq_no))
+        } else {
+            let stream = stream.as_ref().unwrap();
+            stream.is_new_packet(is_repair, seq_no)
+        };
+        if !is_new {
             trace!(
-                "Ignoring dupe packet mid: {} seq_no: {} is_repair: {}",
-                mid, seq_no, is_repair
+                "Ignoring dupe packet ssrc: {} seq_no: {}",
+                header.ssrc, seq_no
             );
             return;
         }
@@ -669,12 +681,12 @@ impl Session {
             Some(d) => d,
             None => {
                 trace!(
-                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
+                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {:?} \
                     rid: {:?} seq_no: {} is_repair: {}",
                     header.ssrc,
                     pt,
-                    stream.mid(),
-                    stream.rid(),
+                    header.ext_vals.mid,
+                    header.ext_vals.rid.or(header.ext_vals.rid_repair),
                     seq_no,
                     is_repair
                 );
@@ -694,6 +706,12 @@ impl Session {
             data
         };
 
+        // The header padding flag alone does not mean the packet contains only padding.
+        // Authenticate and unpad first; media payload needs a mapped stream to be processed.
+        if stream.is_none() && !data.is_empty() {
+            return;
+        }
+
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.to_vec())));
         }
@@ -708,6 +726,12 @@ impl Session {
         // Store largest seen seq_no for the SSRC. This is used in case we get SSRC changes
         // like A -> B -> A. When we go back to A, we must keep the ROC.
         update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
+
+        let Some(stream) = stream else {
+            return;
+        };
+        // A receive stream exists only when MID/SSRC mapping succeeded.
+        let (mid, ssrc) = mapped.unwrap();
 
         // Register reception in nack registers.
         let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
@@ -855,6 +879,27 @@ impl Session {
                 &self.codec_config,
             );
         }
+    }
+
+    /// Identifies candidates for padding receipt before the main SSRC is discovered.
+    ///
+    /// MID and repair RID must identify a negotiated simulcast layer, and the codec must
+    /// support RTX. This limits the fallback to expected repair traffic instead of accepting
+    /// arbitrary unmapped SSRCs. These header checks do not authenticate the packet or prove
+    /// it contains only padding; the receive path verifies both before recording a receipt.
+    fn is_early_rtx_padding(&self, header: &RtpHeader) -> bool {
+        let Some(mid) = header.ext_vals.mid else {
+            return false;
+        };
+        let Some(media) = self.medias.iter().find(|m| m.mid() == mid) else {
+            return false;
+        };
+        let params = main_payload_params(&self.codec_config, header.payload_type);
+        let has_rtx = params.is_some_and(|p| p.resend().is_some());
+        let repair_rid = header.ext_vals.rid_repair;
+        let is_expected_rid = repair_rid.is_some_and(|rid| media.rids_rx().contains(rid));
+        // A regular RID identifies primary traffic, which must go through normal stream discovery.
+        header.has_padding && header.ext_vals.rid.is_none() && has_rtx && is_expected_rid
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -1294,8 +1339,9 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Option<Instant> {
-        let is_receiving = self.streams.is_receiving();
-        if is_receiving && self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
+        // Early RTX padding can create transport receipts before any receive stream exists.
+        // Scheduling by pending receipts ensures that padding still receives timely feedback.
+        if self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
             None
@@ -1521,15 +1567,14 @@ fn un_red<'a>(header: &mut RtpHeader, data: &'a [u8], pt: Pt) -> Option<UnRed<'a
     })
 }
 
-fn make_max_seq_lookup(map: &HashMap<Ssrc, SeqNo>) -> impl Fn(Ssrc) -> Option<SeqNo> + '_ {
-    |ssrc| map.get(&ssrc).cloned()
+fn make_max_seq_lookup(map: &HashMap<Ssrc, SeqNoWindow>) -> impl Fn(Ssrc) -> Option<SeqNo> + '_ {
+    |ssrc| map.get(&ssrc).map(|s| s.max_seq())
 }
 
-fn update_max_seq(map: &mut HashMap<Ssrc, SeqNo>, ssrc: Ssrc, seq_no: SeqNo) {
-    let current = map.entry(ssrc).or_insert(seq_no);
-    if seq_no > *current {
-        *current = seq_no;
-    }
+fn update_max_seq(map: &mut HashMap<Ssrc, SeqNoWindow>, ssrc: Ssrc, seq_no: SeqNo) {
+    map.entry(ssrc)
+        .and_modify(|window| window.update(seq_no))
+        .or_insert_with(|| SeqNoWindow::new(seq_no));
 }
 
 #[cfg(test)]
