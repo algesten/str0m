@@ -437,8 +437,6 @@ pub struct Vp9Depacketizer {
     /// Recommended headers
     /// 7 or 15 bits, picture ID.
     pub picture_id: u16,
-    /// Picture ID extension flag (15 bits when set).
-    pub m: bool,
     /// extended picture id
     pub extended_pid: Option<u64>,
 
@@ -617,9 +615,8 @@ impl Vp9Depacketizer {
         payload_index += 1;
         let previous_picture_id = u64::from(self.picture_id);
         let previous = self.extended_pid.map(|_| previous_picture_id);
-        let m = (b & 0x80) != 0;
         // PID present?
-        if m {
+        let next = if (b & 0x80) != 0 {
             if reader.remaining_bits() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
@@ -627,24 +624,18 @@ impl Vp9Depacketizer {
             let x = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             self.picture_id = (((b & 0x7f) as u16) << 8) | (x as u16);
             payload_index += 1;
+            extend_u15(previous, self.picture_id)
         } else {
             self.picture_id = (b & 0x7F) as u16;
-        }
+            extend_u7(previous, b)
+        };
 
         // A wider wire ID is zero-extended after a width change. Preserve the
         // offset from earlier short-ID wraps by extending the raw-ID delta.
-        // Use the narrower width at transitions, including a late 15-bit ID
-        // parsed after a newer packet has truncated the counter to 7 bits.
-        let next = if m && (self.m || previous.is_none()) {
-            extend_u15(previous, self.picture_id)
-        } else {
-            extend_u7(previous, self.picture_id as u8)
-        };
         self.extended_pid = Some(match self.extended_pid {
             Some(previous) => previous.wrapping_add(next.wrapping_sub(previous_picture_id)),
             None => next,
         });
-        self.m = m;
 
         Ok(payload_index)
     }
@@ -878,7 +869,6 @@ mod test {
                 Vp9Depacketizer {
                     i: true,
                     picture_id: 0x01FF,
-                    m: true,
                     extended_pid: Some(0x01FF),
                     ..Default::default()
                 },
@@ -1139,7 +1129,6 @@ mod test {
                     f: true,
                     b: true,
                     picture_id: 17,
-                    m: true,
                     extended_pid: Some(17),
                     pdiff: [17, 18, 127],
                     ..Default::default()

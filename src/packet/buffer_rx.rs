@@ -151,6 +151,22 @@ impl LastProcessed {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Vp9PictureIds {
+    picture_id: u16,
+    extended_pid: Option<u64>,
+    tl0picidx: u8,
+    extended_tl0picidx: Option<u64>,
+}
+
+#[derive(Debug)]
+struct DepacketizingCache {
+    range: Range<usize>,
+    depacketized: Depacketized,
+    // Restore counters if earlier packets invalidate speculative depacketization.
+    vp9_picture_ids: Option<Vp9PictureIds>,
+}
+
 #[derive(Debug)]
 pub struct DepacketizingBuffer {
     hold_back: usize,
@@ -164,7 +180,7 @@ pub struct DepacketizingBuffer {
     segment_rebuilds: usize,
     last_processed: Option<LastProcessed>,
     max_time: Option<MediaTime>,
-    depack_cache: Option<(Range<usize>, Depacketized)>,
+    depack_cache: Option<DepacketizingCache>,
     contiguity: Contiguity,
 }
 
@@ -245,7 +261,7 @@ impl DepacketizingBuffer {
                         return;
                     }
                     self.queue.pop_front();
-                    self.depack_cache = None;
+                    self.clear_depack_cache();
                     i -= 1;
                 }
 
@@ -270,9 +286,9 @@ impl DepacketizingBuffer {
 
                 // The depack cache is keyed by queue index. Inserting at or before the cached
                 // segment shifts it, so the cache would answer for the wrong packets.
-                if let Some((range, _)) = &self.depack_cache {
-                    if i <= range.end {
-                        self.depack_cache = None;
+                if let Some(cache) = &self.depack_cache {
+                    if i <= cache.range.end {
+                        self.clear_depack_cache();
                     }
                 }
             }
@@ -307,7 +323,7 @@ impl DepacketizingBuffer {
                     let last = self.queue[end - 1].meta.seq_no;
                     self.queue.drain(0..end);
                     self.segments_dirty = true;
-                    self.depack_cache = None;
+                    self.clear_depack_cache();
                     self.last_processed = Some(LastProcessed::Expired(last));
                 }
                 return None;
@@ -345,7 +361,7 @@ impl DepacketizingBuffer {
         };
 
         // depack ahead, even if we may not emit right away
-        let mut dep = match self.depacketize(start, stop, seq) {
+        let (mut dep, vp9_picture_ids) = match self.depacketize(start, stop, seq) {
             Ok(d) => d,
             Err(e) => {
                 // this segment cannot be decoded correctly
@@ -369,7 +385,11 @@ impl DepacketizingBuffer {
 
         if wait_for_contiguity {
             // if we are not sending, cache the depacked
-            self.depack_cache = Some((start..stop, dep));
+            self.depack_cache = Some(DepacketizingCache {
+                range: start..stop,
+                depacketized: dep,
+                vp9_picture_ids,
+            });
             self.discard_old_padding();
             return None;
         }
@@ -416,7 +436,7 @@ impl DepacketizingBuffer {
         );
         entry.meta.header.marker = false;
         self.segments_dirty = true;
-        self.depack_cache = None;
+        self.clear_depack_cache();
     }
 
     pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
@@ -486,7 +506,7 @@ impl DepacketizingBuffer {
 
         if self.queue.len() != original_len {
             self.segments_dirty = true;
-            self.depack_cache = None;
+            self.clear_depack_cache();
         }
     }
 
@@ -504,18 +524,44 @@ impl DepacketizingBuffer {
             .is_some_and(|age| age >= timeout)
     }
 
+    fn clear_depack_cache(&mut self) {
+        if let Some(cache) = self.depack_cache.take() {
+            self.restore_vp9_picture_ids(cache.vp9_picture_ids);
+        }
+    }
+
+    fn restore_vp9_picture_ids(&mut self, ids: Option<Vp9PictureIds>) {
+        if let (CodecDepacketizer::Vp9(depack), Some(ids)) = (&mut self.depack, ids) {
+            depack.picture_id = ids.picture_id;
+            depack.extended_pid = ids.extended_pid;
+            depack.tl0picidx = ids.tl0picidx;
+            depack.extended_tl0picidx = ids.extended_tl0picidx;
+        }
+    }
+
     fn depacketize(
         &mut self,
         start: usize,
         stop: usize,
         _seq: SeqNo,
-    ) -> Result<Depacketized, PacketError> {
+    ) -> Result<(Depacketized, Option<Vp9PictureIds>), PacketError> {
         if let Some(cached) = self.depack_cache.take() {
-            if cached.0 == (start..stop) {
+            if cached.range == (start..stop) {
                 trace!("depack cache hit for segment start {}", start);
-                return Ok(cached.1);
+                return Ok((cached.depacketized, cached.vp9_picture_ids));
             }
+            self.restore_vp9_picture_ids(cached.vp9_picture_ids);
         }
+
+        let vp9_picture_ids = match &self.depack {
+            CodecDepacketizer::Vp9(depack) => Some(Vp9PictureIds {
+                picture_id: depack.picture_id,
+                extended_pid: depack.extended_pid,
+                tl0picidx: depack.tl0picidx,
+                extended_tl0picidx: depack.extended_tl0picidx,
+            }),
+            _ => None,
+        };
 
         let packets_size = self
             .queue
@@ -538,13 +584,16 @@ impl DepacketizingBuffer {
             meta.push(entry.meta.clone());
         }
 
-        Ok(Depacketized {
-            time,
-            contiguous: true, // the caller taking ownership will modify this accordingly
-            meta,
-            data,
-            codec_extra,
-        })
+        Ok((
+            Depacketized {
+                time,
+                contiguous: true, // the caller taking ownership will modify this accordingly
+                meta,
+                data,
+                codec_extra,
+            },
+            vp9_picture_ids,
+        ))
     }
 
     fn first_segment(&self) -> Option<(usize, usize, Instant)> {
@@ -2097,6 +2146,7 @@ mod test {
 
         // The sender truncates the 15-bit counter to 7 bits on picture 0x1bc0.
         push(&mut buf, 2, &[0xEC, 0x40, 0x20, 10, 0x84]);
+        assert!(buf.pop(now, None).is_none());
         assert!(buf.pop(now, None).is_none());
 
         // The missing enhancement still has a 15-bit ID and must remain decodable.
