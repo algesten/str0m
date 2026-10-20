@@ -43,6 +43,9 @@ const CTR_BUFFER_PADDING: usize = SRTP_BLOCK_SIZE - 1;
 /// needs, so `unprotect_rtp` never has to grow the buffer in practice.
 const RX_SCRATCH_CAPACITY: usize = DATAGRAM_MAX_PACKET_SIZE + CTR_BUFFER_PADDING;
 
+/// Start repeated warnings here, then double the failure count between reports.
+const DECRYPT_WARN_INITIAL_COUNT: u64 = 4_096;
+
 impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
     pub fn new(
@@ -68,6 +71,7 @@ impl SrtpContext {
                     srtcp_index: 0,
                     sha1_hmac_provider,
                     rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
+                    decrypt_warnings: DecryptWarnings::default(),
                 }
             }
             SrtpProfile::AEAD_AES_128_GCM => {
@@ -83,6 +87,7 @@ impl SrtpContext {
                     srtcp_index: 0,
                     sha1_hmac_provider,
                     rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
+                    decrypt_warnings: DecryptWarnings::default(),
                 }
             }
             SrtpProfile::AEAD_AES_256_GCM => {
@@ -98,6 +103,7 @@ impl SrtpContext {
                     srtcp_index: 0,
                     sha1_hmac_provider,
                     rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
+                    decrypt_warnings: DecryptWarnings::default(),
                 }
             }
             _ => panic!("Unexpected SRTP profile: {profile:?}"),
@@ -140,6 +146,7 @@ impl SrtpContext {
             srtcp_index,
             sha1_hmac_provider: provider.sha1_hmac_provider,
             rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
+            decrypt_warnings: DecryptWarnings::default(),
         }
     }
 
@@ -179,6 +186,7 @@ impl SrtpContext {
             srtcp_index,
             sha1_hmac_provider: provider.sha1_hmac_provider,
             rx_scratch: Vec::with_capacity(RX_SCRATCH_CAPACITY),
+            decrypt_warnings: DecryptWarnings::default(),
         }
     }
 }
@@ -196,11 +204,48 @@ pub struct SrtpContext {
     /// Reusable scratch buffer for RTP decryption output. Reused across calls
     /// to `unprotect_rtp` so we don't allocate a fresh `Vec` per packet.
     rx_scratch: Vec<u8>,
+    decrypt_warnings: DecryptWarnings,
 }
 
 /// SrtpContext contains cipher contexts that can't observe broken invariants after a panic.
 impl UnwindSafe for SrtpContext {}
 impl RefUnwindSafe for SrtpContext {}
+
+/// Shares one warning budget across all SRTP and SRTCP streams in a receive context.
+/// Reports the first failure immediately, then at exponentially increasing counts.
+#[derive(Debug, Default)]
+struct DecryptWarnings {
+    failures: u64,
+    suppressed_srtp: u64,
+    suppressed_srtcp: u64,
+}
+
+impl DecryptWarnings {
+    fn warn(&mut self, profile: SrtpProfile, is_rtcp: bool) {
+        self.failures = self.failures.saturating_add(1);
+        let should_warn = self.failures == 1
+            || (self.failures >= DECRYPT_WARN_INITIAL_COUNT && self.failures.is_power_of_two());
+        if !should_warn {
+            let count = if is_rtcp {
+                &mut self.suppressed_srtcp
+            } else {
+                &mut self.suppressed_srtp
+            };
+            *count = count.saturating_add(1);
+            return;
+        }
+
+        let protocol = if is_rtcp { "SRTCP" } else { "SRTP" };
+        warn!(
+            failures = self.failures,
+            suppressed_srtp = self.suppressed_srtp,
+            suppressed_srtcp = self.suppressed_srtcp,
+            "Failed to decrypt {protocol} {profile}"
+        );
+        self.suppressed_srtp = 0;
+        self.suppressed_srtcp = 0;
+    }
+}
 
 impl SrtpContext {
     pub fn protect_rtp(
@@ -337,12 +382,13 @@ impl SrtpContext {
                 self.rx_scratch.resize(input.len() + CTR_BUFFER_PADDING, 0);
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut self.rx_scratch) {
-                    warn!(
+                    trace!(
                         "Failed to decrypt SRTP {} ({}): {}",
                         self.rtp.profile(),
                         error_details(header, srtp_index),
                         e
                     );
+                    self.decrypt_warnings.warn(self.rtp.profile(), false);
                     return None;
                 };
 
@@ -367,12 +413,13 @@ impl SrtpContext {
                 match dec.decrypt(&iv, &[aad], input, &mut self.rx_scratch) {
                     Ok(v) => v,
                     Err(e) => {
-                        warn!(
+                        trace!(
                             "Failed to decrypt SRTP {} ({}): {}",
                             self.rtp.profile(),
                             error_details(header, srtp_index),
                             e
                         );
+                        self.decrypt_warnings.warn(self.rtp.profile(), false);
                         return None;
                     }
                 };
@@ -398,12 +445,13 @@ impl SrtpContext {
                 match dec.decrypt(&iv, &[aad], input, &mut self.rx_scratch) {
                     Ok(v) => v,
                     Err(e) => {
-                        warn!(
+                        trace!(
                             "Failed to decrypt SRTP {} ({}): {}",
                             self.rtp.profile(),
                             error_details(header, srtp_index),
                             e
                         );
+                        self.decrypt_warnings.warn(self.rtp.profile(), false);
                         return None;
                     }
                 };
@@ -566,7 +614,8 @@ impl SrtpContext {
                 output[0..8].copy_from_slice(&buf[0..8]);
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output[8..]) {
-                    warn!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
+                    trace!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
+                    self.decrypt_warnings.warn(self.rtcp.profile(), true);
                     return None;
                 }
 
@@ -629,7 +678,8 @@ impl SrtpContext {
                 let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
                     Ok(c) => c,
                     Err(e) => {
-                        warn!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
+                        trace!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
+                        self.decrypt_warnings.warn(self.rtcp.profile(), true);
                         return None;
                     }
                 };
@@ -701,7 +751,8 @@ impl SrtpContext {
                 let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
                     Ok(c) => c,
                     Err(e) => {
-                        warn!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
+                        trace!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
+                        self.decrypt_warnings.warn(self.rtcp.profile(), true);
                         return None;
                     }
                 };
@@ -968,7 +1019,170 @@ fn error_details(header: &RtpHeader, srtp_index: u64) -> String {
 
 #[cfg(test)]
 mod test {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
     use super::*;
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturedLogs {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().write(buf)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl CapturedLogs {
+        fn lines(&self) -> Vec<String> {
+            String::from_utf8(self.0.lock().unwrap().clone())
+                .unwrap()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+    }
+
+    #[test]
+    fn aead_128_decryption_warnings_are_rate_limited() {
+        for rtcp_first in [false, true] {
+            check_decryption_warning_rate_limit(SrtpProfile::AEAD_AES_128_GCM, rtcp_first);
+        }
+    }
+
+    #[test]
+    fn aead_256_decryption_warnings_are_rate_limited() {
+        for rtcp_first in [false, true] {
+            check_decryption_warning_rate_limit(SrtpProfile::AEAD_AES_256_GCM, rtcp_first);
+        }
+    }
+
+    fn check_decryption_warning_rate_limit(profile: SrtpProfile, rtcp_first: bool) {
+        let logs = CapturedLogs::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            let crypto = crate::crypto::test_default_provider();
+            let mat = KeyingMaterial::new(&vec![0; profile.keying_material_len()]);
+            let mut context = SrtpContext::new(crypto, profile, &mat, true);
+            let plaintext_rtp = [0x80, 111, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 42];
+            let header =
+                RtpHeader::parse(&plaintext_rtp, &crate::rtp_::ExtensionMap::empty()).unwrap();
+            let valid_rtp = context.protect_rtp(&plaintext_rtp, &header, 1);
+            let plaintext_rtcp = [0x80, 201, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0];
+            let valid_rtcp = context.protect_rtcp(&plaintext_rtcp);
+
+            assert_eq!(
+                context.unprotect_rtp(&valid_rtp, &header, 1).unwrap(),
+                &[42]
+            );
+            assert_eq!(context.unprotect_rtcp(&valid_rtcp).unwrap(), plaintext_rtcp);
+            assert!(logs.lines().is_empty());
+
+            // Corrupt both authentication tags.
+            let mut rtp = valid_rtp.clone();
+            let mut rtcp = valid_rtcp.clone();
+            *rtp.last_mut().unwrap() ^= 1;
+            let rtcp_tag_end = rtcp.len() - SRTCP_INDEX_LEN - 1;
+            rtcp[rtcp_tag_end] ^= 1;
+            if rtcp_first {
+                assert!(context.unprotect_rtcp(&rtcp).is_none());
+            } else {
+                assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+            }
+            assert_eq!(logs.lines().len(), 1, "the first failure warns immediately");
+            assert!(logs.lines()[0].contains("suppressed_srtp=0 suppressed_srtcp=0"));
+
+            for ssrc in 1u32..=2_046 {
+                // Changing SSRCs must not create additional warning budgets.
+                rtp[8..12].copy_from_slice(&ssrc.to_be_bytes());
+                rtcp[4..8].copy_from_slice(&ssrc.to_be_bytes());
+                let header = RtpHeader::parse(&rtp, &crate::rtp_::ExtensionMap::empty()).unwrap();
+                assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+                assert!(context.unprotect_rtcp(&rtcp).is_none());
+            }
+            rtp[8..12].copy_from_slice(&plaintext_rtp[8..12]);
+            rtcp[4..8].copy_from_slice(&plaintext_rtcp[4..8]);
+
+            // Successful packets do not reset the warning budget or failure counts.
+            assert!(context.unprotect_rtp(&valid_rtp, &header, 1).is_some());
+            assert!(context.unprotect_rtcp(&valid_rtcp).is_some());
+            assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+            assert!(context.unprotect_rtcp(&rtcp).is_none());
+            assert_eq!(
+                logs.lines().len(),
+                1,
+                "4,095 failures still yield one warning"
+            );
+
+            // Either protocol can trigger the next report at failure 4,096.
+            if rtcp_first {
+                assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+            } else {
+                assert!(context.unprotect_rtcp(&rtcp).is_none());
+            }
+            let lines = logs.lines();
+            assert_eq!(lines.len(), 2);
+            assert!(lines[1].contains("suppressed_srtp=2047 suppressed_srtcp=2047"));
+
+            for failure in 0..4_095 {
+                if failure % 2 == 0 {
+                    assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+                } else {
+                    assert!(context.unprotect_rtcp(&rtcp).is_none());
+                }
+            }
+            assert_eq!(
+                logs.lines().len(),
+                2,
+                "the next report waits until failure 8,192"
+            );
+            assert!(context.unprotect_rtcp(&rtcp).is_none());
+            let lines = logs.lines();
+            assert_eq!(lines.len(), 3);
+            assert!(lines[2].contains("suppressed_srtp=2048 suppressed_srtcp=2047"));
+
+            for failure in 0..8_191 {
+                if failure % 2 == 0 {
+                    assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+                } else {
+                    assert!(context.unprotect_rtcp(&rtcp).is_none());
+                }
+                if failure == 4_095 {
+                    assert_eq!(logs.lines().len(), 3, "the reporting gap doubles");
+                }
+            }
+            assert_eq!(
+                logs.lines().len(),
+                3,
+                "16,383 failures yield three warnings"
+            );
+            assert!(context.unprotect_rtcp(&rtcp).is_none());
+            let lines = logs.lines();
+            assert_eq!(lines.len(), 4);
+            assert!(lines[3].contains("suppressed_srtp=4096 suppressed_srtcp=4095"));
+
+            let mut independent = SrtpContext::new(crypto, profile, &mat, true);
+            assert!(independent.unprotect_rtcp(&rtcp).is_none());
+            let lines = logs.lines();
+            assert_eq!(lines.len(), 5, "independent contexts warn immediately");
+            assert!(lines[4].contains("suppressed_srtp=0 suppressed_srtcp=0"));
+            for (line, count) in lines.iter().zip([1, 4_096, 8_192, 16_384, 1]) {
+                assert_eq!(line.split_whitespace().next(), Some("WARN"));
+                assert!(line.contains(&format!("failures={count} ")));
+            }
+        });
+    }
 
     #[test]
     fn derive_key() {
