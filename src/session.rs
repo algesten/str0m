@@ -30,6 +30,7 @@ use crate::rtp_::Pli;
 use crate::rtp_::Pt;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::SeqNo;
+use crate::rtp_::SeqNoWindow;
 use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb};
 use crate::rtp_::{Dlrr, DlrrItem, ExtendedReport, ReportBlock};
 use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
@@ -94,7 +95,7 @@ pub(crate) struct Session {
     twcc: u64,
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
-    max_rx_seq_lookup: HashMap<Ssrc, RxSeq>,
+    max_rx_seq_lookup: HashMap<Ssrc, SeqNoWindow>,
 
     bwe: Option<Bwe>,
     bwe_last_event: Option<(Bitrate, bool)>,
@@ -653,7 +654,11 @@ impl Session {
                 make_max_seq_lookup(&self.max_rx_seq_lookup),
             )
         } else {
-            header.sequence_number(self.max_rx_seq_lookup.get(&header.ssrc).map(|s| s.max))
+            header.sequence_number(
+                self.max_rx_seq_lookup
+                    .get(&header.ssrc)
+                    .map(|s| s.max_seq()),
+            )
         };
         let is_new = match &stream {
             Some(stream) if !(is_repair && header.has_padding) => {
@@ -1558,38 +1563,14 @@ fn un_red<'a>(header: &mut RtpHeader, data: &'a [u8], pt: Pt) -> Option<UnRed<'a
     })
 }
 
-fn make_max_seq_lookup(map: &HashMap<Ssrc, RxSeq>) -> impl Fn(Ssrc) -> Option<SeqNo> + '_ {
-    |ssrc| map.get(&ssrc).map(|s| s.max)
+fn make_max_seq_lookup(map: &HashMap<Ssrc, SeqNoWindow>) -> impl Fn(Ssrc) -> Option<SeqNo> + '_ {
+    |ssrc| map.get(&ssrc).map(|s| s.max_seq())
 }
 
-fn update_max_seq(map: &mut HashMap<Ssrc, RxSeq>, ssrc: Ssrc, seq_no: SeqNo) {
-    let current = map.entry(ssrc).or_insert(RxSeq {
-        max: seq_no,
-        seen: 0,
-    });
-    if seq_no > current.max {
-        current.seen = current
-            .seen
-            .checked_shl((*seq_no - *current.max).min(128) as u32)
-            .unwrap_or(0);
-        current.max = seq_no;
-    }
-    if let Some(bit) = 1u128.checked_shl((*current.max - *seq_no).min(128) as u32) {
-        current.seen |= bit;
-    }
-}
-
-// Extend the existing SSRC rollover history with a fixed replay window. Early padding
-// needs duplicate detection before a StreamRx exists; no provisional stream is retained.
-struct RxSeq {
-    max: SeqNo,
-    seen: u128,
-}
-
-impl RxSeq {
-    fn accepts(&self, seq: SeqNo) -> bool {
-        seq > self.max || (*self.max - *seq < 128 && self.seen & (1u128 << (*self.max - *seq)) == 0)
-    }
+fn update_max_seq(map: &mut HashMap<Ssrc, SeqNoWindow>, ssrc: Ssrc, seq_no: SeqNo) {
+    map.entry(ssrc)
+        .and_modify(|window| window.update(seq_no))
+        .or_insert_with(|| SeqNoWindow::new(seq_no));
 }
 
 #[cfg(test)]
@@ -1782,27 +1763,6 @@ mod tests {
                 feedback(&mut session, now + TWCC_INTERVAL),
                 [(39, true), (40, true), (41, true), (42, true)]
             );
-        }
-
-        #[test]
-        fn replay_window_rejects_old_packets_and_survives_large_sequence_jumps() {
-            let ssrc = RTX_SSRC.into();
-            let mut history = HashMap::new();
-            update_max_seq(&mut history, ssrc, 10.into());
-            update_max_seq(&mut history, ssrc, 137.into());
-            assert!(!history[&ssrc].accepts(10.into()));
-            assert!(history[&ssrc].accepts(11.into()));
-            update_max_seq(&mut history, ssrc, 138.into());
-            assert!(!history[&ssrc].accepts(10.into()));
-            assert!(history[&ssrc].accepts(11.into()));
-            update_max_seq(&mut history, ssrc, 11.into());
-            assert!(!history[&ssrc].accepts(11.into()));
-
-            let jump = (1u64 << 32) + 138;
-            update_max_seq(&mut history, ssrc, jump.into());
-            assert!(!history[&ssrc].accepts(138.into()));
-            assert!(!history[&ssrc].accepts(jump.into()));
-            assert!(history[&ssrc].accepts((jump - 1).into()));
         }
 
         fn receiver(rtp_mode: bool, profile: SrtpProfile) -> (Session, Mid) {
