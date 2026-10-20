@@ -656,12 +656,15 @@ impl Session {
             header.sequence_number(max_seq)
         };
         let is_repair_padding = is_repair && header.has_padding;
-        let is_new = match &stream {
-            Some(stream) if !is_repair_padding => stream.is_new_packet(is_repair, seq_no),
-            // A newly discovered stream restores only the RTX maximum and blocks older packets.
-            // Keep using the session bitmap for padding so unseen reordered packets still count,
-            // while padding already received before discovery remains protected against replay.
-            _ => history.is_none_or(|history| history.accepts(seq_no)),
+        let use_session_history = is_repair_padding || stream.is_none();
+        // A newly discovered stream restores only the RTX maximum and blocks older packets.
+        // Keep using the session bitmap for padding so unseen reordered packets still count,
+        // while padding already received before discovery remains protected against replay.
+        let is_new = if use_session_history {
+            history.is_none_or(|history| history.accepts(seq_no))
+        } else {
+            let stream = stream.as_ref().unwrap();
+            stream.is_new_packet(is_repair, seq_no)
         };
         if !is_new {
             trace!(
