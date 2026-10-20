@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Reduce RTX receive memory use with a 128-position sequence window #1089
   * Rate-limit SRTP/SRTCP decryption warnings #1088
   * Send pending keyframe and REMB requests without waiting for unrelated timers #1081
   * Bump dimpl to 0.8.0 and sctp-proto to 0.10.7; return accepted DTLS write byte counts (breaking) #1080

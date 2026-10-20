@@ -6,6 +6,7 @@ use crate::config_mod::RtcpReportIntervals;
 use crate::media::KeyframeRequestKind;
 use crate::packet::MAX_RED_RECOVERY_DEPTH;
 use crate::rtp_::MidRid;
+use crate::rtp_::SeqNoWindow;
 use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
 use crate::rtp_::{Fir, FirEntry, Frequency, MediaTime, Remb};
 use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
@@ -74,10 +75,10 @@ pub struct StreamRx {
     /// Set on first ever packet.
     register: Option<ReceiverRegister>,
 
-    /// Register of received packets for RTX.
+    /// Sequence and replay tracking for RTX. NACKs and reception reports use the main register.
     ///
-    /// Set on first ever RTXpacket.
-    register_rtx: Option<ReceiverRegister>,
+    /// Set on the first authenticated RTX packet or restored from remembered sequence history.
+    register_rtx: Option<SeqNoWindow>,
 
     /// The most recent main-stream packets as `(seq_no, extended rtp time)`, used to place
     /// RFC 2198 RED redundant blocks (which carry a timestamp, not a seq no) at the right
@@ -367,25 +368,24 @@ impl StreamRx {
         is_repair: bool,
         max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>,
     ) -> SeqNo {
-        // Select reference to register to use depending on RTX or not. The RTX has a separate
-        // sequence number series to the main register.
-        let register_ref = if is_repair {
-            &mut self.register_rtx
-        } else {
-            &mut self.register
-        };
+        // RTX has its own sequence series and only needs a replay window.
+        if is_repair {
+            if self.register_rtx.is_none() {
+                self.register_rtx = max_seq_lookup(header.ssrc).map(SeqNoWindow::new_after);
+            }
+            return header.sequence_number(self.register_rtx.as_ref().map(|r| r.max_seq()));
+        }
 
-        let register =
-            register_ref.get_or_insert_with(|| ReceiverRegister::new(max_seq_lookup(header.ssrc)));
+        let register = self
+            .register
+            .get_or_insert_with(|| ReceiverRegister::new(max_seq_lookup(header.ssrc)));
 
         // If the user has called `reset_seq_no`, this is the time to handle it, but only
         // if the incoming packet is for main (not repair).
         let mut reset_seq_no = None;
-        if !is_repair {
-            if let Some(reset_roc) = self.reset_roc.take() {
-                let s: SeqNo = (reset_roc << 16 | header.sequence_number as u64).into();
-                reset_seq_no = Some(s);
-            }
+        if let Some(reset_roc) = self.reset_roc.take() {
+            let s: SeqNo = (reset_roc << 16 | header.sequence_number as u64).into();
+            reset_seq_no = Some(s);
         }
 
         if let Some(reset_seq_no) = reset_seq_no {
@@ -396,14 +396,12 @@ impl StreamRx {
     }
 
     pub(crate) fn is_new_packet(&self, is_repair: bool, seq_no: SeqNo) -> bool {
-        let register_ref = if is_repair {
-            self.register_rtx.as_ref()
+        if is_repair {
+            self.register_rtx.as_ref().is_none_or(|r| r.accepts(seq_no))
         } else {
-            self.register.as_ref()
-        };
-
-        // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
-        register_ref.unwrap().accepts(seq_no)
+            // extend_seq() initializes the main register before this check.
+            self.register.as_ref().unwrap().accepts(seq_no)
+        }
     }
 
     fn remember_recent(&mut self, seq_no: SeqNo, time: u64) {
@@ -527,16 +525,19 @@ impl StreamRx {
         }
         self.check_paused_at = Some(now + self.pause_threshold);
 
-        let register_ref = if is_repair {
-            &mut self.register_rtx
+        let is_new_packet = if is_repair {
+            let is_new = self.is_new_packet(true, seq_no);
+            self.register_rtx
+                .get_or_insert_with(|| SeqNoWindow::new(seq_no))
+                .update(seq_no);
+            is_new
         } else {
-            &mut self.register
+            // extend_seq() initializes the main register before this update.
+            self.register
+                .as_mut()
+                .unwrap()
+                .update(seq_no, now, header.timestamp, clock_rate.get())
         };
-
-        // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
-        let register = register_ref.as_mut().unwrap();
-
-        let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
 
         // Get the previous time for comparison
         let previous_time = self.last_time.map(|t| t.numer());
@@ -893,8 +894,11 @@ impl StreamRx {
             r.clear(max_seq_lookup(self.ssrc));
         }
 
-        if let Some(r) = &mut self.register_rtx {
-            r.clear(self.rtx.and_then(max_seq_lookup));
+        if self.register_rtx.is_some() {
+            self.register_rtx = self
+                .rtx
+                .and_then(max_seq_lookup)
+                .map(SeqNoWindow::new_after);
         }
         self.pending_request_keyframe = None;
     }
@@ -1295,5 +1299,130 @@ mod tests {
             }),
             now + Duration::from_millis(750)
         );
+    }
+
+    #[test]
+    fn rtx_tracks_rollover_and_reordering_only_after_receipt() {
+        let mut stream = rtx_stream();
+        let header = rtx_header(8, 50000);
+        stream.extend_seq(&header, true, |_| None);
+        assert!(
+            stream.register_rtx.is_none(),
+            "unverified headers must not advance the window"
+        );
+
+        for seq in [65535, 65536, 65538, 65537] {
+            record_rtx(&mut stream, seq);
+            assert!(!stream.is_new_packet(true, seq.into()));
+        }
+        assert!(
+            stream.register.is_none(),
+            "RTX must not update primary reception reports"
+        );
+        let mut feedback = VecDeque::new();
+        assert!(
+            stream
+                .maybe_create_nack(Instant::now(), 1.into(), &mut feedback)
+                .is_none()
+        );
+        assert!(feedback.is_empty());
+    }
+
+    #[test]
+    fn rtx_uses_the_full_128_position_window() {
+        let mut stream = rtx_stream();
+        record_rtx(&mut stream, 0);
+        record_rtx(&mut stream, 200);
+        assert!(!stream.is_new_packet(true, 72.into()));
+        assert!(stream.is_new_packet(true, 73.into()));
+        record_rtx(&mut stream, 73);
+        assert!(!stream.is_new_packet(true, 73.into()));
+    }
+
+    #[test]
+    fn rtx_buffer_and_roc_resets_preserve_remembered_replay_floor() {
+        let mut stream = rtx_stream();
+        record_rtx(&mut stream, 65535);
+        record_rtx(&mut stream, 65537);
+        assert!(stream.is_new_packet(true, 65536.into()));
+        let history = |ssrc| (ssrc == 8.into()).then_some(65537.into());
+        stream.reset_buffers(history);
+        assert!(!stream.is_new_packet(true, 65536.into()));
+        assert!(!stream.is_new_packet(true, 65537.into()));
+
+        stream.reset_roc(5);
+        let header = rtx_header(8, 2);
+        assert_eq!(stream.extend_seq(&header, true, history), 65538.into());
+        assert!(!stream.is_new_packet(true, 65536.into()));
+        assert!(stream.is_new_packet(true, 65538.into()));
+        // The requested ROC applies to the main stream, not the RTX sequence series.
+        let main = RtpHeader {
+            ssrc: 7.into(),
+            sequence_number: 10,
+            ..Default::default()
+        };
+        assert_eq!(
+            stream.extend_seq(&main, false, history),
+            ((5u64 << 16) + 10).into()
+        );
+    }
+
+    #[test]
+    fn rtx_ssrc_changes_restore_history_and_main_changes_preserve_it() {
+        let mut stream = rtx_stream();
+        record_rtx(&mut stream, 65535);
+        assert!(stream.change_ssrc(9.into()));
+        assert!(!stream.is_new_packet(true, 65535.into()));
+        stream.maybe_reset_rtx(8.into());
+        assert!(!stream.is_new_packet(true, 65535.into()));
+
+        stream.maybe_reset_rtx(10.into());
+        assert!(stream.register_rtx.is_none());
+        record_rtx(&mut stream, 0);
+        stream.maybe_reset_rtx(8.into());
+        let header = rtx_header(8, 0);
+        let seq = stream.extend_seq(&header, true, |ssrc| {
+            (ssrc == 8.into()).then_some(65535.into())
+        });
+        assert_eq!(seq, 65536.into());
+        assert!(!stream.is_new_packet(true, 65534.into()));
+        assert!(!stream.is_new_packet(true, 65535.into()));
+        assert!(stream.is_new_packet(true, seq));
+        record_rtx(&mut stream, 65536);
+    }
+
+    fn rtx_stream() -> StreamRx {
+        let mut stream = StreamRx::new(
+            7.into(),
+            MidRid("mid".into(), None),
+            false,
+            Duration::from_millis(1500),
+        );
+        stream.maybe_reset_rtx(8.into());
+        stream
+    }
+
+    fn record_rtx(stream: &mut StreamRx, seq: u64) {
+        let header = rtx_header(*stream.rtx().unwrap(), seq as u16);
+        let extended = stream.extend_seq(&header, true, |_| None);
+        assert_eq!(extended, seq.into());
+        assert!(stream.is_new_packet(true, extended));
+        let receipt = stream.update_register(
+            already_happened(),
+            &header,
+            Frequency::NINETY_KHZ,
+            true,
+            extended,
+        );
+        assert!(receipt.is_new_packet);
+    }
+
+    fn rtx_header(ssrc: u32, seq: u16) -> RtpHeader {
+        RtpHeader {
+            ssrc: ssrc.into(),
+            sequence_number: seq,
+            payload_type: 97.into(),
+            ..Default::default()
+        }
     }
 }
