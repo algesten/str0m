@@ -1,6 +1,5 @@
 use std::fmt;
 use std::panic::{RefUnwindSafe, UnwindSafe};
-use std::time::{Duration, Instant};
 
 use crate::crypto::Aes128CmSha1_80Cipher;
 use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
@@ -44,8 +43,8 @@ const CTR_BUFFER_PADDING: usize = SRTP_BLOCK_SIZE - 1;
 /// needs, so `unprotect_rtp` never has to grow the buffer in practice.
 const RX_SCRATCH_CAPACITY: usize = DATAGRAM_MAX_PACKET_SIZE + CTR_BUFFER_PADDING;
 
-/// One warning budget shared by all SRTP and SRTCP streams in a receive context.
-const DECRYPT_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+/// Start repeated warnings here, then double the failure count between reports.
+const DECRYPT_WARN_INITIAL_COUNT: u64 = 4_096;
 
 impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
@@ -212,21 +211,21 @@ pub struct SrtpContext {
 impl UnwindSafe for SrtpContext {}
 impl RefUnwindSafe for SrtpContext {}
 
-/// Reports the first failure immediately, then summarizes suppressed failures on
-/// the next failure at least one interval later. Uses only caller-supplied time.
+/// Shares one warning budget across all SRTP and SRTCP streams in a receive context.
+/// Reports the first failure immediately, then at exponentially increasing counts.
 #[derive(Debug, Default)]
 struct DecryptWarnings {
-    last_warn: Option<Instant>,
+    failures: u64,
     suppressed_srtp: u64,
     suppressed_srtcp: u64,
 }
 
 impl DecryptWarnings {
-    fn warn(&mut self, now: Instant, profile: SrtpProfile, is_rtcp: bool) {
-        if self
-            .last_warn
-            .is_some_and(|last| now.saturating_duration_since(last) < DECRYPT_WARNING_INTERVAL)
-        {
+    fn warn(&mut self, profile: SrtpProfile, is_rtcp: bool) {
+        self.failures = self.failures.saturating_add(1);
+        let should_warn = self.failures == 1
+            || (self.failures >= DECRYPT_WARN_INITIAL_COUNT && self.failures.is_power_of_two());
+        if !should_warn {
             let count = if is_rtcp {
                 &mut self.suppressed_srtcp
             } else {
@@ -238,11 +237,11 @@ impl DecryptWarnings {
 
         let protocol = if is_rtcp { "SRTCP" } else { "SRTP" };
         warn!(
+            failures = self.failures,
             suppressed_srtp = self.suppressed_srtp,
             suppressed_srtcp = self.suppressed_srtcp,
             "Failed to decrypt {protocol} {profile}"
         );
-        self.last_warn = Some(now);
         self.suppressed_srtp = 0;
         self.suppressed_srtcp = 0;
     }
@@ -352,7 +351,6 @@ impl SrtpContext {
     /// calls to avoid per-packet allocation.
     pub fn unprotect_rtp(
         &mut self,
-        now: Instant,
         buf: &[u8],
         header: &RtpHeader,
         srtp_index: u64, // same as ext_seq
@@ -390,7 +388,7 @@ impl SrtpContext {
                         error_details(header, srtp_index),
                         e
                     );
-                    self.decrypt_warnings.warn(now, self.rtp.profile(), false);
+                    self.decrypt_warnings.warn(self.rtp.profile(), false);
                     return None;
                 };
 
@@ -421,7 +419,7 @@ impl SrtpContext {
                             error_details(header, srtp_index),
                             e
                         );
-                        self.decrypt_warnings.warn(now, self.rtp.profile(), false);
+                        self.decrypt_warnings.warn(self.rtp.profile(), false);
                         return None;
                     }
                 };
@@ -453,7 +451,7 @@ impl SrtpContext {
                             error_details(header, srtp_index),
                             e
                         );
-                        self.decrypt_warnings.warn(now, self.rtp.profile(), false);
+                        self.decrypt_warnings.warn(self.rtp.profile(), false);
                         return None;
                     }
                 };
@@ -561,7 +559,7 @@ impl SrtpContext {
     //
     //                  |--------------------------------------|
     //                              encrypted (aes)
-    pub fn unprotect_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<Vec<u8>> {
+    pub fn unprotect_rtcp(&mut self, buf: &[u8]) -> Option<Vec<u8>> {
         match &mut self.rtcp {
             Derived::Aes128CmSha1_80 { key, salt, dec, .. } => {
                 if buf.len() < SRTCP_HEADER_LEN + SRTCP_INDEX_LEN + Aes128CmSha1_80::HMAC_TAG_LEN {
@@ -617,7 +615,7 @@ impl SrtpContext {
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output[8..]) {
                     trace!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
-                    self.decrypt_warnings.warn(now, self.rtcp.profile(), true);
+                    self.decrypt_warnings.warn(self.rtcp.profile(), true);
                     return None;
                 }
 
@@ -681,7 +679,7 @@ impl SrtpContext {
                     Ok(c) => c,
                     Err(e) => {
                         trace!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
-                        self.decrypt_warnings.warn(now, self.rtcp.profile(), true);
+                        self.decrypt_warnings.warn(self.rtcp.profile(), true);
                         return None;
                     }
                 };
@@ -754,7 +752,7 @@ impl SrtpContext {
                     Ok(c) => c,
                     Err(e) => {
                         trace!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
-                        self.decrypt_warnings.warn(now, self.rtcp.profile(), true);
+                        self.decrypt_warnings.warn(self.rtcp.profile(), true);
                         return None;
                     }
                 };
@@ -1074,7 +1072,6 @@ mod test {
             .finish();
 
         tracing::subscriber::with_default(subscriber, || {
-            let now = Instant::now();
             let crypto = crate::crypto::test_default_provider();
             let mat = KeyingMaterial::new(&vec![0; profile.keying_material_len()]);
             let mut context = SrtpContext::new(crypto, profile, &mat, true);
@@ -1086,13 +1083,10 @@ mod test {
             let valid_rtcp = context.protect_rtcp(&plaintext_rtcp);
 
             assert_eq!(
-                context.unprotect_rtp(now, &valid_rtp, &header, 1).unwrap(),
+                context.unprotect_rtp(&valid_rtp, &header, 1).unwrap(),
                 &[42]
             );
-            assert_eq!(
-                context.unprotect_rtcp(now, &valid_rtcp).unwrap(),
-                plaintext_rtcp
-            );
+            assert_eq!(context.unprotect_rtcp(&valid_rtcp).unwrap(), plaintext_rtcp);
             assert!(logs.lines().is_empty());
 
             // Corrupt both authentication tags.
@@ -1102,66 +1096,91 @@ mod test {
             let rtcp_tag_end = rtcp.len() - SRTCP_INDEX_LEN - 1;
             rtcp[rtcp_tag_end] ^= 1;
             if rtcp_first {
-                assert!(context.unprotect_rtcp(now, &rtcp).is_none());
+                assert!(context.unprotect_rtcp(&rtcp).is_none());
             } else {
-                assert!(context.unprotect_rtp(now, &rtp, &header, 1).is_none());
+                assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
             }
             assert_eq!(logs.lines().len(), 1, "the first failure warns immediately");
             assert!(logs.lines()[0].contains("suppressed_srtp=0 suppressed_srtcp=0"));
 
-            for ssrc in 1u32..=100 {
+            for ssrc in 1u32..=2_046 {
                 // Changing SSRCs must not create additional warning budgets.
                 rtp[8..12].copy_from_slice(&ssrc.to_be_bytes());
                 rtcp[4..8].copy_from_slice(&ssrc.to_be_bytes());
                 let header = RtpHeader::parse(&rtp, &crate::rtp_::ExtensionMap::empty()).unwrap();
-                assert!(context.unprotect_rtp(now, &rtp, &header, 1).is_none());
-                assert!(context.unprotect_rtcp(now, &rtcp).is_none());
+                assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+                assert!(context.unprotect_rtcp(&rtcp).is_none());
             }
+            rtp[8..12].copy_from_slice(&plaintext_rtp[8..12]);
+            rtcp[4..8].copy_from_slice(&plaintext_rtcp[4..8]);
 
+            // Successful packets do not reset the warning budget or failure counts.
+            assert!(context.unprotect_rtp(&valid_rtp, &header, 1).is_some());
+            assert!(context.unprotect_rtcp(&valid_rtcp).is_some());
+            assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+            assert!(context.unprotect_rtcp(&rtcp).is_none());
             assert_eq!(
                 logs.lines().len(),
                 1,
-                "SRTP and SRTCP share a warning budget"
+                "4,095 failures still yield one warning"
             );
 
-            // Successful packets do not reset the warning budget or failure counts.
-            let halfway = now + Duration::from_secs(30);
-            assert!(
-                context
-                    .unprotect_rtp(halfway, &valid_rtp, &header, 1)
-                    .is_some()
-            );
-            assert!(context.unprotect_rtcp(halfway, &valid_rtcp).is_some());
-            let before = now + Duration::from_secs(60) - Duration::from_nanos(1);
-            assert!(context.unprotect_rtp(before, &rtp, &header, 1).is_none());
-            assert!(context.unprotect_rtcp(before, &rtcp).is_none());
-            assert_eq!(logs.lines().len(), 1);
-
-            // Either protocol can trigger the next report at the exact boundary.
-            let next = now + Duration::from_secs(60);
+            // Either protocol can trigger the next report at failure 4,096.
             if rtcp_first {
-                assert!(context.unprotect_rtp(next, &rtp, &header, 1).is_none());
+                assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
             } else {
-                assert!(context.unprotect_rtcp(next, &rtcp).is_none());
+                assert!(context.unprotect_rtcp(&rtcp).is_none());
             }
             let lines = logs.lines();
             assert_eq!(lines.len(), 2);
-            assert!(lines[1].contains("suppressed_srtp=101 suppressed_srtcp=101"));
+            assert!(lines[1].contains("suppressed_srtp=2047 suppressed_srtcp=2047"));
 
-            assert!(context.unprotect_rtp(next, &rtp, &header, 1).is_none());
-            assert!(context.unprotect_rtcp(next, &rtcp).is_none());
-            assert_eq!(logs.lines().len(), 2);
-            let next = now + Duration::from_secs(120);
-            assert!(context.unprotect_rtcp(next, &rtcp).is_none());
+            for failure in 0..4_095 {
+                if failure % 2 == 0 {
+                    assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+                } else {
+                    assert!(context.unprotect_rtcp(&rtcp).is_none());
+                }
+            }
+            assert_eq!(
+                logs.lines().len(),
+                2,
+                "the next report waits until failure 8,192"
+            );
+            assert!(context.unprotect_rtcp(&rtcp).is_none());
             let lines = logs.lines();
             assert_eq!(lines.len(), 3);
-            assert!(lines[2].contains("suppressed_srtp=1 suppressed_srtcp=1"));
+            assert!(lines[2].contains("suppressed_srtp=2048 suppressed_srtcp=2047"));
+
+            for failure in 0..8_191 {
+                if failure % 2 == 0 {
+                    assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
+                } else {
+                    assert!(context.unprotect_rtcp(&rtcp).is_none());
+                }
+                if failure == 4_095 {
+                    assert_eq!(logs.lines().len(), 3, "the reporting gap doubles");
+                }
+            }
+            assert_eq!(
+                logs.lines().len(),
+                3,
+                "16,383 failures yield three warnings"
+            );
+            assert!(context.unprotect_rtcp(&rtcp).is_none());
+            let lines = logs.lines();
+            assert_eq!(lines.len(), 4);
+            assert!(lines[3].contains("suppressed_srtp=4096 suppressed_srtcp=4095"));
 
             let mut independent = SrtpContext::new(crypto, profile, &mat, true);
-            assert!(independent.unprotect_rtcp(next, &rtcp).is_none());
+            assert!(independent.unprotect_rtcp(&rtcp).is_none());
             let lines = logs.lines();
-            assert_eq!(lines.len(), 4, "independent contexts warn immediately");
-            assert!(lines[3].contains("suppressed_srtp=0 suppressed_srtcp=0"));
+            assert_eq!(lines.len(), 5, "independent contexts warn immediately");
+            assert!(lines[4].contains("suppressed_srtp=0 suppressed_srtcp=0"));
+            for (line, count) in lines.iter().zip([1, 4_096, 8_192, 16_384, 1]) {
+                assert_eq!(line.split_whitespace().next(), Some("WARN"));
+                assert!(line.contains(&format!("failures={count} ")));
+            }
         });
     }
 
@@ -1267,7 +1286,7 @@ mod test {
                 SrtpContext::new(crypto, SrtpProfile::AES128_CM_SHA1_80, &key_mat, true);
             ctx_rx.srtcp_index = 1;
 
-            let decrypted = ctx_rx.unprotect_rtcp(Instant::now(), SRTCP).unwrap();
+            let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
 
             assert_eq!(ctx_rx.srtcp_index, 1);
             // check srtcp_index in incoming was indeed 1
@@ -1380,7 +1399,7 @@ mod test {
                     .expect("header to parse");
 
             let out = context
-                .unprotect_rtp(Instant::now(), rfc7714::PROTECTED_RTP_PACKET, &header, 0)
+                .unprotect_rtp(rfc7714::PROTECTED_RTP_PACKET, &header, 0)
                 .expect("decrypt rtp");
 
             assert_eq!(
@@ -1406,7 +1425,7 @@ mod test {
             let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
                 .expect("header to parse");
             let decrypted = context
-                .unprotect_rtp(Instant::now(), &encrypted, &header, 0)
+                .unprotect_rtp(&encrypted, &header, 0)
                 .expect("rtp unprotect");
 
             // And verify we get the input back.
@@ -1430,8 +1449,7 @@ mod test {
             let header =
                 RtpHeader::parse(&header_buf, &ExtensionMap::empty()).expect("header to parse");
 
-            let result =
-                context.unprotect_rtp(Instant::now(), rfc7714::PROTECTED_RTP_PACKET, &header, 0);
+            let result = context.unprotect_rtp(rfc7714::PROTECTED_RTP_PACKET, &header, 0);
             assert!(
                 result.is_none(),
                 "Should fail to decrypt a SRTP packet that has mismatched \
@@ -1454,7 +1472,7 @@ mod test {
             let header =
                 RtpHeader::parse(&input[..12], &ExtensionMap::empty()).expect("header to parse");
 
-            let result = context.unprotect_rtp(Instant::now(), &input, &header, 0);
+            let result = context.unprotect_rtp(&input, &header, 0);
             assert!(
                 result.is_none(),
                 "Should fail to decrypt a SRTP packet with null tag"
@@ -1480,7 +1498,7 @@ mod test {
             let mut context = make_rtcp_context();
 
             let out = context
-                .unprotect_rtcp(Instant::now(), rfc7714::TAGGED_RTCP_PACKET)
+                .unprotect_rtcp(rfc7714::TAGGED_RTCP_PACKET)
                 .expect("Unprotect RTCP");
 
             assert_eq!(out, rfc7714::PLAINTEXT_RTCP_PACKET);
@@ -1609,7 +1627,7 @@ mod test {
                     .expect("header to parse");
 
             let out = context
-                .unprotect_rtp(Instant::now(), rfc7714::PROTECTED_RTP_PACKET, &header, 0)
+                .unprotect_rtp(rfc7714::PROTECTED_RTP_PACKET, &header, 0)
                 .expect("decrypt rtp");
 
             assert_eq!(
@@ -1635,7 +1653,7 @@ mod test {
             let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
                 .expect("header to parse");
             let decrypted = context
-                .unprotect_rtp(Instant::now(), &encrypted, &header, 0)
+                .unprotect_rtp(&encrypted, &header, 0)
                 .expect("rtp unprotect");
 
             // And verify we get the input back.
@@ -1659,8 +1677,7 @@ mod test {
             let header =
                 RtpHeader::parse(&header_buf, &ExtensionMap::empty()).expect("header to parse");
 
-            let result =
-                context.unprotect_rtp(Instant::now(), rfc7714::PROTECTED_RTP_PACKET, &header, 0);
+            let result = context.unprotect_rtp(rfc7714::PROTECTED_RTP_PACKET, &header, 0);
             assert!(
                 result.is_none(),
                 "Should fail to decrypt a SRTP packet that has mismatched \
@@ -1683,7 +1700,7 @@ mod test {
             let header =
                 RtpHeader::parse(&input[..12], &ExtensionMap::empty()).expect("header to parse");
 
-            let result = context.unprotect_rtp(Instant::now(), &input, &header, 0);
+            let result = context.unprotect_rtp(&input, &header, 0);
             assert!(
                 result.is_none(),
                 "Should fail to decrypt a SRTP packet with null tag"
@@ -1709,7 +1726,7 @@ mod test {
             let mut context = make_rtcp_context();
 
             let out = context
-                .unprotect_rtcp(Instant::now(), rfc7714::TAGGED_RTCP_PACKET)
+                .unprotect_rtcp(rfc7714::TAGGED_RTCP_PACKET)
                 .expect("Unprotect RTCP");
 
             assert_eq!(out, rfc7714::PLAINTEXT_RTCP_PACKET);
