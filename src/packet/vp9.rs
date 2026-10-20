@@ -1602,6 +1602,34 @@ mod test {
     }
 
     #[test]
+    fn depacketizer_preserves_wide_picture_id_after_loss_at_width_growth() {
+        let mut depack = Vp9Depacketizer::default();
+        assert_eq!(
+            depacketize_one(&mut depack, &[0x8C, 0, 0xAA]).picture_id,
+            Some(0)
+        );
+        // The sender widens at PID 1; pictures 1..99 are lost in transit.
+        let extra = depacketize_one(&mut depack, &[0x8C, 0x80, 100, 0xAA]);
+        assert_eq!(extra.picture_id, Some(100));
+    }
+
+    #[test]
+    fn depacketizing_buffer_recovers_after_loss_at_picture_id_width_growth() {
+        // A middlebox drops enhancement pictures 1..99 and rewrites RTP sequence numbers.
+        // Picture 100 is a keyframe, so all following pictures are decodable.
+        let frames =
+            std::iter::once(vec![vec![0xAC, 0, 0, 0, 0x80]]).chain((100..=130_u8).map(|pid| {
+                let (flags, payload) = if pid == 100 {
+                    (0xAC, 0x80)
+                } else {
+                    (0xEC, 0x84)
+                };
+                vec![vec![flags, 0x80, pid, 0, pid - 99, payload]]
+            }));
+        assert_every_frame_emitted(frames);
+    }
+
+    #[test]
     fn test_vp9_packetizer_flexible_mode() -> Result<(), PacketError> {
         let mut rands = vec![];
         for r0 in 8692..8702 {
