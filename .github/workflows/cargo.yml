@@ -50,7 +50,7 @@ jobs:
     runs-on: ${{ matrix.crypto.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@master
@@ -59,12 +59,12 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
       - name: Test with ${{ matrix.crypto.name }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.name }}
 
   snowflake:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           # Binary assets have no text lines to format.
@@ -84,7 +84,7 @@ jobs:
   pii:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
@@ -96,7 +96,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
@@ -120,7 +120,7 @@ jobs:
   fuzz-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -153,7 +153,7 @@ jobs:
             os: windows-latest
     runs-on: ${{ matrix.dir.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@master
@@ -174,7 +174,7 @@ jobs:
   cargo-deny:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check

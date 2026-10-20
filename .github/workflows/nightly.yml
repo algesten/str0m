@@ -28,7 +28,7 @@ jobs:
         r_crypto: ["rust-crypto", "aws", "wincrypto"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -57,7 +57,7 @@ jobs:
         r_crypto: ["rust-crypto", "aws", "openssl"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -86,7 +86,7 @@ jobs:
         r_crypto: ["rust-crypto", "aws", "apple-crypto", "openssl"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -127,7 +127,7 @@ jobs:
             features: rust-crypto,aws-lc-rs,apple-crypto,openssl
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -178,7 +178,7 @@ jobs:
             features: rust-crypto,aws-lc-rs
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
