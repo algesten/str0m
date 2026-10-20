@@ -435,8 +435,10 @@ pub struct Vp9Depacketizer {
     pub z: bool,
 
     /// Recommended headers
-    /// 7 or 16 bits, picture ID.
+    /// 7 or 15 bits, picture ID.
     pub picture_id: u16,
+    /// Picture ID extension flag (15 bits when set).
+    pub m: bool,
     /// extended picture id
     pub extended_pid: Option<u64>,
 
@@ -613,20 +615,36 @@ impl Vp9Depacketizer {
         }
         let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
+        let previous_picture_id = u64::from(self.picture_id);
+        let previous = self.extended_pid.map(|_| previous_picture_id);
+        let m = (b & 0x80) != 0;
         // PID present?
-        if (b & 0x80) != 0 {
+        if m {
             if reader.remaining_bits() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
             // M == 1, PID is 15bit
             let x = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             self.picture_id = (((b & 0x7f) as u16) << 8) | (x as u16);
-            self.extended_pid = Some(extend_u15(self.extended_pid, self.picture_id));
             payload_index += 1;
         } else {
             self.picture_id = (b & 0x7F) as u16;
-            self.extended_pid = Some(extend_u7(self.extended_pid, b));
         }
+
+        // A wider wire ID is zero-extended after a width change. Preserve the
+        // offset from earlier short-ID wraps by extending the raw-ID delta.
+        // Use the narrower width at transitions, including a late 15-bit ID
+        // parsed after a newer packet has truncated the counter to 7 bits.
+        let next = if m && (self.m || previous.is_none()) {
+            extend_u15(previous, self.picture_id)
+        } else {
+            extend_u7(previous, self.picture_id as u8)
+        };
+        self.extended_pid = Some(match self.extended_pid {
+            Some(previous) => previous.wrapping_add(next.wrapping_sub(previous_picture_id)),
+            None => next,
+        });
+        self.m = m;
 
         Ok(payload_index)
     }
@@ -860,6 +878,7 @@ mod test {
                 Vp9Depacketizer {
                     i: true,
                     picture_id: 0x01FF,
+                    m: true,
                     extended_pid: Some(0x01FF),
                     ..Default::default()
                 },
@@ -1120,6 +1139,7 @@ mod test {
                     f: true,
                     b: true,
                     picture_id: 17,
+                    m: true,
                     extended_pid: Some(17),
                     pdiff: [17, 18, 127],
                     ..Default::default()

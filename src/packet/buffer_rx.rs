@@ -2073,6 +2073,43 @@ mod test {
     }
 
     #[test]
+    fn vp9_late_enhancement_before_picture_id_width_change() {
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 3);
+        let now = Instant::now();
+        let push = |buf: &mut DepacketizingBuffer, seq: u64, packet: &[u8]| {
+            let mut meta = test_meta(now, seq, seq * 3000, 0);
+            meta.header.marker = true;
+            buf.push(meta, packet);
+        };
+        let pop = |buf: &mut DepacketizingBuffer, expected: u64| {
+            let dep = buf.pop(now, None).expect("frame must be emitted").unwrap();
+            let CodecExtra::Vp9(extra) = dep.codec_extra else {
+                panic!("expected VP9 codec extra");
+            };
+            assert_eq!(extra.picture_id, Some(expected));
+            assert!(dep.contiguous);
+        };
+
+        // Base picture 0x1bbe, followed by two enhancement pictures on the same TL0.
+        push(&mut buf, 0, &[0xAC, 0x9B, 0xBE, 0x00, 10, 0x80]);
+        pop(&mut buf, 0x1BBE);
+
+        // The sender truncates the 15-bit counter to 7 bits on picture 0x1bc0.
+        push(&mut buf, 2, &[0xEC, 0x40, 0x20, 10, 0x84]);
+        assert!(buf.pop(now, None).is_none());
+
+        // The missing enhancement still has a 15-bit ID and must remain decodable.
+        push(&mut buf, 1, &[0xEC, 0x9B, 0xBF, 0x20, 10, 0x84]);
+        pop(&mut buf, 0x1BBF);
+        pop(&mut buf, 0x1BC0);
+
+        // Growing the wire ID again must retain the truncated high bits.
+        push(&mut buf, 3, &[0xEC, 0x80, 0x41, 0x20, 10, 0x84]);
+        pop(&mut buf, 0x1BC1);
+    }
+
+    #[test]
     fn vp9_late_frame_before_picture_id_wrap() {
         fn frame(pid: u16, tl0: u8) -> [u8; 6] {
             // I=1 P=1 L=1 B=1 E=1, 15-bit picture id, TID=0, tl0picidx
