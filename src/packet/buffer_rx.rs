@@ -2118,6 +2118,42 @@ mod test {
     }
 
     #[test]
+    fn vp9_late_enhancement_after_rejected_width_change() {
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 3);
+        let now = Instant::now();
+        let push = |buf: &mut DepacketizingBuffer, seq: u64, packet: &[u8]| {
+            let mut meta = test_meta(now, seq, seq * 3000, 0);
+            meta.header.marker = true;
+            buf.push(meta, packet);
+        };
+
+        push(&mut buf, 0, &[0xAC, 0x9B, 0xBE, 0x00, 10, 0x80]);
+        assert!(buf.pop(now, None).unwrap().unwrap().contiguous);
+
+        // The missing enhancement still has a 15-bit ID. Later enhancements
+        // use 7 bits and fill the hold-back window, so picture 0x1bc0 is parsed
+        // and rejected because its predecessor has not arrived.
+        for seq in 2..=4 {
+            push(&mut buf, seq, &[0xEC, 0x3E + seq as u8, 0x20, 10, 0x84]);
+        }
+        assert!(buf.pop(now, None).is_none());
+
+        // This picture directly follows the last emitted picture and remains
+        // decodable. It must not inherit the rejected later picture's width.
+        push(&mut buf, 1, &[0xEC, 0x9B, 0xBF, 0x20, 10, 0x84]);
+        let dep = buf
+            .pop(now, None)
+            .expect("late enhancement is decodable")
+            .unwrap();
+        let CodecExtra::Vp9(extra) = dep.codec_extra else {
+            panic!("expected VP9 codec extra");
+        };
+        assert_eq!(extra.picture_id, Some(0x1BBF));
+        assert!(dep.contiguous);
+    }
+
+    #[test]
     fn vp9_late_frame_before_picture_id_wrap() {
         fn frame(pid: u16, tl0: u8) -> [u8; 6] {
             // I=1 P=1 L=1 B=1 E=1, 15-bit picture id, TID=0, tl0picidx
