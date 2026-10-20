@@ -405,6 +405,13 @@ impl DepacketizingBuffer {
         self.consume_segment(stop);
 
         if !can_emit {
+            if matches!(self.depack, CodecDepacketizer::Vp9(_)) {
+                // Keep the counters in RTP order after committing a rejected range.
+                self.last_processed = Some(
+                    self.last_processed
+                        .map_or(LastProcessed::Advanced(last), |p| p.with_seq_no(last)),
+                );
+            }
             return None;
         }
 
@@ -2118,7 +2125,7 @@ mod test {
     }
 
     #[test]
-    fn vp9_late_enhancement_after_rejected_width_change() {
+    fn vp9_discards_late_enhancement_after_rejected_width_change() {
         let mut buf =
             DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 3);
         let now = Instant::now();
@@ -2138,19 +2145,52 @@ mod test {
             push(&mut buf, seq, &[0xEC, 0x3E + seq as u8, 0x20, 10, 0x84]);
         }
         assert!(buf.pop(now, None).is_none());
+        assert_eq!(*buf.last_processed.unwrap().seq_no(), 2);
 
-        // This picture directly follows the last emitted picture and remains
-        // decodable. It must not inherit the rejected later picture's width.
+        // Rejecting the later picture closes its RTP range, so this older
+        // enhancement is discarded without rewinding the counters.
         push(&mut buf, 1, &[0xEC, 0x9B, 0xBF, 0x20, 10, 0x84]);
-        let dep = buf
-            .pop(now, None)
-            .expect("late enhancement is decodable")
-            .unwrap();
-        let CodecExtra::Vp9(extra) = dep.codec_extra else {
-            panic!("expected VP9 codec extra");
+        assert_eq!(*buf.queue.front().unwrap().meta.seq_no, 3);
+        assert!(buf.pop(now, Some(Duration::ZERO)).is_none());
+        assert!(buf.queue.is_empty());
+
+        // A following base frame and its enhancement retain the correct IDs.
+        for (seq, pid, tid, expected) in [(5, 0x43, 0, 0x1BC3), (6, 0x44, 1, 0x1BC4)] {
+            push(&mut buf, seq, &[0xEC, 0x80, pid, tid << 5, 11, 0x84]);
+            let dep = buf.pop(now, None).unwrap().unwrap();
+            let CodecExtra::Vp9(extra) = dep.codec_extra else {
+                panic!("expected VP9 codec extra");
+            };
+            assert_eq!(extra.picture_id, Some(expected));
+            assert!(dep.contiguous);
+        }
+    }
+
+    #[test]
+    fn vp9_rejection_preserves_pending_timeout_discontinuity() {
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 3);
+        let now = Instant::now();
+        let push = |buf: &mut DepacketizingBuffer, seq: u64, packet: &[u8], marker: bool| {
+            let mut meta = test_meta(now, seq, seq * 3000, 0);
+            meta.header.marker = marker;
+            buf.push(meta, packet);
         };
-        assert_eq!(extra.picture_id, Some(0x1BBF));
-        assert!(dep.contiguous);
+
+        push(&mut buf, 0, &[0xAC, 1, 0x00, 1, 0x80], true);
+        assert!(buf.pop(now, None).unwrap().unwrap().contiguous);
+        push(&mut buf, 1, &[0xE8, 2, 0x00, 2, 0x84], false);
+        push(&mut buf, 3, &[0xEC, 4, 0x20, 1, 0x84], true);
+        push(&mut buf, 4, &[0xEC, 5, 0x00, 2, 0x84], true);
+
+        // Expire the incomplete frame and reject the dependent enhancement.
+        // Advancing the cutoff must retain the timeout's discontinuity.
+        let dep = buf.pop(now, Some(Duration::ZERO)).unwrap().unwrap();
+        assert_eq!(*dep.meta[0].seq_no, 4);
+        assert!(!dep.contiguous);
+
+        push(&mut buf, 5, &[0xEC, 6, 0x20, 2, 0x84], true);
+        assert!(buf.pop(now, None).unwrap().unwrap().contiguous);
     }
 
     #[test]
