@@ -880,10 +880,13 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
             })
             .collect::<Vec<_>>();
 
-        // Add a=sctp-init to the application m-line if SNAP is configured.
-        if let Some(sctp_init) = &params.local_sctp_init {
-            for line in &mut lines {
-                if line.typ.is_channel() {
+        for line in &mut lines {
+            if line.typ.is_channel() {
+                line.attrs.push(MediaAttribute::MaxMessageSize(
+                    params.local_max_message_size as usize,
+                ));
+                // Add a=sctp-init to the application m-line if SNAP is configured.
+                if let Some(sctp_init) = &params.local_sctp_init {
                     line.attrs
                         .push(sdp::MediaAttribute::SctpInit(sctp_init.clone()));
                 }
@@ -1454,9 +1457,6 @@ impl AsSdpMediaLine for (Mid, usize) {
     ) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.0));
         attrs.push(MediaAttribute::SctpPort(5000));
-        attrs.push(MediaAttribute::MaxMessageSize(
-            crate::sctp::LOCAL_MAX_MESSAGE_SIZE as usize,
-        ));
 
         MediaLine {
             typ: sdp::MediaType::Application,
@@ -1612,6 +1612,7 @@ struct AsSdpParams<'a, 'b> {
     pub setup: Setup,
     pub pending: Option<&'b Changes>,
     pub local_sctp_init: Option<String>,
+    pub local_max_message_size: u32,
 }
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
@@ -1661,6 +1662,7 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             setup,
             pending,
             local_sctp_init: rtc.sctp.local_sctp_init_for_sdp(),
+            local_max_message_size: rtc.sctp.local_max_message_size(),
         }
     }
 
@@ -2672,26 +2674,24 @@ mod test {
         crate::init_crypto_default();
 
         let now = Instant::now();
-        let mut rtc1 = Rtc::new(now);
-        let mut rtc2 = Rtc::new(now);
+        let custom_max_size1 = 98304u32;
+        let custom_max_size2 = 131072u32;
+        let mut rtc1 = Rtc::builder()
+            .set_sctp_max_message_size(custom_max_size1)
+            .build(now);
+        let mut rtc2 = Rtc::builder()
+            .set_sctp_max_message_size(custom_max_size2)
+            .build(now);
 
         // Create an offer from rtc1 with a channel
         let mut change1 = rtc1.sdp_api();
         change1.add_channel("test-channel".into());
         let (offer1, pending1) = change1.apply().unwrap();
 
-        // Get the offer SDP string and modify it to have a custom max-message-size
-        let custom_max_size1 = 98304u32;
-        let sdp_string = offer1.to_sdp_string();
-        let modified_sdp = sdp_string.replace(
-            &format!("a=max-message-size:{}", crate::sctp::LOCAL_MAX_MESSAGE_SIZE),
-            &format!("a=max-message-size:{}", custom_max_size1),
-        );
-
-        let modified_offer =
-            SdpOffer::from_sdp_string(&modified_sdp).expect("modified SDP should parse");
-
-        let answer = rtc2.sdp_api().accept_offer(modified_offer).unwrap();
+        let offer_sdp = offer1.to_sdp_string();
+        assert!(offer_sdp.contains(&format!("a=max-message-size:{custom_max_size1}\r\n")));
+        let offer = SdpOffer::from_sdp_string(&offer_sdp).unwrap();
+        let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
 
         // Verify that rtc2's SCTP send limit is set to the custom value from rtc1's offer
         assert_eq!(
@@ -2701,25 +2701,41 @@ mod test {
         );
 
         // Now verify the reverse: rtc1 accepts rtc2's answer and applies its max-message-size
-        let custom_max_size2 = 131072u32;
-        let sdp_string = answer.to_sdp_string();
-        let modified_sdp = sdp_string.replace(
-            &format!("a=max-message-size:{}", crate::sctp::LOCAL_MAX_MESSAGE_SIZE),
-            &format!("a=max-message-size:{}", custom_max_size2),
-        );
+        let answer_sdp = answer.to_sdp_string();
+        assert!(answer_sdp.contains(&format!("a=max-message-size:{custom_max_size2}\r\n")));
+        let answer = SdpAnswer::from_sdp_string(&answer_sdp).unwrap();
 
-        let modified_answer =
-            SdpAnswer::from_sdp_string(&modified_sdp).expect("modified SDP should parse");
-
-        rtc1.sdp_api()
-            .accept_answer(pending1, modified_answer)
-            .unwrap();
+        rtc1.sdp_api().accept_answer(pending1, answer).unwrap();
 
         assert_eq!(
             rtc1.sctp.remote_max_message_size(),
             custom_max_size2,
             "rtc1 should have remote max message size set to rtc2's advertised value"
         );
+
+        let mut change = rtc1.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, pending) = change.apply().unwrap();
+        assert_eq!(
+            offer
+                .media_lines
+                .iter()
+                .find(|m| m.typ.is_channel())
+                .unwrap()
+                .max_message_size(),
+            Some(custom_max_size1 as usize)
+        );
+        let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
+        assert_eq!(
+            answer
+                .media_lines
+                .iter()
+                .find(|m| m.typ.is_channel())
+                .unwrap()
+                .max_message_size(),
+            Some(custom_max_size2 as usize)
+        );
+        rtc1.sdp_api().accept_answer(pending, answer).unwrap();
     }
 
     #[test]

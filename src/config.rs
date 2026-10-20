@@ -52,6 +52,7 @@ pub struct RtcConfig {
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
     pub(crate) sctp_max_buffered_amount: usize,
+    pub(crate) sctp_max_message_size: u32,
     pub(crate) rtp_mode: bool,
     pub(crate) enable_raw_packets: bool,
     pub(crate) dtls_version: DtlsVersion,
@@ -723,6 +724,35 @@ impl RtcConfig {
         self.sctp_max_buffered_amount
     }
 
+    /// Sets the maximum data channel message size this peer can receive, in bytes.
+    ///
+    /// This limit is advertised in SDP as `a=max-message-size` and applied to SCTP,
+    /// including when using the direct API or SNAP. It does not change the remote
+    /// peer's receive limit or the local send buffer limit.
+    ///
+    /// The SCTP receive storage budget is at least 1 MiB and large enough to
+    /// reassemble one message at this limit. Storage is allocated as data arrives.
+    ///
+    /// A value of 0 advertises unlimited message size, subject to local capacity.
+    /// Internally, both the message limit and receive storage budget are `u32::MAX`.
+    ///
+    /// Defaults to 256 KiB.
+    pub fn set_sctp_max_message_size(mut self, bytes: u32) -> Self {
+        self.sctp_max_message_size = bytes;
+        self
+    }
+
+    /// Returns the maximum data channel message size this peer can receive, in bytes.
+    ///
+    /// ```
+    /// # use str0m::RtcConfig;
+    /// let config = RtcConfig::new().set_sctp_max_message_size(512 * 1024);
+    /// assert_eq!(config.sctp_max_message_size(), 512 * 1024);
+    /// ```
+    pub fn sctp_max_message_size(&self) -> u32 {
+        self.sctp_max_message_size
+    }
+
     /// Make the entire Rtc be in RTP mode.
     ///
     /// This means all media, read from [`RtpPacket`][crate::rtp::RtpPacket] and written to
@@ -902,6 +932,7 @@ impl Default for RtcConfig {
             send_buffer_audio: 50,
             send_buffer_video: 1000,
             sctp_max_buffered_amount: crate::sctp::DEFAULT_MAX_BUFFERED_AMOUNT,
+            sctp_max_message_size: crate::sctp::LOCAL_MAX_MESSAGE_SIZE,
             rtp_mode: false,
             enable_raw_packets: false,
             dtls_version: DtlsVersion::Dtls12,
@@ -915,6 +946,18 @@ impl Default for RtcConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sctp_max_message_size_round_trips() {
+        assert_eq!(
+            RtcConfig::default().sctp_max_message_size(),
+            crate::sctp::LOCAL_MAX_MESSAGE_SIZE
+        );
+        for bytes in [0, 32 * 1024, 512 * 1024, u32::MAX] {
+            let config = RtcConfig::new().set_sctp_max_message_size(bytes);
+            assert_eq!(config.clone().sctp_max_message_size(), bytes);
+        }
+    }
 
     #[test]
     fn enable_comfort_noise_updates_codec_config() {

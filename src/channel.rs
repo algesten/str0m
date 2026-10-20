@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn negotiated_stream_id_cannot_overlap_held_generation() {
-        let sctp = RtcSctp::new(1200);
+        let sctp = RtcSctp::new(1200, crate::sctp::LOCAL_MAX_MESSAGE_SIZE);
         let mut handler = ChannelHandler::default();
         let config = ChannelConfig {
             negotiated: Some(4),
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn negotiated_stream_keeps_config_while_waiting_for_reset() {
-        let mut sctp = RtcSctp::new(1200);
+        let mut sctp = RtcSctp::new(1200, crate::sctp::LOCAL_MAX_MESSAGE_SIZE);
         let mut handler = ChannelHandler::default();
         let config = ChannelConfig {
             label: "replacement".into(),
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn negotiated_stream_waiting_for_reset_does_not_spin_timeout() {
         let now = Instant::now();
-        let mut sctp = RtcSctp::new(1200);
+        let mut sctp = RtcSctp::new(1200, crate::sctp::LOCAL_MAX_MESSAGE_SIZE);
         sctp.init(true, now, None, None).unwrap();
 
         let mut handler = ChannelHandler::default();
@@ -628,7 +628,7 @@ mod tests {
 
     #[test]
     fn stream_id_remains_held_without_reset_completion() {
-        let sctp = RtcSctp::new(1200);
+        let sctp = RtcSctp::new(1200, crate::sctp::LOCAL_MAX_MESSAGE_SIZE);
         let mut handler = ChannelHandler::default();
 
         let id = handler.new_channel(&Default::default());
@@ -687,7 +687,7 @@ mod tests {
     /// hanging is not.
     #[test]
     fn stream_id_space_exhausted_by_remote() {
-        let sctp = RtcSctp::new(1200);
+        let sctp = RtcSctp::new(1200, crate::sctp::LOCAL_MAX_MESSAGE_SIZE);
         let base: u16 = if sctp.is_client() { 0 } else { 1 };
 
         let mut handler = ChannelHandler {

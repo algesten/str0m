@@ -78,6 +78,101 @@ pub fn data_channel() -> Result<(), RtcError> {
     Ok(())
 }
 
+#[test]
+fn data_channel_configured_max_message_size() -> Result<(), RtcError> {
+    init_crypto_default();
+
+    for snap in [false, true] {
+        for (left_limit, right_limit) in [
+            (32 * 1024, 48 * 1024),
+            (384 * 1024, 512 * 1024),
+            (2 * 1024 * 1024, 3 * 1024 * 1024),
+            (0, 384 * 1024),
+        ] {
+            let now = Instant::now();
+            let build = |limit| {
+                Rtc::builder()
+                    .set_snap_enabled(snap)
+                    .set_sctp_max_message_size(limit)
+                    .set_sctp_max_buffered_amount(4 * 1024 * 1024)
+                    .build(now)
+            };
+            let mut l = TestRtc::new_with_rtc(tracing::info_span!("L"), build(left_limit));
+            let mut r = TestRtc::new_with_rtc(tracing::info_span!("R"), build(right_limit));
+            l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+            r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+            let mut change = l.sdp_api();
+            let cid = change.add_channel("custom-limit".into());
+            let (offer, pending) = change.apply().unwrap();
+            let offer_sdp = offer.to_sdp_string();
+            assert!(offer_sdp.contains(&format!("a=max-message-size:{left_limit}\r\n")));
+            assert_eq!(offer_sdp.contains("a=sctp-init:"), snap);
+            let answer = r.sdp_api().accept_offer(offer)?;
+            assert!(
+                answer
+                    .to_sdp_string()
+                    .contains(&format!("a=max-message-size:{right_limit}\r\n"))
+            );
+            l.sdp_api().accept_answer(pending, answer)?;
+
+            while l.channel(cid).is_none() || r.channel(cid).is_none() {
+                progress(&mut l, &mut r)?;
+                assert!(
+                    l.duration() < Duration::from_secs(10),
+                    "channel should open"
+                );
+            }
+
+            let to_right = vec![1; right_limit as usize];
+            let to_left = vec![
+                2;
+                if left_limit == 0 {
+                    2 * 1024 * 1024
+                } else {
+                    left_limit as usize
+                }
+            ];
+            assert!(
+                l.channel(cid)
+                    .unwrap()
+                    .write(true, &vec![0; right_limit as usize + 1])
+                    .is_err()
+            );
+            if left_limit != 0 {
+                assert!(
+                    r.channel(cid)
+                        .unwrap()
+                        .write(true, &vec![0; left_limit as usize + 1])
+                        .is_err()
+                );
+            }
+            assert!(l.channel(cid).unwrap().write(true, &to_right)?);
+            assert!(r.channel(cid).unwrap().write(true, &to_left)?);
+
+            loop {
+                progress(&mut l, &mut r)?;
+                let left_received = l
+                    .events
+                    .iter()
+                    .any(|(_, e)| matches!(e, Event::ChannelData(data) if data.data == to_left));
+                let right_received = r
+                    .events
+                    .iter()
+                    .any(|(_, e)| matches!(e, Event::ChannelData(data) if data.data == to_right));
+                if left_received && right_received {
+                    break;
+                }
+                assert!(
+                    l.duration() < Duration::from_secs(20),
+                    "messages at the configured receive limits should arrive (SNAP: {snap})"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Closing a data channel must propagate to the remote peer (via the SCTP
 /// stream reset handshake), and once the handshake completes the freed stream
 /// id must be reusable by a new in-band channel.
@@ -400,6 +495,42 @@ fn received_bytes(rtc: &TestRtc) -> usize {
             _ => None,
         })
         .sum()
+}
+
+#[test]
+fn data_channel_direct_configured_receive_limit() -> Result<(), RtcError> {
+    init_crypto_default();
+
+    const LIMIT: usize = 32 * 1024;
+    let (mut l, mut r, cid) =
+        connect_with_channel(|config| config.set_sctp_max_message_size(LIMIT as u32))?;
+
+    let message = vec![1; LIMIT];
+    assert!(l.channel(cid).unwrap().write(true, &message)?);
+    assert!(r.channel(cid).unwrap().write(true, &message)?);
+    while received_bytes(&l) < LIMIT || received_bytes(&r) < LIMIT {
+        progress(&mut l, &mut r)?;
+        assert!(l.duration() < Duration::from_secs(10));
+    }
+
+    // The direct API has no SDP, so send limits remain at the 64 KiB default.
+    // Messages above our configured receive limit must still be dropped.
+    let oversized = vec![2; LIMIT + 1];
+    assert!(l.channel(cid).unwrap().write(true, &oversized)?);
+    assert!(r.channel(cid).unwrap().write(true, &oversized)?);
+    let start = l.duration();
+    while l.duration() - start < Duration::from_secs(1) {
+        progress(&mut l, &mut r)?;
+    }
+    for rtc in [&l, &r] {
+        assert_eq!(received_bytes(rtc), LIMIT);
+        assert!(
+            rtc.events
+                .iter()
+                .any(|(_, e)| matches!(e, Event::ChannelData(data) if data.data == message))
+        );
+    }
+    Ok(())
 }
 
 /// Keeps the send buffer full of 60 KiB messages for 3 seconds, then checks that all
