@@ -1,6 +1,7 @@
 # Unreleased
 
   * Include authenticated early RTX padding in TWCC feedback and ingress loss accounting #1086
+  * Make the SCTP receive message size configurable for data channels #1083
   * Reduce RTX receive memory use with a 128-position sequence window #1089
   * Rate-limit SRTP/SRTCP decryption warnings #1088
   * Send pending keyframe and REMB requests without waiting for unrelated timers #1081
