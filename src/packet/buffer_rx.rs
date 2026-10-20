@@ -151,22 +151,6 @@ impl LastProcessed {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Vp9PictureIds {
-    picture_id: u16,
-    extended_pid: Option<u64>,
-    tl0picidx: u8,
-    extended_tl0picidx: Option<u64>,
-}
-
-#[derive(Debug)]
-struct DepacketizingCache {
-    range: Range<usize>,
-    depacketized: Depacketized,
-    // Restore counters if earlier packets invalidate speculative depacketization.
-    vp9_picture_ids: Option<Vp9PictureIds>,
-}
-
 #[derive(Debug)]
 pub struct DepacketizingBuffer {
     hold_back: usize,
@@ -180,7 +164,7 @@ pub struct DepacketizingBuffer {
     segment_rebuilds: usize,
     last_processed: Option<LastProcessed>,
     max_time: Option<MediaTime>,
-    depack_cache: Option<DepacketizingCache>,
+    depack_cache: Option<(Range<usize>, Depacketized)>,
     contiguity: Contiguity,
 }
 
@@ -261,7 +245,7 @@ impl DepacketizingBuffer {
                         return;
                     }
                     self.queue.pop_front();
-                    self.clear_depack_cache();
+                    self.depack_cache = None;
                     i -= 1;
                 }
 
@@ -286,9 +270,9 @@ impl DepacketizingBuffer {
 
                 // The depack cache is keyed by queue index. Inserting at or before the cached
                 // segment shifts it, so the cache would answer for the wrong packets.
-                if let Some(cache) = &self.depack_cache {
-                    if i <= cache.range.end {
-                        self.clear_depack_cache();
+                if let Some((range, _)) = &self.depack_cache {
+                    if i <= range.end {
+                        self.depack_cache = None;
                     }
                 }
             }
@@ -323,7 +307,7 @@ impl DepacketizingBuffer {
                     let last = self.queue[end - 1].meta.seq_no;
                     self.queue.drain(0..end);
                     self.segments_dirty = true;
-                    self.clear_depack_cache();
+                    self.depack_cache = None;
                     self.last_processed = Some(LastProcessed::Expired(last));
                 }
                 return None;
@@ -360,18 +344,6 @@ impl DepacketizingBuffer {
             last.meta.seq_no
         };
 
-        // depack ahead, even if we may not emit right away
-        let (mut dep, vp9_picture_ids) = match self.depacketize(start, stop, seq) {
-            Ok(d) => d,
-            Err(e) => {
-                // this segment cannot be decoded correctly
-                // remove from the queue and return the error
-                self.last_processed = Some(LastProcessed::Advanced(seq));
-                self.consume_segment(stop);
-                return Some(Err(e));
-            }
-        };
-
         // If we have contiguity of seq numbers we emit right away,
         // Otherwise, we wait for retransmissions up to `hold_back` frames
         // and re-evaluate contiguity based on codec specific information
@@ -383,13 +355,28 @@ impl DepacketizingBuffer {
             && !more_than_hold_back
             && !self.timeout_allows_progress(now, first_received, reordering_timeout);
 
+        // VP9 picture-ID width changes must be extended in RTP order.
+        // Wait before parsing so a later frame cannot advance the counters first.
+        if wait_for_contiguity && matches!(self.depack, CodecDepacketizer::Vp9(_)) {
+            self.discard_old_padding();
+            return None;
+        }
+
+        // depack ahead, even if we may not emit right away
+        let mut dep = match self.depacketize(start, stop, seq) {
+            Ok(d) => d,
+            Err(e) => {
+                // this segment cannot be decoded correctly
+                // remove from the queue and return the error
+                self.last_processed = Some(LastProcessed::Advanced(seq));
+                self.consume_segment(stop);
+                return Some(Err(e));
+            }
+        };
+
         if wait_for_contiguity {
             // if we are not sending, cache the depacked
-            self.depack_cache = Some(DepacketizingCache {
-                range: start..stop,
-                depacketized: dep,
-                vp9_picture_ids,
-            });
+            self.depack_cache = Some((start..stop, dep));
             self.discard_old_padding();
             return None;
         }
@@ -436,7 +423,7 @@ impl DepacketizingBuffer {
         );
         entry.meta.header.marker = false;
         self.segments_dirty = true;
-        self.clear_depack_cache();
+        self.depack_cache = None;
     }
 
     pub(crate) fn poll_timeout(&mut self, reordering_timeout: Option<Duration>) -> Option<Instant> {
@@ -506,7 +493,7 @@ impl DepacketizingBuffer {
 
         if self.queue.len() != original_len {
             self.segments_dirty = true;
-            self.clear_depack_cache();
+            self.depack_cache = None;
         }
     }
 
@@ -524,44 +511,18 @@ impl DepacketizingBuffer {
             .is_some_and(|age| age >= timeout)
     }
 
-    fn clear_depack_cache(&mut self) {
-        if let Some(cache) = self.depack_cache.take() {
-            self.restore_vp9_picture_ids(cache.vp9_picture_ids);
-        }
-    }
-
-    fn restore_vp9_picture_ids(&mut self, ids: Option<Vp9PictureIds>) {
-        if let (CodecDepacketizer::Vp9(depack), Some(ids)) = (&mut self.depack, ids) {
-            depack.picture_id = ids.picture_id;
-            depack.extended_pid = ids.extended_pid;
-            depack.tl0picidx = ids.tl0picidx;
-            depack.extended_tl0picidx = ids.extended_tl0picidx;
-        }
-    }
-
     fn depacketize(
         &mut self,
         start: usize,
         stop: usize,
         _seq: SeqNo,
-    ) -> Result<(Depacketized, Option<Vp9PictureIds>), PacketError> {
+    ) -> Result<Depacketized, PacketError> {
         if let Some(cached) = self.depack_cache.take() {
-            if cached.range == (start..stop) {
+            if cached.0 == (start..stop) {
                 trace!("depack cache hit for segment start {}", start);
-                return Ok((cached.depacketized, cached.vp9_picture_ids));
+                return Ok(cached.1);
             }
-            self.restore_vp9_picture_ids(cached.vp9_picture_ids);
         }
-
-        let vp9_picture_ids = match &self.depack {
-            CodecDepacketizer::Vp9(depack) => Some(Vp9PictureIds {
-                picture_id: depack.picture_id,
-                extended_pid: depack.extended_pid,
-                tl0picidx: depack.tl0picidx,
-                extended_tl0picidx: depack.extended_tl0picidx,
-            }),
-            _ => None,
-        };
 
         let packets_size = self
             .queue
@@ -584,16 +545,13 @@ impl DepacketizingBuffer {
             meta.push(entry.meta.clone());
         }
 
-        Ok((
-            Depacketized {
-                time,
-                contiguous: true, // the caller taking ownership will modify this accordingly
-                meta,
-                data,
-                codec_extra,
-            },
-            vp9_picture_ids,
-        ))
+        Ok(Depacketized {
+            time,
+            contiguous: true, // the caller taking ownership will modify this accordingly
+            meta,
+            data,
+            codec_extra,
+        })
     }
 
     fn first_segment(&self) -> Option<(usize, usize, Instant)> {
@@ -2185,10 +2143,9 @@ mod test {
         let dep = buf.pop(base, None).unwrap().unwrap();
         assert_eq!(picture_id(&dep), Some(0x7FFE));
 
-        // The frame after the wrap is depacketized ahead while the late frame is missing.
+        // The frame after the wrap waits while the late frame is missing.
         push(&mut buf, 2, frame(0, 0));
         assert!(buf.pop(base, None).is_none());
-        assert!(buf.depack_cache.is_some());
 
         push(&mut buf, 1, frame(0x7FFF, 255));
         let dep = buf.pop(base, None).unwrap().unwrap();
