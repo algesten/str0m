@@ -730,7 +730,11 @@ impl RtcConfig {
     /// including when using the direct API or SNAP. It does not change the remote
     /// peer's receive limit or the local send buffer limit.
     ///
+    /// The SCTP receive storage budget is at least 1 MiB and large enough to
+    /// reassemble one message at this limit. Storage is allocated as data arrives.
+    ///
     /// A value of 0 advertises unlimited message size, subject to local capacity.
+    /// Internally, both the message limit and receive storage budget are `u32::MAX`.
     ///
     /// Defaults to 256 KiB.
     pub fn set_sctp_max_message_size(mut self, bytes: u32) -> Self {

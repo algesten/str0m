@@ -19,10 +19,14 @@ pub(super) fn webrtc_transport_config(local_max_message_size: u32) -> Arc<Transp
     } else {
         local_max_message_size
     };
+    // SCTP delivers whole messages, so reassembly needs room for one message.
+    // Retain the default 1 MiB receive budget unless the message limit is larger.
+    let max_receive_buffer_size = max_receive_message_size.max(1024 * 1024);
     Arc::new(
         TransportConfig::default()
             .with_max_init_retransmits(None)
             .with_max_data_retransmits(None)
+            .with_max_receive_buffer_size(max_receive_buffer_size)
             .with_max_receive_message_size(max_receive_message_size),
     )
 }

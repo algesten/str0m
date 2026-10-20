@@ -86,6 +86,7 @@ fn data_channel_configured_max_message_size() -> Result<(), RtcError> {
         for (left_limit, right_limit) in [
             (32 * 1024, 48 * 1024),
             (384 * 1024, 512 * 1024),
+            (2 * 1024 * 1024, 3 * 1024 * 1024),
             (0, 384 * 1024),
         ] {
             let now = Instant::now();
@@ -93,7 +94,7 @@ fn data_channel_configured_max_message_size() -> Result<(), RtcError> {
                 Rtc::builder()
                     .set_snap_enabled(snap)
                     .set_sctp_max_message_size(limit)
-                    .set_sctp_max_buffered_amount(1024 * 1024)
+                    .set_sctp_max_buffered_amount(4 * 1024 * 1024)
                     .build(now)
             };
             let mut l = TestRtc::new_with_rtc(tracing::info_span!("L"), build(left_limit));
@@ -127,7 +128,7 @@ fn data_channel_configured_max_message_size() -> Result<(), RtcError> {
             let to_left = vec![
                 2;
                 if left_limit == 0 {
-                    384 * 1024
+                    2 * 1024 * 1024
                 } else {
                     left_limit as usize
                 }
