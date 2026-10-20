@@ -938,11 +938,6 @@ impl StreamRx {
         true
     }
 
-    pub(crate) fn set_rtx_register(&mut self, rtx: Ssrc, register: ReceiverRegister) {
-        self.maybe_reset_rtx(rtx);
-        self.register_rtx = Some(register);
-    }
-
     pub(crate) fn maybe_reset_rtx(&mut self, rtx: Ssrc) {
         if let Some(current) = self.rtx {
             if current == rtx {

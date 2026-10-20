@@ -426,10 +426,6 @@ impl Streams {
         }
     }
 
-    pub(crate) fn is_receiving(&self) -> bool {
-        !self.streams_rx.is_empty()
-    }
-
     pub(crate) fn handle_timeout(
         &mut self,
         now: Instant,
