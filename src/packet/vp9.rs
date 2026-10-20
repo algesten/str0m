@@ -1555,6 +1555,33 @@ mod test {
     }
 
     #[test]
+    fn depacketizer_preserves_picture_id_epoch_when_width_grows() {
+        let mut depack = Vp9Depacketizer::default();
+        for (pid, expected) in [(126_u8, 126_u64), (127, 127), (0, 128), (1, 129)] {
+            let extra = depacketize_one(&mut depack, &[0x8C, pid, 0xAA]);
+            assert_eq!(extra.picture_id, Some(expected));
+        }
+        // RFC 9628 section 4.2: transitioning to 15 bits zero-extends the wire ID.
+        let extra = depacketize_one(&mut depack, &[0x8C, 0x80, 2, 0xAA]);
+        assert_eq!(extra.picture_id, Some(130));
+    }
+
+    #[test]
+    fn depacketizing_buffer_emits_frames_when_picture_id_width_grows() {
+        let frames = [
+            vec![vec![0xAC, 126, 0, 10, 0x80]],
+            vec![vec![0xEC, 127, 0, 11, 0x84]],
+            // A keyframe at the short-ID wrap lets the pre-PR code resynchronize.
+            vec![vec![0xAC, 0, 0, 12, 0x80]],
+            vec![vec![0xEC, 1, 0, 13, 0x84]],
+            // The following picture has wire ID 0x0002 and M=1.
+            vec![vec![0xEC, 0x80, 2, 0, 14, 0x84]],
+            vec![vec![0xEC, 0x80, 3, 0, 15, 0x84]],
+        ];
+        assert_every_frame_emitted(frames);
+    }
+
+    #[test]
     fn test_vp9_packetizer_flexible_mode() -> Result<(), PacketError> {
         let mut rands = vec![];
         for r0 in 8692..8702 {
