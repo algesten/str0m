@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Never give two m-lines in one offer the same mid #1092
   * Preserve VP8 picture ids across 7/15-bit width changes and keep VP8 counters in RTP order #1096
   * Remove SDP `merge()`; applications must track queued negotiation changes (breaking) #1095
   * Expose dimpl crypto providers for AWS-LC-RS and Apple CommonCrypto #1094
