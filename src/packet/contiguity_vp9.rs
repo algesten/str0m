@@ -4,10 +4,10 @@ use super::contiguity::FrameContiguityState;
 #[derive(Debug, Default)]
 pub struct Vp9Contiguity {
     /// last picture id of layer 0 that we allowed emitting
-    last_tl0_picture_id: Option<u8>,
+    last_tl0_picture_id: Option<u64>,
 
     /// last picture id of any layer that we allowed emitting
-    last_picture_id: Option<u16>,
+    last_picture_id: Option<u64>,
 }
 
 impl Vp9Contiguity {
@@ -21,8 +21,8 @@ impl Vp9Contiguity {
     pub fn check(&mut self, next: &Vp9CodecExtra, contiguous_seq: bool) -> (bool, bool) {
         let mut frame_state: FrameContiguityState = self.into();
         let res = frame_state.next_frame(
-            Some(next.pid.into()),
-            next.tl0_picture_id.map(Into::into),
+            next.picture_id,
+            next.tl0_picture_id,
             next.tid.map(Into::into),
             next.is_keyframe,
             contiguous_seq,
@@ -36,8 +36,8 @@ impl Vp9Contiguity {
 impl From<&mut Vp9Contiguity> for FrameContiguityState {
     fn from(value: &mut Vp9Contiguity) -> Self {
         Self {
-            last_picture_id: value.last_picture_id.map(Into::into),
-            last_tl0_picture_id: value.last_tl0_picture_id.map(Into::into),
+            last_picture_id: value.last_picture_id,
+            last_tl0_picture_id: value.last_tl0_picture_id,
         }
     }
 }
@@ -45,8 +45,8 @@ impl From<&mut Vp9Contiguity> for FrameContiguityState {
 impl From<FrameContiguityState> for Vp9Contiguity {
     fn from(value: FrameContiguityState) -> Self {
         Self {
-            last_picture_id: value.last_picture_id.and_then(|v| v.try_into().ok()),
-            last_tl0_picture_id: value.last_tl0_picture_id.and_then(|v| v.try_into().ok()),
+            last_picture_id: value.last_picture_id,
+            last_tl0_picture_id: value.last_tl0_picture_id,
         }
     }
 }
@@ -62,9 +62,9 @@ mod test {
 
     fn get_codec_extra(pid: u16, tid: u8, tl0_picture_id: u8) -> Vp9CodecExtra {
         Vp9CodecExtra {
-            pid,
+            picture_id: Some(pid.into()),
             tid: Some(tid),
-            tl0_picture_id: Some(tl0_picture_id),
+            tl0_picture_id: Some(tl0_picture_id.into()),
             ..Default::default()
         }
     }

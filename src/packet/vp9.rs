@@ -1,4 +1,5 @@
 use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
+use crate::rtp_::{extend_u7, extend_u8, extend_u15};
 
 use std::fmt;
 
@@ -102,10 +103,10 @@ pub struct Vp9CodecExtra {
     pub layers_heights: [Option<u16>; MAX_SPATIAL_LAYERS],
 
     /// Extended picture id of layer 0 frames, if present
-    pub tl0_picture_id: Option<u8>,
+    pub tl0_picture_id: Option<u64>,
 
-    /// Picture ID.
-    pub pid: u16,
+    /// Extended picture id, if present
+    pub picture_id: Option<u64>,
 
     /// Flag which indicates that within [`MediaData`], there is an individual frame
     /// containing complete and independent visual information. This frame serves
@@ -434,8 +435,10 @@ pub struct Vp9Depacketizer {
     pub z: bool,
 
     /// Recommended headers
-    /// 7 or 16 bits, picture ID.
+    /// 7 or 15 bits, picture ID.
     pub picture_id: u16,
+    /// extended picture id
+    pub extended_pid: Option<u64>,
 
     /// Conditionally recommended headers
     /// Temporal layer ID
@@ -452,6 +455,8 @@ pub struct Vp9Depacketizer {
     pub pdiff: [u8; MAX_VP9REF_PICS],
     /// Temporal layer zero index (F=0)
     pub tl0picidx: u8,
+    /// extended version of tl0picidx
+    pub extended_tl0picidx: Option<u64>,
 
     /// Scalability structure headers
     /// N_S + 1 indicates the number of spatial layers present in the VP9 stream
@@ -568,11 +573,15 @@ impl Vp9Depacketizer {
             vp9_extra.tid = Some(self.tid);
 
             if !self.f {
-                vp9_extra.tl0_picture_id = Some(self.tl0picidx);
+                vp9_extra.tl0_picture_id = self.extended_tl0picidx;
             }
         }
 
-        vp9_extra.pid = self.picture_id;
+        // I: "Picture ID (PID) present" (RFC 9628 section 4.2). A packet without it
+        // keeps the picture id of an earlier packet of the same frame.
+        if self.i {
+            vp9_extra.picture_id = self.extended_pid;
+        }
         vp9_extra
             .layers_widths
             .copy_from_slice(&self.width[..MAX_SPATIAL_LAYERS]);
@@ -604,8 +613,10 @@ impl Vp9Depacketizer {
         }
         let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
+        let previous_picture_id = u64::from(self.picture_id);
+        let previous = self.extended_pid.map(|_| previous_picture_id);
         // PID present?
-        if (b & 0x80) != 0 {
+        let next = if (b & 0x80) != 0 {
             if reader.remaining_bits() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
@@ -613,9 +624,18 @@ impl Vp9Depacketizer {
             let x = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             self.picture_id = (((b & 0x7f) as u16) << 8) | (x as u16);
             payload_index += 1;
+            extend_u15(previous, self.picture_id)
         } else {
             self.picture_id = (b & 0x7F) as u16;
-        }
+            extend_u7(previous, b)
+        };
+
+        // A wider wire ID is zero-extended after a width change. Preserve the
+        // offset from earlier short-ID wraps by extending the raw-ID delta.
+        self.extended_pid = Some(match self.extended_pid {
+            Some(previous) => previous.wrapping_add(next.wrapping_sub(previous_picture_id)),
+            None => next,
+        });
 
         Ok(payload_index)
     }
@@ -680,6 +700,7 @@ impl Vp9Depacketizer {
             return Err(PacketError::ErrShortPacket);
         }
         self.tl0picidx = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
+        self.extended_tl0picidx = Some(extend_u8(self.extended_tl0picidx, self.tl0picidx));
         payload_index += 1;
         Ok(payload_index)
     }
@@ -836,6 +857,7 @@ mod test {
                 Vp9Depacketizer {
                     i: true,
                     picture_id: 0x02,
+                    extended_pid: Some(0x02),
                     ..Default::default()
                 },
                 &[0xAA],
@@ -847,6 +869,7 @@ mod test {
                 Vp9Depacketizer {
                     i: true,
                     picture_id: 0x01FF,
+                    extended_pid: Some(0x01FF),
                     ..Default::default()
                 },
                 &[0xAA],
@@ -873,10 +896,12 @@ mod test {
                     i: true,
                     l: true,
                     picture_id: 0x02,
+                    extended_pid: Some(0x02),
                     tid: 0x01,
                     sid: 0x01,
                     d: true,
                     tl0picidx: 0x01,
+                    extended_tl0picidx: Some(0x01),
                     ..Default::default()
                 },
                 &[0xAA],
@@ -890,6 +915,7 @@ mod test {
                     i: true,
                     l: true,
                     picture_id: 0x02,
+                    extended_pid: Some(0x02),
                     tid: 0x01,
                     sid: 0x01,
                     d: true,
@@ -920,6 +946,7 @@ mod test {
                     p: true,
                     f: true,
                     picture_id: 0x02,
+                    extended_pid: Some(0x02),
                     pdiff: [0x01, 0x02, 0],
                     ..Default::default()
                 },
@@ -941,6 +968,7 @@ mod test {
                     p: true,
                     f: true,
                     picture_id: 0x02,
+                    extended_pid: Some(0x02),
                     pdiff: [0x01, 0x02, 0],
                     ..Default::default()
                 },
@@ -1101,6 +1129,7 @@ mod test {
                     f: true,
                     b: true,
                     picture_id: 17,
+                    extended_pid: Some(17),
                     pdiff: [17, 18, 127],
                     ..Default::default()
                 },
@@ -1386,6 +1415,207 @@ mod test {
         assert_eq!(packets[0][4], 1);
 
         Ok(())
+    }
+
+    fn depacketize_one(depack: &mut Vp9Depacketizer, packet: &[u8]) -> Vp9CodecExtra {
+        let mut payload = Vec::new();
+        let mut extra = CodecExtra::None;
+        depack
+            .depacketize(packet, &mut payload, &mut extra)
+            .unwrap();
+        let CodecExtra::Vp9(extra) = extra else {
+            panic!("expected VP9 codec extra");
+        };
+        extra
+    }
+
+    #[test]
+    fn depacketizer_extends_picture_id_and_tl0picidx() {
+        let mut depack = Vp9Depacketizer::default();
+
+        for (pid, tl0, expected_pid, expected_tl0) in [
+            (0x7FFE_u16, 254_u8, 0x7FFE_u64, 254_u64),
+            (0x7FFF, 255, 0x7FFF, 255),
+            (0, 0, 0x8000, 256),
+            (1, 1, 0x8001, 257),
+        ] {
+            // I=1 L=1 B=1 E=1, 15-bit picture id, TID=0, tl0picidx
+            let packet = [0xAC, 0x80 | (pid >> 8) as u8, pid as u8, 0x00, tl0, 0xAA];
+            let extra = depacketize_one(&mut depack, &packet);
+            assert_eq!(extra.picture_id, Some(expected_pid), "pid {pid}");
+            assert_eq!(extra.tl0_picture_id, Some(expected_tl0), "tl0 {tl0}");
+        }
+    }
+
+    #[test]
+    fn depacketizer_extends_7_bit_picture_id() {
+        let mut depack = Vp9Depacketizer::default();
+
+        for (pid, expected) in [(126_u8, 126_u64), (127, 127), (0, 128), (1, 129)] {
+            // I=1 B=1 E=1, 7-bit picture id
+            let extra = depacketize_one(&mut depack, &[0x8C, pid, 0xAA]);
+            assert_eq!(extra.picture_id, Some(expected), "pid {pid}");
+        }
+    }
+
+    #[test]
+    fn depacketizer_reports_missing_picture_id() {
+        let mut depack = Vp9Depacketizer::default();
+
+        let extra = depacketize_one(&mut depack, &[0xAC, 0x92, 0x34, 0x00, 7, 0xAA]);
+        assert_eq!(extra.picture_id, Some(0x1234));
+
+        // I=0 L=1 B=1 E=1
+        let extra = depacketize_one(&mut depack, &[0x2C, 0x00, 8, 0xAA]);
+        assert_eq!(extra.picture_id, None);
+        assert_eq!(extra.tl0_picture_id, Some(8));
+
+        // Picture id on the first packet of the frame only
+        let mut payload = Vec::new();
+        let mut extra = CodecExtra::None;
+        depack
+            .depacketize(&[0xA8, 0x92, 0x35, 0x00, 9, 0xAA], &mut payload, &mut extra)
+            .unwrap();
+        depack
+            .depacketize(&[0x24, 0x00, 9, 0xBB], &mut payload, &mut extra)
+            .unwrap();
+        let CodecExtra::Vp9(extra) = extra else {
+            panic!("expected VP9 codec extra");
+        };
+        assert_eq!(extra.picture_id, Some(0x1235));
+    }
+
+    fn assert_every_frame_emitted(frames: impl IntoIterator<Item = Vec<Vec<u8>>>) {
+        use crate::packet::{CodecDepacketizer, DepacketizingBuffer, RtpMeta};
+        use crate::rtp_::{MediaTime, RtpHeader};
+        use std::time::Instant;
+
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 3);
+        let now = Instant::now();
+        let mut seq = 0_u64;
+
+        for (frame, packets) in frames.into_iter().enumerate() {
+            let count = packets.len();
+            let time = frame as u64 * 3000;
+
+            for (i, packet) in packets.into_iter().enumerate() {
+                let meta = RtpMeta {
+                    received: now,
+                    time: MediaTime::from_90khz(time),
+                    seq_no: seq.into(),
+                    last_sender_info: None,
+                    header: RtpHeader {
+                        sequence_number: seq as u16,
+                        timestamp: time as u32,
+                        marker: i == count - 1,
+                        ..Default::default()
+                    },
+                };
+                buf.push(meta, packet);
+                seq += 1;
+            }
+
+            let dep = buf
+                .pop(now, None)
+                .unwrap_or_else(|| panic!("frame {frame} was not emitted"))
+                .unwrap();
+            assert!(dep.contiguous, "frame {frame} is not contiguous");
+        }
+    }
+
+    #[test]
+    fn depacketizing_buffer_emits_every_frame_across_wraps() {
+        let mut pck = Vp9Packetizer {
+            initial_picture_id: 0x7FFF - 100,
+            tl0picidx: 200,
+            ..Default::default()
+        };
+        let frames: Vec<_> = (0..300)
+            .map(|frame| {
+                let first_byte = if frame == 0 { 0x80 } else { 0x84 };
+                pck.packetize(10, &[first_byte, 1, 2, 3]).unwrap()
+            })
+            .collect();
+
+        assert_every_frame_emitted(frames);
+    }
+
+    #[test]
+    fn depacketizing_buffer_emits_every_frame_with_7_bit_picture_id() {
+        // I=1 L=1 B=1 E=1 (P=1 after the first frame), 7-bit picture id, TID=0, tl0picidx
+        let frames = (0..600_u64).map(|frame| {
+            let flags = if frame == 0 { 0xAC } else { 0xEC };
+            vec![vec![flags, (frame & 0x7F) as u8, 0x00, frame as u8, 0x84]]
+        });
+
+        assert_every_frame_emitted(frames);
+    }
+
+    #[test]
+    fn depacketizing_buffer_emits_every_frame_without_picture_id() {
+        // I=0 L=1 B=1 E=1 (P=1 after the first frame), TID=0, tl0picidx
+        let frames = (0..300_u64).map(|frame| {
+            let flags = if frame == 0 { 0x2C } else { 0x6C };
+            vec![vec![flags, 0x00, frame as u8, 0x84]]
+        });
+
+        assert_every_frame_emitted(frames);
+    }
+
+    #[test]
+    fn depacketizer_preserves_picture_id_epoch_when_width_grows() {
+        let mut depack = Vp9Depacketizer::default();
+        for (pid, expected) in [(126_u8, 126_u64), (127, 127), (0, 128), (1, 129)] {
+            let extra = depacketize_one(&mut depack, &[0x8C, pid, 0xAA]);
+            assert_eq!(extra.picture_id, Some(expected));
+        }
+        // RFC 9628 section 4.2: transitioning to 15 bits zero-extends the wire ID.
+        let extra = depacketize_one(&mut depack, &[0x8C, 0x80, 2, 0xAA]);
+        assert_eq!(extra.picture_id, Some(130));
+    }
+
+    #[test]
+    fn depacketizing_buffer_emits_frames_when_picture_id_width_grows() {
+        let frames = [
+            vec![vec![0xAC, 126, 0, 10, 0x80]],
+            vec![vec![0xEC, 127, 0, 11, 0x84]],
+            // A keyframe at the short-ID wrap lets the pre-PR code resynchronize.
+            vec![vec![0xAC, 0, 0, 12, 0x80]],
+            vec![vec![0xEC, 1, 0, 13, 0x84]],
+            // The following picture has wire ID 0x0002 and M=1.
+            vec![vec![0xEC, 0x80, 2, 0, 14, 0x84]],
+            vec![vec![0xEC, 0x80, 3, 0, 15, 0x84]],
+        ];
+        assert_every_frame_emitted(frames);
+    }
+
+    #[test]
+    fn depacketizer_preserves_wide_picture_id_after_loss_at_width_growth() {
+        let mut depack = Vp9Depacketizer::default();
+        assert_eq!(
+            depacketize_one(&mut depack, &[0x8C, 0, 0xAA]).picture_id,
+            Some(0)
+        );
+        // The sender widens at PID 1; pictures 1..99 are lost in transit.
+        let extra = depacketize_one(&mut depack, &[0x8C, 0x80, 100, 0xAA]);
+        assert_eq!(extra.picture_id, Some(100));
+    }
+
+    #[test]
+    fn depacketizing_buffer_recovers_after_loss_at_picture_id_width_growth() {
+        // A middlebox drops enhancement pictures 1..99 and rewrites RTP sequence numbers.
+        // Picture 100 is a keyframe, so all following pictures are decodable.
+        let frames =
+            std::iter::once(vec![vec![0xAC, 0, 0, 0, 0x80]]).chain((100..=130_u8).map(|pid| {
+                let (flags, payload) = if pid == 100 {
+                    (0xAC, 0x80)
+                } else {
+                    (0xEC, 0x84)
+                };
+                vec![vec![flags, 0x80, pid, 0, pid - 99, payload]]
+            }));
+        assert_every_frame_emitted(frames);
     }
 
     #[test]
