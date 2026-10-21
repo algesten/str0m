@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Configure how long an ice-lite agent waits for binding requests with `RtcConfig::set_ice_lite_timeout`
   * Include authenticated early RTX padding in TWCC feedback and ingress loss accounting #1086
   * Make the SCTP receive message size configurable for data channels #1083
   * Reduce RTX receive memory use with a 128-position sequence window #1089

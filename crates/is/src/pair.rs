@@ -9,7 +9,7 @@ use str0m_proto::Id;
 use str0m_proto::Pii;
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
-const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);
+pub(crate) const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);
 
 /// A pair of candidates, local and remote, in the ice agent.
 pub struct CandidatePair {
@@ -225,11 +225,11 @@ impl CandidatePair {
         self.remote_binding_request_time
     }
 
-    pub fn is_ice_lite_alive(&self, now: Instant) -> bool {
+    pub fn is_ice_lite_alive(&self, now: Instant, ice_lite_timeout: Duration) -> bool {
         let Some(t) = self.remote_binding_request_time else {
             return true; // No timestamp yet = hasn't had a chance to fail
         };
-        now - t < RECENT_BINDING_REQUEST
+        now - t < ice_lite_timeout
     }
 
     pub fn is_nominated(&self) -> bool {
@@ -618,6 +618,26 @@ mod tests {
         let duration = now.duration_since(offline_at);
 
         assert_eq!(duration, stun_timing.timeout())
+    }
+
+    #[test]
+    fn ice_lite_alive_until_the_timeout_after_the_last_binding_request() {
+        let mut pair = CandidatePair::new(0, CandidateKind::Host, 0, CandidateKind::Host, 0);
+        let now = Instant::now();
+        let timeout = Duration::from_secs(60);
+
+        assert!(pair.is_ice_lite_alive(now + timeout * 10, timeout));
+
+        pair.increase_remote_binding_requests(now);
+
+        assert!(pair.is_ice_lite_alive(now + RECENT_BINDING_REQUEST, timeout));
+        assert!(pair.is_ice_lite_alive(now + timeout - Duration::from_millis(1), timeout));
+        assert!(!pair.is_ice_lite_alive(now + timeout, timeout));
+
+        pair.increase_remote_binding_requests(now + timeout);
+
+        assert!(pair.is_ice_lite_alive(now + timeout * 2 - Duration::from_millis(1), timeout));
+        assert!(!pair.is_ice_lite_alive(now + timeout * 2, timeout));
     }
 
     #[test]

@@ -16,7 +16,7 @@ use str0m_proto::{DATAGRAM_MTU_TARGET, DATAGRAM_MTU_WARN, Id, Transmit};
 use str0m_proto::{NonCryptographicRng, Pii, Protocol};
 
 use crate::candidate::{Candidate, CandidateKind};
-use crate::pair::{CandidatePair, CheckState, PairId};
+use crate::pair::{CandidatePair, CheckState, PairId, RECENT_BINDING_REQUEST};
 
 /// Handles the ICE protocol for a given peer.
 ///
@@ -42,6 +42,10 @@ pub struct IceAgent {
     /// incoming STUN binding requests and acting as a controlled entity in the ICE
     /// process itself.
     ice_lite: bool,
+
+    /// How long an ice-lite agent keeps a candidate pair without receiving
+    /// a binding request from the remote peer.
+    ice_lite_timeout: Duration,
 
     // The default limit of candidate pairs for the checklist set is 100,
     // but the value MUST be configurable.
@@ -326,6 +330,7 @@ impl IceAgent {
         IceAgent {
             last_now: None,
             ice_lite: false,
+            ice_lite_timeout: RECENT_BINDING_REQUEST,
             max_candidate_pairs: None,
             has_exceeded_max_candidate_pairs: false,
             local_credentials,
@@ -393,6 +398,27 @@ impl IceAgent {
     /// Default is disabled.
     pub fn set_ice_lite(&mut self, enabled: bool) {
         self.ice_lite = enabled;
+    }
+
+    /// How long an ice-lite agent keeps a candidate pair without receiving a
+    /// binding request from the remote peer.
+    pub fn ice_lite_timeout(&self) -> Duration {
+        self.ice_lite_timeout
+    }
+
+    /// Sets how long an ice-lite agent keeps a candidate pair without receiving
+    /// a binding request from the remote peer.
+    ///
+    /// An ice-lite agent sends no binding requests of its own, so the remote
+    /// peer's binding requests are its only evidence that the peer is still
+    /// there. Once every pair has gone this long without one, the agent
+    /// becomes disconnected.
+    ///
+    /// Has no effect unless ice-lite is enabled.
+    ///
+    /// Defaults to 15s.
+    pub fn set_ice_lite_timeout(&mut self, timeout: Duration) {
+        self.ice_lite_timeout = timeout;
     }
 
     /// Set a new timing advance (Ta) value.
@@ -1230,7 +1256,7 @@ impl IceAgent {
         let mut any_pruned = false;
         self.candidate_pairs.retain(|p| {
             let keep = if self.ice_lite {
-                p.is_ice_lite_alive(now)
+                p.is_ice_lite_alive(now, self.ice_lite_timeout)
             } else {
                 p.is_still_possible(now, &self.timing_config)
             };

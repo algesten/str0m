@@ -1253,6 +1253,10 @@ impl Rtc {
             ice.set_max_stun_retransmits(max_stun_retransmits);
         }
 
+        if let Some(ice_lite_timeout) = config.ice_lite_timeout {
+            ice.set_ice_lite_timeout(ice_lite_timeout);
+        }
+
         ice.set_mtu(mtu.clone());
 
         let dtls_cert = config

@@ -729,6 +729,83 @@ pub(crate) mod test {
         }
     }
 
+    /// Connects a full ICE agent to an ice-lite agent, then drops everything the
+    /// full agent sends, and returns how long the ice-lite agent took to disconnect.
+    fn ice_lite_disconnect_delay(ice_lite_timeout: Option<Duration>) -> Duration {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
+        a2.add_remote_candidate(c1);
+
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+        a2.set_ice_lite(true);
+        if let Some(timeout) = ice_lite_timeout {
+            a2.set_ice_lite_timeout(timeout);
+        }
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        a1.drop_sent_packets = true;
+        let dropped_at = a2.time - a2.start_time;
+
+        loop {
+            if a2.state().is_disconnected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        let (disconnected_at, event) = a2.events.last().unwrap();
+        assert_eq!(
+            *event,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Disconnected)
+        );
+
+        *disconnected_at - dropped_at
+    }
+
+    #[test]
+    pub fn ice_lite_timeout_defaults_to_fifteen_seconds() {
+        let a = TestAgent::new(info_span!("L"));
+        assert_eq!(a.ice_lite_timeout(), Duration::from_secs(15));
+    }
+
+    #[test]
+    pub fn ice_lite_disconnects_after_the_configured_timeout() {
+        // The full agent keeps a successful pair alive with a binding request
+        // at most every max STUN RTO, so the last one the ice-lite agent saw
+        // may predate the drop by up to that much. The ice-lite agent itself
+        // wakes up at least every 3s while idle.
+        let keepalive = Duration::from_millis(3000);
+        let idle_wakeup = Duration::from_secs(3);
+
+        for (configured, timeout) in [
+            (None, Duration::from_secs(15)),
+            (Some(Duration::from_secs(5)), Duration::from_secs(5)),
+            (Some(Duration::from_secs(60)), Duration::from_secs(60)),
+        ] {
+            let delay = ice_lite_disconnect_delay(configured);
+            assert!(
+                delay + keepalive >= timeout,
+                "disconnected after {delay:?}, before the {timeout:?} timeout"
+            );
+            assert!(
+                delay <= timeout + idle_wakeup,
+                "disconnected after {delay:?}, well after the {timeout:?} timeout"
+            );
+        }
+    }
+
     #[test]
     pub fn trickle_host_host() {
         let mut a1 = TestAgent::new(info_span!("L"));

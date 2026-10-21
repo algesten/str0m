@@ -39,6 +39,7 @@ pub struct RtcConfig {
     pub(crate) initial_stun_rto: Option<Duration>,
     pub(crate) max_stun_rto: Option<Duration>,
     pub(crate) max_stun_retransmits: Option<usize>,
+    pub(crate) ice_lite_timeout: Option<Duration>,
     pub(crate) codec_config: CodecConfig,
     pub(crate) exts: ExtensionMap,
     pub(crate) stats_interval: Option<Duration>,
@@ -177,6 +178,21 @@ impl RtcConfig {
     /// Defaults to 9.
     pub fn set_max_stun_retransmits(&mut self, num: usize) {
         self.max_stun_retransmits = Some(num);
+    }
+
+    /// Sets how long an ice-lite agent waits for a binding request from the
+    /// remote peer before it considers the peer gone.
+    ///
+    /// An ice-lite agent sends no binding requests of its own, so this is the
+    /// ice-lite counterpart of the STUN retransmission settings above. Once
+    /// every candidate pair has gone this long without a binding request, the
+    /// ICE connection state becomes disconnected.
+    ///
+    /// Has no effect unless [`RtcConfig::set_ice_lite`] is enabled.
+    ///
+    /// Defaults to 15s.
+    pub fn set_ice_lite_timeout(&mut self, timeout: Duration) {
+        self.ice_lite_timeout = Some(timeout);
     }
 
     /// Get fingerprint verification mode.
@@ -916,6 +932,7 @@ impl Default for RtcConfig {
             initial_stun_rto: None,
             max_stun_rto: None,
             max_stun_retransmits: None,
+            ice_lite_timeout: None,
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
             stats_interval: None,
