@@ -1,7 +1,6 @@
 # Unreleased
 
   * Remove SDP `merge()`; applications must track queued negotiation changes (breaking) #1095
-
   * Expose dimpl crypto providers for AWS-LC-RS and Apple CommonCrypto #1094
   * Extend VP9 picture ids in `Vp9CodecExtra` to 64 bits, fixing frames dropped after wrap-around (breaking) #1091
   * Include authenticated early RTX padding in TWCC feedback and ingress loss accounting #1086
