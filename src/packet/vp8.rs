@@ -672,17 +672,27 @@ impl Depacketizer for Vp8Depacketizer {
         if self.i == 1 {
             b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
+            let previous_picture_id = u64::from(self.picture_id);
+            let previous = self.extended_pid.map(|_| previous_picture_id);
             // PID present?
-            if b & 0x80 > 0 {
+            let next = if b & 0x80 > 0 {
                 // M == 1, PID is 16bit
                 let x = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
                 self.picture_id = (((b & PICTURE_ID_SHORT_MASK) as u16) << 8) | (x as u16);
-                self.extended_pid = Some(extend_u15(self.extended_pid, self.picture_id));
                 payload_index += 1;
+                extend_u15(previous, self.picture_id)
             } else {
                 self.picture_id = b as u16;
-                self.extended_pid = Some(extend_u7(self.extended_pid, b));
-            }
+                extend_u7(previous, b)
+            };
+
+            // "The receiver MUST NOT assume that the number of bits in PictureID stays the
+            // same through the session" (RFC 7741 section 4.2). Preserve the offset from
+            // earlier short-ID wraps by extending the raw-ID delta.
+            self.extended_pid = Some(match self.extended_pid {
+                Some(previous) => previous.wrapping_add(next.wrapping_sub(previous_picture_id)),
+                None => next,
+            });
         }
 
         if payload_index >= payload_len {
@@ -1260,5 +1270,108 @@ mod test {
             }
         }
         Ok(())
+    }
+
+    fn picture_id_of(depack: &mut Vp8Depacketizer, picture_id: &[u8]) -> Option<u64> {
+        // X=1 S=1, I=1, picture id, inter frame
+        let mut packet = vec![0x90, 0x80];
+        packet.extend_from_slice(picture_id);
+        packet.push(0x01);
+        let mut payload = Vec::new();
+        let mut extra = CodecExtra::None;
+        depack
+            .depacketize(&packet, &mut payload, &mut extra)
+            .unwrap();
+        let CodecExtra::Vp8(extra) = extra else {
+            panic!("expected VP8 codec extra");
+        };
+        extra.picture_id
+    }
+
+    /// X=1 S=1, I=1 L=1 T=1, picture id, tl0picidx, TID=0
+    fn frame(keyframe: bool, picture_id: &[u8], tl0_pic_idx: u8) -> Vec<Vec<u8>> {
+        let mut packet = vec![0x90, 0xE0];
+        packet.extend_from_slice(picture_id);
+        packet.extend_from_slice(&[tl0_pic_idx, 0x00, u8::from(!keyframe)]);
+        vec![packet]
+    }
+
+    fn assert_every_frame_emitted(frames: impl IntoIterator<Item = Vec<Vec<u8>>>) {
+        use crate::packet::{CodecDepacketizer, DepacketizingBuffer, RtpMeta};
+        use crate::rtp_::{MediaTime, RtpHeader};
+        use std::time::Instant;
+
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp8(Vp8Depacketizer::default()), 3);
+        let now = Instant::now();
+        let mut seq = 0_u64;
+
+        for (frame, packets) in frames.into_iter().enumerate() {
+            let count = packets.len();
+            let time = frame as u64 * 3000;
+
+            for (i, packet) in packets.into_iter().enumerate() {
+                let meta = RtpMeta {
+                    received: now,
+                    time: MediaTime::from_90khz(time),
+                    seq_no: seq.into(),
+                    last_sender_info: None,
+                    header: RtpHeader {
+                        sequence_number: seq as u16,
+                        timestamp: time as u32,
+                        marker: i == count - 1,
+                        ..Default::default()
+                    },
+                };
+                buf.push(meta, packet);
+                seq += 1;
+            }
+
+            let dep = buf
+                .pop(now, None)
+                .unwrap_or_else(|| panic!("frame {frame} was not emitted"))
+                .unwrap();
+            assert!(dep.contiguous, "frame {frame} is not contiguous");
+        }
+    }
+
+    #[test]
+    fn depacketizer_preserves_picture_id_epoch_when_width_grows() {
+        let mut depack = Vp8Depacketizer::default();
+        for (picture_id, expected) in [(126_u8, 126_u64), (127, 127), (0, 128), (1, 129)] {
+            assert_eq!(picture_id_of(&mut depack, &[picture_id]), Some(expected));
+        }
+        // The 15-bit PictureID continues incrementing from the 7-bit one.
+        assert_eq!(picture_id_of(&mut depack, &[0x80, 2]), Some(130));
+    }
+
+    #[test]
+    fn depacketizing_buffer_emits_frames_when_picture_id_width_grows() {
+        let frames = [
+            frame(true, &[126], 10),
+            frame(false, &[127], 11),
+            frame(false, &[0], 12),
+            frame(false, &[1], 13),
+            frame(false, &[0x80, 2], 14),
+            frame(false, &[0x80, 3], 15),
+        ];
+        assert_every_frame_emitted(frames);
+    }
+
+    #[test]
+    fn depacketizer_preserves_wide_picture_id_after_loss_at_width_growth() {
+        let mut depack = Vp8Depacketizer::default();
+        assert_eq!(picture_id_of(&mut depack, &[0]), Some(0));
+        // The sender widens at PictureID 1; pictures 1..99 are lost in transit.
+        assert_eq!(picture_id_of(&mut depack, &[0x80, 100]), Some(100));
+    }
+
+    #[test]
+    fn depacketizing_buffer_recovers_after_loss_at_picture_id_width_growth() {
+        // A middlebox drops pictures 1..99 and rewrites RTP sequence numbers.
+        // Picture 100 is a keyframe, so all following pictures are decodable.
+        let frames = std::iter::once(frame(true, &[0], 0))
+            .chain((100..=130_u8).map(|pid| frame(pid == 100, &[0x80, pid], pid - 99)));
+        assert_every_frame_emitted(frames);
     }
 }

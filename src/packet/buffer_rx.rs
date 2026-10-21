@@ -355,9 +355,13 @@ impl DepacketizingBuffer {
             && !more_than_hold_back
             && !self.timeout_allows_progress(now, first_received, reordering_timeout);
 
-        // VP9 picture-ID width changes must be extended in RTP order.
+        // VP8 and VP9 picture-ID width changes must be extended in RTP order.
         // Wait before parsing so a later frame cannot advance the counters first.
-        if wait_for_contiguity && matches!(self.depack, CodecDepacketizer::Vp9(_)) {
+        let ordered_counters = matches!(
+            self.depack,
+            CodecDepacketizer::Vp8(_) | CodecDepacketizer::Vp9(_)
+        );
+        if wait_for_contiguity && ordered_counters {
             self.discard_old_padding();
             return None;
         }
@@ -405,7 +409,7 @@ impl DepacketizingBuffer {
         self.consume_segment(stop);
 
         if !can_emit {
-            if matches!(self.depack, CodecDepacketizer::Vp9(_)) {
+            if ordered_counters {
                 // Keep the counters in RTP order after committing a rejected range.
                 self.last_processed = Some(
                     self.last_processed
@@ -733,6 +737,7 @@ mod test {
     use std::time::{Duration, Instant, SystemTime};
 
     use super::*;
+    use crate::packet::Vp8Depacketizer;
     use crate::packet::vp9::Vp9Depacketizer;
     use crate::rtp::UserExtensionValues;
     use crate::rtp_::{AbsCaptureTime, Frequency, MediaTime, Pt, Ssrc, VideoOrientation};
@@ -2190,6 +2195,121 @@ mod test {
         assert!(!dep.contiguous);
 
         push(&mut buf, 5, &[0xEC, 6, 0x20, 2, 0x84], true);
+        assert!(buf.pop(now, None).unwrap().unwrap().contiguous);
+    }
+
+    /// X=1 S=1, I=1 L=1 T=1, picture id, tl0picidx, TID
+    fn vp8_packet(keyframe: bool, picture_id: &[u8], tid: u8, tl0_pic_idx: u8) -> Vec<u8> {
+        let mut packet = vec![0x90, 0xE0];
+        packet.extend_from_slice(picture_id);
+        packet.extend_from_slice(&[tl0_pic_idx, tid << 6, u8::from(!keyframe)]);
+        packet
+    }
+
+    #[test]
+    fn vp8_late_enhancement_before_picture_id_width_change() {
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp8(Vp8Depacketizer::default()), 3);
+        let now = Instant::now();
+        let push = |buf: &mut DepacketizingBuffer, seq: u64, packet: Vec<u8>| {
+            let mut meta = test_meta(now, seq, seq * 3000, 0);
+            meta.header.marker = true;
+            buf.push(meta, packet);
+        };
+        let pop = |buf: &mut DepacketizingBuffer, expected: u64| {
+            let dep = buf.pop(now, None).expect("frame must be emitted").unwrap();
+            let CodecExtra::Vp8(extra) = dep.codec_extra else {
+                panic!("expected VP8 codec extra");
+            };
+            assert_eq!(extra.picture_id, Some(expected));
+            assert!(dep.contiguous);
+        };
+
+        // Base picture 0x1bbe, followed by two enhancement pictures on the same TL0.
+        push(&mut buf, 0, vp8_packet(true, &[0x9B, 0xBE], 0, 10));
+        pop(&mut buf, 0x1BBE);
+
+        // The sender truncates the 15-bit counter to 7 bits on picture 0x1bc0.
+        push(&mut buf, 2, vp8_packet(false, &[0x40], 1, 10));
+        assert!(buf.pop(now, None).is_none());
+        assert!(buf.pop(now, None).is_none());
+
+        // The missing enhancement still has a 15-bit ID and must remain decodable.
+        push(&mut buf, 1, vp8_packet(false, &[0x9B, 0xBF], 1, 10));
+        pop(&mut buf, 0x1BBF);
+        pop(&mut buf, 0x1BC0);
+
+        // Growing the wire ID again must retain the truncated high bits.
+        push(&mut buf, 3, vp8_packet(false, &[0x80, 0x41], 1, 10));
+        pop(&mut buf, 0x1BC1);
+    }
+
+    #[test]
+    fn vp8_discards_late_enhancement_after_rejected_width_change() {
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp8(Vp8Depacketizer::default()), 3);
+        let now = Instant::now();
+        let push = |buf: &mut DepacketizingBuffer, seq: u64, packet: Vec<u8>| {
+            let mut meta = test_meta(now, seq, seq * 3000, 0);
+            meta.header.marker = true;
+            buf.push(meta, packet);
+        };
+
+        push(&mut buf, 0, vp8_packet(true, &[0x9B, 0xBE], 0, 10));
+        assert!(buf.pop(now, None).unwrap().unwrap().contiguous);
+
+        // The missing enhancement still has a 15-bit ID. Later enhancements
+        // use 7 bits and fill the hold-back window, so picture 0x1bc0 is parsed
+        // and rejected because its predecessor has not arrived.
+        for seq in 2..=4 {
+            push(&mut buf, seq, vp8_packet(false, &[0x3E + seq as u8], 1, 10));
+        }
+        assert!(buf.pop(now, None).is_none());
+        assert_eq!(*buf.last_processed.unwrap().seq_no(), 2);
+
+        // Rejecting the later picture closes its RTP range, so this older
+        // enhancement is discarded without rewinding the counters.
+        push(&mut buf, 1, vp8_packet(false, &[0x9B, 0xBF], 1, 10));
+        assert_eq!(*buf.queue.front().unwrap().meta.seq_no, 3);
+        assert!(buf.pop(now, Some(Duration::ZERO)).is_none());
+        assert!(buf.queue.is_empty());
+
+        // A following base frame and its enhancement retain the correct IDs.
+        for (seq, pid, tid, expected) in [(5, 0x43, 0, 0x1BC3), (6, 0x44, 1, 0x1BC4)] {
+            push(&mut buf, seq, vp8_packet(false, &[0x80, pid], tid, 11));
+            let dep = buf.pop(now, None).unwrap().unwrap();
+            let CodecExtra::Vp8(extra) = dep.codec_extra else {
+                panic!("expected VP8 codec extra");
+            };
+            assert_eq!(extra.picture_id, Some(expected));
+            assert!(dep.contiguous);
+        }
+    }
+
+    #[test]
+    fn vp8_rejection_preserves_pending_timeout_discontinuity() {
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp8(Vp8Depacketizer::default()), 3);
+        let now = Instant::now();
+        let push = |buf: &mut DepacketizingBuffer, seq: u64, packet: Vec<u8>, marker: bool| {
+            let mut meta = test_meta(now, seq, seq * 3000, 0);
+            meta.header.marker = marker;
+            buf.push(meta, packet);
+        };
+
+        push(&mut buf, 0, vp8_packet(true, &[1], 0, 1), true);
+        assert!(buf.pop(now, None).unwrap().unwrap().contiguous);
+        push(&mut buf, 1, vp8_packet(false, &[2], 0, 2), false);
+        push(&mut buf, 3, vp8_packet(false, &[4], 1, 1), true);
+        push(&mut buf, 4, vp8_packet(false, &[5], 0, 2), true);
+
+        // Expire the incomplete frame and reject the dependent enhancement.
+        // Advancing the cutoff must retain the timeout's discontinuity.
+        let dep = buf.pop(now, Some(Duration::ZERO)).unwrap().unwrap();
+        assert_eq!(*dep.meta[0].seq_no, 4);
+        assert!(!dep.contiguous);
+
+        push(&mut buf, 5, vp8_packet(false, &[6], 1, 2), true);
         assert!(buf.pop(now, None).unwrap().unwrap().contiguous);
     }
 
