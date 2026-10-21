@@ -27,6 +27,11 @@ pub use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, Streams};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
+///
+/// Only one local offer/answer exchange can be pending at a time. Applications must track
+/// queued changes outside str0m and wait for the current exchange to finish before creating
+/// another offer. If an incoming offer interrupts the exchange, recreate the desired local
+/// changes against the updated session after answering that offer.
 pub struct SdpApi<'a> {
     rtc: &'a mut Rtc,
     changes: Changes,
@@ -45,7 +50,9 @@ impl<'a> SdpApi<'a> {
     /// sent to the remote peer.
     ///
     /// <b>Note. Pending changes from a previous non-completed [`SdpApi`][super::SdpApi] will be
-    /// considered rolled back when calling this function.</b>
+    /// considered rolled back when calling this function.</b> Any outstanding [`SdpPendingOffer`]
+    /// is invalidated, even if this call returns an error. The application must track and
+    /// recreate any local changes it still wants to negotiate.
     ///
     /// The incoming SDP is validated in various ways which can cause this call to fail.
     /// Example of such problems would be an SDP without any m-lines, missing `a=fingerprint`
@@ -522,49 +529,18 @@ impl<'a> SdpApi<'a> {
             None
         }
     }
-
-    /// Combines the modifications made in [`SdpApi`] with those in [`SdpPendingOffer`].
-    ///
-    /// This function merges the changes present in [`SdpApi`] with the changes
-    /// in [`SdpPendingOffer`]. In result this [`SdpApi`] will incorporate modifications
-    /// from both the previous [`SdpPendingOffer`] and any newly added changes.
-    ///
-    /// ## Example
-    ///
-    /// ```no_run
-    /// # use std::time::Instant;
-    /// # use str0m::media::{Direction, MediaKind};
-    /// # use str0m::Rtc;
-    /// let mut rtc = Rtc::new(Instant::now());
-    /// let mut changes = rtc.sdp_api();
-    /// changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-    /// let (_offer, pending) = changes.apply().unwrap();
-    ///
-    /// let mut changes = rtc.sdp_api();
-    /// changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-    /// changes.merge(pending);
-    ///
-    /// // This `SdpOffer` will have changes from the first `SdpPendingChanges`
-    /// // and new changes from `SdpApi`
-    /// let (_offer, pending) = changes.apply().unwrap();
-    /// ```
-    pub fn merge(&mut self, mut pending_offer: SdpPendingOffer) {
-        pending_offer.retain_relevant(self.rtc);
-
-        // Prepend the original pending changes before the current SdpApi's own changes.
-        //
-        // AddMedia / AddApp entries from the pending offer carry already-allocated MIDs
-        // that the remote peer may have committed to specific m-line positions. They must
-        // appear before any new changes so that as_new_medias() assigns them the same
-        // indices as in the original offer.
-        pending_offer.changes.0.append(&mut self.changes.0);
-        self.changes.0 = pending_offer.changes.0;
-    }
 }
 
 /// Pending offer from a previous [`Rtc::sdp_api()`] call.
 ///
-/// This allows us to accept a remote answer. No changes have been made to the session
+/// Represents one local negotiation change set, which can contain multiple media or channel
+/// changes, and allows accepting its remote answer. It is not a queue of pending negotiations.
+/// Creating another offer with [`SdpApi::apply()`] invalidates it, as does calling
+/// [`SdpApi::accept_offer()`]. Invalidated changes cannot be reapplied through this token.
+/// Applications must track queued changes outside str0m and recreate any desired changes
+/// after an interrupted negotiation against the current session state.
+///
+/// No changes have been made to the session
 /// before we call [`SdpApi::accept_answer()`], which means that rolling back a
 /// change is as simple as dropping this instance.
 ///
@@ -587,29 +563,6 @@ impl<'a> SdpApi<'a> {
 pub struct SdpPendingOffer {
     change_id: usize,
     changes: Changes,
-}
-
-impl SdpPendingOffer {
-    /// Retains only the relevant changes in the `changes` vector based on the provided `Rtc` instance.
-    ///
-    /// This function filters the vector of `Change` instances stored in the current object and retains
-    /// only those changes that are considered relevant with respect to the provided `Rtc` instance.
-    fn retain_relevant(&mut self, rtc: &Rtc) {
-        fn is_relevant(rtc: &Rtc, c: &Change) -> bool {
-            match c {
-                Change::AddMedia(v) => rtc.media(v.mid).is_none(),
-                Change::AddApp(_) => rtc.session.app().is_none(),
-                Change::AddChannel(v) => rtc.chan.stream_id_by_channel_id(v.0).is_none(),
-                Change::Direction(m, d) => {
-                    // If mid is missing, this is not relevant.
-                    rtc.media(*m).map(|m| m.direction() != *d).unwrap_or(false)
-                }
-                Change::IceRestart(v, _) => rtc.ice.local_credentials() != v,
-            }
-        }
-
-        self.changes.retain(|c| is_relevant(rtc, c));
-    }
 }
 
 #[derive(Default)]
@@ -1979,28 +1932,6 @@ mod test {
         assert!(matches!(r, Err(RtcError::ChangesOutOfOrder)));
     }
 
-    #[test]
-    fn sdp_api_merge_works() {
-        crate::init_crypto_default();
-
-        let mut rtc = Rtc::new(Instant::now());
-        let mut changes = rtc.sdp_api();
-        changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-        let (offer, pending) = changes.apply().unwrap();
-
-        let mut changes = rtc.sdp_api();
-        changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        changes.merge(pending);
-        let (new_offer, _) = changes.apply().unwrap();
-
-        // After merge(), the original AddMedia (audio) is prepended before the new AddMedia
-        // (video) to preserve its original m-line position.  So audio is at index 0 and video at 1.
-        assert_eq!(offer.media_lines[0], new_offer.media_lines[0]);
-        assert_eq!(new_offer.media_lines[0].typ, MediaType::Audio);
-        assert_eq!(new_offer.media_lines[1].typ, MediaType::Video);
-        assert_eq!(new_offer.media_lines.len(), 2);
-    }
-
     // The indices assigned to Media objects by as_new_medias() must be contiguous starting
     // from index_start.  Only entries that produce m-lines (AddMedia / AddApp) should
     // consume an index slot – non-media entries (AddChannel, Direction, IceRestart) must
@@ -2071,133 +2002,6 @@ mod test {
             medias[1].index(),
             1,
             "AddMedia(audio) should have contiguous index 1, not 2"
-        );
-    }
-
-    // AddMedia/AddApp entries from a pending offer carry already-allocated MIDs whose
-    // m-line positions the remote peer may have committed to.  When merging a pending offer
-    // into a new SdpApi, those original entries must be prepended so they keep their
-    // original lower-index positions rather than being displaced by new changes.
-    #[test]
-    fn sdp_api_merge_stale_media_keeps_original_position() {
-        crate::init_crypto_default();
-
-        let mut rtc = Rtc::new(Instant::now());
-
-        // First offer: add audio.  Audio will be at index 0.
-        let mut changes = rtc.sdp_api();
-        let _mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-        let (offer1, pending) = changes.apply().unwrap();
-
-        // The original offer has audio at position 0.
-        assert_eq!(offer1.media_lines[0].typ, MediaType::Audio);
-
-        // Simulate glare: a new SdpApi adds video, then merges the pending offer
-        // containing the original audio AddMedia.
-        let mut changes = rtc.sdp_api();
-        changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        changes.merge(pending);
-        let (offer2, _) = changes.apply().unwrap();
-
-        // The original audio must be prepended before the new video, keeping it at
-        // position 0 — the same position as in the original offer.
-        assert_eq!(
-            offer2.media_lines[0].typ,
-            MediaType::Audio,
-            "Original audio from pending should be at position 0 (same as original offer)"
-        );
-        assert_eq!(
-            offer2.media_lines[1].typ,
-            MediaType::Video,
-            "New video added to current SdpApi should be at position 1"
-        );
-        assert_eq!(
-            offer1.media_lines[0], offer2.media_lines[0],
-            "Audio m-line must be identical between original and merged offers"
-        );
-    }
-
-    // When a new SdpApi has its own AddMedia changes and also merges a pending offer that
-    // has AddMedia changes, the original pending entries must come before the new ones so
-    // their m-line positions are stable:
-    //   1. First offer: [AddMedia(audio), AddMedia(video)] → audio at 0, video at 1
-    //   2. Glare – pending is saved
-    //   3. New SdpApi: [AddMedia(screen)]
-    //   4. After merge: [AddMedia(audio), AddMedia(video), AddMedia(screen)]
-    //      → audio at 0, video at 1, screen at 2  (CORRECT)
-    #[test]
-    fn sdp_api_merge_with_direction_and_new_media_preserves_positions() {
-        crate::init_crypto_default();
-
-        let now = Instant::now();
-        let mut rtc1 = Rtc::new(now);
-        let mut rtc2 = Rtc::new(now);
-
-        // Establish one audio m-line so we can change its direction later.
-        let mut changes = rtc1.sdp_api();
-        let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-        let (offer0, pending0) = changes.apply().unwrap();
-        let answer0 = rtc2.sdp_api().accept_offer(offer0).unwrap();
-        rtc1.sdp_api().accept_answer(pending0, answer0).unwrap();
-        // Session now: audio at index 0.
-
-        // Create an offer with two new medias: video1 and video2.
-        // video1 → session position 1, video2 → session position 2.
-        let mut changes = rtc1.sdp_api();
-        let mid_v1 = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        let mid_v2 = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        let (offer1, pending1) = changes.apply().unwrap();
-
-        assert_eq!(offer1.media_lines[1].mid(), mid_v1, "video1 at idx 1");
-        assert_eq!(offer1.media_lines[2].mid(), mid_v2, "video2 at idx 2");
-
-        // Glare: create a new SdpApi that:
-        //   (a) changes direction of existing audio m-line (non-media Change)
-        //   (b) adds a new screen-share video m-line
-        // Then merge the original pending1 into it.
-        let mut changes = rtc1.sdp_api();
-        changes.set_direction(mid_audio, Direction::Inactive);
-        let mid_screen = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        changes.merge(pending1);
-        let (offer2, _) = changes.apply().unwrap();
-
-        // Session already has audio at index 0.
-        // The merged offer must have:
-        //   position 0: audio (existing, unchanged)
-        //   position 1: video1 (from pending — same position as offer1)
-        //   position 2: video2 (from pending — same position as offer1)
-        //   position 3: screen (newly added in the new SdpApi)
-        assert_eq!(
-            offer2.media_lines.len(),
-            4,
-            "Merged offer should have 4 m-lines: audio + video1 + video2 + screen"
-        );
-
-        // Original video m-lines from the pending offer must keep their positions (1 and 2).
-        assert_eq!(
-            offer2.media_lines[1].mid(),
-            mid_v1,
-            "video1 from pending should remain at position 1"
-        );
-        assert_eq!(
-            offer1.media_lines[1], offer2.media_lines[1],
-            "video1 m-line should be identical in both offers"
-        );
-        assert_eq!(
-            offer2.media_lines[2].mid(),
-            mid_v2,
-            "video2 from pending should remain at position 2"
-        );
-        assert_eq!(
-            offer1.media_lines[2], offer2.media_lines[2],
-            "video2 m-line should be identical in both offers"
-        );
-
-        // New screen share is at position 3, after the original pending m-lines.
-        assert_eq!(
-            offer2.media_lines[3].mid(),
-            mid_screen,
-            "New screen-share should be at position 3"
         );
     }
 
