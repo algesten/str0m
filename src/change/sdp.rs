@@ -45,6 +45,15 @@ impl<'a> SdpApi<'a> {
         }
     }
 
+    fn new_mid(&self) -> Mid {
+        loop {
+            let mid = self.rtc.new_mid();
+            if !self.changes.has_mid(mid) {
+                break mid;
+            }
+        }
+    }
+
     /// Accept an [`SdpOffer`] from the remote peer. If this call returns successfully, the
     /// changes will have been made to the session. The resulting [`SdpAnswer`] should be
     /// sent to the remote peer.
@@ -286,7 +295,7 @@ impl<'a> SdpApi<'a> {
         track_id: Option<String>,
         simulcast: Option<crate::media::Simulcast>,
     ) -> Mid {
-        let mid = self.rtc.new_mid();
+        let mid = self.new_mid();
 
         // https://www.rfc-editor.org/rfc/rfc8830
         // msid-id = 1*64token-char
@@ -450,7 +459,7 @@ impl<'a> SdpApi<'a> {
         let changes_contains_add_app = self.changes.contains_add_app();
 
         if !has_media && !changes_contains_add_app {
-            let mid = self.rtc.new_mid();
+            let mid = self.new_mid();
             self.changes.0.push(Change::AddApp(mid));
         }
 
@@ -1648,6 +1657,14 @@ impl fmt::Debug for SdpPendingOffer {
 }
 
 impl Changes {
+    fn has_mid(&self, mid: Mid) -> bool {
+        self.0.iter().any(|c| match c {
+            Change::AddMedia(v) => v.mid == mid,
+            Change::AddApp(v) => *v == mid,
+            Change::AddChannel(_) | Change::Direction(_, _) | Change::IceRestart(_, _) => false,
+        })
+    }
+
     pub fn contains_add_app(&self) -> bool {
         for i in 0..self.0.len() {
             if matches!(&self.0[i], Change::AddApp(_)) {
