@@ -21,8 +21,8 @@ use g7xx::{G711Depacketizer, G711Packetizer, G722Packetizer};
 
 mod h264;
 pub use h264::H264CodecExtra;
-pub use h264::{detect_h264_keyframe, detect_h264_nalu};
 pub use h264::{H264Depacketizer, H264Packetizer};
+pub use h264::{detect_h264_keyframe, detect_h264_nalu};
 
 mod h264_profile;
 pub(crate) use h264_profile::H264ProfileLevel;
