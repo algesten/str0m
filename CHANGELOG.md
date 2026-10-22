@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Expose H264 NAL unit detection for single NAL, STAP-A, and FU-A payloads #1099
   * Reject remote SDP that gives two m-lines the same mid #1097
   * Never give two m-lines in one offer the same mid #1092
   * Preserve VP8 picture ids across 7/15-bit width changes and keep VP8 counters in RTP order #1096
