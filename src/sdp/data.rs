@@ -101,6 +101,8 @@ impl Sdp {
         //    for PT 96 in one m-line it must be in all m-lines.
         // 2. Compare with previous m-lines that remote isn't narrowing/expanding PT and/or extmaps.
 
+        // SDP typically has few m-lines, so a pairwise scan avoids allocation and hashing
+        // for a small number of comparisons (at most 45 for 10 m-lines).
         for (i, media) in self.media_lines.iter().enumerate() {
             let mid = media.mid();
             if self.media_lines.iter().skip(i + 1).any(|m| m.mid() == mid) {
