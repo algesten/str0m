@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Reject remote SDP that gives two m-lines the same mid #1097
   * Never give two m-lines in one offer the same mid #1092
   * Preserve VP8 picture ids across 7/15-bit width changes and keep VP8 counters in RTP order #1096
   * Remove SDP `merge()`; applications must track queued negotiation changes (breaking) #1095
