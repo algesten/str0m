@@ -101,10 +101,9 @@ impl Sdp {
         //    for PT 96 in one m-line it must be in all m-lines.
         // 2. Compare with previous m-lines that remote isn't narrowing/expanding PT and/or extmaps.
 
-        let mut seen_mids = HashSet::new();
-        for media in &self.media_lines {
+        for (i, media) in self.media_lines.iter().enumerate() {
             let mid = media.mid();
-            if !seen_mids.insert(mid) {
+            if self.media_lines[i + 1..].iter().any(|m| m.mid() == mid) {
                 return Some(format!("Mid {mid} is used by more than one m-line"));
             }
         }
