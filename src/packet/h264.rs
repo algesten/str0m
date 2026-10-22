@@ -51,12 +51,18 @@ pub static ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 /// Detect whether an H264 RTP payload contains a keyframe.
 ///
 /// Checks for IDR (Instantaneous Decoding Refresh) NAL units (type 5)
-/// in the RTP payload. Handles single NAL units, STAP-A aggregation
+/// in the RTP payload.
+pub fn detect_h264_keyframe(payload: &[u8]) -> bool {
+    detect_h264_nalu(payload, IDR_NALU_TYPE)
+}
+
+/// Checks for target NAL units in the RTP payload.
+/// Handles single NAL units, STAP-A aggregation
 /// packets, and FU-A fragmentation units.
 ///
-/// For FU-A packets, only the start fragment (S=1) is detected as a
-/// keyframe since the NAL type is only reliably available there.
-pub fn detect_h264_keyframe(payload: &[u8]) -> bool {
+/// For FU-A packets, only the start fragment (S=1) is checked
+/// since the NAL type is only reliably available there.
+pub fn detect_h264_nalu(payload: &[u8], target_nalu: u8) -> bool {
     if payload.is_empty() {
         return false;
     }
@@ -65,7 +71,7 @@ pub fn detect_h264_keyframe(payload: &[u8]) -> bool {
 
     match nalu_type {
         // Single NAL unit (types 1-23)
-        1..=23 => nalu_type == IDR_NALU_TYPE,
+        1..=23 => nalu_type == target_nalu,
 
         // STAP-A: check all aggregated NALUs
         STAPA_NALU_TYPE => {
@@ -77,7 +83,7 @@ pub fn detect_h264_keyframe(payload: &[u8]) -> bool {
                     break;
                 }
                 if let Some(&b0) = payload.get(offset) {
-                    if b0 & NALU_TYPE_BITMASK == IDR_NALU_TYPE {
+                    if b0 & NALU_TYPE_BITMASK == target_nalu {
                         return true;
                     }
                 }
@@ -96,7 +102,7 @@ pub fn detect_h264_keyframe(payload: &[u8]) -> bool {
             if b1 & FU_START_BITMASK == 0 {
                 return false;
             }
-            b1 & NALU_TYPE_BITMASK == IDR_NALU_TYPE
+            b1 & NALU_TYPE_BITMASK == target_nalu
         }
 
         _ => false,
@@ -909,6 +915,40 @@ mod test {
 
         // FU-A too short
         assert!(!detect_h264_keyframe(&[0x7C]));
+    }
+
+    #[test]
+    fn test_detect_h264_nalu() {
+        // Empty payload
+        assert!(!detect_h264_nalu(&[], SPS_NALU_TYPE));
+
+        // SPS (type 7)
+        assert!(detect_h264_nalu(&[0x67, 0x00, 0x00], SPS_NALU_TYPE));
+
+        // PPS (type 8)
+        assert!(!detect_h264_nalu(&[0x68, 0x00, 0x00], SPS_NALU_TYPE));
+
+        // STAP-A containing IDR
+        // Header: type 24 (STAP-A)
+        // NALU 1: 2 bytes, type 7 (SPS)
+        // NALU 2: 2 bytes, type 5 (IDR)
+        let stapa_with_idr = [
+            0x18, // STAP-A (24)
+            0x00, 0x02, 0x67, 0xAA, // SPS: size=2, type=7
+            0x00, 0x02, 0x65, 0xBB, // IDR: size=2, type=5
+        ];
+        assert!(detect_h264_nalu(&stapa_with_idr, SPS_NALU_TYPE));
+
+        // STAP-A without IDR
+        let stapa_no_idr = [
+            0x18, // STAP-A (24)
+            0x00, 0x02, 0x67, 0xAA, // SPS: size=2, type=7
+            0x00, 0x02, 0x68, 0xBB, // PPS: size=2, type=8
+        ];
+        assert!(detect_h264_nalu(&stapa_no_idr, SPS_NALU_TYPE));
+
+        // FU-A too short
+        assert!(!detect_h264_nalu(&[0x7C], SPS_NALU_TYPE));
     }
 
     #[test]

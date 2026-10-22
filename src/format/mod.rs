@@ -10,7 +10,7 @@ pub use crate::packet::Vp8CodecExtra;
 pub use crate::packet::Vp9CodecExtra;
 pub use crate::packet::Vp9PacketizerMode;
 pub use crate::packet::detect_av1_keyframe;
-pub use crate::packet::detect_h264_keyframe;
+pub use crate::packet::{detect_h264_keyframe, detect_h264_nalu};
 pub use crate::packet::detect_h265_keyframe;
 pub use crate::packet::detect_h266_keyframe;
 pub use crate::packet::detect_vp8_keyframe;
