@@ -66,24 +66,23 @@ impl<'a> SdpApi<'a> {
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
     /// ```
     pub fn accept_offer(self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
-        self.accept_offer_with(offer, |_, _, direction| direction)
+        self.accept_offer_with(offer, |_| {})
     }
 
-    /// Accept an [`SdpOffer`] like [`SdpApi::accept_offer()`], choosing the direction
-    /// the answer gives each audio and video m-line.
+    /// Accept an [`SdpOffer`] like [`SdpApi::accept_offer()`], adjusting how the answer
+    /// treats each audio and video m-line.
     ///
-    /// `direction` is called once per audio and video m-line in the offer, with its mid,
-    /// its kind and the direction the answer would get by default: the offered direction
-    /// inverted. It returns the direction to answer with, which may only narrow that
-    /// default (RFC 3264 §6): drop sending, receiving, or both. An offered `sendrecv`
-    /// can be answered `sendonly`, `recvonly` or `inactive`; an offered `recvonly`
-    /// can be answered `inactive` but never `recvonly`.
+    /// `answer` is called once per audio and video m-line in the offer with an
+    /// [`AnswerMedia`] describing it, before anything is applied. Changes made through it
+    /// shape the answer; leaving it untouched answers exactly like
+    /// [`SdpApi::accept_offer()`]. Currently the direction can be narrowed, see
+    /// [`AnswerMedia::set_direction()`].
     ///
     /// Rejected m-lines (port 0 outside the BUNDLE group) and data channels are not
-    /// passed to `direction`.
+    /// passed to `answer`.
     ///
-    /// If `direction` widens any m-line, this returns [`RtcError::RemoteSdp`] before the
-    /// session is changed.
+    /// If any change is not allowed, such as widening a direction, this returns
+    /// [`RtcError::RemoteSdp`] before the session is changed.
     ///
     /// ```no_run
     /// # use std::time::Instant;
@@ -97,20 +96,21 @@ impl<'a> SdpApi<'a> {
     /// // Send audio but never receive it, whatever the offer proposes.
     /// let answer = rtc
     ///     .sdp_api()
-    ///     .accept_offer_with(offer, |_mid, kind, direction| match kind {
-    ///         MediaKind::Audio if direction.is_sending() => Direction::SendOnly,
-    ///         MediaKind::Audio => Direction::Inactive,
-    ///         MediaKind::Video => direction,
+    ///     .accept_offer_with(offer, |media| {
+    ///         if media.kind() == MediaKind::Audio {
+    ///             let sending = media.direction().is_sending();
+    ///             media.set_direction(if sending {
+    ///                 Direction::SendOnly
+    ///             } else {
+    ///                 Direction::Inactive
+    ///             });
+    ///         }
     ///     })
     ///     .unwrap();
     /// ```
-    pub fn accept_offer_with<F>(
-        self,
-        offer: SdpOffer,
-        mut direction: F,
-    ) -> Result<SdpAnswer, RtcError>
+    pub fn accept_offer_with<F>(self, offer: SdpOffer, mut answer: F) -> Result<SdpAnswer, RtcError>
     where
-        F: FnMut(Mid, MediaKind, Direction) -> Direction,
+        F: FnMut(&mut AnswerMedia),
     {
         debug!("Accept offer");
 
@@ -121,7 +121,7 @@ impl<'a> SdpApi<'a> {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
         }
 
-        let answer_directions = answer_directions(&offer, &mut direction)?;
+        let answer_directions = answer_directions(&offer, &mut answer)?;
 
         if self.rtc.ice.ice_lite() && offer.session.ice_lite() {
             return Err(RtcError::RemoteSdp(
@@ -994,17 +994,59 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     }
 }
 
-/// Calls `direction` for each audio and video m-line the answer will carry, and checks
-/// that each returned direction narrows the default one.
-fn answer_directions<F>(
-    offer: &SdpOffer,
-    direction: &mut F,
-) -> Result<Vec<(Mid, Direction)>, RtcError>
+/// An audio or video m-line of an offer being answered with
+/// [`SdpApi::accept_offer_with()`].
+///
+/// Read what the offer proposes and change how the answer treats the m-line.
+#[derive(Debug)]
+pub struct AnswerMedia {
+    mid: Mid,
+    kind: MediaKind,
+    offered_direction: Direction,
+    direction: Direction,
+}
+
+impl AnswerMedia {
+    /// The m-line's mid.
+    pub fn mid(&self) -> Mid {
+        self.mid
+    }
+
+    /// Whether the m-line is audio or video.
+    pub fn kind(&self) -> MediaKind {
+        self.kind
+    }
+
+    /// The direction as written in the offer, from the offerer's side.
+    pub fn offered_direction(&self) -> Direction {
+        self.offered_direction
+    }
+
+    /// The direction the answer gives the m-line, from this side. Defaults to
+    /// [`AnswerMedia::offered_direction()`] inverted.
+    pub fn direction(&self) -> Direction {
+        self.direction
+    }
+
+    /// Set the direction the answer gives the m-line, from this side.
+    ///
+    /// It may only narrow the default (RFC 3264 §6): drop sending, receiving, or both.
+    /// An offered `sendrecv` can be answered `sendonly`, `recvonly` or `inactive`; an
+    /// offered `recvonly` can be answered `inactive` but never `recvonly`. A widening
+    /// direction makes [`SdpApi::accept_offer_with()`] fail.
+    pub fn set_direction(&mut self, direction: Direction) {
+        self.direction = direction;
+    }
+}
+
+/// Calls `answer` for each audio and video m-line the answer will carry, and checks
+/// that each chosen direction narrows the default one.
+fn answer_directions<F>(offer: &SdpOffer, answer: &mut F) -> Result<Vec<(Mid, Direction)>, RtcError>
 where
-    F: FnMut(Mid, MediaKind, Direction) -> Direction,
+    F: FnMut(&mut AnswerMedia),
 {
     let bundle_mids = offer.bundle_mids();
-    let mut answer = Vec::new();
+    let mut directions = Vec::new();
 
     for m in offer.media_lines.iter().filter(|m| m.typ.is_media()) {
         let is_in_bundle = bundle_mids
@@ -1020,7 +1062,14 @@ where
             MediaKind::Video
         };
         let default = m.direction().invert();
-        let chosen = direction(m.mid(), kind, default);
+        let mut media = AnswerMedia {
+            mid: m.mid(),
+            kind,
+            offered_direction: m.direction(),
+            direction: default,
+        };
+        answer(&mut media);
+        let chosen = media.direction;
 
         let widens = (chosen.is_sending() && !default.is_sending())
             || (chosen.is_receiving() && !default.is_receiving());
@@ -1032,10 +1081,10 @@ where
             )));
         }
 
-        answer.push((m.mid(), chosen));
+        directions.push((m.mid(), chosen));
     }
 
-    Ok(answer)
+    Ok(directions)
 }
 
 fn apply_offer(

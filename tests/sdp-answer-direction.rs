@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use str0m::change::SdpOffer;
+use str0m::change::{AnswerMedia, SdpOffer};
 use str0m::media::{Direction, MediaKind, Mid};
 use str0m::{Event, Rtc, RtcError};
 use tracing::info_span;
@@ -9,15 +9,15 @@ use tracing::info_span;
 mod common;
 use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
-/// L offers the given media; R answers with `direction`. Returns R's answer SDP.
+/// L offers the given media; R answers with `answer`. Returns R's answer SDP.
 fn offer_and_answer<F>(
     l: &mut TestRtc,
     r: &mut TestRtc,
     media: &[(MediaKind, Direction)],
-    direction: F,
+    answer: F,
 ) -> Result<(Vec<Mid>, String), RtcError>
 where
-    F: FnMut(Mid, MediaKind, Direction) -> Direction,
+    F: FnMut(&mut AnswerMedia),
 {
     let mut change = l.sdp_api();
     let mids = media
@@ -26,7 +26,7 @@ where
         .collect();
     let (offer, pending) = change.apply().unwrap();
 
-    let answer = r.rtc.sdp_api().accept_offer_with(offer, direction)?;
+    let answer = r.rtc.sdp_api().accept_offer_with(offer, answer)?;
     let answer_sdp = answer.to_sdp_string();
     l.rtc.sdp_api().accept_answer(pending, answer)?;
 
@@ -62,9 +62,10 @@ fn answer_narrows_offered_sendrecv_audio_to_sendonly() -> Result<(), RtcError> {
             (MediaKind::Audio, Direction::SendRecv),
             (MediaKind::Video, Direction::SendRecv),
         ],
-        |_, kind, dir| match kind {
-            MediaKind::Audio => Direction::SendOnly,
-            MediaKind::Video => dir,
+        |media| {
+            if media.kind() == MediaKind::Audio {
+                media.set_direction(Direction::SendOnly);
+            }
         },
     )?;
     let (audio, video) = (mids[0], mids[1]);
@@ -93,16 +94,16 @@ fn default_direction_matches_accept_offer() -> Result<(), RtcError> {
 
     let mut seen = vec![];
     let (mut l, mut r) = new_pair();
-    let (mids, _) = offer_and_answer(&mut l, &mut r, &media, |mid, kind, dir| {
-        seen.push((mid, kind, dir));
-        dir
+    let (mids, _) = offer_and_answer(&mut l, &mut r, &media, |m| {
+        seen.push((m.mid(), m.kind(), m.offered_direction(), m.direction()));
     })?;
 
-    // The callback sees each m-line once, with the direction accept_offer would answer.
+    // The callback sees each m-line once, with the offered direction and the one
+    // accept_offer would answer.
     let expected: Vec<_> = mids
         .iter()
         .zip(media)
-        .map(|(mid, (kind, dir))| (*mid, kind, dir.invert()))
+        .map(|(mid, (kind, dir))| (*mid, kind, dir, dir.invert()))
         .collect();
     assert_eq!(seen, expected);
 
@@ -123,7 +124,7 @@ fn answer_can_be_inactive() -> Result<(), RtcError> {
         &mut l,
         &mut r,
         &[(MediaKind::Audio, Direction::SendRecv)],
-        |_, _, _| Direction::Inactive,
+        |m| m.set_direction(Direction::Inactive),
     )?;
 
     assert!(answer_sdp.contains("a=inactive"), "{answer_sdp}");
@@ -148,7 +149,7 @@ fn widening_the_answer_is_rejected_before_the_session_changes() {
     let result = r
         .rtc
         .sdp_api()
-        .accept_offer_with(offer, |_, _, _| Direction::SendRecv);
+        .accept_offer_with(offer, |m| m.set_direction(Direction::SendRecv));
 
     assert!(matches!(result, Err(RtcError::RemoteSdp(_))), "{result:?}");
     assert!(
@@ -200,9 +201,9 @@ fn data_channel_and_rejected_lines_are_not_passed_to_the_callback() -> Result<()
 
     let mut seen = vec![];
     let answer = r.span.in_scope(|| {
-        r.rtc.sdp_api().accept_offer_with(offer, |mid, kind, dir| {
-            seen.push((mid, kind, dir));
-            Direction::SendOnly
+        r.rtc.sdp_api().accept_offer_with(offer, |m| {
+            seen.push((m.mid(), m.kind(), m.offered_direction()));
+            m.set_direction(Direction::SendOnly);
         })
     })?;
 
@@ -240,7 +241,7 @@ fn sendonly_answer_sends_but_never_receives() -> Result<(), RtcError> {
         &mut l,
         &mut r,
         &[(MediaKind::Audio, Direction::SendRecv)],
-        |_, _, _| Direction::SendOnly,
+        |m| m.set_direction(Direction::SendOnly),
     )?;
     let mid = mids[0];
 
