@@ -103,7 +103,7 @@ impl Sdp {
 
         for (i, media) in self.media_lines.iter().enumerate() {
             let mid = media.mid();
-            if self.media_lines[i + 1..].iter().any(|m| m.mid() == mid) {
+            if self.media_lines.iter().skip(i + 1).any(|m| m.mid() == mid) {
                 return Some(format!("Mid {mid} is used by more than one m-line"));
             }
         }
