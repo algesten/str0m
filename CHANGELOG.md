@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Write SDP that str0m can read back when it rejects every m-line #1101
   * Check every m-line for SDP consistency and accept rejected m-lines without payload types #1100
   * Expose H264 NAL unit detection for single NAL, STAP-A, and FU-A payloads #1099
   * Reject remote SDP that gives two m-lines the same mid #1097

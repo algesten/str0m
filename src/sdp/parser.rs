@@ -121,11 +121,13 @@ where
         "group",
         (
             not_sp(),
-            token(' '),
-            sep_by1(not_sp().map(|m| Mid::from(m.as_str())), token(' ')),
+            many::<Vec<_>, _, _>(attempt(
+                (token(' '), not_sp()).map(|(_, m)| Mid::from(m.as_str())),
+            )),
+            optional(token(' ')),
         ),
     )
-    .map(|(typ, _, mids)| SessionAttribute::Group { typ, mids });
+    .map(|(typ, mids, _)| SessionAttribute::Group { typ, mids });
 
     // a=msid-semantic: WMS 9ce81ef6-c7cb-4da5-8f5f-3e7cc9b5f9b0
     let msid_semantic = attribute_line(
@@ -1199,6 +1201,28 @@ mod test {
                 "m=application 9 DTLS/SCTP 5000\n"
             ))
         );
+    }
+
+    #[test]
+    fn session_parser_group_without_mids() {
+        for group in ["a=group:BUNDLE\r\n", "a=group:BUNDLE \r\n"] {
+            let sdp = format!(
+                "v=0\r\n\
+                o=- 6564425948916445306 2 IN IP4 127.0.0.1\r\n\
+                s=-\r\n\
+                t=0 0\r\n\
+                {group}"
+            );
+            let (session, rest) = session_parser().parse(sdp.as_str()).unwrap();
+            assert_eq!(
+                session.attrs,
+                vec![SessionAttribute::Group {
+                    typ: "BUNDLE".into(),
+                    mids: vec![],
+                }]
+            );
+            assert_eq!(rest, "");
+        }
     }
 
     #[test]
