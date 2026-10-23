@@ -101,6 +101,12 @@ impl Sdp {
         //    for PT 96 in one m-line it must be in all m-lines.
         // 2. Compare with previous m-lines that remote isn't narrowing/expanding PT and/or extmaps.
 
+        for media in &self.media_lines {
+            if let Some(error) = media.check_consistent() {
+                return Some(error);
+            }
+        }
+
         // SDP typically has few m-lines, so a pairwise scan avoids allocation and hashing
         // for a small number of comparisons (at most 45 for 10 m-lines).
         for (i, media) in self.media_lines.iter().enumerate() {
@@ -110,28 +116,13 @@ impl Sdp {
             }
         }
 
-        let group = self
+        let has_group = self
             .session
             .attrs
             .iter()
-            .find(|a| matches!(a, SessionAttribute::Group { .. }));
+            .any(|a| matches!(a, SessionAttribute::Group { .. }));
 
-        if let Some(SessionAttribute::Group { mids, .. }) = group {
-            if !mids.len() == self.media_lines.len() {
-                return Some(format!(
-                    "a=group mid count doesn't match m-line count {} != {}",
-                    mids.len(),
-                    self.media_lines.len()
-                ));
-            }
-            for (media, mid) in self.media_lines.iter().zip(mids.iter()) {
-                media.check_consistent()?;
-                let m = media.mid();
-                if m != *mid {
-                    return Some(format!("Mid order not matching a=group {m} != {mid}"));
-                }
-            }
-        } else {
+        if !has_group {
             return Some("Session attribute a=group missing".into());
         }
 
@@ -1768,6 +1759,39 @@ mod test {
             sdp.push_str("a=sendrecv\r\na=rtpmap:111 opus/48000/2\r\n");
         }
         Sdp::parse(&sdp).unwrap()
+    }
+
+    #[test]
+    fn an_invalid_m_line_after_a_valid_one_is_inconsistent() {
+        let mut missing_mid = sdp_with_mids("0 1", &["0", "1"]);
+        missing_mid.media_lines[1]
+            .attrs
+            .retain(|a| !matches!(a, MediaAttribute::Mid(_)));
+
+        let mut two_directions = sdp_with_mids("0 1", &["0", "1"]);
+        two_directions.media_lines[1]
+            .attrs
+            .push(MediaAttribute::RecvOnly);
+
+        for sdp in [missing_mid, two_directions] {
+            let expected = sdp.media_lines[1].check_consistent().unwrap();
+            let err = sdp.assert_consistency().unwrap_err();
+            let SdpError::Inconsistent(message) = err else {
+                panic!("expected an inconsistent SDP error, got {err:?}");
+            };
+            assert_eq!(message, expected);
+        }
+    }
+
+    #[test]
+    fn a_group_in_another_order_or_without_a_rejected_m_line_is_consistent() {
+        sdp_with_mids("1 0", &["0", "1"])
+            .assert_consistency()
+            .unwrap();
+
+        let mut rejected = sdp_with_mids("0", &["0", "1"]);
+        rejected.media_lines[1].disabled = true;
+        rejected.assert_consistency().unwrap();
     }
 
     #[test]
