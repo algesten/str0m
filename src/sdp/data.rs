@@ -1517,6 +1517,8 @@ impl fmt::Display for MediaLine {
         let len = self.pts.len();
         if self.typ.is_channel() {
             write!(f, "webrtc-datachannel\r\n")?;
+        } else if self.pts.is_empty() {
+            write!(f, "0\r\n")?;
         } else {
             for (idx, m) in self.pts.iter().enumerate() {
                 if idx + 1 < len {

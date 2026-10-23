@@ -9,6 +9,7 @@ use common::negotiate;
 use common::progress;
 use common::{extract_sctp_init, remove_sctp_init, replace_sctp_init};
 use str0m::Rtc;
+use str0m::change::SdpAnswer;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::format::CodecSpec;
@@ -246,6 +247,41 @@ pub fn answer_no_match() {
     assert!(!r.codec_config()[0]._is_locked());
     // No remote PTs.
     assert_eq!(r.media(mid).unwrap().remote_pts(), &[]);
+}
+
+#[test]
+pub fn rejected_answer_is_accepted_as_text() {
+    init_log();
+    init_crypto_default();
+
+    let mut l = build_params(info_span!("L"), &[vp8(100)]);
+    let mut r = build_params(info_span!("R"), &[h264(96)]);
+
+    let (offer, pending) = l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        change.apply().unwrap()
+    });
+
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+
+    let answer_sdp = answer.to_sdp_string();
+    assert!(
+        answer_sdp.contains("m=video 0 UDP/TLS/RTP/SAVPF 0\r\n"),
+        "Expected a rejected m-line with a format, got:\n{}",
+        answer_sdp
+    );
+
+    let answer = SdpAnswer::from_sdp_string(&answer_sdp).unwrap();
+    l.span.in_scope(|| {
+        l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    });
+
+    let mid = l._mids()[0];
+    assert!(l.media(mid).unwrap().disabled());
+    assert_eq!(l.media(mid).unwrap().direction(), Direction::Inactive);
 }
 
 #[test]
