@@ -1474,8 +1474,11 @@ impl fmt::Display for SessionAttribute {
         use SessionAttribute::*;
         match self {
             Group { typ, mids } => {
-                let mids: Vec<_> = mids.iter().map(|m| m.to_string()).collect();
-                write!(f, "a=group:{} {}\r\n", typ, mids.join(" "))?;
+                write!(f, "a=group:{typ}")?;
+                for mid in mids {
+                    write!(f, " {mid}")?;
+                }
+                write!(f, "\r\n")?;
             }
             AllowMixedExts => write!(f, "a=extmap-allow-mixed\r\n")?,
             MsidSemantic {
@@ -1780,6 +1783,21 @@ mod test {
             let p = params.iter().find(|p| p.pt == pt.into()).unwrap();
             assert_eq!(p.fb_transport_cc(), expected);
         }
+    }
+
+    #[test]
+    fn a_group_is_written_without_a_trailing_space() {
+        let empty = SessionAttribute::Group {
+            typ: "BUNDLE".into(),
+            mids: vec![],
+        };
+        assert_eq!(empty.to_string(), "a=group:BUNDLE\r\n");
+
+        let two = SessionAttribute::Group {
+            typ: "BUNDLE".into(),
+            mids: vec!["0".into(), "1".into()],
+        };
+        assert_eq!(two.to_string(), "a=group:BUNDLE 0 1\r\n");
     }
 
     fn sdp_with_mids(group: &str, mids: &[&str]) -> Sdp {
