@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Check every m-line for SDP consistency and accept rejected m-lines without payload types #1100
   * Expose H264 NAL unit detection for single NAL, STAP-A, and FU-A payloads #1099
   * Reject remote SDP that gives two m-lines the same mid #1097
   * Never give two m-lines in one offer the same mid #1092
