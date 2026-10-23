@@ -123,6 +123,13 @@ impl Sdp {
             .find(|a| matches!(a, SessionAttribute::Group { .. }));
 
         if let Some(SessionAttribute::Group { mids, .. }) = group {
+            // For str0m's single BUNDLE transport, expect participating m-lines in
+            // media-section order, as libwebrtc generates offers and answers in
+            // pc/media_session.cc, omitting rejected sections from the group.
+            // This ordering is a deliberate interoperability constraint, stricter
+            // than RFC 9143 section 5, which permits BUNDLE MID order to differ
+            // from media-section order. Rejecting a section does not remove its
+            // m-line from the SDP or change the positions of the remaining m-lines.
             // Port 0 outside BUNDLE means rejected; inside BUNDLE it can be bundle-only.
             let media_lines = self
                 .media_lines
