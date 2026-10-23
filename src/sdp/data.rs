@@ -101,6 +101,12 @@ impl Sdp {
         //    for PT 96 in one m-line it must be in all m-lines.
         // 2. Compare with previous m-lines that remote isn't narrowing/expanding PT and/or extmaps.
 
+        for media in &self.media_lines {
+            if let Some(error) = media.check_consistent() {
+                return Some(error);
+            }
+        }
+
         // SDP typically has few m-lines, so a pairwise scan avoids allocation and hashing
         // for a small number of comparisons (at most 45 for 10 m-lines).
         for (i, media) in self.media_lines.iter().enumerate() {
@@ -117,15 +123,31 @@ impl Sdp {
             .find(|a| matches!(a, SessionAttribute::Group { .. }));
 
         if let Some(SessionAttribute::Group { mids, .. }) = group {
-            if !mids.len() == self.media_lines.len() {
+            // For str0m's single BUNDLE transport, expect participating m-lines in
+            // media-section order, as libwebrtc generates offers and answers in
+            // pc/media_session.cc, omitting rejected sections from the group.
+            // This ordering is a deliberate interoperability constraint, stricter
+            // than RFC 9143 section 5, which permits BUNDLE MID order to differ
+            // from media-section order. Rejecting a section does not remove its
+            // m-line from the SDP or change the positions of the remaining m-lines.
+            // Port 0 outside BUNDLE means rejected; inside BUNDLE it can be bundle-only.
+            let media_lines = self
+                .media_lines
+                .iter()
+                .filter(|m| !m.disabled || mids.contains(&m.mid()));
+            // This clones only the iterator state: a slice cursor and a filter closure
+            // borrowing `mids`. It does not clone any MediaLine, its attributes, or the
+            // backing Vec, and it allocates nothing. Counting consumes the cloned
+            // iterator so the original remains available for the order check below.
+            let media_count = media_lines.clone().count();
+            if mids.len() != media_count {
                 return Some(format!(
                     "a=group mid count doesn't match m-line count {} != {}",
                     mids.len(),
-                    self.media_lines.len()
+                    media_count
                 ));
             }
-            for (media, mid) in self.media_lines.iter().zip(mids.iter()) {
-                media.check_consistent()?;
+            for (media, mid) in media_lines.zip(mids.iter()) {
                 let m = media.mid();
                 if m != *mid {
                     return Some(format!("Mid order not matching a=group {m} != {mid}"));
@@ -494,7 +516,7 @@ impl MediaLine {
             ));
         }
 
-        if self.proto == Proto::Srtp && self.pts.is_empty() {
+        if self.proto == Proto::Srtp && self.pts.is_empty() && !self.disabled {
             return Some(format!("Expected at least one PT for mid: {}", self.mid()));
         }
 
@@ -1768,6 +1790,70 @@ mod test {
             sdp.push_str("a=sendrecv\r\na=rtpmap:111 opus/48000/2\r\n");
         }
         Sdp::parse(&sdp).unwrap()
+    }
+
+    #[test]
+    fn an_invalid_m_line_after_a_valid_one_is_inconsistent() {
+        let mut missing_mid = sdp_with_mids("0 1", &["0", "1"]);
+        missing_mid.media_lines[1]
+            .attrs
+            .retain(|a| !matches!(a, MediaAttribute::Mid(_)));
+
+        let mut two_directions = sdp_with_mids("0 1", &["0", "1"]);
+        two_directions.media_lines[1]
+            .attrs
+            .push(MediaAttribute::RecvOnly);
+
+        for sdp in [missing_mid, two_directions] {
+            let expected = sdp.media_lines[1].check_consistent().unwrap();
+            let err = sdp.assert_consistency().unwrap_err();
+            let SdpError::Inconsistent(message) = err else {
+                panic!("expected an inconsistent SDP error, got {err:?}");
+            };
+            assert_eq!(message, expected);
+        }
+    }
+
+    #[test]
+    fn group_mids_match_participating_m_lines_in_order() {
+        for group in ["1 0", "0", "0 1 2", "0 2"] {
+            assert!(
+                sdp_with_mids(group, &["0", "1"])
+                    .assert_consistency()
+                    .is_err()
+            );
+        }
+        sdp_with_mids("0 1", &["0", "1"])
+            .assert_consistency()
+            .unwrap();
+
+        for (group, rejected_index) in [("1", 0), ("0", 1)] {
+            let mut rejected = sdp_with_mids(group, &["0", "1"]);
+            rejected.media_lines[rejected_index].disabled = true;
+            rejected.assert_consistency().unwrap();
+        }
+
+        let mut bundle_only = sdp_with_mids("0 1", &["0", "1"]);
+        bundle_only.media_lines[1].disabled = true;
+        bundle_only.assert_consistency().unwrap();
+    }
+
+    #[test]
+    fn a_rejected_m_line_without_formats_is_consistent() {
+        let mut built = sdp_with_mids("0", &["0", "1"]);
+        built.media_lines[1].disabled = true;
+        built.media_lines[1].pts.clear();
+        built.assert_consistency().unwrap();
+
+        let parsed = Sdp::parse(
+            "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n\
+             m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:111 opus/48000/2\r\n\
+             m=video 0 UDP/TLS/RTP/SAVPF \r\na=mid:1\r\na=inactive\r\n",
+        )
+        .unwrap();
+        assert!(parsed.media_lines[1].disabled);
+        assert!(parsed.media_lines[1].pts.is_empty());
+        parsed.assert_consistency().unwrap();
     }
 
     #[test]
