@@ -485,7 +485,7 @@ impl MediaLine {
             ));
         }
 
-        if self.proto == Proto::Srtp && self.pts.is_empty() {
+        if self.proto == Proto::Srtp && self.pts.is_empty() && !self.disabled {
             return Some(format!("Expected at least one PT for mid: {}", self.mid()));
         }
 
@@ -1792,6 +1792,24 @@ mod test {
         let mut rejected = sdp_with_mids("0", &["0", "1"]);
         rejected.media_lines[1].disabled = true;
         rejected.assert_consistency().unwrap();
+    }
+
+    #[test]
+    fn a_rejected_m_line_without_formats_is_consistent() {
+        let mut built = sdp_with_mids("0", &["0", "1"]);
+        built.media_lines[1].disabled = true;
+        built.media_lines[1].pts.clear();
+        built.assert_consistency().unwrap();
+
+        let parsed = Sdp::parse(
+            "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n\
+             m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=mid:0\r\na=sendrecv\r\na=rtpmap:111 opus/48000/2\r\n\
+             m=video 0 UDP/TLS/RTP/SAVPF \r\na=mid:1\r\na=inactive\r\n",
+        )
+        .unwrap();
+        assert!(parsed.media_lines[1].disabled);
+        assert!(parsed.media_lines[1].pts.is_empty());
+        parsed.assert_consistency().unwrap();
     }
 
     #[test]
