@@ -116,13 +116,33 @@ impl Sdp {
             }
         }
 
-        let has_group = self
+        let group = self
             .session
             .attrs
             .iter()
-            .any(|a| matches!(a, SessionAttribute::Group { .. }));
+            .find(|a| matches!(a, SessionAttribute::Group { .. }));
 
-        if !has_group {
+        if let Some(SessionAttribute::Group { mids, .. }) = group {
+            // Port 0 outside BUNDLE means rejected; inside BUNDLE it can be bundle-only.
+            let media_lines = self
+                .media_lines
+                .iter()
+                .filter(|m| !m.disabled || mids.contains(&m.mid()));
+            let media_count = media_lines.clone().count();
+            if mids.len() != media_count {
+                return Some(format!(
+                    "a=group mid count doesn't match m-line count {} != {}",
+                    mids.len(),
+                    media_count
+                ));
+            }
+            for (media, mid) in media_lines.zip(mids.iter()) {
+                let m = media.mid();
+                if m != *mid {
+                    return Some(format!("Mid order not matching a=group {m} != {mid}"));
+                }
+            }
+        } else {
             return Some("Session attribute a=group missing".into());
         }
 
@@ -1784,14 +1804,27 @@ mod test {
     }
 
     #[test]
-    fn a_group_in_another_order_or_without_a_rejected_m_line_is_consistent() {
-        sdp_with_mids("1 0", &["0", "1"])
+    fn group_mids_match_participating_m_lines_in_order() {
+        for group in ["1 0", "0", "0 1 2", "0 2"] {
+            assert!(
+                sdp_with_mids(group, &["0", "1"])
+                    .assert_consistency()
+                    .is_err()
+            );
+        }
+        sdp_with_mids("0 1", &["0", "1"])
             .assert_consistency()
             .unwrap();
 
-        let mut rejected = sdp_with_mids("0", &["0", "1"]);
-        rejected.media_lines[1].disabled = true;
-        rejected.assert_consistency().unwrap();
+        for (group, rejected_index) in [("1", 0), ("0", 1)] {
+            let mut rejected = sdp_with_mids(group, &["0", "1"]);
+            rejected.media_lines[rejected_index].disabled = true;
+            rejected.assert_consistency().unwrap();
+        }
+
+        let mut bundle_only = sdp_with_mids("0 1", &["0", "1"]);
+        bundle_only.media_lines[1].disabled = true;
+        bundle_only.assert_consistency().unwrap();
     }
 
     #[test]
