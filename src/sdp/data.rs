@@ -128,6 +128,10 @@ impl Sdp {
                 .media_lines
                 .iter()
                 .filter(|m| !m.disabled || mids.contains(&m.mid()));
+            // This clones only the iterator state: a slice cursor and a filter closure
+            // borrowing `mids`. It does not clone any MediaLine, its attributes, or the
+            // backing Vec, and it allocates nothing. Counting consumes the cloned
+            // iterator so the original remains available for the order check below.
             let media_count = media_lines.clone().count();
             if mids.len() != media_count {
                 return Some(format!(
