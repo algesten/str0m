@@ -2,7 +2,6 @@
 
 use combine::EasyParser;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::fmt::{self};
 use std::ops::Deref;
 
@@ -66,14 +65,16 @@ impl Sdp {
     }
 
     pub(crate) fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
-        let mut candidates: HashSet<&Candidate> = HashSet::new();
+        // Deduplicate while keeping SDP order, so the result does not depend on hasher state.
+        let mut candidates: Vec<&Candidate> = Vec::new();
 
-        // Session level ice candidates.
-        candidates.extend(self.session.ice_candidates());
+        let session = self.session.ice_candidates();
+        let media = self.media_lines.iter().flat_map(|m| m.ice_candidates());
 
-        // Ice candidates.
-        for m in &self.media_lines {
-            candidates.extend(m.ice_candidates());
+        for c in session.chain(media) {
+            if !candidates.contains(&c) {
+                candidates.push(c);
+            }
         }
 
         candidates.into_iter()

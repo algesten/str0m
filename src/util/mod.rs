@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 mod bit_pattern;
@@ -12,6 +13,18 @@ pub(crate) use time_tricks::{already_happened, epoch_to_beginning};
 
 mod average;
 pub(crate) use average::MovingAverage;
+
+/// Entries of a map in key order, for passes whose iteration order is observable.
+///
+/// Such passes decide pacer tie-breaks between queues, the order of RTCP reports and
+/// which stream's event is polled first. `HashMap` order differs from run to run, so a
+/// seeded test or simulation could not be replayed. The maps keep `RandomState`, since
+/// their keys come from the remote peer; they are small, so sorting each pass is cheap.
+pub(crate) fn sorted_by_key_mut<K: Ord, V, S>(map: &mut HashMap<K, V, S>) -> Vec<(&K, &mut V)> {
+    let mut entries: Vec<_> = map.iter_mut().collect();
+    entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    entries
+}
 
 pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;
