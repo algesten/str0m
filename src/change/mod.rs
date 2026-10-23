@@ -14,7 +14,7 @@
 //! some "other way" keeping the two peers in sync.
 mod sdp;
 pub(crate) use sdp::AddMedia;
-pub use sdp::{SdpAnswer, SdpApi, SdpOffer, SdpPendingOffer};
+pub use sdp::{AnswerMedia, SdpAnswer, SdpApi, SdpOffer, SdpPendingOffer};
 
 mod direct;
 pub use direct::DirectApi;
