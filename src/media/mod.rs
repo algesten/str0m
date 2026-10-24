@@ -10,6 +10,7 @@ use crate::format::CodecConfig;
 
 use crate::packet::{CodecDepacketizer, DepacketizingBuffer, Payloader};
 use crate::packet::{RedSender, RedSink, RtpMeta};
+use crate::rtp::dependency_descriptor::FrameDescriptor;
 use crate::rtp_::ExtensionMap;
 use crate::rtp_::MidRid;
 use crate::rtp_::SRTP_BLOCK_SIZE;
@@ -210,6 +211,8 @@ pub(crate) struct ToPayload {
     pub start_of_talk_spurt: bool,
     pub data: Arc<[u8]>,
     pub ext_vals: ExtensionValues,
+    /// Kept apart from `ext_vals`, since each packet of the frame gets its own descriptor.
+    pub dependency_descriptor: Option<FrameDescriptor>,
 }
 
 /// Per-(pt, rid) outgoing payloader entry stored in [`Media::payloaders`]: the codec-agnostic
@@ -609,6 +612,14 @@ impl Media {
         let rtp_size: usize = mtu - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs
         let aligned_mtu: usize = rtp_size - rtp_size % SRTP_BLOCK_SIZE;
+        // The headroom above the MTU target fits the usual RTP header, but not a Dependency
+        // Descriptor of up to 255 bytes, so its bytes come out of the payload instead.
+        let budget = aligned_mtu.saturating_sub(
+            to_payload
+                .dependency_descriptor
+                .as_ref()
+                .map_or(0, FrameDescriptor::max_header_growth),
+        );
 
         // The RED PT to wrap into, if RED is negotiated for this codec and send-side wrapping is
         // on. When off we send on the plain PT even though RED stays negotiated on the m-line (it
@@ -624,17 +635,17 @@ impl Media {
         let result = if let Some(red_pt) = red_pt {
             // Keep the RED sender current with the negotiated PT/pattern without discarding a live
             // talk-spurt's history. Reserve the 1-byte RED primary header so the wrapped packet
-            // still fits the MTU; the sink uses the full aligned MTU as its shed budget.
+            // still fits the MTU; the sink uses the full budget to shed redundancy.
             let red = red.get_or_insert_with(|| RedSender::new(red_pt, pt, red_distances));
             red.sync(red_pt, pt, red_distances);
 
-            let packetize_mtu = aligned_mtu.saturating_sub(1);
-            let mut sink = RedSink::new(stream, red, aligned_mtu);
+            let packetize_mtu = budget.saturating_sub(1);
+            let mut sink = RedSink::new(stream, red, budget);
             payloader.push_sample(to_payload, packetize_mtu, &mut sink)
         } else {
             // Drop any stale sender so its history does not persist across a RED disable.
             *red = None;
-            payloader.push_sample(to_payload, aligned_mtu, stream)
+            payloader.push_sample(to_payload, budget, stream)
         };
 
         result.map_err(|e| RtcError::Packet(self.mid, pt, e))

@@ -92,3 +92,9 @@ name = "red_decode"
 path = "fuzz_targets/red_decode.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "dependency_descriptor"
+path = "fuzz_targets/dependency_descriptor.rs"
+test = false
+doc = false

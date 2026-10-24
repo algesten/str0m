@@ -783,6 +783,7 @@ pub mod rtp {
     }
     use self::rtcp::Rtcp;
 
+    pub mod dependency_descriptor;
     /// Video Layers Allocation RTP Header Extension
     pub mod vla;
     pub use crate::rtp_::{AbsCaptureTime, ExtensionValues, UserExtensionValues};
