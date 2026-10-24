@@ -1611,6 +1611,11 @@ fn run_negotiated(rtc: &mut Rtc, mut now: Instant) {
     }
 }
 
+/// Fuzz Dependency Descriptor parsing, encoding, frame-mode sending, and per-stream receiving.
+pub fn dependency_descriptor(data: &[u8]) {
+    let _ = crate::rtp::dependency_descriptor::fuzz(data);
+}
+
 /// Fuzz each codec depacketizer directly (bypassing the buffer's gating),
 /// exercising the raw `Depacketizer::depacketize` parsers.
 pub fn depack_direct(data: &[u8]) -> Option<()> {
