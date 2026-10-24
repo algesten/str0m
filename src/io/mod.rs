@@ -18,7 +18,8 @@ pub use str0m_proto::DATAGRAM_MTU_WARN;
 /// Max UDP packet size
 pub(crate) const DATAGRAM_MAX_PACKET_SIZE: usize = 2000;
 
-/// Max expected RTP header over, with full extensions etc.
+/// Max expected RTP header over, with full extensions etc. This excludes a Dependency Descriptor,
+/// whose bytes are reserved from the payload instead.
 pub const MAX_RTP_OVERHEAD: usize = 80;
 
 /// Max expected DTLS record overhead (record header + explicit nonce + AEAD
