@@ -151,7 +151,7 @@ impl<'a> Writer<'a> {
     /// Write media.
     ///
     /// This operation fails if the PT doesn't match a negotiated codec, the RID (`None` or a value)
-    /// does not match anything negotiated, or a
+    /// does not match anything negotiated, or a negotiated
     /// [`DependencyDescriptor`][crate::rtp::dependency_descriptor::DependencyDescriptor] user
     /// extension value attaches a malformed structure.
     ///
@@ -189,7 +189,9 @@ impl<'a> Writer<'a> {
         let clock_rate = params.spec().rtp_clock_rate();
 
         let mid = self.mid;
-        let dependency_descriptor = FrameDescriptor::take(&mut self.ext_vals)
+        // This unwrap is OK due to the invariant of self.mid being resolvable
+        let exts = self.session.media_by_mid(mid).unwrap().remote_extmap();
+        let dependency_descriptor = FrameDescriptor::take(&mut self.ext_vals, exts)
             .map_err(|e| RtcError::Packet(mid, pt, PacketError::InvalidDependencyDescriptor(e)))?;
 
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable

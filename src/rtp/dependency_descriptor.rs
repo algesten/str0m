@@ -67,6 +67,13 @@
 //! included, and signals the forwarded targets in the active decode targets bitmask, as in the
 //! example. The specification suggests sending the bitmask on every packet.
 //!
+//! In RTP mode, an SFU reads the descriptor of each received [`RtpPacket`] from its header's
+//! extension values, and sets the descriptor to forward in [`RtpWrite::ext_vals`]. RTP sequence
+//! numbers are separate from frame numbers: rewrite those, so that subscribers see no gaps where
+//! packets were dropped. When dropping the top spatial layers, set the marker bit on the last
+//! packet forwarded for each temporal unit. A descriptor that a subscriber did not negotiate is
+//! not sent.
+//!
 //! # Frame mode
 //!
 //! Each media write is one temporal unit with one DD frame. str0m sets the packet boundary flags
@@ -74,7 +81,8 @@
 //! active decode targets bitmask. To remove the structure, str0m parses a descriptor that
 //! attaches one, and [`Writer::write`] rejects it if it is malformed. Other descriptors cannot be
 //! checked without per-stream state and are sent as given. The descriptor's bytes are reserved
-//! from each packet's payload, so packets stay within the MTU.
+//! from each packet's payload, so packets stay within the MTU. Where the m-line did not
+//! negotiate DD, the descriptor is dropped instead, unchecked and without reserving room.
 //!
 //! A received [`MediaData`] holds one temporal unit. If all of its packets belong to one DD
 //! frame, it carries the first packet's descriptor, including its original packet boundary flags.
@@ -91,6 +99,8 @@
 //! [`Writer::write`]: crate::media::Writer::write
 //! [`MediaData`]: crate::media::MediaData
 //! [`remote_extmap`]: crate::media::Media::remote_extmap
+//! [`RtpPacket`]: crate::rtp::RtpPacket
+//! [`RtpWrite::ext_vals`]: crate::rtp::RtpWrite::ext_vals
 
 use std::fmt;
 use std::iter;
@@ -101,7 +111,7 @@ use arrayvec::ArrayVec;
 
 use crate::rtp_::MAX_ID_ONE_BYTE_FORM;
 
-use super::{ExtensionSerializer, ExtensionValues};
+use super::{ExtensionMap, ExtensionSerializer, ExtensionValues};
 
 /// URI for the Dependency Descriptor RTP Header Extension.
 pub const URI: &str =
@@ -2104,16 +2114,22 @@ pub(crate) struct FrameDescriptor {
 impl FrameDescriptor {
     /// Take the descriptor out of the extension values of a frame.
     ///
+    /// A descriptor that `exts` cannot send is dropped, since it was not negotiated, so it takes
+    /// no room in the packets and is not checked.
     /// Only the first packet of a frame may attach a structure, so a descriptor that attaches
     /// one is parsed to find it, which also checks it. Other descriptors cannot be checked
     /// without the latest shared structure.
     pub(crate) fn take(
         ext_vals: &mut ExtensionValues,
+        exts: &ExtensionMap,
     ) -> Result<Option<Self>, DependencyDescriptorError> {
         let Some(descriptor) = ext_vals.user_values.get::<DependencyDescriptor>().cloned() else {
             return Ok(None);
         };
         ext_vals.user_values.remove::<DependencyDescriptor>();
+        if !exts.iter().any(|(_, extension)| extension.as_uri() == URI) {
+            return Ok(None);
+        }
         let continuation = match descriptor.attached_structure_bit_range()? {
             Some(structure_bit_range) => {
                 descriptor.without_attached_structure(structure_bit_range)?
@@ -2377,6 +2393,7 @@ impl BitWriter {
 /// descriptors that follow. Returns the number of descriptors that parsed.
 #[cfg(any(test, feature = "_internal_test_exports"))]
 pub(crate) fn fuzz(mut data: &[u8]) -> usize {
+    let exts = negotiated_extension_map();
     let mut input_structure: Option<SharedStructure> = None;
     let mut output_structure: Option<SharedStructure> = None;
     let mut receiver = DependencyDescriptorReceiver::default();
@@ -2390,7 +2407,7 @@ pub(crate) fn fuzz(mut data: &[u8]) -> usize {
         receiver.receive(&descriptor);
         let mut values = ExtensionValues::default();
         values.user_values.set(descriptor.clone());
-        let frame = FrameDescriptor::take(&mut values);
+        let frame = FrameDescriptor::take(&mut values, &exts);
         let Ok(parsed) = descriptor.parse(input_structure.as_ref()) else {
             continue;
         };
@@ -2498,6 +2515,14 @@ pub(crate) fn fuzz(mut data: &[u8]) -> usize {
     parsed_count
 }
 
+// An extension map that can send the Dependency Descriptor, as when it was negotiated.
+#[cfg(any(test, feature = "_internal_test_exports"))]
+fn negotiated_extension_map() -> ExtensionMap {
+    let mut exts = ExtensionMap::empty();
+    exts.set(1, super::Extension::with_serializer(URI, Serializer));
+    exts
+}
+
 #[cfg(test)]
 mod test {
     use std::time::{Instant, SystemTime};
@@ -2543,7 +2568,9 @@ mod test {
     fn frame_descriptor(descriptor: &DependencyDescriptor) -> FrameDescriptor {
         let mut values = ExtensionValues::default();
         values.user_values.set(descriptor.clone());
-        let frame = FrameDescriptor::take(&mut values).unwrap().unwrap();
+        let frame = FrameDescriptor::take(&mut values, &negotiated_extension_map())
+            .unwrap()
+            .unwrap();
         assert!(values.user_values.get::<DependencyDescriptor>().is_none());
         frame
     }
@@ -3193,8 +3220,9 @@ mod test {
 
     #[test]
     fn frame_descriptor_rejects_malformed_attached_structure() {
+        let exts = negotiated_extension_map();
         let mut values = ExtensionValues::default();
-        assert!(FrameDescriptor::take(&mut values).unwrap().is_none());
+        assert!(FrameDescriptor::take(&mut values, &exts).unwrap().is_none());
         for (bytes, error) in [
             (
                 &[0xc0_u8, 0, 42, 0x80][..],
@@ -3208,11 +3236,25 @@ mod test {
             values
                 .user_values
                 .set(DependencyDescriptor::from_bytes(bytes).unwrap());
-            assert_eq!(FrameDescriptor::take(&mut values).unwrap_err(), error);
+            assert_eq!(
+                FrameDescriptor::take(&mut values, &exts).unwrap_err(),
+                error
+            );
         }
         // Without an attached structure, fields after the flags cannot be checked.
         let unchecked = DependencyDescriptor::from_bytes([0xc0, 0, 42, 0x14]).unwrap();
         assert_eq!(frame_descriptor(&unchecked).continuation, unchecked);
+    }
+
+    #[test]
+    fn frame_descriptor_is_dropped_unless_negotiated() {
+        // A descriptor that would not be sent is neither kept nor checked.
+        let malformed = DependencyDescriptor::from_bytes([0xc0, 0, 42, 0x80]).unwrap();
+        let mut values = ExtensionValues::default();
+        values.user_values.set(malformed);
+        let frame = FrameDescriptor::take(&mut values, &ExtensionMap::standard());
+        assert!(frame.unwrap().is_none());
+        assert!(values.user_values.get::<DependencyDescriptor>().is_none());
     }
 
     #[test]
