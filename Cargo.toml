@@ -183,7 +183,3 @@ required-features = ["examples"]
 [[example]]
 name = "http-post"
 required-features = ["examples"]
-
-[lints.clippy]
-# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
-collapsible_if = "allow"

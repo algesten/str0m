@@ -1,6 +1,9 @@
 //! OpenSSL implementation of cryptographic functions.
 //! DTLS via OpenSSL's native DTLS implementation.
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
+
 mod cert;
 #[cfg(feature = "dimpl")]
 mod dimpl_provider;

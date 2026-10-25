@@ -26,7 +26,3 @@ dimpl = { workspace = true, optional = true }
 
 [dev-dependencies]
 arrayvec = "0.7"
-
-[lints.clippy]
-# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
-collapsible_if = "allow"

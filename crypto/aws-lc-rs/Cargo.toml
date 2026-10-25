@@ -16,7 +16,3 @@ str0m-proto = { workspace = true, features = ["dtls"] }
 aws-lc-rs.workspace = true
 dimpl = { workspace = true, features = ["aws-lc-rs", "rcgen"] }
 time.workspace = true
-
-[lints.clippy]
-# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
-collapsible_if = "allow"

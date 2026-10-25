@@ -32,7 +32,3 @@ serde.workspace = true
 
 # For openssl errors
 openssl = { workspace = true, optional = true }
-
-[lints.clippy]
-# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
-collapsible_if = "allow"

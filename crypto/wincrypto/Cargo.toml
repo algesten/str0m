@@ -26,7 +26,3 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 # Compatibility alias: DTLS always uses dimpl.
 dimpl = []
 fips140 = []
-
-[lints.clippy]
-# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
-collapsible_if = "allow"

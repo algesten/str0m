@@ -14,7 +14,3 @@ rust-version = "1.89.0"
 [dependencies]
 fastrand.workspace = true
 str0m-proto.workspace = true
-
-[lints.clippy]
-# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
-collapsible_if = "allow"

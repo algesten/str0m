@@ -10,7 +10,3 @@ publish = false
 
 [dependencies]
 str0m = { workspace = true, default-features = false, features = ["_internal_test_exports"] }
-
-[lints.clippy]
-# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
-collapsible_if = "allow"
