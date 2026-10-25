@@ -809,22 +809,21 @@ impl PayloadParams {
             claimed.assert_claim_once(remote_pt);
 
             // Check if RTX PT also conflicts
-            if local_is_controlling {
-                if let Some(rtx) = remote_rtx {
-                    if claimed.is_claimed(rtx) {
-                        let new_rtx = self
-                            .resend
-                            .filter(|pt| !claimed.is_claimed(*pt))
-                            .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+            if local_is_controlling
+                && let Some(rtx) = remote_rtx
+                && claimed.is_claimed(rtx)
+            {
+                let new_rtx = self
+                    .resend
+                    .filter(|pt| !claimed.is_claimed(*pt))
+                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
 
-                        if let Some(new_rtx) = new_rtx {
-                            debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
-                            remote_rtx = Some(new_rtx);
-                            unlocked.remove(&new_rtx);
-                        } else {
-                            panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
-                        }
-                    }
+                if let Some(new_rtx) = new_rtx {
+                    debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
+                    remote_rtx = Some(new_rtx);
+                    unlocked.remove(&new_rtx);
+                } else {
+                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 }
             }
 
@@ -843,26 +842,26 @@ impl PayloadParams {
                 .red
                 .and(first.red)
                 .filter(|_| self.spec.codec.is_audio());
-            if let Some(red) = remote_red {
-                if claimed.is_claimed(red) {
-                    if local_is_controlling {
-                        // We control PT allocation: remap the conflicting RED to a free PT.
-                        if let Some(new_red) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
-                            debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
-                            remote_red = Some(new_red);
-                            unlocked.remove(&new_red);
-                        } else {
-                            // RED is opt-in; drop it rather than panic if no PT is free.
-                            debug!("No free PT for RED; dropping it");
-                            remote_red = None;
-                        }
+            if let Some(red) = remote_red
+                && claimed.is_claimed(red)
+            {
+                if local_is_controlling {
+                    // We control PT allocation: remap the conflicting RED to a free PT.
+                    if let Some(new_red) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
+                        debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
+                        remote_red = Some(new_red);
+                        unlocked.remove(&new_red);
                     } else {
-                        // The remote dictated the PTs and mapped a RED PT that is already taken.
-                        // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
-                        // rather than claim the same PT twice (which would panic).
-                        debug!("Conflicting remote RED PT {:?}; dropping it", red);
+                        // RED is opt-in; drop it rather than panic if no PT is free.
+                        debug!("No free PT for RED; dropping it");
                         remote_red = None;
                     }
+                } else {
+                    // The remote dictated the PTs and mapped a RED PT that is already taken.
+                    // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
+                    // rather than claim the same PT twice (which would panic).
+                    debug!("Conflicting remote RED PT {:?}; dropping it", red);
+                    remote_red = None;
                 }
             }
             self.red = remote_red;

@@ -482,7 +482,7 @@ impl StreamRx {
             }
             let d = span_time / span_seq;
             let back = block_time - l_time;
-            if back % d != 0 {
+            if !back.is_multiple_of(d) {
                 return None;
             }
             let seq: SeqNo = (l_seq + back / d).into();
@@ -799,10 +799,10 @@ impl StreamRx {
         range: std::ops::Range<SeqNo>,
         received: Instant,
     ) -> Option<Instant> {
-        if !self.suppress_nack {
-            if let Some(register) = &self.register {
-                return register.recovery_deadline(range, received, self.stats.rtt);
-            }
+        if !self.suppress_nack
+            && let Some(register) = &self.register
+        {
+            return register.recovery_deadline(range, received, self.stats.rtt);
         }
         let rtt = self.stats.rtt.unwrap_or(super::register_nack::DEFAULT_RTT);
         received.checked_add(rtt.saturating_mul(3))

@@ -428,17 +428,17 @@ impl Media {
             }
 
             // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1)
-            if let CodecDepacketizer::H265(ref mut h265) = depack {
-                if params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
-                    h265.with_donl(true);
-                }
+            if let CodecDepacketizer::H265(ref mut h265) = depack
+                && params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0
+            {
+                h265.with_donl(true);
             }
 
             // Enable DONL for H.266 when sprop-max-don-diff > 0 (RFC 9328 §7.2)
-            if let CodecDepacketizer::H266(ref mut h266) = depack {
-                if params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
-                    h266.with_donl(true);
-                }
+            if let CodecDepacketizer::H266(ref mut h266) = depack
+                && params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0
+            {
+                h266.with_donl(true);
             }
 
             // RFC 4867: without octet-align=1 the payload is bandwidth-efficient.

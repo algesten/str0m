@@ -222,11 +222,12 @@ impl DepacketizingBuffer {
         //
         // As a special case, per popular demand, if hold_back is 0, we do emit
         // out of order packets.
-        if let Some(last) = self.last_processed.map(LastProcessed::seq_no) {
-            if meta.seq_no <= last && self.hold_back > 0 {
-                trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
-                return;
-            }
+        if let Some(last) = self.last_processed.map(LastProcessed::seq_no)
+            && meta.seq_no <= last
+            && self.hold_back > 0
+        {
+            trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
+            return;
         }
 
         // Record that latest seen max time (used for extending time to u64).
@@ -276,10 +277,10 @@ impl DepacketizingBuffer {
 
                 // The depack cache is keyed by queue index. Inserting at or before the cached
                 // segment shifts it, so the cache would answer for the wrong packets.
-                if let Some((range, _)) = &self.depack_cache {
-                    if i <= range.end {
-                        self.depack_cache = None;
-                    }
+                if let Some((range, _)) = &self.depack_cache
+                    && i <= range.end
+                {
+                    self.depack_cache = None;
                 }
             }
         }
@@ -336,17 +337,17 @@ impl DepacketizingBuffer {
     ) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
 
-        if self.wait_for_recovery || reordering_timeout.is_some() {
-            if let Some((end, first_received)) = self.first_incomplete_frame() {
-                if self.timeout_allows_progress(now, first_received, reordering_timeout) {
-                    let last = self.queue[end - 1].meta.seq_no;
-                    self.queue.drain(0..end);
-                    self.segments_dirty = true;
-                    self.depack_cache = None;
-                    self.last_processed = Some(LastProcessed::Expired(last));
-                }
-                return None;
+        if (self.wait_for_recovery || reordering_timeout.is_some())
+            && let Some((end, first_received)) = self.first_incomplete_frame()
+        {
+            if self.timeout_allows_progress(now, first_received, reordering_timeout) {
+                let last = self.queue[end - 1].meta.seq_no;
+                self.queue.drain(0..end);
+                self.segments_dirty = true;
+                self.depack_cache = None;
+                self.last_processed = Some(LastProcessed::Expired(last));
             }
+            return None;
         }
 
         if self.segments.is_empty() {
@@ -571,11 +572,11 @@ impl DepacketizingBuffer {
         stop: usize,
         _seq: SeqNo,
     ) -> Result<Depacketized, PacketError> {
-        if let Some(cached) = self.depack_cache.take() {
-            if cached.0 == (start..stop) {
-                trace!("depack cache hit for segment start {}", start);
-                return Ok(cached.1);
-            }
+        if let Some(cached) = self.depack_cache.take()
+            && cached.0 == (start..stop)
+        {
+            trace!("depack cache hit for segment start {}", start);
+            return Ok(cached.1);
         }
 
         let packets_size = self

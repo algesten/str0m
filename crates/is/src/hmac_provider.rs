@@ -8,7 +8,7 @@ pub struct DefaultSha1HmacProvider;
 #[cfg(feature = "sha1")]
 impl str0m_proto::Sha1HmacProvider for DefaultSha1HmacProvider {
     fn sha1_hmac(&self, key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         let mut mac =
             Hmac::<sha1_::Sha1>::new_from_slice(key).expect("HMAC-SHA1 accepts any key length");
         for p in payloads {

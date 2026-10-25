@@ -230,10 +230,10 @@ impl Av1Packetizer {
         }
 
         // set N flag:
-        if let Some(ObuType::SequenceHeader) = obus[0].obu_type() {
-            if is_first_packet {
-                agg_header |= 1 << 3;
-            }
+        if let Some(ObuType::SequenceHeader) = obus[0].obu_type()
+            && is_first_packet
+        {
+            agg_header |= 1 << 3;
         }
 
         agg_header as u8
@@ -626,10 +626,10 @@ fn parse_obus(payload: &[u8], parsed_obus: &mut Vec<Obu>) -> Result<(), PacketEr
         }
         obu.size += obu.payload.len();
 
-        if let Some(obu_type) = obu.obu_type() {
-            if obu_type.include_in_packetization() {
-                obu_idx += 1;
-            }
+        if let Some(obu_type) = obu.obu_type()
+            && obu_type.include_in_packetization()
+        {
+            obu_idx += 1;
         }
     }
 

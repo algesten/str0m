@@ -1466,7 +1466,7 @@ mod test {
     use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 
     fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha1_::Sha1;
         let mut mac = Hmac::<Sha1>::new_from_slice(key).unwrap();
         for p in payloads {

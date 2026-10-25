@@ -37,10 +37,10 @@ impl Sdp {
     /// Get the MIDs listed in the BUNDLE group, if any.
     pub(crate) fn bundle_mids(&self) -> Option<&[Mid]> {
         self.session.attrs.iter().find_map(|a| {
-            if let SessionAttribute::Group { typ, mids } = a {
-                if typ == "BUNDLE" {
-                    return Some(mids.as_slice());
-                }
+            if let SessionAttribute::Group { typ, mids } = a
+                && typ == "BUNDLE"
+            {
+                return Some(mids.as_slice());
             }
             None
         })
@@ -361,10 +361,10 @@ impl MediaLine {
             .collect();
 
         for pt in &self.pts {
-            if !rtp_maps.iter().any(|(mapped, _)| mapped == pt) {
-                if let Some(spec) = CodecSpec::from_static_pt(*pt) {
-                    rtp_maps.push((*pt, spec.into()));
-                }
+            if !rtp_maps.iter().any(|(mapped, _)| mapped == pt)
+                && let Some(spec) = CodecSpec::from_static_pt(*pt)
+            {
+                rtp_maps.push((*pt, spec.into()));
             }
         }
 
@@ -418,15 +418,15 @@ impl MediaLine {
             for (pt, values) in fmtps.iter() {
                 // find resend pt, if there is one.
                 for fp in values.iter() {
-                    if let FormatParam::Apt(v) = fp {
-                        if *v == p.pt {
-                            // ensure this is a rtx
-                            let is_rtx = rtp_maps
-                                .iter()
-                                .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Rtx);
-                            if is_rtx {
-                                p.resend = Some(**pt);
-                            }
+                    if let FormatParam::Apt(v) = fp
+                        && *v == p.pt
+                    {
+                        // ensure this is a rtx
+                        let is_rtx = rtp_maps
+                            .iter()
+                            .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Rtx);
+                        if is_rtx {
+                            p.resend = Some(**pt);
                         }
                     }
                 }
@@ -441,10 +441,10 @@ impl MediaLine {
                     continue;
                 }
                 for fp in values.iter() {
-                    if let FormatParam::BarePtList(primary) | FormatParam::Red(primary) = fp {
-                        if *primary == p.pt {
-                            p.red = Some(**pt);
-                        }
+                    if let FormatParam::BarePtList(primary) | FormatParam::Red(primary) = fp
+                        && *primary == p.pt
+                    {
+                        p.red = Some(**pt);
                     }
                 }
             }

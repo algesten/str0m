@@ -1638,16 +1638,16 @@ impl Rtc {
         // Handle DTLS timeout before polling output so any retransmit packets
         // queued by dimpl and the re-armed flight timer are picked up by the
         // poll loop below in the same iteration.
-        if let Some(timeout) = self.next_dtls_timeout {
-            if timeout <= self.last_now {
-                self.next_dtls_timeout = None;
+        if let Some(timeout) = self.next_dtls_timeout
+            && timeout <= self.last_now
+        {
+            self.next_dtls_timeout = None;
 
-                if let Err(error) = self.dtls.handle_timeout(self.last_now) {
-                    // A failed timer transition leaves DTLS unrecoverable. Close the
-                    // RTC so continued polling cannot expose the same due timeout again.
-                    self.disconnect();
-                    return Err(error.into());
-                }
+            if let Err(error) = self.dtls.handle_timeout(self.last_now) {
+                // A failed timer transition leaves DTLS unrecoverable. Close the
+                // RTC so continued polling cannot expose the same due timeout again.
+                self.disconnect();
+                return Err(error.into());
             }
         }
 
@@ -1947,10 +1947,10 @@ impl Rtc {
 
         // Fast path: DTLS, RTP, and RTCP traffic coming in from the same socket address
         // we've nominated for sending via the ICE agent. This is the typical case
-        if let Some(send_addr) = &self.send_addr {
-            if r.source == send_addr.destination {
-                return true;
-            }
+        if let Some(send_addr) = &self.send_addr
+            && r.source == send_addr.destination
+        {
+            return true;
         }
 
         // STUN can use the ufrag/password to identify that a message belongs
@@ -2073,28 +2073,28 @@ impl Rtc {
         self.chan.handle_timeout(now, &mut self.sctp);
         self.session.handle_timeout(now)?;
 
-        if let Some(stats) = &mut self.stats {
-            if stats.wants_timeout(now) {
-                let mut snapshot = StatsSnapshot::new(now);
-                snapshot.peer_rx = self.peer_bytes_rx;
-                snapshot.peer_tx = self.peer_bytes_tx;
-                let current_round_trip_time = self.ice.nominated_pair_rtt();
-                let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
-                let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
-                snapshot.selected_candidate_pair =
-                    self.send_addr.as_ref().map(|s| CandidatePairStats {
-                        protocol: s.proto,
-                        local: CandidateStats { addr: s.source },
-                        remote: CandidateStats {
-                            addr: s.destination,
-                        },
-                        current_round_trip_time,
-                        total_round_trip_time,
-                        responses_received,
-                    });
-                self.session.visit_stats(now, &mut snapshot);
-                stats.do_handle_timeout(&mut snapshot);
-            }
+        if let Some(stats) = &mut self.stats
+            && stats.wants_timeout(now)
+        {
+            let mut snapshot = StatsSnapshot::new(now);
+            snapshot.peer_rx = self.peer_bytes_rx;
+            snapshot.peer_tx = self.peer_bytes_tx;
+            let current_round_trip_time = self.ice.nominated_pair_rtt();
+            let total_round_trip_time = self.ice.nominated_pair_total_rtt().unwrap_or_default();
+            let responses_received = self.ice.nominated_pair_responses_received().unwrap_or(0);
+            snapshot.selected_candidate_pair =
+                self.send_addr.as_ref().map(|s| CandidatePairStats {
+                    protocol: s.proto,
+                    local: CandidateStats { addr: s.source },
+                    remote: CandidateStats {
+                        addr: s.destination,
+                    },
+                    current_round_trip_time,
+                    total_round_trip_time,
+                    responses_received,
+                });
+            self.session.visit_stats(now, &mut snapshot);
+            stats.do_handle_timeout(&mut snapshot);
         }
 
         Ok(())

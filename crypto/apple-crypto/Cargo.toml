@@ -8,7 +8,7 @@ repository = "https://github.com/algesten/str0m"
 readme = "README.md"
 
 # MSRV
-rust-version = "1.85.0"
+rust-version = "1.89.0"
 
 [dependencies]
 str0m-proto = { workspace = true, features = ["dtls"] }

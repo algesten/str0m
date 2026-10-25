@@ -1,6 +1,6 @@
 //! SRTP cipher implementations using RustCrypto.
 
-use aes_gcm::aead::generic_array::GenericArray;
+use aes::cipher::Array;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes128Gcm, Aes256Gcm, Nonce};
 use ctr::cipher::{KeyIvInit, StreamCipher};
@@ -85,12 +85,12 @@ impl AeadAes128GcmCipher for RustCryptoAeadAes128GcmCipher {
             "Associated data length MUST be at least 12 octets"
         );
 
-        let nonce = Nonce::from_slice(iv);
+        let nonce = Nonce::from(*iv);
         let payload = Payload { msg: input, aad };
 
         let ciphertext = self
             .cipher
-            .encrypt(nonce, payload)
+            .encrypt(&nonce, payload)
             .map_err(|e| CryptoError::Other(format!("AES-GCM encrypt failed: {:?}", e)))?;
 
         output[..ciphertext.len()].copy_from_slice(&ciphertext);
@@ -109,7 +109,7 @@ impl AeadAes128GcmCipher for RustCryptoAeadAes128GcmCipher {
         // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
 
-        let nonce = Nonce::from_slice(iv);
+        let nonce = Nonce::from(*iv);
 
         // Concatenate AAD slices if needed
         let aad_vec: Vec<u8>;
@@ -124,7 +124,7 @@ impl AeadAes128GcmCipher for RustCryptoAeadAes128GcmCipher {
 
         let plaintext = self
             .cipher
-            .decrypt(nonce, payload)
+            .decrypt(&nonce, payload)
             .map_err(|e| CryptoError::Other(format!("AES-GCM decrypt failed: {:?}", e)))?;
 
         output[..plaintext.len()].copy_from_slice(&plaintext);
@@ -159,12 +159,12 @@ impl AeadAes256GcmCipher for RustCryptoAeadAes256GcmCipher {
             "Associated data length MUST be at least 12 octets"
         );
 
-        let nonce = Nonce::from_slice(iv);
+        let nonce = Nonce::from(*iv);
         let payload = Payload { msg: input, aad };
 
         let ciphertext = self
             .cipher
-            .encrypt(nonce, payload)
+            .encrypt(&nonce, payload)
             .map_err(|e| CryptoError::Other(format!("AES-GCM encrypt failed: {:?}", e)))?;
 
         output[..ciphertext.len()].copy_from_slice(&ciphertext);
@@ -183,7 +183,7 @@ impl AeadAes256GcmCipher for RustCryptoAeadAes256GcmCipher {
         // not bad input, so fail fast rather than hiding it in an error.
         assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
 
-        let nonce = Nonce::from_slice(iv);
+        let nonce = Nonce::from(*iv);
 
         // Concatenate AAD slices if needed
         let aad_vec: Vec<u8>;
@@ -198,7 +198,7 @@ impl AeadAes256GcmCipher for RustCryptoAeadAes256GcmCipher {
 
         let plaintext = self
             .cipher
-            .decrypt(nonce, payload)
+            .decrypt(&nonce, payload)
             .map_err(|e| CryptoError::Other(format!("AES-GCM decrypt failed: {:?}", e)))?;
 
         output[..plaintext.len()].copy_from_slice(&plaintext);
@@ -235,7 +235,7 @@ impl std::fmt::Debug for RustCryptoSupportedAeadAes128Gcm {
 
 impl SupportedAeadAes128Gcm for RustCryptoSupportedAeadAes128Gcm {
     fn create_cipher(&self, key: [u8; 16], _encrypt: bool) -> Box<dyn AeadAes128GcmCipher> {
-        let cipher = Aes128Gcm::new(GenericArray::from_slice(&key));
+        let cipher = Aes128Gcm::new(&key.into());
         Box::new(RustCryptoAeadAes128GcmCipher { cipher })
     }
 }
@@ -250,7 +250,7 @@ impl std::fmt::Debug for RustCryptoSupportedAeadAes256Gcm {
 
 impl SupportedAeadAes256Gcm for RustCryptoSupportedAeadAes256Gcm {
     fn create_cipher(&self, key: [u8; 32], _encrypt: bool) -> Box<dyn AeadAes256GcmCipher> {
-        let cipher = Aes256Gcm::new(GenericArray::from_slice(&key));
+        let cipher = Aes256Gcm::new(&key.into());
         Box::new(RustCryptoAeadAes256GcmCipher { cipher })
     }
 }
@@ -283,9 +283,9 @@ impl SrtpProvider for RustCryptoSrtpProvider {
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         // Use aes crate for ECB mode
         use aes::Aes128;
-        use aes::cipher::{BlockEncrypt, KeyInit};
+        use aes::cipher::{BlockCipherEncrypt, KeyInit};
 
-        let cipher = Aes128::new(GenericArray::from_slice(key));
+        let cipher = Aes128::new(key.try_into().expect("valid AES key length"));
 
         // Input is 16 bytes, output needs to be 32 bytes (with PKCS7 padding)
         // For a 16-byte input, PKCS7 adds a full block of padding (16 bytes of 0x10)
@@ -293,12 +293,12 @@ impl SrtpProvider for RustCryptoSrtpProvider {
         assert!(output.len() >= 32);
 
         // First block: encrypt the input
-        let mut block1 = *GenericArray::from_slice(&input[0..16]);
+        let mut block1 = Array::try_from(&input[0..16]).expect("AES block length");
         cipher.encrypt_block(&mut block1);
         output[0..16].copy_from_slice(&block1);
 
         // Second block: PKCS7 padding (16 bytes of 0x10)
-        let mut block2 = GenericArray::from([0x10u8; 16]);
+        let mut block2 = Array::from([0x10u8; 16]);
         cipher.encrypt_block(&mut block2);
         output[16..32].copy_from_slice(&block2);
     }
@@ -306,9 +306,9 @@ impl SrtpProvider for RustCryptoSrtpProvider {
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         // Use aes crate for ECB mode
         use aes::Aes256;
-        use aes::cipher::{BlockEncrypt, KeyInit};
+        use aes::cipher::{BlockCipherEncrypt, KeyInit};
 
-        let cipher = Aes256::new(GenericArray::from_slice(key));
+        let cipher = Aes256::new(key.try_into().expect("valid AES key length"));
 
         // Input is 16 bytes, output needs to be 32 bytes (with PKCS7 padding)
         // For a 16-byte input, PKCS7 adds a full block of padding (16 bytes of 0x10)
@@ -316,12 +316,12 @@ impl SrtpProvider for RustCryptoSrtpProvider {
         assert!(output.len() >= 32);
 
         // First block: encrypt the input
-        let mut block1 = *GenericArray::from_slice(&input[0..16]);
+        let mut block1 = Array::try_from(&input[0..16]).expect("AES block length");
         cipher.encrypt_block(&mut block1);
         output[0..16].copy_from_slice(&block1);
 
         // Second block: PKCS7 padding (16 bytes of 0x10)
-        let mut block2 = GenericArray::from([0x10u8; 16]);
+        let mut block2 = Array::from([0x10u8; 16]);
         cipher.encrypt_block(&mut block2);
         output[16..32].copy_from_slice(&block2);
     }

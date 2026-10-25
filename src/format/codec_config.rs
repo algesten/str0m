@@ -669,20 +669,20 @@ impl CodecConfig {
             }
 
             // RED rides its own PT (like RTX); reassign it if it now collides.
-            if let Some(red) = p.red {
-                if claimed.is_claimed(red) {
-                    match claimed.find_unclaimed(PREFERED_RANGES, &unlocked) {
-                        Some(new_red) => {
-                            debug!("Reassigned RED PT {:?} => {:?}", p.red, new_red);
-                            p.red = Some(new_red);
-                            claimed.assert_claim_once(new_red);
-                            unlocked.remove(&new_red);
-                        }
-                        // RED is opt-in; drop it rather than panic if no PT is free.
-                        None => {
-                            debug!("No free PT for RED; dropping it");
-                            p.red = None;
-                        }
+            if let Some(red) = p.red
+                && claimed.is_claimed(red)
+            {
+                match claimed.find_unclaimed(PREFERED_RANGES, &unlocked) {
+                    Some(new_red) => {
+                        debug!("Reassigned RED PT {:?} => {:?}", p.red, new_red);
+                        p.red = Some(new_red);
+                        claimed.assert_claim_once(new_red);
+                        unlocked.remove(&new_red);
+                    }
+                    // RED is opt-in; drop it rather than panic if no PT is free.
+                    None => {
+                        debug!("No free PT for RED; dropping it");
+                        p.red = None;
                     }
                 }
             }

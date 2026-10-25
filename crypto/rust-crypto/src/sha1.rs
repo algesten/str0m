@@ -1,6 +1,6 @@
 //! SHA-1 hash and HMAC implementations using RustCrypto.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha1::{Digest, Sha1};
 
 use str0m_proto::crypto::{Sha1HmacProvider, Sha1Provider};

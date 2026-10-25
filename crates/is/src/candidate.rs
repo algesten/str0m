@@ -104,10 +104,10 @@ pub struct Candidate {
 impl fmt::Debug for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Candidate({}={}/{}", self.kind, self.addr, self.proto)?;
-        if let Some(base) = self.base {
-            if base != self.addr {
-                write!(f, " base={base}")?;
-            }
+        if let Some(base) = self.base
+            && base != self.addr
+        {
+            write!(f, " base={base}")?;
         }
         if let Some(raddr) = self.raddr {
             write!(f, " raddr={raddr}")?;

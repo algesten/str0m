@@ -188,10 +188,10 @@ impl<'a> Writer<'a> {
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
-        if let Some(rid) = self.rid {
-            if !media.rids_tx().contains(rid) {
-                return Err(RtcError::UnknownRid(rid));
-            }
+        if let Some(rid) = self.rid
+            && !media.rids_tx().contains(rid)
+        {
+            return Err(RtcError::UnknownRid(rid));
         }
 
         let data: Arc<[u8]> = data.into();
@@ -357,10 +357,10 @@ fn validate_tele_event(
     if !media.direction().is_sending() {
         return Err(RtcError::NotSendingDirection(media.direction()));
     }
-    if let Some(rid) = rid {
-        if !media.rids_tx().contains(rid) {
-            return Err(RtcError::UnknownRid(rid));
-        }
+    if let Some(rid) = rid
+        && !media.rids_tx().contains(rid)
+    {
+        return Err(RtcError::UnknownRid(rid));
     }
     let midrid = MidRid(mid, rid);
     let sender_missing = streams.stream_tx_by_midrid(midrid).is_none();

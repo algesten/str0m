@@ -285,10 +285,10 @@ impl Streams {
             }
 
             // Handle changes in RTX
-            if let (Some(rtx_from), Some(rtx_to)) = (rtx_from, rtx) {
-                if rtx_from != rtx_to {
-                    self.change_stream_rx_rtx(rtx_from, rtx_to);
-                }
+            if let (Some(rtx_from), Some(rtx_to)) = (rtx_from, rtx)
+                && rtx_from != rtx_to
+            {
+                self.change_stream_rx_rtx(rtx_from, rtx_to);
             }
         }
 

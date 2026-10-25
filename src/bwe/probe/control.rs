@@ -263,10 +263,10 @@ impl ProbeControl {
 
     fn update_estimate_change(&mut self, now: Instant, estimate: Bitrate) {
         // Track when estimate last changed significantly (>5%).
-        if let Some(prev) = self.prev_estimate {
-            if estimate != prev {
-                self.last_estimate_change = Some(now);
-            }
+        if let Some(prev) = self.prev_estimate
+            && estimate != prev
+        {
+            self.last_estimate_change = Some(now);
         }
 
         // Initialize baseline if not set yet.
@@ -465,10 +465,10 @@ impl ProbeControl {
         }
 
         // Rate limit: at least 30 seconds between stagnation probes.
-        if let Some(last_probe) = self.last_stagnant {
-            if now.saturating_duration_since(last_probe) < MIN_TIME_BETWEEN_STAGNANT_PROBES {
-                return false;
-            }
+        if let Some(last_probe) = self.last_stagnant
+            && now.saturating_duration_since(last_probe) < MIN_TIME_BETWEEN_STAGNANT_PROBES
+        {
+            return false;
         }
 
         // Probe at 2× estimate (conservative, won't overwhelm if at capacity).
@@ -486,15 +486,14 @@ impl ProbeControl {
         }
 
         // Detect large drops: estimate fell below 66% of previous.
-        if self.large_drop.is_none() {
-            if let Some(prev) = self.prev_estimate {
-                if estimate < prev * BITRATE_DROP_THRESHOLD {
-                    self.large_drop = Some(LargeDrop {
-                        when: now,
-                        bitrate_before: prev,
-                    });
-                }
-            }
+        if self.large_drop.is_none()
+            && let Some(prev) = self.prev_estimate
+            && estimate < prev * BITRATE_DROP_THRESHOLD
+        {
+            self.large_drop = Some(LargeDrop {
+                when: now,
+                bitrate_before: prev,
+            });
         }
 
         // No large drop detected.
@@ -558,13 +557,13 @@ impl ProbeControl {
     fn compute_next_timeout(&mut self, now: Instant) -> Instant {
         // Exponential probing: wait for probe result before re-probing at same estimate.
         // This handles the case where we sent a probe but haven't received updated estimate yet.
-        if let Some(last) = &self.last_probe {
-            if matches!(last.kind, ProbeKind::Initial | ProbeKind::Exponential) {
-                if self.scheduled_exponential.is_none() {
-                    self.scheduled_exponential = Some(now + MAX_WAITING_TIME_FOR_PROBING_RESULT);
-                }
-                return self.scheduled_exponential.unwrap();
+        if let Some(last) = &self.last_probe
+            && matches!(last.kind, ProbeKind::Initial | ProbeKind::Exponential)
+        {
+            if self.scheduled_exponential.is_none() {
+                self.scheduled_exponential = Some(now + MAX_WAITING_TIME_FOR_PROBING_RESULT);
             }
+            return self.scheduled_exponential.unwrap();
         }
 
         // ALR periodic probing

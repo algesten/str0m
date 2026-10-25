@@ -695,12 +695,11 @@ impl LossController {
 
         // When in ALR and we have a link capacity estimate from probes,
         // use it as the upper bound. This prevents estimating beyond proven capacity.
-        if self.is_in_alr() {
-            if let Some(capacity) = self.link_capacity_estimate {
-                if capacity.is_valid() {
-                    upper_bound = upper_bound.min(capacity);
-                }
-            }
+        if self.is_in_alr()
+            && let Some(capacity) = self.link_capacity_estimate
+            && capacity.is_valid()
+        {
+            upper_bound = upper_bound.min(capacity);
         }
 
         if self.is_bandwidth_limited_due_to_loss()
@@ -1030,10 +1029,10 @@ trait AsValid<T> {
 
 impl AsValid<Bitrate> for Option<Bitrate> {
     fn as_valid(&self) -> Option<Bitrate> {
-        if let Some(bitrate) = self {
-            if bitrate.as_f64().is_finite() {
-                return Some(*bitrate);
-            }
+        if let Some(bitrate) = self
+            && bitrate.as_f64().is_finite()
+        {
+            return Some(*bitrate);
         }
         None
     }

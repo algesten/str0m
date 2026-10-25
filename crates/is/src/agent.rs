@@ -734,17 +734,16 @@ impl IceAgent {
             return;
         }
 
-        if let Some(creds) = &self.remote_credentials {
-            if let Some(ufrag) = c.ufrag() {
-                if ufrag != creds.ufrag {
-                    debug!(
-                        "Reject candidate with ufrag mismatch: {} != {}",
-                        Pii(&ufrag),
-                        Pii(&creds.ufrag)
-                    );
-                    return;
-                }
-            }
+        if let Some(creds) = &self.remote_credentials
+            && let Some(ufrag) = c.ufrag()
+            && ufrag != creds.ufrag
+        {
+            debug!(
+                "Reject candidate with ufrag mismatch: {} != {}",
+                Pii(&ufrag),
+                Pii(&creds.ufrag)
+            );
+            return;
         }
 
         // After we accepted the ufrag, don't keep this around since it will look
@@ -945,13 +944,12 @@ impl IceAgent {
                 && v.raddr() == c.raddr()
                 && v.kind() == c.kind()
                 && v.proto() == c.proto()
-        }) {
-            if !other.discarded() {
-                debug!("Local candidate to discard {:?}", Pii(&other));
-                other.set_discarded(true);
-                self.discard_candidate_pairs_by_local(idx);
-                return true;
-            }
+        }) && !other.discarded()
+        {
+            debug!("Local candidate to discard {:?}", Pii(&other));
+            other.set_discarded(true);
+            self.discard_candidate_pairs_by_local(idx);
+            return true;
         }
 
         if let Some((idx, other)) = self
@@ -965,13 +963,12 @@ impl IceAgent {
                     && v.kind() == c.kind()
                     && v.proto() == c.proto()
             })
+            && !other.discarded()
         {
-            if !other.discarded() {
-                debug!("Remote candidate to discard {:?}", Pii(&other));
-                other.set_discarded(true);
-                self.discard_candidate_pairs_by_remote(idx);
-                return true;
-            }
+            debug!("Remote candidate to discard {:?}", Pii(&other));
+            other.set_discarded(true);
+            self.discard_candidate_pairs_by_remote(idx);
+            return true;
         }
 
         debug!("No local or remote candidate found: {:?}", Pii(&c));
@@ -1104,14 +1101,14 @@ impl IceAgent {
                     return false;
                 }
 
-                if let Some(remote_creds) = &self.remote_credentials {
-                    if remote != remote_creds.ufrag {
-                        trace!(
-                            "Message rejected, remote user mismatch: {} != {}",
-                            remote, remote_creds.ufrag
-                        );
-                        return false;
-                    }
+                if let Some(remote_creds) = &self.remote_credentials
+                    && remote != remote_creds.ufrag
+                {
+                    trace!(
+                        "Message rejected, remote user mismatch: {} != {}",
+                        remote, remote_creds.ufrag
+                    );
+                    return false;
                 }
 
                 do_integrity_check(true)
@@ -1942,13 +1939,13 @@ impl IceAgent {
         };
 
         if let Some(best_prio) = best_prio {
-            if let Some(nominated) = nominated_pair_priority {
-                if nominated == best_prio.prio() {
-                    // The best prio is also the current nominated prio. Make
-                    // no changes since there can be multiple pairs having the
-                    // same best_prio.
-                    return;
-                }
+            if let Some(nominated) = nominated_pair_priority
+                && nominated == best_prio.prio()
+            {
+                // The best prio is also the current nominated prio. Make
+                // no changes since there can be multiple pairs having the
+                // same best_prio.
+                return;
             }
             trace!("Nominating best candidate");
 

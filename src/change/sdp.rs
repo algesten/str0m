@@ -1367,17 +1367,17 @@ fn update_media(
 }
 
 fn extract_max_message_size(mut media_lines: Iter<MediaLine>) -> Option<u32> {
-    if let Some(app_line) = media_lines.find(|m| m.typ.is_channel()) {
-        if let Some(max_size) = app_line.max_message_size() {
-            // RFC 8841 §6.1: a value of 0 means the peer can receive a message of
-            // any size, subject to local capacity. Represent that as the maximum.
-            let max_size = if max_size == 0 {
-                u32::MAX
-            } else {
-                u32::try_from(max_size).unwrap_or(u32::MAX)
-            };
-            return Some(max_size);
-        }
+    if let Some(app_line) = media_lines.find(|m| m.typ.is_channel())
+        && let Some(max_size) = app_line.max_message_size()
+    {
+        // RFC 8841 §6.1: a value of 0 means the peer can receive a message of
+        // any size, subject to local capacity. Represent that as the maximum.
+        let max_size = if max_size == 0 {
+            u32::MAX
+        } else {
+            u32::try_from(max_size).unwrap_or(u32::MAX)
+        };
+        return Some(max_size);
     }
 
     None
@@ -1682,10 +1682,10 @@ impl Changes {
         }
 
         for i in (0..self.0.len()).rev() {
-            if matches!(&self.0[i], Change::AddChannel(_)) {
-                if let Change::AddChannel(id) = self.0.remove(i) {
-                    v.push(id);
-                }
+            if matches!(&self.0[i], Change::AddChannel(_))
+                && let Change::AddChannel(id) = self.0.remove(i)
+            {
+                v.push(id);
             }
         }
 
@@ -1765,12 +1765,11 @@ impl Changes {
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
         for change in &self.0 {
-            if let Change::Direction(mid, dir) = change {
-                if let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid) {
-                    if let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction()) {
-                        line.attrs[dir_pos] = (*dir).into();
-                    }
-                }
+            if let Change::Direction(mid, dir) = change
+                && let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid)
+                && let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction())
+            {
+                line.attrs[dir_pos] = (*dir).into();
             }
         }
     }

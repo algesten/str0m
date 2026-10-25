@@ -563,10 +563,10 @@ impl Vp9Depacketizer {
         if self.l {
             let new_stop = out_len + packet_len - payload_index;
 
-            if let Some(stop) = vp9_extra.layers_scheme[self.sid as usize] {
-                if stop != out_len {
-                    return Err(PacketError::ErrVP9CorruptedPacket);
-                }
+            if let Some(stop) = vp9_extra.layers_scheme[self.sid as usize]
+                && stop != out_len
+            {
+                return Err(PacketError::ErrVP9CorruptedPacket);
             }
 
             vp9_extra.layers_scheme[self.sid as usize] = Some(new_stop);
