@@ -4,6 +4,63 @@
 
 str0m does not follow the exact specification for SDP negotiation, however, almost no one does.
 
+## Our view of SDP
+
+We disagree with using SDP offer/answer as the application protocol for deciding
+what media should flow. SDP carries the complexity of its telephony origins into
+WebRTC, including negotiation rules and state transitions that applications
+already have the information to decide for themselves. Implementing every
+possible negotiation is not a goal of str0m.
+
+We think the useful negotiation is to narrow codecs and fmtp parameters to an
+agreed set for the session. str0m uses a single BUNDLE/session codec configuration,
+with the limitations described below. We do not model every distinction SDP can
+express between directions or individual m-lines.
+
+Media intent belongs to the application: which sources exist, who should send or
+receive them, and when they should start or stop. Applications already need a
+signaling channel to exchange offers and answers. They can use that channel to
+agree on this intent instead of relying on SDP direction changes to discover it.
+
+Unified Plan adds another complication by tying media to transceivers and m-line
+slots, including rules for reusing transceivers and recycling stopped m-lines.
+Those lifecycles do not necessarily match the application's sources and
+subscriptions. We think Plan B was the better direction for this model. str0m
+still needs to interoperate with Unified Plan peers, but that does not make the
+browser's transceiver model the model we want applications to adopt.
+
+Browsers and libWebRTC handle the full negotiation machinery and its edge cases
+better. str0m provides a deliberately limited SDP adapter to configure its
+session and interoperate with those peers. The details and departures documented
+here are part of that boundary, rather than a roadmap to implementing every SDP
+negotiation possibility.
+
+### Expressing application intent
+
+Agree on media intent through application signaling where possible. When an
+incoming offer is broader than what the application intends to accept, the
+application can narrow that offer before passing it to str0m. Send the answer
+that str0m produces unchanged.
+
+For example, a camera that can send audio but cannot play incoming audio may
+receive an offer with `sendrecv` audio. Narrowing that offered direction to
+`recvonly`, from the offerer's perspective, lets str0m answer `sendonly` and
+configure its own media in that direction. The answer tells the offerer that it
+will only receive audio. Editing the answer after str0m generates it would leave
+str0m's session state unaware of that change.
+
+The application is responsible for keeping any offer transformation compatible
+with the original offer and the peer's expectations. Narrowing is not permission
+to introduce new capabilities, change established payload type mappings, or
+bypass the existing-media and renegotiation constraints documented below.
+
+This does not make str0m an SDP transformation toolkit. We do not intend to
+expose its internal SDP parser and representation as a public API for munging
+offers or answers. Applications that need structured SDP transformations should
+use a separate crate. Nor do we want a general per-m-line answer customization
+API: an m-line is not an independent configuration when codec parameters and
+other negotiated properties are shared across the session.
+
 ## MSID identity in offers and answers
 
 When a remote offer first creates an m-line, str0m normally copies its
@@ -52,7 +109,7 @@ For an OFFER with `sendonly`, the payload types (and PT numbers) mean "this is w
 I **hope to send**". They are suggestions the ANSWER can change.
 
 For an ANSWER with `sendonly`, the payload types (and PT numbers) indicating what it hopes to send.
-I conclude they are not interesting, because the receiving side (the OFFER), has already dictated
+We conclude they are not interesting, because the receiving side (the OFFER), has already dictated
 "this is what I expect to receive". The ANSWER side is not allowed use anything else – it might as well
 just mirror the OFFER.
 
