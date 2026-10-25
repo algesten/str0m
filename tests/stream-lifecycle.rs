@@ -191,7 +191,6 @@ fn pause_preserves_video_contiguity_history() -> Result<(), RtcError> {
         config
             .set_pause_threshold(Duration::from_millis(500))
             .set_reordering_size_video(1)
-            .set_reordering_timeout_video(Some(Duration::from_millis(100)))
     });
     assert_eq!(
         Rtc::builder().pause_threshold(),

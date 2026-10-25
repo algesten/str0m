@@ -348,10 +348,10 @@ impl Media {
         &mut self,
         params: &[PayloadParams],
         now: Instant,
-        reordering_timeout: Option<Duration>,
+        audio_timeout: Option<Duration>,
     ) -> Result<Option<MediaData>, RtcError> {
         for ((pt, rid), buf) in &mut self.depayloaders {
-            if let Some(r) = buf.pop(now, reordering_timeout) {
+            if let Some(r) = buf.pop(now, audio_timeout) {
                 let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
@@ -563,13 +563,21 @@ impl Media {
             .map(|p| p.not_before.unwrap_or_else(already_happened))
     }
 
+    pub(crate) fn receive_buffers(
+        &mut self,
+    ) -> impl Iterator<Item = (Option<Rid>, &mut DepacketizingBuffer)> {
+        self.depayloaders
+            .iter_mut()
+            .map(|((_, rid), buf)| (*rid, buf))
+    }
+
     pub(crate) fn poll_receive_timeout(
         &mut self,
-        reordering_timeout: Option<Duration>,
+        audio_timeout: Option<Duration>,
     ) -> Option<Instant> {
         self.depayloaders
             .values_mut()
-            .filter_map(|buf| buf.poll_timeout(reordering_timeout))
+            .filter_map(|buf| buf.poll_timeout(audio_timeout))
             .min()
     }
 
