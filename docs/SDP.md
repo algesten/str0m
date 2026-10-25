@@ -265,7 +265,9 @@ m-line (max-bundle style).
 | 9    | Yes             | Valid bundled m-line (max-compat style) |
 
 [quote]: https://mailarchive.ietf.org/arch/msg/mmusic/2N1_-eUTVrmciX3LpSjkjFH7oCU/
+
 [^plan-b]: Plan B was the better direction. :)
+
 [rfc9429]: https://www.rfc-editor.org/rfc/rfc9429.html#section-5.2.2
 [rfc8830]: https://www.rfc-editor.org/rfc/rfc8830.html#section-3.2.3
 [sdpspec]: https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
