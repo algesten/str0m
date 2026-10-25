@@ -376,7 +376,7 @@ impl SignatureVerifier for WinCngSignatureVerifier {
 
 /// Convert raw (r || s) to DER-encoded ECDSA-Sig-Value.
 pub(crate) fn raw_rs_to_der(raw: &[u8]) -> Result<Vec<u8>, String> {
-    if raw.len() % 2 != 0 {
+    if !raw.len().is_multiple_of(2) {
         return Err("Raw signature length must be even".into());
     }
     let half = raw.len() / 2;

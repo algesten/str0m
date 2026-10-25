@@ -18,7 +18,7 @@ jobs:
   test:
     strategy:
       matrix:
-        rust: [stable, beta, 1.85.0]
+        rust: [stable, beta, 1.89.0]
         crypto:
           - name: openssl
             os: ubuntu-latest
@@ -133,7 +133,7 @@ jobs:
   related-crates:
     strategy:
       matrix:
-        rust: [stable, beta, 1.85.0]
+        rust: [stable, beta, 1.89.0]
         dir:
           - name: crates/proto
             os: ubuntu-latest

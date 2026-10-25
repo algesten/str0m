@@ -1,6 +1,9 @@
 //! AWS-LC-RS implementation of cryptographic functions.
 //! DTLS via dimpl with AWS-LC-RS as crypto backend.
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
+
 mod dtls;
 mod sha1;
 mod sha256;

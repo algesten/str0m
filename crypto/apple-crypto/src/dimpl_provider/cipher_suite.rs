@@ -246,14 +246,14 @@ impl OutputBuffer {
         }
     }
 
-    fn as_mut_slice(&mut self) -> &mut [u8] {
+    const fn as_mut_slice(&mut self) -> &mut [u8] {
         match self {
             Self::Stack(buffer) => buffer.as_mut_slice(),
             Self::Heap(buffer) => buffer.as_mut_slice(),
         }
     }
 
-    fn as_slice(&self) -> &[u8] {
+    const fn as_slice(&self) -> &[u8] {
         match self {
             Self::Stack(buffer) => buffer.as_slice(),
             Self::Heap(buffer) => buffer.as_slice(),

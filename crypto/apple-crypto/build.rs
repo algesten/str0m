@@ -44,6 +44,9 @@
 //! whether or not the shim archives ship. Once upstream raises its floor,
 //! delete this file and the `cc` build-dependency in Cargo.toml.
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;

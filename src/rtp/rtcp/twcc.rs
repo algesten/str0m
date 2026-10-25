@@ -167,7 +167,7 @@ impl RtcpPacket for Twcc {
             total += pad;
         }
 
-        assert!(total % 4 == 0);
+        assert!(total.is_multiple_of(4));
 
         let total_words = total / 4;
 

@@ -44,6 +44,9 @@
 //! }
 //! ```
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
+
 mod config;
 mod loss;
 

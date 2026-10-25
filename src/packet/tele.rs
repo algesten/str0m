@@ -79,12 +79,14 @@ impl TelephoneEvent {
     /// This method is not currently versioned according to semver rules.
     /// Breaking changes may be made in minor or patch releases.
     pub fn parse_all(buf: &[u8], clock_rate: Frequency) -> Option<impl Iterator<Item = Self> + '_> {
-        if buf.is_empty() || buf.len() % REPORT_LEN != 0 {
+        if buf.is_empty() || !buf.len().is_multiple_of(REPORT_LEN) {
             return None;
         }
 
         Some(
-            buf.chunks_exact(REPORT_LEN)
+            buf.as_chunks::<REPORT_LEN>()
+                .0
+                .iter()
                 .filter_map(move |report| Self::parse(report, clock_rate)),
         )
     }

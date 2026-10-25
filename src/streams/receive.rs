@@ -482,7 +482,7 @@ impl StreamRx {
             }
             let d = span_time / span_seq;
             let back = block_time - l_time;
-            if back % d != 0 {
+            if !back.is_multiple_of(d) {
                 return None;
             }
             let seq: SeqNo = (l_seq + back / d).into();

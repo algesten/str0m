@@ -664,6 +664,8 @@
 //! [reqkey2]:    https://docs.rs/str0m/*/str0m/rtp/struct.StreamRx.html#method.request_keyframe
 //! [bitwhip]:    https://github.com/bitwhip/bitwhip
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
 #![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]

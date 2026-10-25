@@ -1177,7 +1177,7 @@ impl Session {
 
         // Round to nearest multiple of 4 bytes.
         let encryptable_mtu: usize = (self.mtu() - SRTCP_OVERHEAD) & !3;
-        assert!(encryptable_mtu % 4 == 0);
+        assert!(encryptable_mtu.is_multiple_of(4));
 
         let mut data = vec![0_u8; encryptable_mtu];
 

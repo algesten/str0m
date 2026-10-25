@@ -1,6 +1,9 @@
 //! Windows CNG implementation of cryptographic functions.
 //! DTLS 1.2 and 1.3 via dimpl.
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
+
 mod srtp;
 use srtp::WinCryptoSrtpProvider;
 

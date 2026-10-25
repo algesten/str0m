@@ -103,7 +103,7 @@ impl RtpHeader {
             return 0;
         }
 
-        let rounded_len = if pad_len as usize % block_size == 0 {
+        let rounded_len = if (pad_len as usize).is_multiple_of(block_size) {
             pad_len as usize
         } else {
             ((pad_len as usize / block_size) + 1) * block_size

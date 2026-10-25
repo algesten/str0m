@@ -197,8 +197,10 @@ impl KeyProvider for AppleCryptoKeyProvider {
 /// For P-384: 1 + 48 + 48 + 48 = 145 bytes
 fn extract_apple_key_data(key_der: &[u8]) -> Result<(EcCurve, Vec<u8>), String> {
     // Try PKCS#8 format first - extract the SEC1 ECPrivateKey from inside
-    let sec1_data = pkcs8::PrivateKeyInfo::from_der(key_der)
-        .map_or_else(|_| key_der.to_vec(), |info| info.private_key.to_vec());
+    let sec1_data = pkcs8::PrivateKeyInfoRef::from_der(key_der).map_or_else(
+        |_| key_der.to_vec(),
+        |info| info.private_key.as_bytes().to_vec(),
+    );
 
     // Parse SEC1 ECPrivateKey structure to extract raw bytes
     let ec_key = sec1::EcPrivateKey::try_from(sec1_data.as_slice())
@@ -284,7 +286,7 @@ impl SignatureVerifier for AppleCryptoSignatureVerifier {
 
         let cert =
             X509Certificate::from_der(cert_der).map_err(|_| CryptoError::CertificateParseFailed)?;
-        let spki = &cert.tbs_certificate.subject_public_key_info;
+        let spki = cert.tbs_certificate().subject_public_key_info();
 
         const OID_EC_PUBLIC_KEY: ObjectIdentifier =
             ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");

@@ -12,7 +12,7 @@ edition = "2024"
 exclude = ["/cargo_deny.sh", "/deny.toml", "/run-fuzz.sh"]
 
 # MSRV
-rust-version = "1.85.0"
+rust-version = "1.89.0"
 
 # Notes on OpenSSL
 # - Vendored (static link source build) ensures version consistency and easier
@@ -58,9 +58,9 @@ combine = "4.6.6"
 subtle = "2.0.0"
 arrayvec = "0.7.6"
 serde = { version = "1.0.152", features = ["derive"] }
-dimpl = { version = "0.8.0", default-features = false }
+dimpl = { version = "0.9.0", default-features = false }
 drv = { version = "0.4.3" }
-time = "0.3"
+time = "0.3.47"
 base64ct = "1"
 
 # Proto dependencies
@@ -68,23 +68,23 @@ openssl = "0.10.78"
 
 # IS dependencies
 crc = "3"
-hmac = "0.12.1"
-sha1 = "0.10"
+hmac = "0.13"
+sha1 = "0.11"
 
 # Crypto backend dependencies
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
-aes-gcm = "0.10"
-aes = "0.8"
-ctr = "0.9"
-p256 = { version = "0.13", features = ["ecdh"] }
-sha2 = "0.10"
+aes-gcm = "0.11"
+aes = "0.9"
+ctr = "0.10"
+p256 = { version = "0.14", features = ["ecdh"] }
+sha2 = "0.11"
 openssl-sys = "0.9.80"
 libc = "0.2"
-der = "0.7"
-pkcs8 = { version = "0.10", features = ["pem"] }
-sec1 = "0.7"
-spki = "0.7"
-x509-cert = { version = "0.2", default-features = false }
+der = "0.8"
+pkcs8 = { version = "0.11", features = ["pem"] }
+sec1 = "0.8"
+spki = "0.8"
+x509-cert = { version = "0.3", default-features = false }
 
 # Dev/test dependencies
 rouille = "3.6.2"

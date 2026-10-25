@@ -1,6 +1,8 @@
 //! Apple CommonCrypto/Security framework implementation of cryptographic functions.
 //! DTLS via dimpl with Apple CommonCrypto as crypto backend.
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
 #![allow(clippy::redundant_pub_crate)]
 #![allow(unsafe_code)]
 #![cfg(target_vendor = "apple")]

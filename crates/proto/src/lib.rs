@@ -1,5 +1,8 @@
 //! Shared protocol types and traits for str0m.
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
+
 /// Default target MTU when no MTU is explicitly configured via [`RtcConfig::set_mtu`].
 pub const DATAGRAM_MTU_TARGET: usize = 1150;
 

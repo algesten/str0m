@@ -9,7 +9,7 @@ readme = "README.md"
 edition = "2024"
 
 # MSRV
-rust-version = "1.85.0"
+rust-version = "1.89.0"
 
 [features]
 vendored = ["openssl/vendored"]

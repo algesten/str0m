@@ -91,6 +91,8 @@
 //! [sansio]: https://sans-io.readthedocs.io/
 //! [design]: https://github.com/algesten/str0m/blob/main/docs/ice.md
 
+// Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+#![allow(clippy::collapsible_if)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 
