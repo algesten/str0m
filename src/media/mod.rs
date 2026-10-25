@@ -21,7 +21,7 @@ use crate::format::Vp9PacketizerMode;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid, is_no_stream};
 use crate::streams::{RtpPacket, Streams};
-use crate::util::already_happened;
+use crate::util::{already_happened, sorted_by_key_mut};
 
 mod event;
 pub use event::*;
@@ -350,7 +350,7 @@ impl Media {
         now: Instant,
         reordering_timeout: Option<Duration>,
     ) -> Result<Option<MediaData>, RtcError> {
-        for ((pt, rid), buf) in &mut self.depayloaders {
+        for ((pt, rid), buf) in sorted_by_key_mut(&mut self.depayloaders) {
             if let Some(r) = buf.pop(now, reordering_timeout) {
                 let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {

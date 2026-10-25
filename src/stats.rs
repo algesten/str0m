@@ -311,11 +311,16 @@ impl Stats {
 
         self.events.push_back(StatsEvent::Peer(event));
 
-        for (_, event) in snapshot.ingress.drain() {
+        // Key order, so the event order does not depend on hasher state.
+        let mut ingress: Vec<_> = snapshot.ingress.drain().collect();
+        ingress.sort_unstable_by_key(|(k, _)| *k);
+        for (_, event) in ingress {
             self.events.push_back(StatsEvent::MediaIngress(event));
         }
 
-        for (_, event) in snapshot.egress.drain() {
+        let mut egress: Vec<_> = snapshot.egress.drain().collect();
+        egress.sort_unstable_by_key(|(k, _)| *k);
+        for (_, event) in egress {
             self.events.push_back(StatsEvent::MediaEgress(event));
         }
 
