@@ -135,6 +135,9 @@ pub struct StreamTx {
     /// Scheduled resends due to NACK or spurious padding.
     resends: VecDeque<Resend>,
 
+    /// Resends queued since the pacer last saw this stream's queue state.
+    resends_unseen: bool,
+
     /// Requested padding, that has not been turned into packets yet.
     padding: usize,
 
@@ -377,6 +380,7 @@ impl StreamTx {
             queue_info: None,
             unpaced: None,
             resends: VecDeque::new(),
+            resends_unseen: false,
             padding: 0,
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
@@ -1075,6 +1079,7 @@ impl StreamTx {
                 payload_size: packet.payload.len(),
             };
             self.resends.push_back(resend);
+            self.resends_unseen = true;
         }
 
         Some(())
@@ -1184,6 +1189,7 @@ impl StreamTx {
 
         let mut snapshot = self.send_queue.snapshot(now);
 
+        self.resends_unseen = false;
         if let Some(snapshot_resend) = self.queue_state_resend(now) {
             snapshot.merge(&snapshot_resend);
         }
@@ -1275,7 +1281,7 @@ impl StreamTx {
     }
 
     pub(crate) fn need_timeout(&self) -> bool {
-        self.send_queue.need_timeout()
+        self.send_queue.need_timeout() || self.resends_unseen
     }
 
     pub(crate) fn handle_timeout<'a>(
@@ -1540,6 +1546,35 @@ mod test {
         assert_eq!(second.header.ext_vals.transport_cc, Some(1));
         assert_eq!(second.header.ext_vals.mid, Some("vid".into()));
         assert_eq!(second.header.payload_type, 96.into());
+    }
+
+    #[test]
+    fn nack_asks_for_a_timeout_until_the_pacer_sees_it() {
+        let mut stream = StreamTx::new(42.into(), None, MidRid(Mid::from("0"), None), false, 1200);
+        let now = Instant::now();
+        stream.rtx_cache.cache_sent_packet(
+            RtpPacket {
+                header: RtpHeader::default(),
+                seq_no: 7.into(),
+                time: MediaTime::from_90khz(0),
+                payload: vec![0; 100].into(),
+                vp8_patch: None,
+                timestamp: now,
+                last_sender_info: None,
+                nackable: true,
+            },
+            now,
+        );
+        assert!(!stream.need_timeout());
+
+        stream.handle_nack(std::iter::once(NackEntry { pid: 7, blp: 0 }), now);
+        assert!(
+            stream.need_timeout(),
+            "a resend must not wait for an unrelated timeout"
+        );
+
+        stream.queue_state(now);
+        assert!(!stream.need_timeout());
     }
 
     #[test]
