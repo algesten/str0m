@@ -51,6 +51,11 @@ impl<'a> Bwe<'a> {
     ///   [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate]. This rate might not
     ///   be reached if the network link cannot sustain the desired bitrate.
     ///
+    /// Increasing the desired bitrate above the current estimate can trigger an allocation
+    /// probe, whether or not the application is currently sending below its estimated capacity.
+    /// Initial probing and congestion conditions can suppress this probe. Repeating or reducing
+    /// the desired bitrate does not request an allocation probe.
+    ///
     /// ## Example
     ///
     /// Say you have three simulcast video tracks each with a high layer configured at 1.5Mbit/s.

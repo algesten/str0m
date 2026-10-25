@@ -13,6 +13,12 @@ This git revision we have aligned the str0m impl to.
 
 **Date**: Sat Jan 10 00:02:32 2026 -0800
 
+Allocation probing additionally follows libwebrtc commit
+[`bff4a9e71e`](https://webrtc.googlesource.com/src/+/bff4a9e71e3813d65d6382997ed9a42edf61946c)
+(August 20, 2026): increases in desired bitrate can trigger probes both
+inside and outside ALR. This is a targeted alignment beyond the baseline
+revision above, not a full update of the BWE implementation.
+
 ## How It Works: High-Level Overview
 
 Bandwidth estimation continuously measures how much data you can send
@@ -343,18 +349,22 @@ concepts are unified into this single value.
    sent at X and are receiving at >0.7X, the link isn't saturated and we
    should explore higher rates.
 
-3. **Allocation Probing**: When in ALR and `estimated_bitrate < max_bitrate`
-   (application's desired bitrate exceeds current estimate), probes at 1× and
-   2× max_bitrate (`first_allocation_probe_scale` = 1.0,
-   `second_allocation_probe_scale` = 2.0), limited by 2× current BWE
-   estimate (`allocation_probe_limit_by_current_scale` = 2.0). Triggers
-   immediately upon entering ALR (when estimate is below max_bitrate) and
-   periodically every 5 seconds (`MIN_TIME_BETWEEN_ALR_PROBES`) while
-   remaining in ALR with headroom available. This level-triggered approach
-   ensures that whenever the application wants more bandwidth than currently
-   available, the system actively probes to discover if the network can
-   support it—whether from initial ALR entry, network improvements during
-   ALR, or sustained application demand exceeding the estimate.
+3. **Allocation Probing**: An increase in the application's desired bitrate
+   above the current estimate can trigger probing both inside and outside
+   ALR. Unchanged or decreased demand does not trigger allocation probes;
+   a subsequent increase is compared with the latest desired value, including
+   decreases. Initial probing and congestion gates still apply. Requests
+   observed while these gates block probing are not replayed when they clear.
+   Probe rates use the existing allocation scales (1× and 2× desired) and
+   the 2× current-estimate limit. The first probe is capped at that limit;
+   the second is queued only if it fits and exceeds the first probe's rate.
+   Allocation probes outside ALR are not classified as ALR probes for
+   link-capacity estimation.
+
+   Periodic ALR probing is a separate trigger: while in ALR, it probes at
+   2× desired bitrate with a minimum interval of 5 seconds. Entering ALR
+   alone does not trigger an allocation probe, and periodic ALR probing
+   continues even when the estimate has reached the desired bitrate.
 
 4. **Large-Drop Recovery**: After a bitrate drop to 66% or below
    (`BITRATE_DROP_THRESHOLD`), if the drop occurred within 5 seconds
@@ -716,7 +726,7 @@ transmission smoothing and padding generation respectively.
    - **WebRTC**: Exponential probing only chains after Initial or Exponential probes
      (state-based, only when `state_ == State::kWaitingForProbingResult`)
    - **str0m**: Exponential probing chains after any probe type (Initial, Exponential,
-     IncreaseAlr, PeriodicAlr, LargeDrop, Stagnant)
+     Allocation, PeriodicAlr, LargeDrop, Stagnant)
    - **Reason**: Accelerates capacity discovery in all scenarios, not just startup.
      If a probe succeeds (estimate increases to >70% of probe rate) regardless of
      probe type, the network has demonstrated capacity and we should explore higher
@@ -751,17 +761,15 @@ transmission smoothing and padding generation respectively.
      probing up to 2× desired rate without a separate hard cap, while WebRTC
      constrains by the minimum of the two values
 
-5. **Allocation Probing Trigger:**
-   - **WebRTC**: Edge-triggered on `OnMaxTotalAllocatedBitrate()` calls during
-     ALR (probes only when allocation changes while in ALR)
-   - **str0m**: Level-triggered on `estimate < max_bitrate` condition (probes
-     immediately on ALR entry and every 5 seconds while in ALR with headroom)
-   - **Reason**: Better handles network recovery scenarios where application's
-     desired bitrate remains constant but network capacity improves
-   - **Impact**: More aggressive capacity rediscovery during ALR. Ensures
-     consistent application demand (e.g., "I want 5 Mbps") triggers probing
-     whenever the network might support it, not just when the demand value
-     changes
+5. **Periodic ALR Probing:**
+   - **WebRTC**: Optional periodic ALR probes at 2× current estimate
+   - **str0m**: Periodic ALR probes are enabled with BWE and target 2× desired
+     bitrate, with a minimum interval of 5 seconds
+   - **Reason**: Rediscover capacity while application demand remains constant
+   - **Impact**: Capacity discovery during ALR does not depend on an allocation
+     increase. Allocation probes themselves are triggered by increases in
+     desired bitrate, inside or outside ALR, matching the newer WebRTC default
+     identified above
 
 6. **Probe Padding Without Media:**
    - **WebRTC**: The referenced `PacketRouter::GeneratePadding` implementation
