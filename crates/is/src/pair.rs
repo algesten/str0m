@@ -480,10 +480,10 @@ impl CandidatePair {
         // This handles the case where the remote peer is still sending us requests
         // (indicating connectivity) but may not be responding to our requests due to
         // asymmetric behavior in some browser versions (e.g., Chrome v144+).
-        if let Some(t) = self.remote_binding_request_time
-            && now - t < RECENT_BINDING_REQUEST
-        {
-            return true;
+        if let Some(t) = self.remote_binding_request_time {
+            if now - t < RECENT_BINDING_REQUEST {
+                return true;
+            }
         }
 
         let attempts = self.binding_attempts.len();

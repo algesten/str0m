@@ -812,12 +812,13 @@ impl RtcSctp {
                             // missing ones already went through Close, and an AwaitOpen
                             // entry is a new incarnation waiting on the same id, it must
                             // not be killed by the old pending teardown.
-                            if let Some(entry) = entry_by_id_mut(&mut self.entries, id)
-                                && entry.state != StreamEntryState::Closed
-                                && entry.state != StreamEntryState::AwaitOpen
-                            {
-                                debug!("Stream {} finished", id);
-                                entry.do_close = true;
+                            if let Some(entry) = entry_by_id_mut(&mut self.entries, id) {
+                                if entry.state != StreamEntryState::Closed
+                                    && entry.state != StreamEntryState::AwaitOpen
+                                {
+                                    debug!("Stream {} finished", id);
+                                    entry.do_close = true;
+                                }
                             }
                         }
                         StreamEvent::ResetComplete { id } => {

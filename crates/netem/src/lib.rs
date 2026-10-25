@@ -131,11 +131,11 @@ impl<T: Clone + WithLen> Netem<T> {
     }
 
     fn progress_time(&mut self, now: Instant) {
-        if let Some(last_time) = self.current_time
-            && now < last_time
-        {
-            // Time does not go backwards.
-            return;
+        if let Some(last_time) = self.current_time {
+            if now < last_time {
+                // Time does not go backwards.
+                return;
+            }
         }
         self.current_time = Some(now);
     }
@@ -212,10 +212,10 @@ impl<T: Clone + WithLen> Netem<T> {
             let tx_time = packet_size / link.rate;
 
             // Apply rate limiting: packet can't be sent until previous finishes
-            if let Some(virtual_time) = self.rate_virtual_time
-                && virtual_time > send_at
-            {
-                send_at = virtual_time;
+            if let Some(virtual_time) = self.rate_virtual_time {
+                if virtual_time > send_at {
+                    send_at = virtual_time;
+                }
             }
 
             // Check buffer overflow (tail drop) using actual queued bytes

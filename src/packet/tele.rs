@@ -84,7 +84,9 @@ impl TelephoneEvent {
         }
 
         Some(
-            buf.chunks_exact(REPORT_LEN)
+            buf.as_chunks::<REPORT_LEN>()
+                .0
+                .iter()
                 .filter_map(move |report| Self::parse(report, clock_rate)),
         )
     }

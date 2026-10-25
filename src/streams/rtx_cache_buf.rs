@@ -126,10 +126,10 @@ impl<T> EvictingBuffer<T> {
         }
 
         let index = (position % self.buf.len() as u64) as usize;
-        if let Some(entry) = &self.buf[index]
-            && entry.position == position
-        {
-            return Some(&entry.value);
+        if let Some(entry) = &self.buf[index] {
+            if entry.position == position {
+                return Some(&entry.value);
+            }
         }
         None
     }
@@ -140,10 +140,10 @@ impl<T> EvictingBuffer<T> {
         }
 
         let index = (position % self.buf.len() as u64) as usize;
-        if let Some(entry) = &mut self.buf[index]
-            && entry.position == position
-        {
-            return Some(&mut entry.value);
+        if let Some(entry) = &mut self.buf[index] {
+            if entry.position == position {
+                return Some(&mut entry.value);
+            }
         }
         None
     }

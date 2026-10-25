@@ -28,3 +28,7 @@ sha1_ = { package = "sha1", version = "0.11", optional = true }
 [dev-dependencies]
 serde_json.workspace = true
 tracing-subscriber.workspace = true
+
+[lints.clippy]
+# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+collapsible_if = "allow"

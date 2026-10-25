@@ -283,36 +283,36 @@ impl LeakyBucketPacer {
             non_empty_queues.min_by_key(|q| (q.snapshot.priority, q.snapshot.last_emitted))
         };
 
-        if let Some(queue) = non_empty_queue
-            && self.adjusted_bitrate > Bitrate::ZERO
-        {
-            // Check if we're actively probing and should use probe-specific timing
-            let poll_at = if let Some(probe) = self.probe_queue.front() {
-                // During probe: use absolute time directly from probe state
-                (probe.next_probe_time(), PacerReason::Probe1)
-            } else {
-                // Normal pacing: use relative offset based on debt
-                let drain_debt_time = self.media_debt / self.adjusted_bitrate;
-                // Limit the burst to MAX_BURST_SIZE so high bitrates don't overfill socket
-                // buffers. Below ~12.6 Mbps this is PACING.
-                let burst_interval = PACING.min(MAX_BURST_SIZE / self.adjusted_bitrate);
-                let next_send_offset = if drain_debt_time >= burst_interval {
-                    // If we have incurred too much debt, wait for it to clear before sending.
-                    // again.
-                    drain_debt_time
+        if let Some(queue) = non_empty_queue {
+            if self.adjusted_bitrate > Bitrate::ZERO {
+                // Check if we're actively probing and should use probe-specific timing
+                let poll_at = if let Some(probe) = self.probe_queue.front() {
+                    // During probe: use absolute time directly from probe state
+                    (probe.next_probe_time(), PacerReason::Probe1)
                 } else {
-                    Duration::ZERO
+                    // Normal pacing: use relative offset based on debt
+                    let drain_debt_time = self.media_debt / self.adjusted_bitrate;
+                    // Limit the burst to MAX_BURST_SIZE so high bitrates don't overfill socket
+                    // buffers. Below ~12.6 Mbps this is PACING.
+                    let burst_interval = PACING.min(MAX_BURST_SIZE / self.adjusted_bitrate);
+                    let next_send_offset = if drain_debt_time >= burst_interval {
+                        // If we have incurred too much debt, wait for it to clear before sending.
+                        // again.
+                        drain_debt_time
+                    } else {
+                        Duration::ZERO
+                    };
+
+                    let time = self
+                        .last_handle_time
+                        .map(|h| h + next_send_offset)
+                        .unwrap_or(now);
+
+                    (time, PacerReason::Paced)
                 };
 
-                let time = self
-                    .last_handle_time
-                    .map(|h| h + next_send_offset)
-                    .unwrap_or(now);
-
-                (time, PacerReason::Paced)
-            };
-
-            return Some((poll_at, Some(queue)));
+                return Some((poll_at, Some(queue)));
+            }
         }
 
         let any_queue_for_padding = self.queue_states.iter().any(|q| q.use_for_padding);

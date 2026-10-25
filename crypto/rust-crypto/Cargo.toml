@@ -22,3 +22,7 @@ ctr.workspace = true
 p256.workspace = true
 sha1.workspace = true
 sha2.workspace = true
+
+[lints.clippy]
+# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+collapsible_if = "allow"

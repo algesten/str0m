@@ -42,6 +42,8 @@ unused_lifetimes = "deny"
 unused_macro_rules = "deny"
 
 [lints.clippy]
+# Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
+collapsible_if = "allow"
 as_ptr_cast_mut = "deny"
 branches_sharing_code = "deny"
 clear_with_drain = "deny"

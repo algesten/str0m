@@ -387,16 +387,16 @@ impl CodecPacketizer {
     /// concrete packetizer variants.
     pub(crate) fn configure_for(&mut self, spec: &crate::format::CodecSpec) {
         // Enable DONL for H.265 when sprop-max-don-diff > 0 (RFC 7798 §7.1).
-        if let CodecPacketizer::H265(h265) = self
-            && spec.format.sprop_max_don_diff.unwrap_or(0) > 0
-        {
-            h265.with_donl(true);
+        if let CodecPacketizer::H265(h265) = self {
+            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                h265.with_donl(true);
+            }
         }
         // Enable DONL for H.266 when sprop-max-don-diff > 0 (RFC 9328 §7.2).
-        if let CodecPacketizer::H266(h266) = self
-            && spec.format.sprop_max_don_diff.unwrap_or(0) > 0
-        {
-            h266.with_donl(true);
+        if let CodecPacketizer::H266(h266) = self {
+            if spec.format.sprop_max_don_diff.unwrap_or(0) > 0 {
+                h266.with_donl(true);
+            }
         }
         if let CodecPacketizer::AmrWb(amr) = self {
             amr.octet_align = spec.format.octet_align.unwrap_or(false);

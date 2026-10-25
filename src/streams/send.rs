@@ -1308,18 +1308,17 @@ impl StreamTx {
         // To allow for sending padding on a newly created StreamTx, before any regular
         // packet has been sent, we need any main PT that has associated RTX. This is
         // later be overwritten when we send the first regular packet.
-        if self.rtx.is_some()
-            && self.pt_for_padding.is_none()
-            && let Some(pt) = media.first_pt_with_rtx(config)
-        {
-            trace!(
-                "StreamTx {:?} PT {} before first regular packet",
-                self.midrid, pt
-            );
-            self.pt_for_padding = Some(pt);
+        if self.rtx.is_some() && self.pt_for_padding.is_none() {
+            if let Some(pt) = media.first_pt_with_rtx(config) {
+                trace!(
+                    "StreamTx {:?} PT {} before first regular packet",
+                    self.midrid, pt
+                );
+                self.pt_for_padding = Some(pt);
 
-            // Setting the pt_for_rtx should enable RTX.
-            assert!(self.padding_enabled());
+                // Setting the pt_for_rtx should enable RTX.
+                assert!(self.padding_enabled());
+            }
         }
     }
 

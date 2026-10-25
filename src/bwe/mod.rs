@@ -264,12 +264,12 @@ impl SendSideBandwidthEstimator {
 
         // Loss-based result is capped by delay_based_limit
         let loss_result = self.loss_controller.loss_based_result();
-        if let Some(loss_estimate) = loss_result.bandwidth_estimate
-            && loss_estimate > delay_estimate
-        {
-            // Loss controller produced higher estimate than delay controller
-            // Cap it at delay estimate (delay controller is the upper limit)
-            self.loss_controller.set_bandwidth_estimate(delay_estimate);
+        if let Some(loss_estimate) = loss_result.bandwidth_estimate {
+            if loss_estimate > delay_estimate {
+                // Loss controller produced higher estimate than delay controller
+                // Cap it at delay estimate (delay controller is the upper limit)
+                self.loss_controller.set_bandwidth_estimate(delay_estimate);
+            }
         }
 
         // Feed the (possibly combined) estimate into subcomponents wanting it.

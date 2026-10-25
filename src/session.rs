@@ -338,10 +338,10 @@ impl Session {
         let probe_media = self.handle_timeout_bwe(now);
         self.update_queue_state(now, probe_media);
 
-        if let Some(twcc_at) = self.twcc_at()
-            && now >= twcc_at
-        {
-            self.create_twcc_feedback(sender_ssrc, now);
+        if let Some(twcc_at) = self.twcc_at() {
+            if now >= twcc_at {
+                self.create_twcc_feedback(sender_ssrc, now);
+            }
         }
 
         Ok(())
@@ -1021,10 +1021,10 @@ impl Session {
             return None;
         }
 
-        if let Some(raw_packets) = &mut self.raw_packets
-            && let Some(p) = raw_packets.pop_front()
-        {
-            return Some(Event::RawPacket(p));
+        if let Some(raw_packets) = &mut self.raw_packets {
+            if let Some(p) = raw_packets.pop_front() {
+                return Some(Event::RawPacket(p));
+            }
         }
 
         if let Some(feedback) = self.pending_app_feedback.take() {
@@ -1037,10 +1037,10 @@ impl Session {
             return Some(Event::StreamPaused(paused));
         }
 
-        if self.rtp_mode
-            && let Some(packet) = self.pending_packet.take()
-        {
-            return Some(Event::RtpPacket(packet));
+        if self.rtp_mode {
+            if let Some(packet) = self.pending_packet.take() {
+                return Some(Event::RtpPacket(packet));
+            }
         }
 
         if let Some(req) = self.streams.poll_keyframe_request() {

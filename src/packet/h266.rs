@@ -476,8 +476,10 @@ impl H266Packetizer {
             self.pkt_buf.push(fu_b0);
             self.pkt_buf.push(fu_b1);
             self.pkt_buf.push(fu_hdr.0);
-            if first && let Some(ref b) = donl_bytes {
-                self.pkt_buf.extend_from_slice(b);
+            if first {
+                if let Some(ref b) = donl_bytes {
+                    self.pkt_buf.extend_from_slice(b);
+                }
             }
             self.pkt_buf
                 .extend_from_slice(&payload[offset..offset + take]);
@@ -634,24 +636,24 @@ impl Depacketizer for H266Depacketizer {
                 buf.extend_from_slice(fu_payload);
             }
 
-            if fu_header.e()
-                && let Some(ref buf) = self.fu_buffer
-            {
-                // Rebuild the original NAL header: byte0 unchanged,
-                // byte1 = orig type in bits 7..3 + original TID.
-                let orig_type = fu_header.fu_type();
-                let orig_b0 = packet[0];
-                let orig_b1 = (orig_type << 3) | (packet[1] & 0b111);
-                let irap = matches!(
-                    orig_type,
-                    H266NALU_IDR_W_RADL | H266NALU_IDR_N_LP | H266NALU_CRA
-                );
-                mark_keyframe(codec_extra, irap);
+            if fu_header.e() {
+                if let Some(ref buf) = self.fu_buffer {
+                    // Rebuild the original NAL header: byte0 unchanged,
+                    // byte1 = orig type in bits 7..3 + original TID.
+                    let orig_type = fu_header.fu_type();
+                    let orig_b0 = packet[0];
+                    let orig_b1 = (orig_type << 3) | (packet[1] & 0b111);
+                    let irap = matches!(
+                        orig_type,
+                        H266NALU_IDR_W_RADL | H266NALU_IDR_N_LP | H266NALU_CRA
+                    );
+                    mark_keyframe(codec_extra, irap);
 
-                out.extend_from_slice(ANNEXB_NALUSTART_CODE);
-                out.push(orig_b0);
-                out.push(orig_b1);
-                out.extend_from_slice(buf);
+                    out.extend_from_slice(ANNEXB_NALUSTART_CODE);
+                    out.push(orig_b0);
+                    out.push(orig_b1);
+                    out.extend_from_slice(buf);
+                }
             }
             Ok(())
         } else if header.is_aggregation_packet() {

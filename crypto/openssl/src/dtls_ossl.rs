@@ -476,11 +476,11 @@ impl OsslDtlsInstance {
         }
 
         // Check for keying material
-        if self.pending_keying_material.is_none()
-            && let Some((km, profile, peer_cert_der)) = self.inner.take_keying_material()
-        {
-            self.pending_keying_material = Some((km.as_ref().to_vec(), profile));
-            self.pending_peer_cert = Some(peer_cert_der);
+        if self.pending_keying_material.is_none() {
+            if let Some((km, profile, peer_cert_der)) = self.inner.take_keying_material() {
+                self.pending_keying_material = Some((km.as_ref().to_vec(), profile));
+                self.pending_peer_cert = Some(peer_cert_der);
+            }
         }
 
         // Update timeout
