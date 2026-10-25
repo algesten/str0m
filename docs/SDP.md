@@ -20,20 +20,15 @@ express between directions or individual m-lines.
 Media intent belongs to the application: which sources exist, who should send or
 receive them, and when they should start or stop. Applications already need a
 signaling channel to exchange offers and answers. They can use that channel to
-agree on this intent instead of relying on SDP direction changes to discover it.
-
-Unified Plan adds another complication by tying media to transceivers and m-line
-slots, including rules for reusing transceivers and recycling stopped m-lines.
-Those lifecycles do not necessarily match the application's sources and
-subscriptions. We think Plan B was the better direction for this model. str0m
-still needs to interoperate with Unified Plan peers, but that does not make the
-browser's transceiver model the model we want applications to adopt.
+agree on this intent instead of relying on SDP direction changes to discover it.[^plan-b]
 
 Browsers and libWebRTC handle the full negotiation machinery and its edge cases
 better. str0m provides a deliberately limited SDP adapter to configure its
 session and interoperate with those peers. The details and departures documented
 here are part of that boundary, rather than a roadmap to implementing every SDP
 negotiation possibility.
+
+[^plan-b]: Plan B was the better direction. :)
 
 ### Expressing application intent
 
