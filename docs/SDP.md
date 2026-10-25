@@ -32,29 +32,15 @@ negotiation possibility.
 
 ### Expressing application intent
 
-Agree on media intent through application signaling where possible. When an
-incoming offer is broader than what the application intends to accept, the
-application can narrow that offer before passing it to str0m. Send the answer
-that str0m produces unchanged.
+Establish media intent through application signaling, or narrow the incoming
+offer before passing it to str0m. For example, narrowing offered audio from
+`sendrecv` to `recvonly` makes str0m answer `sendonly`. Send that answer unchanged
+so str0m and the peer agree on the session. Any transformation must remain
+compatible with the original offer and the constraints documented below.
 
-For example, a camera that can send audio but cannot play incoming audio may
-receive an offer with `sendrecv` audio. Narrowing that offered direction to
-`recvonly`, from the offerer's perspective, lets str0m answer `sendonly` and
-configure its own media in that direction. The answer tells the offerer that it
-will only receive audio. Editing the answer after str0m generates it would leave
-str0m's session state unaware of that change.
-
-The application is responsible for keeping any offer transformation compatible
-with the original offer and the peer's expectations. Narrowing is not permission
-to introduce new capabilities, change established payload type mappings, or
-bypass the existing-media and renegotiation constraints documented below.
-
-This does not make str0m an SDP transformation toolkit. We do not intend to
-expose its internal SDP parser and representation as a public API for munging
-offers or answers. Applications that need structured SDP transformations should
-use a separate crate. Nor do we want a general per-m-line answer customization
-API: an m-line is not an independent configuration when codec parameters and
-other negotiated properties are shared across the session.
+SDP transformations belong in a separate crate. We do not intend to expose
+str0m's internal SDP parser or provide general per-m-line answer customization:
+codec parameters and other negotiated properties are shared across the session.
 
 ## MSID identity in offers and answers
 
