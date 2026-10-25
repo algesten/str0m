@@ -72,7 +72,6 @@ pub(crate) struct Session {
     reordering_size_audio: usize,
     reordering_size_video: usize,
     reordering_timeout_audio: Option<Duration>,
-    reordering_timeout_video: Option<Duration>,
     intervals: RtcpReportIntervals,
     pub send_buffer_audio: usize,
     pub send_buffer_video: usize,
@@ -184,7 +183,6 @@ impl Session {
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
             reordering_timeout_audio: config.reordering_timeout_audio,
-            reordering_timeout_video: config.reordering_timeout_video,
             intervals: config.intervals,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
@@ -1084,19 +1082,32 @@ impl Session {
         None
     }
 
+    fn update_receive_recovery(&mut self) {
+        for media in self.medias.iter_mut().filter(|m| m.kind().is_video()) {
+            let mid = media.mid();
+            for (rid, buf) in media.receive_buffers() {
+                let deadline = buf.recovery_candidate().and_then(|(range, received)| {
+                    match self.streams.stream_rx_by_midrid(MidRid(mid, rid)) {
+                        Some(stream) => stream.recovery_deadline(range, received),
+                        None => received.checked_add(Duration::from_millis(300)),
+                    }
+                });
+                buf.set_recovery_deadline(deadline);
+            }
+        }
+    }
+
     pub fn poll_event_fallible(&mut self, now: Instant) -> Result<Option<Event>, RtcError> {
         // Not relevant in rtp_mode, where the packets are picked up by poll_event().
         if self.rtp_mode {
             return Ok(None);
         }
 
+        self.update_receive_recovery();
         for media in &mut self.medias {
-            let timeout = if media.kind().is_video() {
-                self.reordering_timeout_video
-            } else {
-                self.reordering_timeout_audio
-            };
-            if let Some(e) = media.poll_sample(&self.codec_config, now, timeout)? {
+            if let Some(e) =
+                media.poll_sample(&self.codec_config, now, self.reordering_timeout_audio)?
+            {
                 return Ok(Some(Event::MediaData(e)));
             }
         }
@@ -1275,6 +1286,7 @@ impl Session {
             };
         }
 
+        self.update_receive_recovery();
         let feedback_at = self.regular_feedback_at();
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
@@ -1283,14 +1295,7 @@ impl Session {
         let receive_at = self
             .medias
             .iter_mut()
-            .filter_map(|media| {
-                let timeout = if media.kind().is_video() {
-                    self.reordering_timeout_video
-                } else {
-                    self.reordering_timeout_audio
-                };
-                media.poll_receive_timeout(timeout)
-            })
+            .filter_map(|media| media.poll_receive_timeout(self.reordering_timeout_audio))
             .min();
         let paused_at = self.paused_at();
         let send_stream_at = self.streams.send_stream();

@@ -9,7 +9,7 @@ const MAX_MISORDER: u64 = 100;
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
 
-const DEFAULT_RTT: Duration = Duration::from_millis(100);
+pub(super) const DEFAULT_RTT: Duration = Duration::from_millis(100);
 const NACK_RETRY_MARGIN: Duration = Duration::from_millis(5);
 
 /// Circular buffer size
@@ -235,6 +235,36 @@ impl NackRegister {
         )
     }
 
+    /// Deadline for abandoning missing packets in a candidate's preceding sequence range.
+    /// None means a relevant packet still has NACK attempts remaining.
+    pub fn recovery_deadline(
+        &self,
+        range: Range<SeqNo>,
+        candidate_received: Instant,
+        rtt: Option<Duration>,
+    ) -> Option<Instant> {
+        let grace = rtt.unwrap_or(DEFAULT_RTT).saturating_mul(3);
+        let fallback = candidate_received.checked_add(grace);
+        let Some(active) = &self.active else {
+            return fallback;
+        };
+        let mut deadline = None;
+        for seq in *range.start.max(active.start)..*range.end.min(active.end) {
+            let packet = self.packet(seq.into());
+            if packet.received {
+                continue;
+            }
+            if packet.needs_nack() {
+                return None;
+            }
+            let at = packet.last_nack_at?.checked_add(grace)?;
+            deadline = Some(deadline.map_or(at, |previous: Instant| previous.max(at)));
+        }
+        // Gaps outside the bounded NACK window and missing tail markers have no final
+        // request to time from. Give them a candidate-relative grace period instead.
+        deadline.or(fallback)
+    }
+
     fn as_index(&self, seq: SeqNo) -> usize {
         (*seq % self.packets.len() as u64) as usize
     }
@@ -259,6 +289,46 @@ mod test {
     use crate::streams::register_nack::MAX_MISORDER;
 
     use super::NackRegister;
+
+    #[test]
+    fn recovery_waits_for_final_nack_and_three_rtts() {
+        for rtt in [
+            None,
+            Some(Duration::from_millis(20)),
+            Some(Duration::from_millis(400)),
+        ] {
+            let base = Instant::now();
+            let measured = rtt.unwrap_or(Duration::from_millis(100));
+            let mut reg = NackRegister::new(None);
+            reg.update(10.into());
+            reg.update(12.into());
+            let mut now = base;
+            for attempt in 0..5 {
+                assert_eq!(reg.recovery_deadline(10.into()..12.into(), base, rtt), None);
+                assert_eq!(nack_entries(&mut reg, now, rtt).len(), 1);
+                if attempt < 4 {
+                    now += measured + Duration::from_millis(5);
+                }
+            }
+            let deadline = Some(now + measured * 3);
+            // Include a received packet before the active window; it must not add a fallback wait.
+            assert_eq!(
+                reg.recovery_deadline(10.into()..12.into(), base, rtt),
+                deadline
+            );
+            reg.update(14.into());
+            assert_eq!(
+                reg.recovery_deadline(10.into()..12.into(), base, rtt),
+                deadline
+            );
+            assert_eq!(reg.recovery_deadline(10.into()..14.into(), base, rtt), None);
+            reg.update(11.into());
+            assert_eq!(
+                reg.recovery_deadline(10.into()..12.into(), base, rtt),
+                Some(base + measured * 3)
+            );
+        }
+    }
 
     #[test]
     fn pending_nacks_follow_repair_and_retry_exhaustion() {
