@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Replace BWE `set_desired_bitrate` with `set_bitrate(minimum, desired)` (breaking)
   * Drain NullPacer queues without a timeout after every send #1112
   * Align BWE probing with libwebrtc bd3d2d3150 #1108
   * Parse valid SDP without building combine's easy errors, about 6x faster #1118

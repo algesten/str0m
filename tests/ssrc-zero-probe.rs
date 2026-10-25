@@ -298,7 +298,7 @@ fn video_padding_before_srtp_does_not_spin() -> Result<(), RtcError> {
     let (offer, pending) = change.apply().unwrap();
     let answer = r.sdp_api().accept_offer(offer)?;
     l.sdp_api().accept_answer(pending, answer)?;
-    l.bwe().set_desired_bitrate(Bitrate::mbps(2));
+    l.bwe().set_bitrate(Bitrate::mbps(1), Bitrate::mbps(2));
 
     // Drain immediate work without advancing the supplied clock. There are no
     // SRTP keys yet, so unsendable padding must not keep the deadline at `now`.
@@ -423,7 +423,7 @@ fn peers(feedback: bool) -> (TestRtc, TestRtc) {
     let (mut l, mut r) = connect_l_r_with_rtc(l, r);
     l.set_forced_time_advance(Duration::from_micros(100));
     r.set_forced_time_advance(Duration::from_micros(100));
-    l.bwe().set_desired_bitrate(Bitrate::mbps(2));
+    l.bwe().set_bitrate(Bitrate::ZERO, Bitrate::mbps(2));
     if feedback {
         r.direct_api().enable_twcc_feedback();
     }
