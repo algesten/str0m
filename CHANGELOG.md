@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Bump dimpl to 0.9.0 and raise MSRV to Rust 1.89 (breaking) #1110
   * Remove the fixed video reordering timeout setting (breaking) #1078
   * Wait for NACK recovery and a complete successor before expiring incomplete video frames #1078
   * Write SDP that str0m can read back when it rejects every m-line #1101
