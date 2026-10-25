@@ -75,11 +75,15 @@ impl Payloader {
             data,
             start_of_talk_spurt,
             ext_vals,
+            dependency_descriptor,
             ..
         } = to_payload;
 
         let chunks = self.pack.packetize(mtu, data.as_ref())?;
         let len = chunks.len();
+        let mut descriptors = dependency_descriptor
+            .as_ref()
+            .map(|v| v.packet_descriptors(len));
 
         for (idx, data) in chunks.into_iter().enumerate() {
             let last = idx == len - 1;
@@ -94,6 +98,10 @@ impl Payloader {
             let nackable = self.pack.nackable();
 
             let mut pkt_ext_vals = ext_vals.clone();
+
+            if let Some(descriptor) = descriptors.as_mut().and_then(Iterator::next) {
+                pkt_ext_vals.user_values.set_arc(descriptor);
+            }
 
             if !first {
                 pkt_ext_vals.abs_capture_time = None;

@@ -6,6 +6,7 @@ mod seq_no_window;
 pub(crate) use seq_no_window::SeqNoWindow;
 
 mod ext;
+pub(crate) use ext::MAX_ID_ONE_BYTE_FORM;
 pub use ext::{AbsCaptureTime, UserExtensionValues, VideoOrientation};
 pub use ext::{Extension, ExtensionMap, ExtensionSerializer, ExtensionValues};
 

@@ -4,6 +4,7 @@ use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::rtp::dependency_descriptor::DependencyDescriptor;
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
@@ -107,6 +108,23 @@ impl Depacketized {
 
         if let Some(first_val) = first.user_values.get_arc::<VideoLayersAllocation>() {
             merged.user_values.set_arc(first_val);
+        }
+
+        // Each packet of a frame has its own descriptor, and the sample has the first packet's.
+        // With one frame per spatial layer, no single descriptor describes the sample.
+        merged.user_values.remove::<DependencyDescriptor>();
+        if let Some(first_val) = first.user_values.get_arc::<DependencyDescriptor>() {
+            let frame_number = first_val.truncated_frame_number();
+            let one_frame = self.meta.iter().all(|meta| {
+                meta.header
+                    .ext_vals
+                    .user_values
+                    .get::<DependencyDescriptor>()
+                    .is_none_or(|v| v.truncated_frame_number() == frame_number)
+            });
+            if one_frame {
+                merged.user_values.set_arc(first_val);
+            }
         }
 
         merged
@@ -894,6 +912,13 @@ mod test {
             current_simulcast_stream_index: 1,
             simulcast_streams: vec![],
         });
+        let first_descriptor =
+            DependencyDescriptor::from_bytes([0x80, 0, 1, 0x80, 0, 0xe0]).unwrap();
+        let continuation = DependencyDescriptor::from_bytes([0x40, 0, 1]).unwrap();
+        let mut first_user_values = vla.clone();
+        first_user_values.set(first_descriptor.clone());
+        let mut last_user_values = UserExtensionValues::default();
+        last_user_values.set(continuation.clone());
 
         let first_header = RtpHeader {
             version: 2,
@@ -908,7 +933,7 @@ mod test {
             csrc: [0; 15],
             ext_vals: ExtensionValues {
                 abs_capture_time: Some(abs_capture_time),
-                user_values: vla.clone(),
+                user_values: first_user_values,
                 ..Default::default()
             },
             header_len: 0,
@@ -917,13 +942,14 @@ mod test {
         let last_header = RtpHeader {
             ext_vals: ExtensionValues {
                 video_orientation: Some(VideoOrientation::Deg90),
+                user_values: last_user_values,
                 ..Default::default()
             },
             ..first_header.clone()
         };
 
         let time_value = 100_u64;
-        let dep = Depacketized {
+        let mut dep = Depacketized {
             time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
             contiguous: true,
             meta: vec![
@@ -962,6 +988,34 @@ mod test {
                 .current_simulcast_stream_index,
         );
         assert_eq!(merged.video_orientation, Some(VideoOrientation::Deg90));
+        assert_eq!(
+            merged.user_values.get::<DependencyDescriptor>(),
+            Some(&first_descriptor)
+        );
+
+        // No single descriptor describes a sample with one frame per spatial layer.
+        let last_user_values = &mut dep.meta[1].header.ext_vals.user_values;
+        last_user_values.set(DependencyDescriptor::from_bytes([0xc0, 0, 2]).unwrap());
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+
+        // A continuation descriptor never stands in for a missing first one.
+        dep.meta[1].header.ext_vals.user_values.set(continuation);
+        dep.meta[0]
+            .header
+            .ext_vals
+            .user_values
+            .remove::<DependencyDescriptor>();
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
     }
 
     #[test]

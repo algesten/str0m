@@ -81,6 +81,7 @@ impl TelephonePackets {
             start_of_talk_spurt: marker,
             data,
             ext_vals: self.ext_vals.clone(),
+            dependency_descriptor: None,
         }
     }
 }

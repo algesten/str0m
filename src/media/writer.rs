@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::RtcError;
 use crate::format::{CodecConfig, PayloadParams};
 use crate::packet::PacketError;
+use crate::rtp::dependency_descriptor::FrameDescriptor;
 use crate::rtp_::AbsCaptureTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
@@ -149,8 +150,10 @@ impl<'a> Writer<'a> {
 
     /// Write media.
     ///
-    /// This operation fails if the PT doesn't match a negotiated codec, or the RID (`None` or a value)
-    /// does not match anything negotiated.
+    /// This operation fails if the PT doesn't match a negotiated codec, the RID (`None` or a value)
+    /// does not match anything negotiated, or a negotiated
+    /// [`DependencyDescriptor`][crate::rtp::dependency_descriptor::DependencyDescriptor] user
+    /// extension value attaches a malformed structure.
     ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
@@ -163,7 +166,7 @@ impl<'a> Writer<'a> {
     ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
     pub fn write(
-        self,
+        mut self,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
@@ -184,6 +187,12 @@ impl<'a> Writer<'a> {
             return Err(RtcError::UnknownPt(pt));
         }
         let clock_rate = params.spec().rtp_clock_rate();
+
+        let mid = self.mid;
+        // This unwrap is OK due to the invariant of self.mid being resolvable
+        let exts = self.session.media_by_mid(mid).unwrap().remote_extmap();
+        let dependency_descriptor = FrameDescriptor::take(&mut self.ext_vals, exts)
+            .map_err(|e| RtcError::Packet(mid, pt, PacketError::InvalidDependencyDescriptor(e)))?;
 
         // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
@@ -221,6 +230,7 @@ impl<'a> Writer<'a> {
                 data,
                 start_of_talk_spurt: self.start_of_talkspurt.unwrap_or(false),
                 ext_vals: self.ext_vals.clone(),
+                dependency_descriptor,
             })?;
         }
 
