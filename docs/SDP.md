@@ -4,6 +4,42 @@
 
 str0m does not follow the exact specification for SDP negotiation, however, almost no one does.
 
+## Our view of SDP
+
+We disagree with using SDP offer/answer as the application protocol for deciding
+what media should flow. SDP carries the complexity of its telephony origins into
+WebRTC, including negotiation rules and state transitions that applications
+already have the information to decide for themselves. Implementing every
+possible negotiation is not a goal of str0m.
+
+We think the useful negotiation is to narrow codecs and fmtp parameters to an
+agreed set for the session. str0m uses a single BUNDLE/session codec configuration,
+with the limitations described below. We do not model every distinction SDP can
+express between directions or individual m-lines.
+
+Media intent belongs to the application: which sources exist, who should send or
+receive them, and when they should start or stop. Applications already need a
+signaling channel to exchange offers and answers. They can use that channel to
+agree on this intent instead of relying on SDP direction changes to discover it.[^plan-b]
+
+Browsers and libWebRTC handle the full negotiation machinery and its edge cases
+better. str0m provides a deliberately limited SDP adapter to configure its
+session and interoperate with those peers. The details and departures documented
+here are part of that boundary, rather than a roadmap to implementing every SDP
+negotiation possibility.
+
+### Expressing application intent
+
+Establish media intent through application signaling, or narrow the incoming
+offer before passing it to str0m. For example, narrowing offered audio from
+`sendrecv` to `recvonly` makes str0m answer `sendonly`. Send that answer unchanged
+so str0m and the peer agree on the session. Any transformation must remain
+compatible with the original offer and the constraints documented below.
+
+SDP transformations belong in a separate crate. We do not intend to expose
+str0m's internal SDP parser or provide general per-m-line answer customization:
+codec parameters and other negotiated properties are shared across the session.
+
 ## MSID identity in offers and answers
 
 When a remote offer first creates an m-line, str0m normally copies its
@@ -52,7 +88,7 @@ For an OFFER with `sendonly`, the payload types (and PT numbers) mean "this is w
 I **hope to send**". They are suggestions the ANSWER can change.
 
 For an ANSWER with `sendonly`, the payload types (and PT numbers) indicating what it hopes to send.
-I conclude they are not interesting, because the receiving side (the OFFER), has already dictated
+We conclude they are not interesting, because the receiving side (the OFFER), has already dictated
 "this is what I expect to receive". The ANSWER side is not allowed use anything else – it might as well
 just mirror the OFFER.
 
@@ -229,7 +265,10 @@ m-line (max-bundle style).
 | 9    | Yes             | Valid bundled m-line (max-compat style) |
 
 [quote]: https://mailarchive.ietf.org/arch/msg/mmusic/2N1_-eUTVrmciX3LpSjkjFH7oCU/
+
+[^plan-b]: Plan B was the better direction. :)
+
+[rfc9429]: https://www.rfc-editor.org/rfc/rfc9429.html#section-5.2.2
+[rfc8830]: https://www.rfc-editor.org/rfc/rfc8830.html#section-3.2.3
 [sdpspec]: https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
 [rfc8843]: https://datatracker.ietf.org/doc/html/rfc8843
-[rfc8830]: https://www.rfc-editor.org/rfc/rfc8830.html#section-3.2.3
-[rfc9429]: https://www.rfc-editor.org/rfc/rfc9429.html#section-5.2.2
