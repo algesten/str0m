@@ -1,6 +1,6 @@
 #![allow(clippy::single_match)]
 
-use combine::EasyParser;
+use combine::{EasyParser, Parser};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::{self};
@@ -28,6 +28,12 @@ pub struct Sdp {
 
 impl Sdp {
     pub(crate) fn parse(input: &str) -> Result<Sdp, SdpError> {
+        // `easy_parse` builds (allocates, merges, dedups) an error for every alternative tried,
+        // which is most of the cost of parsing a valid SDP. Plain `&str` errors cost nothing; the
+        // detailed message is only needed when the input is invalid, so parse again for it then.
+        if let Ok((sdp, _)) = sdp_parser().parse(input) {
+            return Ok(sdp);
+        }
         sdp_parser()
             .easy_parse(input)
             .map(|(sdp, _)| sdp)
@@ -1732,6 +1738,36 @@ mod test {
     use crate::rtp_::{Extension, Frequency};
 
     use super::*;
+
+    /// The captured Chrome offer in `docs/chrome-sdp.json`, as an SDP string.
+    fn chrome_offer() -> String {
+        let json: serde_json::Value =
+            serde_json::from_str(include_str!("../../docs/chrome-sdp.json")).unwrap();
+        let lines = json["sdp"].as_array().unwrap();
+        let sdp: String = lines
+            .iter()
+            .map(|l| format!("{}\r\n", l.as_str().unwrap()))
+            .collect();
+        sdp
+    }
+
+    #[test]
+    fn fast_and_easy_parse_agree() {
+        let input = chrome_offer();
+        let fast = Sdp::parse(&input).unwrap();
+        let (easy, _) = sdp_parser().easy_parse(input.as_str()).unwrap();
+        assert_eq!(fast, easy);
+        assert!(fast.media_lines.len() >= 2);
+    }
+
+    #[test]
+    fn invalid_sdp_keeps_the_detailed_error() {
+        let input = chrome_offer().replacen("v=0", "v=x", 1);
+        let Err(SdpError::ParseError(msg)) = Sdp::parse(&input) else {
+            panic!("a bad version line parses");
+        };
+        assert!(msg.contains("Parse error at"), "{msg}");
+    }
 
     #[test]
     fn fingerprint_hash_preference_at_session_and_media_level() {
