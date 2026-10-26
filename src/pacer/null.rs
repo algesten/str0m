@@ -12,8 +12,8 @@ use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
 #[derive(Debug, Default)]
 pub struct NullPacer {
     last_sends: HashMap<MidRid, Instant>,
-    /// Snapshot from the last `handle_timeout`, kept accurate by `poll_queue`
-    /// counting off each packet it hands out.
+    /// Snapshots from the last `handle_timeout`. `poll_queue` counts off
+    /// each packet it hands out.
     queue_states: Vec<QueueState>,
     /// Set when `poll_queue` hands out a queue that `register_send` never confirms:
     /// the stream had nothing to send after all, so the snapshot is stale.
@@ -30,7 +30,8 @@ impl Pacer for NullPacer {
     }
     fn poll_timeout(&self) -> (Option<Instant>, Reason) {
         // Only a poll that sent nothing needs a fresh snapshot: other queued packets go
-        // out on the next poll, and new media or resends ask for their own timeout.
+        // out on the next poll. New media requests a timeout, and receiving a NACK
+        // refreshes the snapshot through Rtc::handle_input before polling resumes.
         (self.unsent_since, Reason::Pacer(PacerReason::Handle))
     }
 
@@ -93,13 +94,16 @@ mod test {
         pacer.handle_timeout(now, queues.into_iter());
 
         let mut sent = vec![];
-        while let Some((midrid, _)) = pacer.poll_queue() {
+        for _ in 0..3 {
+            let (midrid, _) = pacer.poll_queue().expect("queued packet");
             pacer.register_send(now, DataSize::bytes(100), midrid);
             assert_eq!(pacer.poll_timeout().0, None, "no timeout between sends");
             sent.push(midrid.mid().to_string());
         }
         sent.sort();
         assert_eq!(sent, ["a", "a", "b"]);
+        assert_eq!(pacer.poll_queue(), None);
+        assert_eq!(pacer.poll_timeout().0, None, "no timeout after draining");
     }
 
     #[test]
@@ -112,6 +116,11 @@ mod test {
         assert_eq!(pacer.poll_timeout().0, Some(now), "stream sent nothing");
 
         pacer.handle_timeout(now, [queue("b", 1, now)].into_iter());
+        assert_eq!(pacer.poll_timeout().0, None);
+        let (midrid, _) = pacer.poll_queue().expect("remaining packet");
+        assert_eq!(midrid, MidRid("b".into(), None));
+        pacer.register_send(now, DataSize::bytes(100), midrid);
+        assert_eq!(pacer.poll_queue(), None);
         assert_eq!(pacer.poll_timeout().0, None);
     }
 
