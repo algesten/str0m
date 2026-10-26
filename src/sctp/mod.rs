@@ -747,10 +747,10 @@ impl RtcSctp {
     }
 
     pub fn do_poll(&mut self) -> Option<SctpEvent> {
-        // A completed handshake or a written DCEP open can produce more to send, so
-        // those start over from the top instead of falling through. There is one
-        // restart per channel waiting to open, which is why this is a loop and not
-        // recursion.
+        // Handshakes, DCEP writes, and deferred stream closes can leave more work.
+        // Restart until that work is drained before reporting None: the RTC caches
+        // an idle result. Each restart advances a handshake or opens/closes a stream;
+        // use a loop so draining many channels does not grow the stack.
         'restart: loop {
             if self.state == RtcSctpState::Uninited {
                 // Need to call `init()` before any polling starts.
@@ -1011,7 +1011,7 @@ impl RtcSctp {
                         // This is expected on browser refresh or similar abrupt shutdown.
                         debug!("Getting stream {} failed: {:?}", entry.id, e);
                         entry.do_close = true;
-                        continue;
+                        continue 'restart;
                     }
                 };
 
@@ -1023,7 +1023,7 @@ impl RtcSctp {
                         debug!("Setting buffered_amount_low_threshold failed: {:?}", e);
                         entry.do_close = true;
                         entry.buffered_threshold = BufferedThresholdConfig::Unconfigured;
-                        continue;
+                        continue 'restart;
                     }
 
                     entry.buffered_threshold = BufferedThresholdConfig::Configured(x);
@@ -1056,7 +1056,7 @@ impl RtcSctp {
                                     Err(e) => {
                                         warn!("Failed to read incoming DCEP {}: {:?}", entry.id, e);
                                         entry.do_close = true;
-                                        continue;
+                                        continue 'restart;
                                     }
                                 };
 
@@ -1070,7 +1070,7 @@ impl RtcSctp {
                                 // Without this, the DCEP-receiving side of an in-band channel sends
                                 // with stream defaults: ordered and fully reliable.
                                 if !entry.configure_reliability(&mut stream) {
-                                    continue;
+                                    continue 'restart;
                                 }
 
                                 let mut obuf = [0];
@@ -1108,7 +1108,7 @@ impl RtcSctp {
                                 if let Err(e) = res {
                                     warn!("Failed to read incoming DCEP ACK {}: {:?}", entry.id, e);
                                     entry.do_close = true;
-                                    continue;
+                                    continue 'restart;
                                 }
 
                                 entry.set_state(StreamEntryState::Open);
@@ -1125,12 +1125,15 @@ impl RtcSctp {
                                     entry.id, entry.state
                                 );
                                 entry.do_close = true;
-                                continue;
+                                continue 'restart;
                             }
                         }
                     }
                     Ok(None) => continue,
-                    Err(_) => entry.do_close = true,
+                    Err(_) => {
+                        entry.do_close = true;
+                        continue 'restart;
+                    }
                 }
             }
 
@@ -1530,6 +1533,101 @@ mod tests {
         assert_eq!(server.state, RtcSctpState::Established);
 
         (client, server)
+    }
+
+    fn assert_close_before_idle(sctp: &mut RtcSctp, id: u16) {
+        for _ in 0..100 {
+            match sctp.poll() {
+                Some(SctpEvent::Close {
+                    id: closed,
+                    reset_pending,
+                }) => {
+                    assert_eq!(closed, id);
+                    assert!(reset_pending, "the malformed stream must start a reset");
+                    return;
+                }
+                Some(_) => {}
+                None => panic!("SCTP reported idle before draining the deferred close"),
+            }
+        }
+        panic!("SCTP did not finish draining");
+    }
+
+    fn transfer_transmits(from: &mut RtcSctp, to: &mut RtcSctp) {
+        while let Some(t) = from.poll_transmit() {
+            if let Some(packets) = transmit_to_vec(t) {
+                for packet in packets {
+                    to.handle_input(to.last_now, &packet);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_dcep_open_closes_before_idle() {
+        let (mut client, mut server) = connect_client_server();
+        // Send an actual SCTP DATA chunk with an invalid DCEP OPEN body.
+        client
+            .assoc
+            .as_mut()
+            .unwrap()
+            .open_stream(0, PayloadProtocolIdentifier::Dcep)
+            .unwrap()
+            .write_with_ppi(&[0xff], PayloadProtocolIdentifier::Dcep)
+            .unwrap();
+        transfer_transmits(&mut client, &mut server);
+        assert_close_before_idle(&mut server, 0);
+    }
+
+    #[test]
+    fn unexpected_dcep_on_open_stream_closes_before_idle() {
+        let (mut client, mut server) = connect_client_server();
+        let config = ChannelConfig {
+            negotiated: Some(0),
+            ..Default::default()
+        };
+        client.open_stream(0, config.clone());
+        server.open_stream(0, config);
+        assert!(matches!(client.poll(), Some(SctpEvent::Open { id: 0, .. })));
+        assert!(matches!(server.poll(), Some(SctpEvent::Open { id: 0, .. })));
+        client
+            .assoc
+            .as_mut()
+            .unwrap()
+            .stream(0)
+            .unwrap()
+            .write_with_ppi(&[2], PayloadProtocolIdentifier::Dcep)
+            .unwrap();
+        transfer_transmits(&mut client, &mut server);
+        assert_close_before_idle(&mut server, 0);
+    }
+
+    #[test]
+    fn malformed_dcep_ack_closes_before_idle() {
+        let (mut client, mut server) = connect_client_server();
+        client.open_stream(0, ChannelConfig::default());
+        while let Some(event) = client.poll() {
+            if let SctpEvent::Transmit { packets } = event {
+                for packet in packets {
+                    server.handle_input(server.last_now, &packet);
+                }
+            }
+        }
+        assert_eq!(
+            entry_by_id_mut(&mut client.entries, 0).unwrap().state,
+            StreamEntryState::AwaitDcepAck
+        );
+        // Bypass the server's DCEP handler to return a malformed ACK over SCTP.
+        server
+            .assoc
+            .as_mut()
+            .unwrap()
+            .stream(0)
+            .unwrap()
+            .write_with_ppi(&[0xff], PayloadProtocolIdentifier::Dcep)
+            .unwrap();
+        transfer_transmits(&mut server, &mut client);
+        assert_close_before_idle(&mut client, 0);
     }
 
     /// A stream the remote opened can be gone from the association by the time the
