@@ -1,15 +1,107 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use netem::{NetemConfig, Probability, RandomLoss};
+use netem::{Input as NetemInput, NetemConfig, Output as NetemOutput, Probability, RandomLoss};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
+use str0m::net::Receive;
 use str0m::rtp::rtcp::Rtcp;
 use str0m::rtp::{ExtensionValues, RawPacket, RtpWrite, SeqNo, Ssrc};
-use str0m::{Event, Reason, Rtc, RtcError};
+use str0m::{Event, Input, Output, Reason, Rtc, RtcError};
 
 mod common;
 use common::{connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, progress};
+
+#[test]
+fn nack_receive_retransmits_without_another_timeout() -> Result<(), RtcError> {
+    init_crypto_default();
+    let (mut l, mut r) = connect_l_r();
+    let mid = "vid".into();
+    let ssrc = 42.into();
+    let rtx = 44.into();
+    l.direct_api().declare_media(mid, MediaKind::Video);
+    l.direct_api().declare_stream_tx(ssrc, Some(rtx), mid, None);
+    r.direct_api().declare_media(mid, MediaKind::Video);
+    r.direct_api().expect_stream_rx(ssrc, Some(rtx), mid, None);
+    let pt = l.params_vp8().pt();
+    let now = l.last.max(r.last);
+    l.last = now;
+    r.last = now;
+
+    // Establish the stream and enough media traffic to permit a retransmission.
+    for seq in 47_000..47_020 {
+        let now = l.last;
+        l.direct_api().stream_tx(&ssrc).unwrap().write_rtp(
+            RtpWrite::new(pt, seq.into(), seq as u32 * 3000, now, [1, 2, 3, 4]).nackable(true),
+        );
+        progress(&mut l, &mut r)?;
+    }
+
+    // Hold feedback in the network while the receiver detects one lost packet.
+    l.set_netem(NetemConfig::new().latency(Duration::from_millis(100)));
+    for seq in 47_020..47_025 {
+        let loss = if seq == 47_020 { 1.0 } else { 0.0 };
+        r.set_netem(NetemConfig::new().loss(RandomLoss::new(Probability::new(loss))));
+        let now = l.last;
+        l.direct_api().stream_tx(&ssrc).unwrap().write_rtp(
+            RtpWrite::new(pt, seq.into(), seq as u32 * 3000, now, [1, 2, 3, 4]).nackable(true),
+        );
+        progress(&mut l, &mut r)?;
+    }
+    let deadline = l.duration() + Duration::from_millis(50);
+    while !r.events.iter().any(|(_, event)| {
+        matches!(event.as_raw_packet(), Some(RawPacket::RtcpTx(Rtcp::Nack(n)))
+            if n.reports.iter().any(|entry| entry.pid == 47_020))
+    }) {
+        assert!(
+            l.duration() < deadline,
+            "receiver must request the lost packet"
+        );
+        progress(&mut l, &mut r)?;
+    }
+
+    // Deliver queued feedback through the public API. Poll to the next timeout
+    // without providing Input::Timeout: receiving the NACK must ready the RTX queue.
+    for _ in 0..20 {
+        let now = l.pending.poll_timeout();
+        l.pending.handle_input(NetemInput::Timeout(now));
+        let Some(NetemOutput::Packet(packet)) = l.pending.poll_output() else {
+            panic!("expected queued feedback");
+        };
+        l.handle_input(Input::Receive(
+            now,
+            Receive {
+                proto: packet.proto,
+                source: packet.source,
+                destination: packet.destination,
+                contents: packet.contents.as_slice().try_into()?,
+            },
+        ))?;
+        let mut nack = false;
+        let mut retransmitted = false;
+        let mut transmitted = false;
+        loop {
+            match l.poll_output()? {
+                Output::Timeout(_) => break,
+                Output::Transmit(_) => transmitted = true,
+                Output::Event(event) => {
+                    nack |= matches!(event.as_raw_packet(), Some(RawPacket::RtcpRx(Rtcp::Nack(n)))
+                        if n.reports.iter().any(|entry| entry.pid == 47_020));
+                    retransmitted |= matches!(event.as_raw_packet(), Some(RawPacket::RtpTx(h, _))
+                        if h.ssrc == rtx);
+                }
+            }
+        }
+        if nack {
+            assert!(
+                retransmitted && transmitted,
+                "NACK must send RTX before the next timeout"
+            );
+            return Ok(());
+        }
+    }
+    panic!("queued NACK was not received");
+}
 
 #[test]
 pub fn loss_recovery() -> Result<(), RtcError> {
