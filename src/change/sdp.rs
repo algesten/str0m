@@ -1483,13 +1483,15 @@ impl AsSdpMediaLine for Media {
             let p = *p;
             p.as_media_attrs(&mut attrs);
 
-            // The pts that will be advertised in the SDP
+            // The pts that will be advertised in the SDP. A negotiated RED goes before its
+            // primary: libwebrtc enables RED only when it precedes the selected audio codec.
+            // RED is kept only when both sides offer it (`PayloadParams::update_param`).
+            if let Some(red) = p.red() {
+                pts.push(red);
+            }
             pts.push(p.pt());
             if let Some(rtx) = p.resend() {
                 pts.push(rtx);
-            }
-            if let Some(red) = p.red() {
-                pts.push(red);
             }
         }
 

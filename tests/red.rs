@@ -2,6 +2,7 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use netem::{NetemConfig, Probability, RandomLoss};
+use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::rtp::RedDecoder;
@@ -234,6 +235,73 @@ pub fn red_offer_lists_red_pt_in_mline() {
         fmts.contains(&red_pt.to_string().as_str()),
         "m-line fmt list must include the RED pt {red_pt}; got: {mline}"
     );
+}
+
+/// The m-line's payload types, in order.
+fn audio_fmts(sdp: &str) -> Vec<String> {
+    let mline = sdp
+        .lines()
+        .find(|line| line.starts_with("m=audio"))
+        .expect("m=audio line");
+    mline
+        .split_whitespace()
+        .skip(3)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// libwebrtc enables RED only when it precedes the selected audio codec. Chrome offers Opus
+/// before RED, so an answer that keeps that order negotiates RED but does not make Chrome send it.
+/// The answer lists RED before Opus, as does our own offer.
+#[test]
+pub fn red_listed_before_its_primary() {
+    init_log();
+    init_crypto_default();
+
+    let mut l = rtc_with_red(Peer::Left, false);
+    let mut r = rtc_with_red(Peer::Right, false);
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+
+    let opus = l.params_opus().pt().to_string();
+    let red = l.params_opus().red().expect("RED configured").to_string();
+    let position = |fmts: &[String], pt: &str| fmts.iter().position(|f| f == pt).unwrap();
+    let fmts = audio_fmts(&offer.to_sdp_string());
+    assert!(
+        position(&fmts, &red) < position(&fmts, &opus),
+        "offer: {fmts:?}"
+    );
+
+    // As Chrome offers it: Opus first, then RED.
+    let sdp = offer.to_sdp_string();
+    let mline = sdp
+        .lines()
+        .find(|line| line.starts_with("m=audio"))
+        .unwrap();
+    let mut words: Vec<&str> = mline.split_whitespace().collect();
+    let (i, j) = (
+        words.iter().position(|w| *w == opus).unwrap(),
+        words.iter().position(|w| *w == red).unwrap(),
+    );
+    words.swap(i, j);
+    let browser_like = sdp.replace(mline, &words.join(" "));
+    let fmts = audio_fmts(&browser_like);
+    assert!(position(&fmts, &opus) < position(&fmts, &red));
+
+    let offer = SdpOffer::from_sdp_string(&browser_like).unwrap();
+    let answer = r.rtc.sdp_api().accept_offer(offer).unwrap();
+    let fmts = audio_fmts(&answer.to_sdp_string());
+    assert!(
+        position(&fmts, &red) < position(&fmts, &opus),
+        "answer: {fmts:?}"
+    );
+
+    l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    assert!(l.params_opus().red().is_some(), "RED stays negotiated");
 }
 
 /// Under independent (isolated) packet loss, RED recovers the lost frames from the next packet's
