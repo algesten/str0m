@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Keep the enqueue time of queued packets so a send queue that never empties is not drained in bursts #1115
+  * Fix bursty pacing with a persistent send queue #1115
   * Bump dimpl to 0.9.0 and raise MSRV to Rust 1.89 (breaking) #1110
   * Remove the fixed video reordering timeout setting (breaking) #1078
   * Wait for NACK recovery and a complete successor before expiring incomplete video frames #1078
