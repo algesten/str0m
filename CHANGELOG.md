@@ -2,6 +2,7 @@
 
   * Find the first TWCC send record of a feedback report by binary search #1116
   * Fix bursty pacing with a persistent send queue #1115
+  * List a negotiated RED before its primary codec, so browsers send redundant audio #1117
   * Bump dimpl to 0.9.0 and raise MSRV to Rust 1.89 (breaking) #1110
   * Remove the fixed video reordering timeout setting (breaking) #1078
   * Wait for NACK recovery and a complete successor before expiring incomplete video frames #1078

@@ -1483,13 +1483,16 @@ impl AsSdpMediaLine for Media {
             let p = *p;
             p.as_media_attrs(&mut attrs);
 
-            // The pts that will be advertised in the SDP
+            // The pts that will be advertised in the SDP. A negotiated RED goes before its
+            // primary: a browser sends with the first codec the other side lists, so listed
+            // after it, RED is negotiated but never sent to us. RED is only kept when both
+            // sides offer it (`PayloadParams::update_param`).
+            if let Some(red) = p.red() {
+                pts.push(red);
+            }
             pts.push(p.pt());
             if let Some(rtx) = p.resend() {
                 pts.push(rtx);
-            }
-            if let Some(red) = p.red() {
-                pts.push(red);
             }
         }
 
