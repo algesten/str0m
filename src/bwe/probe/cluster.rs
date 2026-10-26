@@ -46,7 +46,7 @@ pub struct ProbeClusterConfig {
 pub enum ProbeKind {
     Initial,
     Exponential,
-    IncreaseAlr,
+    Allocation { in_alr: bool },
     PeriodicAlr,
     LargeDrop,
     Stagnant,
@@ -54,7 +54,10 @@ pub enum ProbeKind {
 
 impl ProbeKind {
     pub(crate) fn is_alr(&self) -> bool {
-        matches!(self, ProbeKind::PeriodicAlr | ProbeKind::IncreaseAlr)
+        matches!(
+            self,
+            ProbeKind::PeriodicAlr | ProbeKind::Allocation { in_alr: true }
+        )
     }
 }
 

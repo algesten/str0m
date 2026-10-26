@@ -68,9 +68,21 @@ fn missing_feedback_keeps_probes_bounded() -> Result<(), RtcError> {
         count < 400,
         "missing feedback caused unbounded padding: {count}"
     );
+    assert!(
+        !l.events.iter().any(|(_, event)| matches!(event,
+            Event::Probe(probe) if probe.is_alr_probe()
+        )),
+        "periodic ALR probes must wait for transport feedback"
+    );
     r.direct_api().enable_twcc_feedback();
     run(&mut l, &mut r, Duration::from_secs(12))?;
     assert_feedback_and_no_media(&l, &r);
+    assert!(
+        l.events.iter().any(|(_, event)| matches!(event,
+            Event::Probe(probe) if probe.is_alr_probe()
+        )),
+        "ALR probing should start once feedback arrives"
+    );
     Ok(())
 }
 

@@ -136,6 +136,7 @@ impl ProbeControl {
             self.pending.clear();
             self.last_estimate = None;
             self.desired_bitrate = None;
+            self.prev_desired = None;
             self.last_estimate_change = None;
             self.last_stagnant = None;
             self.last_probe = None;
@@ -226,6 +227,11 @@ impl ProbeControl {
         let desired = self.desired_bitrate?;
         let estimate = self.last_estimate?;
 
+        // Consume allocation changes even when probing is blocked or already pending.
+        // A decrease establishes the baseline for the next increase; a blocked increase
+        // must not be replayed later when congestion or initial probing clears.
+        let prev_desired = self.prev_desired.replace(desired);
+
         // Return pending probes first.
         if let Some(config) = self.pending.pop_front() {
             // Schedule another.
@@ -241,7 +247,7 @@ impl ProbeControl {
         // Try each probe type in order - only one fires per timeout.
         let _ = self.maybe_initial(now, desired, estimate)
             || self.maybe_exponential(now, desired, estimate)
-            || self.maybe_increase_alr(now, desired, estimate)
+            || self.maybe_allocation(now, desired, prev_desired, estimate)
             || self.maybe_large_drop(now, desired, estimate)
             || self.maybe_periodic_alr(now, desired)
             || self.maybe_stagnant(now, desired, estimate);
@@ -328,26 +334,25 @@ impl ProbeControl {
         true
     }
 
-    fn maybe_increase_alr(&mut self, now: Instant, desired: Bitrate, estimate: Bitrate) -> bool {
+    fn maybe_allocation(
+        &mut self,
+        now: Instant,
+        desired: Bitrate,
+        prev_desired: Option<Bitrate>,
+        estimate: Bitrate,
+    ) -> bool {
         // Don't interfere with initial probing phase.
         if self.is_during_initial(now) {
             return false;
         }
 
-        // Allocation probes only fire in ALR (application-limited region).
-        if !self.in_alr() {
-            return false;
-        }
-
-        let prev = self.prev_desired;
-        self.prev_desired = Some(desired);
-
         // Need a previous desired value to compare against.
-        let Some(prev) = prev else {
+        let Some(prev) = prev_desired else {
             return false;
         };
 
-        // Only probe if desired increased
+        // Allocation increases can probe both inside and outside ALR.
+        // Unchanged or decreased demand must not trigger probing.
         if desired <= prev {
             return false;
         }
@@ -360,12 +365,15 @@ impl ProbeControl {
         // Allocation probes at 1× and 2× of desired, capped by 2× estimate
         let current_bwe_limit = estimate * self.config.allocation_probe_limit_by_current_scale;
 
+        let kind = ProbeKind::Allocation {
+            in_alr: self.in_alr(),
+        };
         let p1 = (desired * self.config.first_allocation_probe_scale).min(current_bwe_limit);
-        self.queue_probe(p1, ProbeKind::IncreaseAlr, desired, now);
+        self.queue_probe(p1, kind, desired, now);
 
-        let p2 = desired * self.config.second_allocation_probe_scale;
-        if p2 <= current_bwe_limit && p2 > p1 {
-            self.queue_probe(p2, ProbeKind::IncreaseAlr, desired, now);
+        let p2 = (desired * self.config.second_allocation_probe_scale).min(current_bwe_limit);
+        if p2 > p1 {
+            self.queue_probe(p2, kind, desired, now);
         }
 
         true
@@ -825,6 +833,123 @@ mod test {
         // No probes should be created since desired was rejected.
         let p1 = pc.handle_timeout(now);
         assert!(p1.is_none(), "Should not create probes with zero desired");
+    }
+
+    fn allocation_probe_fixture(in_alr: bool) -> (ProbeControl, Instant) {
+        let now = Instant::now();
+        let mut pc = ProbeControl::new();
+        pc.enable(true);
+        pc.set_desired_bitrate(Bitrate::kbps(500));
+        pc.set_estimated_bitrate(Bitrate::kbps(500), BandwidthLimitedCause::DelayBasedLimited);
+        assert!(pc.handle_timeout(now).is_some());
+        assert!(pc.handle_timeout(now).is_some());
+        let now = now + Duration::from_secs(2);
+        assert!(pc.handle_timeout(now).is_none());
+        if in_alr {
+            pc.set_alr_start_time(now);
+            assert!(pc.handle_timeout(now).is_none());
+        }
+        (pc, now)
+    }
+
+    #[test]
+    fn allocation_probe_on_increase_with_or_without_alr() {
+        for in_alr in [false, true] {
+            let (mut pc, now) = allocation_probe_fixture(in_alr);
+            pc.set_desired_bitrate(Bitrate::mbps(4));
+            assert!(pc.poll_timeout() <= now);
+            let probe = pc
+                .handle_timeout(now)
+                .expect("increased demand should probe");
+            assert_eq!(probe.target_bitrate(), Bitrate::mbps(1));
+            assert_eq!(probe.is_alr_probe(), in_alr);
+            assert!(pc.handle_timeout(now).is_none(), "only one capped probe");
+        }
+    }
+
+    #[test]
+    fn second_allocation_probe_is_capped_instead_of_dropped() {
+        for in_alr in [false, true] {
+            let (mut pc, now) = allocation_probe_fixture(in_alr);
+            pc.set_desired_bitrate(Bitrate::kbps(750));
+            let first = pc.handle_timeout(now).unwrap();
+            assert_eq!(first.target_bitrate(), Bitrate::kbps(750));
+            assert_eq!(first.is_alr_probe(), in_alr);
+            let second = pc.handle_timeout(now).expect("capped second probe");
+            assert_eq!(second.target_bitrate(), Bitrate::mbps(1));
+            assert_eq!(second.is_alr_probe(), in_alr);
+            assert!(pc.handle_timeout(now).is_none());
+        }
+    }
+
+    #[test]
+    fn allocation_probe_requires_increase_from_latest_desired() {
+        for in_alr in [false, true] {
+            let (mut pc, now) = allocation_probe_fixture(in_alr);
+            // Raise demand without a probe while congestion prevents discovery.
+            pc.set_estimated_bitrate(Bitrate::kbps(500), BandwidthLimitedCause::LossLimitedBwe);
+            pc.set_desired_bitrate(Bitrate::mbps(4));
+            assert!(pc.handle_timeout(now).is_none());
+            pc.set_estimated_bitrate(Bitrate::kbps(500), BandwidthLimitedCause::DelayBasedLimited);
+            assert!(
+                pc.handle_timeout(now).is_none(),
+                "do not replay blocked increases"
+            );
+            for desired in [Bitrate::mbps(4), Bitrate::mbps(2), Bitrate::mbps(2)] {
+                pc.set_desired_bitrate(desired);
+                assert!(
+                    pc.handle_timeout(now).is_none(),
+                    "unchanged/decreased demand"
+                );
+            }
+            // Below the old high-water mark, but above the latest allocation.
+            pc.set_desired_bitrate(Bitrate::mbps(3));
+            assert!(pc.handle_timeout(now).is_some());
+        }
+    }
+
+    #[test]
+    fn allocation_increase_during_initial_probing_is_not_replayed() {
+        let now = Instant::now();
+        let mut pc = ProbeControl::new();
+        pc.enable(true);
+        pc.set_desired_bitrate(Bitrate::kbps(500));
+        pc.set_estimated_bitrate(Bitrate::kbps(500), BandwidthLimitedCause::DelayBasedLimited);
+        assert!(pc.handle_timeout(now).is_some());
+        assert!(pc.handle_timeout(now).is_some());
+
+        pc.set_desired_bitrate(Bitrate::mbps(2));
+        assert!(
+            pc.handle_timeout(now + Duration::from_millis(500))
+                .is_none()
+        );
+        assert!(pc.handle_timeout(now + Duration::from_secs(2)).is_none());
+
+        pc.set_desired_bitrate(Bitrate::mbps(3));
+        let probe = pc.handle_timeout(now + Duration::from_secs(2)).unwrap();
+        assert_eq!(probe.target_bitrate(), Bitrate::mbps(1));
+        assert!(!probe.is_alr_probe());
+    }
+
+    #[test]
+    fn allocation_probe_respects_congestion_and_estimate_gates() {
+        for cause in [
+            BandwidthLimitedCause::LossLimitedBwe,
+            BandwidthLimitedCause::DelayBasedLimitedDelayIncreased,
+        ] {
+            let (mut pc, now) = allocation_probe_fixture(false);
+            pc.set_estimated_bitrate(Bitrate::kbps(500), cause);
+            pc.set_desired_bitrate(Bitrate::mbps(4));
+            assert!(pc.handle_timeout(now).is_none());
+        }
+        let (mut pc, now) = allocation_probe_fixture(false);
+        pc.set_desired_bitrate(Bitrate::kbps(200));
+        assert!(pc.handle_timeout(now).is_none());
+        pc.set_desired_bitrate(Bitrate::kbps(400));
+        assert!(
+            pc.handle_timeout(now).is_none(),
+            "estimate already covers demand"
+        );
     }
 
     #[test]

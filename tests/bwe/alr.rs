@@ -10,6 +10,60 @@ use str0m::bwe::Bitrate;
 use crate::common::{BweTestContext, Step, connect_with_bwe, init_crypto_default, init_log};
 
 #[test]
+fn bwe_allocation_probe_on_desired_increase_outside_alr() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let plan = vec![
+        Step::Conditions {
+            description: "Network supports steady media but limits startup probes",
+            config: NetemConfig::new()
+                .latency(Duration::from_millis(10))
+                .link(Bitrate::mbps(3), DataSize::kbytes(100))
+                .seed(42),
+        },
+        Step::Media {
+            description: "Send enough media to stay outside ALR",
+            desired_bitrate: Bitrate::mbps(3),
+            media_send_rate: Bitrate::mbps(2),
+        },
+        Step::Run {
+            description: "Let startup probes settle",
+            duration: Duration::from_secs(2),
+        },
+        Step::Media {
+            description: "Keep demand and traffic unchanged after startup",
+            desired_bitrate: Bitrate::mbps(3),
+            media_send_rate: Bitrate::mbps(2),
+        },
+        Step::Run {
+            description: "No fresh demand or automatic probe trigger",
+            duration: Duration::from_millis(100),
+        },
+        Step::AssertNoProbes {
+            description: "Startup probing has finished",
+        },
+        Step::Media {
+            description: "Raise demand without reducing media traffic",
+            desired_bitrate: Bitrate::mbps(5),
+            media_send_rate: Bitrate::mbps(2),
+        },
+        Step::Run {
+            description: "Allocation increase should promptly probe outside ALR",
+            duration: Duration::from_millis(20),
+        },
+        Step::CheckProbe {
+            description: "Probe is emitted without being classified as ALR",
+            check: Arc::new(|_, probe| !probe.is_alr_probe()),
+        },
+    ];
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(3));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    ctx.run_plan(&mut l, &mut r, &plan)?;
+    Ok(())
+}
+
+#[test]
 pub fn bwe_allocation_probe_on_desired_increase_in_alr() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
@@ -22,7 +76,7 @@ pub fn bwe_allocation_probe_on_desired_increase_in_alr() -> Result<(), RtcError>
             description: "First periodic ALR probe",
             check: Arc::new(|_index, probe| probe.is_alr_probe()),
         },
-        // Now increase desired bitrate while in ALR - should trigger IncreaseAlr probes
+        // Now increase desired bitrate while in ALR - should trigger allocation probes
         Step::Media {
             description: "Increase desired bitrate while in ALR",
             desired_bitrate: Bitrate::mbps(5), // Increased from 3 to 5
