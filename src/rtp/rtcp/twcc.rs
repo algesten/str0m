@@ -1219,10 +1219,13 @@ impl TwccSendRegister {
             .skip_while(|(seq, _, _)| seq < &head_seq);
         let (first_seq_no, _, first_instant) = iter.next()?;
 
-        let mut iter2 = self
-            .queue
-            .iter_mut()
-            .skip_while(|r| *r.seq() < *first_seq_no);
+        // The queue is in seq order: find the report's first record by
+        // binary search rather than walking every older record.
+        let Ok(first_index) = self.queue.binary_search_by_key(&first_seq_no, |r| r.seq()) else {
+            // Old report for which we no longer have any send records.
+            return None;
+        };
+        let mut iter2 = self.queue.range_mut(first_index..);
         let first_record = iter2.next()?;
 
         fn update(
@@ -1259,11 +1262,6 @@ impl TwccSendRegister {
             true
         }
 
-        if first_record.seq() != first_seq_no {
-            // Old report for which we no longer have any send records.
-            return None;
-        }
-
         let mut problematic_seq = None;
 
         if !update(
@@ -1296,11 +1294,6 @@ impl TwccSendRegister {
                     \nLast 100 entires in queue: {queue_tail:?}."
             );
         }
-
-        let first_index = self
-            .queue
-            .binary_search_by_key(&first_seq_no, |r| r.seq())
-            .expect("first_seq_no to be registered");
 
         let range = first_seq_no..=last_seq_no;
 
@@ -2222,6 +2215,55 @@ mod test {
             iter.map(|r| *r.seq()).collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 4, 5, 6, 7]
         );
+    }
+
+    fn received(base_seq: u16, status_count: u16) -> Twcc {
+        Twcc {
+            sender_ssrc: Ssrc::new(),
+            ssrc: Ssrc::new(),
+            base_seq,
+            status_count,
+            reference_time: 35,
+            feedback_count: 0,
+            chunks: [PacketChunk::Run(
+                PacketStatus::ReceivedSmallDelta,
+                status_count,
+            )]
+            .into(),
+            delta: (0..status_count).map(|_| Delta::Small(10)).collect(),
+        }
+    }
+
+    #[test]
+    fn test_twcc_send_register_report_deep_in_queue() {
+        let mut reg = TwccSendRegister::new(1000);
+        let mut now = Instant::now();
+        for i in 0..1000 {
+            reg.register_seq(TwccPacketId::new(i), now, 0);
+            now = now + Duration::from_micros(15);
+        }
+
+        let iter = reg
+            .apply_report(received(990, 8), now)
+            .expect("apply_report to return Some(_)");
+
+        assert_eq!(
+            iter.map(|r| *r.seq()).collect::<Vec<_>>(),
+            (990..998).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_twcc_send_register_report_before_queue() {
+        let mut reg = TwccSendRegister::new(25);
+        let mut now = Instant::now();
+        for i in 0..50 {
+            reg.register_seq(TwccPacketId::new(i), now, 0);
+            now = now + Duration::from_micros(15);
+        }
+
+        // The queue starts at 25: nothing left to apply 0..8 to.
+        assert!(reg.apply_report(received(0, 8), now).is_none());
     }
 
     #[test]
