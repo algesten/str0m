@@ -351,7 +351,7 @@ impl ProbeControl {
             return false;
         };
 
-        // Like WebRTC bff4a9e71e, allocation increases can probe outside ALR too.
+        // Allocation increases can probe both inside and outside ALR.
         // Unchanged or decreased demand must not trigger probing.
         if desired <= prev {
             return false;
@@ -371,8 +371,8 @@ impl ProbeControl {
         let p1 = (desired * self.config.first_allocation_probe_scale).min(current_bwe_limit);
         self.queue_probe(p1, kind, desired, now);
 
-        let p2 = desired * self.config.second_allocation_probe_scale;
-        if p2 <= current_bwe_limit && p2 > p1 {
+        let p2 = (desired * self.config.second_allocation_probe_scale).min(current_bwe_limit);
+        if p2 > p1 {
             self.queue_probe(p2, kind, desired, now);
         }
 
@@ -864,6 +864,21 @@ mod test {
             assert_eq!(probe.target_bitrate(), Bitrate::mbps(1));
             assert_eq!(probe.is_alr_probe(), in_alr);
             assert!(pc.handle_timeout(now).is_none(), "only one capped probe");
+        }
+    }
+
+    #[test]
+    fn second_allocation_probe_is_capped_instead_of_dropped() {
+        for in_alr in [false, true] {
+            let (mut pc, now) = allocation_probe_fixture(in_alr);
+            pc.set_desired_bitrate(Bitrate::kbps(750));
+            let first = pc.handle_timeout(now).unwrap();
+            assert_eq!(first.target_bitrate(), Bitrate::kbps(750));
+            assert_eq!(first.is_alr_probe(), in_alr);
+            let second = pc.handle_timeout(now).expect("capped second probe");
+            assert_eq!(second.target_bitrate(), Bitrate::mbps(1));
+            assert_eq!(second.is_alr_probe(), in_alr);
+            assert!(pc.handle_timeout(now).is_none());
         }
     }
 

@@ -7,17 +7,16 @@ BWE system.
 
 ### WebRTC revision
 
-This git revision we have aligned the str0m impl to.
+str0m's GCC implementation is aligned with the following libwebrtc revision.
+The differences below describe str0m's integration and probing policies.
 
-**Revision**: 2bc24d44be71c186ee0756725abaed7015fbc8bc
+**Revision**: bd3d2d31501d3acabd9bd54a7bb1f615f6e1345b
 
-**Date**: Sat Jan 10 00:02:32 2026 -0800
+**Date**: Mon Oct 26 09:19:38 2026 -0700
 
-Allocation probing additionally follows libwebrtc commit
-[`bff4a9e71e`](https://webrtc.googlesource.com/src/+/bff4a9e71e3813d65d6382997ed9a42edf61946c)
-(August 20, 2026): increases in desired bitrate can trigger probes both
-inside and outside ALR. This is a targeted alignment beyond the baseline
-revision above, not a full update of the BWE implementation.
+The estimator uses TWCC feedback and sans-I/O scheduling. Libwebrtc's
+RFC 8888 congestion feedback, ECN handling, and SCReAM controller are
+separate paths and are not part of this implementation.
 
 ## How It Works: High-Level Overview
 
@@ -318,11 +317,10 @@ available bandwidth.
 **WebRTC:** `modules/congestion_controller/goog_cc/probe_controller.cc`
 
 Decides when and at what rate to send probe clusters to discover available
-bandwidth. The controller implements WebRTC's full state machine with three
-states: Init (startup), WaitingForProbingResult (active probing with
-potential for further probes), and ProbingComplete (idle, monitoring for
-triggers). The state machine uses a 1-second timeout
-(`MAX_WAITING_TIME_FOR_PROBING_RESULT`) when waiting for probe results.
+bandwidth. The controller tracks startup, the last probe and its result
+threshold, and pending probe clusters. Initial and exponential probes use
+a 1-second result-waiting interval (`MAX_WAITING_TIME_FOR_PROBING_RESULT`)
+before allocation or periodic probing can take over.
 
 In str0m, `max_bitrate` represents the application's desired sending rate
 (equivalent to WebRTC's `max_total_allocated_bitrate`), not a hard cap.
@@ -355,14 +353,16 @@ concepts are unified into this single value.
    a subsequent increase is compared with the latest desired value, including
    decreases. Initial probing and congestion gates still apply. Requests
    observed while these gates block probing are not replayed when they clear.
-   Probe rates use the existing allocation scales (1× and 2× desired) and
-   the 2× current-estimate limit. The first probe is capped at that limit;
-   the second is queued only if it fits and exceeds the first probe's rate.
+   Probe rates use allocation scales of 1× and 2× desired, each capped at
+   2× the current estimate. The second probe is queued only when its capped
+   rate exceeds the first probe's rate.
    Allocation probes outside ALR are not classified as ALR probes for
    link-capacity estimation.
 
-   Periodic ALR probing is a separate trigger: while in ALR, it probes at
-   2× desired bitrate with a minimum interval of 5 seconds. Entering ALR
+   Periodic ALR probing is a separate trigger: after receiving nonempty
+   transport feedback, it probes while in ALR at 2× desired bitrate with a
+   minimum interval of 5 seconds. Empty feedback does not enable ALR probing.
+   Initial capacity discovery does not require feedback first. Entering ALR
    alone does not trigger an allocation probe, and periodic ALR probing
    continues even when the estimate has reached the desired bitrate.
 
@@ -689,8 +689,8 @@ internal timers or threads.
 ### Pacer Control
 
 **Location:** `src/pacer/control.rs`
-**WebRTC:** `modules/congestion_controller/goog_cc/send_side_bandwidth_estimation.cc`
-(rate calculation)
+**WebRTC:** `modules/congestion_controller/goog_cc/goog_cc_network_control.cc`
+(`GetPacingRates`)
 
 Calculates pacing and padding rates based on the BWE estimate. The pacing
 rate is set to 1.1× the estimate (`PACING_FACTOR`), providing a 10%
@@ -700,20 +700,26 @@ encoder bitrate fluctuations would constantly hit the pacing limit, causing
 unnecessary queuing delays. This rate controls how the pacer smooths media
 transmission timing.
 
-The padding rate determines how much additional traffic to inject to
-maintain NAT bindings and keep RTX state warm. Padding is enabled when the
-current bitrate exceeds 50 kbps (`MIN_PADDING_THRESHOLD`)—below this, we're
-barely sending anything and padding isn't needed. It's disabled during
-overuse conditions to avoid worsening congestion by adding unnecessary
-traffic. When active, the padding target is 50 kbps (`PADDING_TARGET`),
-sufficient to keep middleboxes alive without adding significant overhead.
-Authorized probe clusters use their own target rates, including when the regular
-padding rate is zero.
+Regular padding fills gaps toward a 50 kbps traffic target
+(`PADDING_TARGET`) when a non-disabled outgoing media section has a sending
+direction. The target is zero during overuse or without such a section.
+Sent media consumes the padding budget, so 50 kbps is not extra traffic
+added on top of media. Authorized probe clusters use their own target rates,
+including when the regular padding rate is zero.
 
-This differs from WebRTC, which bases padding decisions on the minimum
-simulcast layer bitrate (typically 30 kbps). str0m uses a fixed 50 kbps
-threshold instead, taking a simulcast-agnostic approach that works for any
-stream configuration.
+Libwebrtc calculates a stream padding target from active simulcast/SVC
+layers, content-dependent startup hysteresis, and a configured minimum
+transmit bitrate. For simulcast/SVC with periodic ALR probing enabled,
+the layer-derived component uses the lowest active layer's minimum;
+otherwise it targets the highest active layer's startup requirement,
+including lower layers' target rates. For a single non-SVC stream, its
+minimum contributes only when padding to the minimum is enabled. The
+allocator sums targets and
+can raise them for suspended streams. GoogCC can also raise the request
+in its loss-based padding-recovery state, then caps the effective padding
+rate by the congestion-controlled target after congestion-window pushback.
+str0m uses its fixed regular padding target and automatic probe policy;
+it does not derive padding rates from encoder or layer allocations.
 
 The calculated pacing_rate and padding_rate flow to the Pacer, controlling
 transmission smoothing and padding generation respectively.
@@ -723,16 +729,14 @@ transmission smoothing and padding generation respectively.
 ### Deviations
 
 1. **Exponential Probing After All Probe Types:**
-   - **WebRTC**: Exponential probing only chains after Initial or Exponential probes
-     (state-based, only when `state_ == State::kWaitingForProbingResult`)
-   - **str0m**: Exponential probing chains after any probe type (Initial, Exponential,
-     Allocation, PeriodicAlr, LargeDrop, Stagnant)
-   - **Reason**: Accelerates capacity discovery in all scenarios, not just startup.
-     If a probe succeeds (estimate increases to >70% of probe rate) regardless of
-     probe type, the network has demonstrated capacity and we should explore higher
-     rates immediately
-   - **Impact**: Faster convergence to true capacity after ALR probes, large-drop
-     recovery, and stagnation probes. Reduces time spent below available capacity
+   - **WebRTC**: Further probing depends on the probe's `probe_further` flag.
+     Startup, periodic ALR and network-state probes allow it; allocation
+     probes allow it when capped by the current estimate. Large-drop
+     recovery probes do not allow further probing
+   - **str0m**: Any probe type can lead to exponential probing when its
+     result exceeds 70% of the target rate
+   - **Impact**: Capacity discovery can continue after large-drop recovery
+     and stagnation probes as well as startup and ALR probes
 
 2. **Stagnant Estimate Probing:**
    - **WebRTC**: None (relies on large-drop recovery with ALR requirement, or
@@ -745,10 +749,13 @@ transmission smoothing and padding generation respectively.
      ALR entry. Probes at 2× estimate after 15s stagnation with 15s rate limit
 
 3. **Padding Strategy:**
-   - **WebRTC**: Based on min simulcast layer bitrate (~30 kbps)
-   - **str0m**: Fixed 50 kbps threshold and target
-   - **Reason**: Simulcast-agnostic design
-   - **Impact**: Slightly higher padding in audio-only scenarios
+   - **WebRTC**: Layer/stream requirements and minimum transmit configuration
+     supply a padding target, capped by the congestion-controlled rate
+   - **str0m**: Fixed 50 kbps target for active outgoing media, suppressed
+     during overuse; authorized probes use separate burst targets
+   - **Reason**: str0m has no encoder or built-in layer allocator
+   - **Impact**: Low-rate media relies on probes to discover higher capacity
+     instead of filling toward a layer-derived traffic target
 
 4. **Bitrate Constraints:**
    - **WebRTC**: Separate `max_bitrate` (hard cap) and
@@ -764,12 +771,12 @@ transmission smoothing and padding generation respectively.
 5. **Periodic ALR Probing:**
    - **WebRTC**: Optional periodic ALR probes at 2× current estimate
    - **str0m**: Periodic ALR probes are enabled with BWE and target 2× desired
-     bitrate, with a minimum interval of 5 seconds
+     bitrate after transport feedback arrives, with a minimum interval of
+     5 seconds
    - **Reason**: Rediscover capacity while application demand remains constant
    - **Impact**: Capacity discovery during ALR does not depend on an allocation
      increase. Allocation probes themselves are triggered by increases in
-     desired bitrate, inside or outside ALR, matching the newer WebRTC default
-     identified above
+     desired bitrate, inside or outside ALR
 
 6. **Probe Padding Without Media:**
    - **WebRTC**: The referenced `PacketRouter::GeneratePadding` implementation
@@ -789,6 +796,8 @@ transmission smoothing and padding generation respectively.
 - Probe cluster configuration (target duration, min packet count, min probe
   delta)
 - Initial exponential probing (3×, 6× with further probing at 2×)
+- Allocation probing on increased demand, both inside and outside ALR
+- Transport-feedback requirement before periodic ALR probing
 - Large-drop recovery probing (85% of pre-drop rate)
 - Bandwidth-limited-cause gating for probing
 - Arrival group formation rules
@@ -798,11 +807,11 @@ transmission smoothing and padding generation respectively.
 - Loss-based estimation with ALR integration and link capacity tracking
 - ALR detection for probe scheduling and loss controller bounds
 
-## Field Trials to Monitor
+## Optional WebRTC Policies
 
-These WebRTC features remain behind field trials (disabled by default).
-str0m does not implement them until they become permanently enabled in
-WebRTC.
+These optional WebRTC settings describe additional probing policies.
+str0m uses fixed controller configuration rather than WebRTC field-trial
+strings; its periodic ALR behavior is described below.
 
 ### Periodic ALR Probing
 - **API**: `StreamsConfig.requests_alr_probing = true`
@@ -811,9 +820,8 @@ WebRTC.
 - **WebRTC constants**: `alr_probing_interval = 5s`, `alr_probe_scale =
   2.0`
 - **Status**: Optional feature, must be explicitly enabled by application
-- **str0m note**: This feature is effectively implemented in str0m (always
-  enabled when BWE is active). We monitor this field trial to track
-  whether WebRTC takes the implementation in a different direction.
+- **str0m behavior**: Enabled when BWE can probe and transport feedback
+  has arrived. The periodic probe target is 2× desired bitrate.
 
 ### Repeated Initial Probing
 - **API**: `StreamsConfig.enable_repeated_initial_probing = true`
