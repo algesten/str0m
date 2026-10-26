@@ -39,31 +39,45 @@ pub enum BweKind {
 pub struct Bwe<'a>(pub(crate) &'a mut Rtc);
 
 impl<'a> Bwe<'a> {
-    /// Configure the desired bitrate.
+    /// Configure the minimum transmit bitrate and desired bandwidth.
     ///
-    /// Configure the bandwidth estimation system with the desired bitrate.
-    /// **Note:** This only has an effect if BWE has been enabled via
-    /// [`RtcConfig::enable_bwe`][crate::RtcConfig::enable_bwe].
+    /// `minimum` is the total outgoing rate to sustain with media and padding. When
+    /// media sends less, padding fills the gap, capped by the current bandwidth
+    /// estimate. Padding is suppressed during overuse and requires an active sending
+    /// media section with TWCC feedback and a usable padding source. This is not guaranteed bandwidth.
+    /// The automatic 50 kbit/s padding target remains a floor, even with a zero
+    /// minimum, and is also capped by the estimate. The minimum is clamped to
+    /// `desired`; it does not force a probe or raise the estimate.
     ///
-    /// * `desired_bitrate` The bitrate you would like to eventually send at. The BWE system will try
-    ///   to reach this bitrate by probing with padding packets. You should allocate your media bitrate
-    ///   based on the estimated the BWE system produces via
-    ///   [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate]. This rate might not
-    ///   be reached if the network link cannot sustain the desired bitrate.
+    /// `desired` is the bitrate you would like to eventually send at. BWE tries to
+    /// discover this capacity through probing. It is not a hard ceiling: probes
+    /// may exceed it, and the network may not sustain it. Allocate media using the
+    /// estimates from [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate].
     ///
     /// Increasing the desired bitrate above the current estimate can trigger an allocation
     /// probe, whether or not the application is currently sending below its estimated capacity.
     /// Initial probing and congestion conditions can suppress this probe. Repeating or reducing
     /// the desired bitrate does not request an allocation probe.
     ///
-    /// ## Example
+    /// An SFU can set `minimum` to the rate needed to start its next video layer,
+    /// and `desired` to the rate needed for its preferred quality. As the estimate
+    /// grows, more padding is allowed until media can take its place. Lower the
+    /// minimum when sustained traffic is no longer wanted.
     ///
-    /// Say you have three simulcast video tracks each with a high layer configured at 1.5Mbit/s.
-    /// You should then set the desired bitrate to 4.5Mbit/s (or slightly higher). If the network
-    /// link can sustain 4.5Mbit/s there will eventually be an
-    /// [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate] with this estimate.
-    pub fn set_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        self.0.session.set_bwe_desired_bitrate(desired_bitrate);
+    /// This only has an effect when BWE is enabled via
+    /// [`RtcConfig::enable_bwe`][crate::RtcConfig::enable_bwe]. Both rates are retained
+    /// across [`reset`][Self::reset].
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use str0m::{Rtc, bwe::Bitrate};
+    /// # let mut rtc = Rtc::builder().enable_bwe(Some(Bitrate::kbps(300))).build(std::time::Instant::now());
+    /// // Sustain traffic toward the next layer while probing for the preferred rate.
+    /// rtc.bwe().set_bitrate(Bitrate::kbps(800), Bitrate::mbps(3));
+    /// ```
+    pub fn set_bitrate(&mut self, minimum: Bitrate, desired: Bitrate) {
+        self.0.session.set_bwe_bitrate(minimum, desired);
     }
 
     /// Reset the BWE with a new init_bitrate

@@ -1379,9 +1379,9 @@ impl Session {
         snapshot.ingress_loss_fraction = self.twcc_rx_register.loss();
     }
 
-    pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
+    pub fn set_bwe_bitrate(&mut self, minimum: Bitrate, desired: Bitrate) {
         if let Some(bwe) = self.bwe.as_mut() {
-            bwe.set_desired_bitrate(desired_bitrate);
+            bwe.set_bitrate(minimum, desired);
             self.configure_pacer();
         }
     }
@@ -1389,6 +1389,7 @@ impl Session {
     pub fn reset_bwe(&mut self, init_bitrate: Bitrate) {
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.reset(init_bitrate);
+            self.configure_pacer();
         }
     }
 
@@ -1420,22 +1421,24 @@ impl Session {
             return;
         };
         let is_overuse = bwe.is_overusing();
+        let minimum = bwe.minimum_bitrate();
 
         let has_active_media = self.has_active_outgoing_media();
 
         // Calculate pacing and padding rates
-        let result = self
-            .pacer_control
-            .calculate(has_active_media, current_estimate, is_overuse);
+        let result =
+            self.pacer_control
+                .calculate(has_active_media, current_estimate, is_overuse, minimum);
 
         self.pacer.set_padding_rate(result.padding_rate);
         self.pacer.set_pacing_rate(result.pacing_rate);
     }
 
     fn has_active_outgoing_media(&self) -> bool {
-        self.medias
-            .iter()
-            .any(|m| m.direction().is_sending() && !m.disabled())
+        // Direct API media has no SDP remote payload list, so Media::disabled()
+        // is not an availability check here. Use the same negotiated/configured
+        // sending capabilities as probing, including TWCC feedback.
+        self.probe_media().is_some()
     }
 
     pub fn media_by_mid(&self, mid: Mid) -> Option<&Media> {

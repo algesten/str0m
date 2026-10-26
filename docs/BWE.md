@@ -700,11 +700,27 @@ encoder bitrate fluctuations would constantly hit the pacing limit, causing
 unnecessary queuing delays. This rate controls how the pacer smooths media
 transmission timing.
 
-Regular padding fills gaps toward a 50 kbps traffic target
-(`PADDING_TARGET`) when a non-disabled outgoing media section has a sending
-direction. The target is zero during overuse or without such a section.
-Sent media consumes the padding budget, so 50 kbps is not extra traffic
-added on top of media. Authorized probe clusters use their own target rates,
+The application configures `Bwe::set_bitrate(minimum, desired)`. The minimum
+is a total transmit target: when media falls short, regular padding fills
+available gaps. The desired bitrate tells the probe controller how much
+capacity to discover; it is not a hard ceiling. The minimum is clamped to
+the desired bitrate. To migrate from `set_desired_bitrate(desired)`, use
+`set_bitrate(Bitrate::ZERO, desired)`.
+
+Regular padding uses `min(max(50 kbps, minimum), estimate)`. The automatic
+50 kbps target maintains NAT bindings and RTX state. Padding is suppressed
+during overuse and when there is no active sending media section. Sending
+also requires an available media padding source; SSRC 0 remains restricted
+to authorized probe clusters. Media bytes count against the padding budget,
+so this target is not extra traffic added on top of media. Lowering the
+minimum reduces the target immediately. Both configured rates survive a
+BWE reset, and the effective padding rate follows the new estimate.
+
+An SFU can request a minimum near its next layer's startup requirement
+while retaining a higher desired bitrate. Padding can then sustain traffic
+near the current estimate, giving passive estimation evidence to increase
+without first switching the media layer. Changing only the minimum does
+not force a probe. Authorized probe clusters retain their own target rates,
 including when the regular padding rate is zero.
 
 Libwebrtc calculates a stream padding target from active simulcast/SVC
@@ -718,8 +734,8 @@ allocator sums targets and
 can raise them for suspended streams. GoogCC can also raise the request
 in its loss-based padding-recovery state, then caps the effective padding
 rate by the congestion-controlled target after congestion-window pushback.
-str0m uses its fixed regular padding target and automatic probe policy;
-it does not derive padding rates from encoder or layer allocations.
+str0m has no encoders or layer allocator: the application supplies the
+minimum transmit target, and str0m applies its estimate cap and overuse gate.
 
 The calculated pacing_rate and padding_rate flow to the Pacer, controlling
 transmission smoothing and padding generation respectively.
@@ -751,11 +767,12 @@ transmission smoothing and padding generation respectively.
 3. **Padding Strategy:**
    - **WebRTC**: Layer/stream requirements and minimum transmit configuration
      supply a padding target, capped by the congestion-controlled rate
-   - **str0m**: Fixed 50 kbps target for active outgoing media, suppressed
-     during overuse; authorized probes use separate burst targets
+   - **str0m**: Configurable minimum transmit target with a 50 kbps floor for
+     active outgoing media, capped by the estimate and suppressed during
+     overuse; authorized probes use separate burst targets
    - **Reason**: str0m has no encoder or built-in layer allocator
-   - **Impact**: Low-rate media relies on probes to discover higher capacity
-     instead of filling toward a layer-derived traffic target
+   - **Impact**: Low-rate media can fill toward an application-configured
+     traffic target to help discover higher capacity
 
 4. **Bitrate Constraints:**
    - **WebRTC**: Separate `max_bitrate` (hard cap) and

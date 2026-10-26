@@ -33,7 +33,7 @@ pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
-    l.bwe().set_desired_bitrate(desired_bitrate);
+    l.bwe().set_bitrate(Bitrate::ZERO, desired_bitrate);
 
     // The resolution must be smaller than the fastest send rate we want to test.
     l.set_forced_time_advance(Duration::from_micros(100));
@@ -175,7 +175,7 @@ impl BweTestContext {
                     media_send_rate,
                 } => {
                     info!("{}/{}: Media rates: {}", no + 1, total, description);
-                    l.bwe().set_desired_bitrate(*desired_bitrate);
+                    l.bwe().set_bitrate(Bitrate::ZERO, *desired_bitrate);
                     self.set_media_send_rate(*media_send_rate);
                     event_offset = l.events.len();
                 }

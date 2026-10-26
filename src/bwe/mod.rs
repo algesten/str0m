@@ -58,6 +58,7 @@ const STARTUP_PHASE: Duration = Duration::from_secs(2);
 pub struct Bwe {
     bwe: SendSideBandwidthEstimator,
     desired_bitrate: Bitrate,
+    minimum_bitrate: Bitrate,
     smoother: EstimateSmoother,
 }
 
@@ -67,6 +68,7 @@ impl Bwe {
         Bwe {
             bwe: send_side_bwe,
             desired_bitrate: Bitrate::ZERO,
+            minimum_bitrate: Bitrate::ZERO,
             smoother: EstimateSmoother::new(),
         }
     }
@@ -122,8 +124,13 @@ impl Bwe {
         self.bwe.is_overusing()
     }
 
-    pub fn set_desired_bitrate(&mut self, v: Bitrate) {
-        self.desired_bitrate = v;
+    pub fn set_bitrate(&mut self, minimum: Bitrate, desired: Bitrate) {
+        self.minimum_bitrate = minimum.min(desired);
+        self.desired_bitrate = desired;
+    }
+
+    pub fn minimum_bitrate(&self) -> Bitrate {
+        self.minimum_bitrate
     }
 }
 
@@ -545,5 +552,26 @@ mod test {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn bitrate_targets_survive_estimator_reset() {
+        let mut bwe = Bwe::new(Bitrate::kbps(300));
+        bwe.set_bitrate(Bitrate::kbps(800), Bitrate::mbps(3));
+        bwe.reset(Bitrate::kbps(200));
+        assert_eq!(bwe.minimum_bitrate(), Bitrate::kbps(800));
+        assert_eq!(bwe.desired_bitrate, Bitrate::mbps(3));
+        assert_eq!(bwe.last_estimate(), Some(Bitrate::kbps(200)));
+    }
+
+    #[test]
+    fn minimum_is_clamped_to_desired_and_can_be_cleared() {
+        let mut bwe = Bwe::new(Bitrate::kbps(300));
+        bwe.set_bitrate(Bitrate::mbps(2), Bitrate::mbps(1));
+        assert_eq!(bwe.minimum_bitrate(), Bitrate::mbps(1));
+        assert_eq!(bwe.desired_bitrate, Bitrate::mbps(1));
+        bwe.set_bitrate(Bitrate::ZERO, Bitrate::mbps(1));
+        assert_eq!(bwe.minimum_bitrate(), Bitrate::ZERO);
+        assert_eq!(bwe.desired_bitrate, Bitrate::mbps(1));
     }
 }
