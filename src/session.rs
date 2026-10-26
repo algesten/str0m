@@ -276,11 +276,11 @@ impl Session {
         self.srtp_tx = Some(SrtpContext::new(crypto, srtp_profile, &mat, left));
     }
 
-    // `_wake` arms both signals: driving the session both emits events (media,
-    // feedback, RTP) and re-arms its timers. Threaded here as the point where
-    // future per-stream narrowing would live.
-    pub fn handle_timeout(&mut self, now: Instant, _wake: &mut Wake) -> Result<(), RtcError> {
+    pub fn handle_timeout(&mut self, now: Instant, wake: &mut Wake) -> Result<(), RtcError> {
         if self.rtp_closing {
+            // Closing only drains previously queued BYEs; this timeout changes nothing.
+            wake.no_events();
+            wake.no_timeout();
             return Ok(());
         }
 
@@ -484,8 +484,11 @@ impl Session {
         }));
     }
 
-    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8], _wake: &mut Wake) {
+    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8], wake: &mut Wake) {
         let Some(header) = RtpHeader::parse(message, &self.exts) else {
+            // Parsing has not touched stream state. Later rejection paths can have.
+            wake.no_events();
+            wake.no_timeout();
             trace!("Failed to parse RTP header");
             return;
         };
@@ -493,13 +496,15 @@ impl Session {
         self.handle_rtp(now, header, message);
     }
 
-    // `_wake` arms both: incoming RTCP can surface remote keyframe requests or
-    // sender feedback as events and updates report timers.
-    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8], _wake: &mut Wake) {
+    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8], wake: &mut Wake) {
         // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
         // even if it's irrelevant and empty.
         // In practice I'm not sure that is happening, because libWebRTC hates empty packets.
-        self.handle_rtcp(now, message);
+        if self.handle_rtcp(now, message, wake).is_none() {
+            // Missing keys or failed authentication: no reports reached the session.
+            wake.no_events();
+            wake.no_timeout();
+        }
     }
 
     fn mid_and_ssrc_for_header(&mut self, now: Instant, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
@@ -906,12 +911,13 @@ impl Session {
         header.has_padding && header.ext_vals.rid.is_none() && has_rtx && is_expected_rid
     }
 
-    fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
+    fn handle_rtcp(&mut self, now: Instant, buf: &[u8], wake: &mut Wake) -> Option<()> {
         let srtp: &mut SrtpContext = self.srtp_rx.as_mut()?;
         let unprotected = srtp.unprotect_rtcp(buf)?;
 
         Rtcp::read_packet(&unprotected, &mut self.feedback_rx);
         let mut need_configure_pacer = false;
+        let mut may_move_timeout = false;
 
         if let Some(raw_packets) = &mut self.raw_packets {
             for fb in &self.feedback_rx {
@@ -928,6 +934,10 @@ impl Session {
                 });
                 continue;
             }
+
+            // Application feedback above only queues an event. Keep the conservative
+            // timer wake for every other report, including reports in a compound packet.
+            may_move_timeout = true;
 
             if let RtcpFb::Twcc(twcc) = fb {
                 trace!("Handle TWCC: {:?}", twcc);
@@ -988,6 +998,11 @@ impl Session {
         // doesn't do anything when BWE isn't configured.
         if need_configure_pacer {
             self.configure_pacer();
+        }
+
+        if !may_move_timeout {
+            // Also covers empty reports; raw-packet capture only queues events.
+            wake.no_timeout();
         }
 
         Some(())
@@ -1598,6 +1613,136 @@ mod tests {
     use crate::RtcConfig;
     use crate::io::DATAGRAM_MTU_TARGET;
     use crate::packet::RedEncoder;
+
+    use crate::poll::Readiness;
+    use crate::rtp_::RtcpPacket;
+
+    fn keyed_session() -> Session {
+        let mut session = Session::new(&RtcConfig::default());
+        let crypto = crate::crypto::test_default_provider();
+        let profile = SrtpProfile::AEAD_AES_128_GCM;
+        let mat = KeyingMaterial::new(&vec![0; profile.keying_material_len()]);
+        session.set_keying_material(mat, crypto, profile, true);
+        session
+    }
+
+    #[test]
+    fn readiness_closed_session_timeout_preserves_pending_bye() {
+        let now = Instant::now();
+        let mut session = keyed_session();
+        session
+            .streams
+            .declare_stream_tx(42.into(), None, MidRid("vid".into(), None));
+        session.close_rtp();
+        let before = session.poll_timeout();
+        assert_eq!(before.1, Reason::Feedback);
+        let mut readiness = Readiness::idle();
+        session.handle_timeout(now, &mut readiness.wake()).unwrap();
+        assert!(!readiness.wants_events());
+        assert!(!readiness.wants_timeout());
+        assert_eq!(session.poll_timeout(), before);
+        assert!(
+            session.poll_datagram(now).is_some(),
+            "existing BYE must still drain"
+        );
+    }
+
+    #[test]
+    fn readiness_malformed_rtp_does_not_wake() {
+        let mut session = keyed_session();
+        let before = session.poll_timeout();
+        let mut readiness = Readiness::idle();
+        session.handle_rtp_receive(Instant::now(), &[0x80], &mut readiness.wake());
+        assert!(!readiness.wants_events());
+        assert!(!readiness.wants_timeout());
+        assert_eq!(session.poll_timeout(), before);
+        assert!(session.poll_event().is_none());
+    }
+
+    #[test]
+    fn readiness_valid_rtp_header_keeps_wake_even_without_keys() {
+        let mut session = Session::new(&RtcConfig::default());
+        let mut readiness = Readiness::idle();
+        // SSRC 0 creates a probe receive stream before the missing-key check.
+        let packet = [0x80, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
+        session.handle_rtp_receive(Instant::now(), &packet, &mut readiness.wake());
+        assert!(session.streams.has_stream_rx(0.into()));
+        assert!(readiness.wants_events());
+        assert!(readiness.wants_timeout());
+    }
+
+    #[test]
+    fn readiness_rejected_rtcp_does_not_wake() {
+        for mut session in [Session::new(&RtcConfig::default()), keyed_session()] {
+            let before = session.poll_timeout();
+            let mut readiness = Readiness::idle();
+            session.handle_rtcp_receive(Instant::now(), &[0; 32], &mut readiness.wake());
+            assert!(!readiness.wants_events());
+            assert!(!readiness.wants_timeout());
+            assert_eq!(session.poll_timeout(), before);
+            assert!(session.poll_event().is_none());
+        }
+    }
+
+    #[test]
+    fn readiness_rtcp_app_feedback_only_wakes_events() {
+        for mixed in [false, true] {
+            let now = Instant::now();
+            let mut session = keyed_session();
+            let before = session.poll_timeout();
+            let feedback = crate::rtp_::AppSpecificFeedback {
+                sender_ssrc: 1.into(),
+                media_ssrc: 2.into(),
+                payload: vec![1, 2, 3, 4].into(),
+            };
+            // Empty RR followed by application feedback, as sent by DirectApi.
+            let mut buf = vec![0x80, 201, 0, 1, 0, 0, 0, 1];
+            let mut packet = [0; 64];
+            let len = feedback.write_to(&mut packet);
+            buf.extend_from_slice(&packet[..len]);
+            if mixed {
+                let pli = Pli {
+                    sender_ssrc: 1.into(),
+                    ssrc: 2.into(),
+                };
+                let len = pli.write_to(&mut packet);
+                buf.extend_from_slice(&packet[..len]);
+            }
+            // Equal key material lets the local transmit context act as the peer.
+            let packet = session.srtp_tx.as_mut().unwrap().protect_rtcp(&buf);
+            let mut readiness = Readiness::idle();
+            session.handle_rtcp_receive(now, &packet, &mut readiness.wake());
+            assert!(readiness.wants_events());
+            assert_eq!(
+                readiness.wants_timeout(),
+                mixed,
+                "other compound reports keep timer invalidation"
+            );
+            let Some(Event::AppSpecificFeedback(received)) = session.poll_event() else {
+                panic!("feedback must remain observable immediately");
+            };
+            assert_eq!(received.payload, feedback.payload);
+            assert_eq!(session.poll_timeout(), before);
+        }
+    }
+
+    #[test]
+    fn readiness_empty_rtcp_report_keeps_raw_packet_events() {
+        let mut session = keyed_session();
+        session.raw_packets = Some(VecDeque::new());
+        let before = session.poll_timeout();
+        let packet = session
+            .srtp_tx
+            .as_mut()
+            .unwrap()
+            .protect_rtcp(&[0x80, 201, 0, 1, 0, 0, 0, 1]);
+        let mut readiness = Readiness::idle();
+        session.handle_rtcp_receive(Instant::now(), &packet, &mut readiness.wake());
+        assert!(readiness.wants_events());
+        assert!(!readiness.wants_timeout());
+        assert!(matches!(session.poll_event(), Some(Event::RawPacket(_))));
+        assert_eq!(session.poll_timeout(), before);
+    }
 
     #[test]
     fn session_mtu_matches_config() {

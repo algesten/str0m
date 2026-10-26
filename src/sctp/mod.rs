@@ -706,11 +706,11 @@ impl RtcSctp {
         }
     }
 
-    // `_wake` arms both: driving the association can produce transmits and
-    // channel events while also re-arming SCTP's own timers.
-    pub fn handle_timeout(&mut self, now: Instant, _wake: &mut Wake) {
+    pub fn handle_timeout(&mut self, now: Instant, wake: &mut Wake) {
         if self.state == RtcSctpState::Uninited {
             // Need to call `init()` before any timeouts are accepted.
+            wake.no_events();
+            wake.no_timeout();
             return;
         }
 
@@ -720,6 +720,9 @@ impl RtcSctp {
         self.entries.retain(|e| e.state != StreamEntryState::Closed);
 
         let Some(assoc) = &mut self.assoc else {
+            // No association can produce output. Keep the timer wake because
+            // advancing last_now can move the stream-open retry deadline.
+            wake.no_events();
             return;
         };
 
@@ -1394,6 +1397,48 @@ impl From<(ReliabilityType, u32)> for Reliability {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::poll::Readiness;
+
+    #[test]
+    fn readiness_uninitialized_sctp_timeout_does_not_wake() {
+        let now = Instant::now();
+        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
+        let mut readiness = Readiness::idle();
+        sctp.handle_timeout(now, &mut readiness.wake());
+        assert!(!readiness.wants_events());
+        assert!(!readiness.wants_timeout());
+        assert!(sctp.poll_timeout().is_none());
+        assert!(sctp.poll().is_none());
+    }
+
+    #[test]
+    fn readiness_passive_sctp_timeout_does_not_wake_events() {
+        let now = Instant::now();
+        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
+        sctp.init(false, now, None, None).unwrap();
+        assert!(sctp.assoc.is_none());
+        let mut readiness = Readiness::idle();
+        sctp.handle_timeout(now, &mut readiness.wake());
+        assert!(!readiness.wants_events());
+        assert!(readiness.wants_timeout());
+        assert!(sctp.poll().is_none());
+    }
+
+    #[test]
+    fn readiness_sctp_retransmission_keeps_both_signals() {
+        let now = Instant::now();
+        let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
+        sctp.init(true, now, None, None).unwrap();
+        while sctp.poll().is_some() {}
+        let deadline = sctp.poll_timeout().unwrap();
+        let mut readiness = Readiness::idle();
+        sctp.handle_timeout(deadline, &mut readiness.wake());
+        assert!(readiness.wants_events());
+        assert!(readiness.wants_timeout());
+        assert!(matches!(sctp.poll(), Some(SctpEvent::Transmit { .. })));
+        assert!(sctp.poll_timeout().unwrap() > deadline);
+    }
 
     /// Insert an entry directly, keeping `entries` sorted by id.
     fn insert_entry(entries: &mut Vec<StreamEntry>, entry: StreamEntry) {

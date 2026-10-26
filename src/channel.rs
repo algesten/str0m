@@ -255,8 +255,11 @@ impl ChannelHandler {
             .and_then(|a| a.sctp_stream_id)
     }
 
-    pub(crate) fn handle_timeout(&mut self, _now: Instant, sctp: &mut RtcSctp, _wake: &mut Wake) {
-        if !sctp.is_inited() {
+    pub(crate) fn handle_timeout(&mut self, _now: Instant, sctp: &mut RtcSctp, wake: &mut Wake) {
+        if !sctp.is_inited() || (!self.need_allocation() && !self.need_open()) {
+            // No allocation or open can progress, including ids held for a reset.
+            wake.no_events();
+            wake.no_timeout();
             return;
         }
 
@@ -264,10 +267,13 @@ impl ChannelHandler {
         self.do_allocations(sctp);
 
         // After do_allocations so we get a channel for any confirmed.
-        self.open_channels(sctp);
-
-        // Opening channels drives SCTP, which can both emit events and re-arm
-        // its timers, so `_wake` is left armed.
+        if self.need_open() {
+            // Opening channels drives SCTP and can affect both signals.
+            self.open_channels(sctp);
+        } else {
+            // Allocating ids cannot produce output, but can remove our immediate timeout.
+            wake.no_events();
+        }
     }
 
     /// Allocate next available `ChannelId`.
@@ -456,6 +462,55 @@ impl ChannelHandler {
 mod tests {
     use super::*;
 
+    use crate::poll::Readiness;
+
+    #[test]
+    fn readiness_channel_timeout_without_work_does_not_wake() {
+        let now = Instant::now();
+        for initialized in [false, true] {
+            let mut sctp = RtcSctp::new(crate::io::DATAGRAM_MTU_TARGET, 65536);
+            if initialized {
+                sctp.init(false, now, None, None).unwrap();
+            }
+            let mut handler = ChannelHandler::default();
+            let before = handler.poll_timeout(&sctp);
+            let mut readiness = Readiness::idle();
+            handler.handle_timeout(now, &mut sctp, &mut readiness.wake());
+            assert!(!readiness.wants_events());
+            assert!(!readiness.wants_timeout());
+            assert_eq!(handler.poll_timeout(&sctp), before);
+            assert!(sctp.poll().is_none());
+        }
+    }
+
+    #[test]
+    fn readiness_channel_allocation_only_moves_timeout() {
+        let now = Instant::now();
+        let mut sctp = RtcSctp::new(crate::io::DATAGRAM_MTU_TARGET, 65536);
+        sctp.init(false, now, None, None).unwrap();
+        let mut handler = ChannelHandler::default();
+        let id = handler.new_channel(&ChannelConfig::default());
+        assert!(handler.poll_timeout(&sctp).is_some());
+        let mut readiness = Readiness::idle();
+        handler.handle_timeout(now, &mut sctp, &mut readiness.wake());
+        assert!(!readiness.wants_events());
+        assert!(readiness.wants_timeout());
+        assert!(handler.stream_id_by_channel_id(id).is_some());
+        assert!(handler.poll_timeout(&sctp).is_none());
+        assert!(sctp.poll().is_none());
+
+        // Confirming opens the stream and must retain both signals.
+        handler.confirm(id, ChannelConfig::default());
+        let mut readiness = Readiness::idle();
+        handler.handle_timeout(now, &mut sctp, &mut readiness.wake());
+        assert!(readiness.wants_events());
+        assert!(readiness.wants_timeout());
+        assert!(
+            sctp.config(handler.stream_id_by_channel_id(id).unwrap())
+                .is_some()
+        );
+    }
+
     #[test]
     fn channel_id_allocation() {
         let mut handler = ChannelHandler::default();
@@ -604,8 +659,10 @@ mod tests {
         handler.closed_stream_ids.push(4);
         let replacement = handler.new_channel(&config);
         handler.confirm(replacement, config);
-        let mut readiness = crate::poll::Readiness::armed();
+        let mut readiness = Readiness::idle();
         handler.handle_timeout(now, &mut sctp, &mut readiness.wake());
+        assert!(!readiness.wants_events());
+        assert!(!readiness.wants_timeout());
 
         assert_eq!(
             handler.poll_timeout(&sctp),

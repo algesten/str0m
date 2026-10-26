@@ -221,3 +221,121 @@ impl Drop for Wake<'_> {
         self.readiness.timeout |= self.timeout;
     }
 }
+
+#[cfg(test)]
+impl Readiness {
+    pub(crate) fn idle() -> Self {
+        Self {
+            events: false,
+            timeout: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::bwe::Bitrate;
+    use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
+    use crate::media::MediaKind;
+    use crate::{Input, Output};
+    use std::time::Instant;
+
+    fn idle_rtc() -> Rtc {
+        let now = Instant::now();
+        let mut rtc = Rtc::builder()
+            .enable_bwe(Some(Bitrate::kbps(300)))
+            .build(now);
+        let profile = SrtpProfile::AEAD_AES_128_GCM;
+        let mat = KeyingMaterial::new(&vec![0; profile.keying_material_len()]);
+        rtc.session
+            .set_keying_material(mat, crate::crypto::test_default_provider(), profile, true);
+        rtc.direct_api()
+            .declare_media("vid".into(), MediaKind::Video);
+        rtc.direct_api()
+            .declare_stream_tx(42.into(), None, "vid".into(), None);
+        rtc.handle_input(Input::Timeout(now)).unwrap();
+        while !matches!(rtc.poll_output().unwrap(), Output::Timeout(_)) {}
+        assert!(!rtc.readiness.wants_events());
+        assert!(!rtc.readiness.wants_timeout());
+        rtc
+    }
+
+    #[test]
+    fn readiness_bwe_set_bitrate_only_wakes_timeout() {
+        let mut rtc = idle_rtc();
+        rtc.bwe().set_bitrate(Bitrate::kbps(100), Bitrate::mbps(2));
+        assert!(!rtc.readiness.wants_events());
+        assert!(rtc.readiness.wants_timeout());
+        assert!(
+            rtc.session.poll_event().is_none(),
+            "no hidden event behind the narrowed flag"
+        );
+        let expected = rtc.poll_timeout();
+        assert!(matches!(rtc.poll_output().unwrap(), Output::Timeout(at) if at == expected));
+    }
+
+    #[test]
+    fn readiness_bwe_reset_only_wakes_timeout() {
+        let mut rtc = idle_rtc();
+        rtc.bwe().reset(Bitrate::kbps(900));
+        assert!(!rtc.readiness.wants_events());
+        assert!(rtc.readiness.wants_timeout());
+        assert!(
+            rtc.session.poll_event().is_none(),
+            "reset produces estimates on a later timeout"
+        );
+        let expected = rtc.poll_timeout();
+        assert!(matches!(rtc.poll_output().unwrap(), Output::Timeout(at) if at == expected));
+    }
+
+    #[test]
+    fn readiness_outgoing_app_feedback_only_wakes_events() {
+        let mut rtc = idle_rtc();
+        let before = rtc.session.poll_timeout();
+        rtc.direct_api()
+            .send_app_specific_feedback(42.into(), 43.into(), vec![1, 2, 3, 4]);
+        assert!(rtc.readiness.wants_events());
+        assert!(!rtc.readiness.wants_timeout());
+        assert_eq!(rtc.session.poll_timeout(), before);
+        assert!(
+            rtc.session.poll_datagram(rtc.last_now).is_some(),
+            "queued feedback must be sendable without a timeout"
+        );
+    }
+
+    #[test]
+    fn readiness_api_narrowing_preserves_other_mutations() {
+        for feedback_first in [false, true] {
+            let mut rtc = idle_rtc();
+            if feedback_first {
+                rtc.direct_api()
+                    .send_app_specific_feedback(42.into(), 43.into(), vec![1, 2, 3, 4]);
+                rtc.bwe().reset(Bitrate::kbps(900));
+            } else {
+                rtc.bwe().reset(Bitrate::kbps(900));
+                rtc.direct_api()
+                    .send_app_specific_feedback(42.into(), 43.into(), vec![1, 2, 3, 4]);
+            }
+            assert!(rtc.readiness.wants_events());
+            assert!(rtc.readiness.wants_timeout());
+        }
+    }
+
+    #[test]
+    fn narrowing_preserves_other_operations() {
+        for events in [false, true] {
+            for timeout in [false, true] {
+                let mut readiness = Readiness { events, timeout };
+                {
+                    let mut wake = readiness.wake();
+                    wake.no_events();
+                    wake.no_timeout();
+                }
+                assert_eq!(readiness.wants_events(), events);
+                assert_eq!(readiness.wants_timeout(), timeout);
+            }
+        }
+    }
+}
