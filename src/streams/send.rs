@@ -915,8 +915,6 @@ impl StreamTx {
         // finish poll_packet, at which point we move it to the cache.
         let pkt = self.send_queue.peek()?;
 
-        pkt.timestamp = now;
-
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, false);
         if let Some(h) = &mut self.stats.bytes_transmitted {
@@ -1437,6 +1435,32 @@ mod test {
             assert!(header.ssrc.is_probe());
             assert!(header.has_padding);
         }
+    }
+
+    #[test]
+    fn queue_time_counts_only_unsent_packets_while_the_queue_never_empties() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        let pt = codecs.params()[0].pt();
+        let exts = ExtensionMap::standard();
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let stream = streams.declare_stream_tx(42.into(), None, MidRid("vid".into(), None));
+        let mut buf = vec![];
+        let mut now = start;
+        for i in 0..205_u64 {
+            now = start + Duration::from_millis(i * 10);
+            stream.write_rtp(RtpWrite::new(pt, i.into(), 0, now, vec![0_u8; 1000]));
+            stream.send_queue.handle_timeout(now);
+            if i >= 5 {
+                stream
+                    .poll_packet(now, &exts, None, codecs.params(), &mut buf)
+                    .expect("a queued packet to send");
+            }
+        }
+        let snapshot = stream.queue_state(now).snapshot;
+        // The five queued packets are 0, 10, 20, 30 and 40 ms old.
+        assert_eq!(snapshot.packet_count, 5);
+        assert_eq!(snapshot.total_queue_time(now), Duration::from_millis(100));
     }
 
     #[test]
