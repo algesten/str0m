@@ -1497,17 +1497,16 @@ impl Rtc {
             return None;
         }
 
-        // Disjoint borrows: the writer mutates `session`, and carries an armed
-        // `Wake` into which its methods narrow their own re-poll decision.
+        // Disjoint borrows let the writer arm readiness within each mutation.
         let Rtc {
             session, readiness, ..
         } = self;
 
         // This does not catch potential RIDs required to send simulcast, but
         // it's a good start. An error might arise later on RID mismatch.
-        session.media_by_mid_mut(mid)?;
+        session.media_by_mid(mid)?;
 
-        Some(Writer::new(session, readiness.wake(), mid))
+        Some(Writer::new(session, readiness, mid))
     }
 
     /// Currently configured media.
@@ -2192,9 +2191,9 @@ impl Rtc {
                 drop(readiness.wake());
             }
             Dtls(dtls_packet) => {
+                // A failed receive can still change DTLS state and timers.
+                let _wake = readiness.wake();
                 dtls.handle_receive(dtls_packet)?;
-                // DTLS is an external crate; arm both on its behalf.
-                drop(readiness.wake());
             }
             Rtp(rtp) => session.handle_rtp_receive(recv_time, rtp, &mut readiness.wake()),
             Rtcp(rtcp) => session.handle_rtcp_receive(recv_time, rtcp, &mut readiness.wake()),

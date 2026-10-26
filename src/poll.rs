@@ -13,7 +13,7 @@
 //!
 //! The direction is deliberate: the safe default is to re-poll, and narrowing
 //! is an opt-in optimization owned by the component that performed the
-//! mutation. A forgotten or over-broad narrow costs at most one redundant
+//! mutation. A forgotten narrowing or an over-broad wake costs at most one redundant
 //! poll; it can never drop output. No component names another's scope, and
 //! `Rtc` holds no knowledge of which mutation affects what.
 //!
