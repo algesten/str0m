@@ -730,7 +730,8 @@ the layer-derived component uses the lowest active layer's minimum;
 otherwise it targets the highest active layer's startup requirement,
 including lower layers' target rates. For a single non-SVC stream, its
 minimum contributes only when padding to the minimum is enabled. The
-allocator sums targets and can raise them for suspended streams. GoogCC can also raise the request
+allocator sums targets and
+can raise them for suspended streams. GoogCC can also raise the request
 in its loss-based padding-recovery state, then caps the effective padding
 rate by the congestion-controlled target after congestion-window pushback.
 str0m has no encoders or layer allocator: the application supplies the
@@ -764,12 +765,14 @@ transmission smoothing and padding generation respectively.
      ALR entry. Probes at 2× estimate after 15s stagnation with 15s rate limit
 
 3. **Padding Strategy:**
-   - **WebRTC**: Layer-derived targets, configured minimum transmit bitrate,
-     and allocator/recovery state, capped by the congestion-controlled rate
-   - **str0m**: Application minimum transmit target with an automatic 50 kbps
-     floor, capped by the estimate and suppressed during overuse
-   - **Reason**: The application knows layer startup requirements; str0m has no encoder
-   - **Impact**: Fixed-layer senders can sustain traffic to support estimate growth
+   - **WebRTC**: Layer/stream requirements and minimum transmit configuration
+     supply a padding target, capped by the congestion-controlled rate
+   - **str0m**: Configurable minimum transmit target with a 50 kbps floor for
+     active outgoing media, capped by the estimate and suppressed during
+     overuse; authorized probes use separate burst targets
+   - **Reason**: str0m has no encoder or built-in layer allocator
+   - **Impact**: Low-rate media can fill toward an application-configured
+     traffic target to help discover higher capacity
 
 4. **Bitrate Constraints:**
    - **WebRTC**: Separate `max_bitrate` (hard cap) and
