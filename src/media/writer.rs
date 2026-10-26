@@ -4,6 +4,7 @@ use std::time::Instant;
 use crate::RtcError;
 use crate::format::{CodecConfig, PayloadParams};
 use crate::packet::PacketError;
+use crate::poll::Readiness;
 use crate::rtp_::AbsCaptureTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
@@ -22,6 +23,7 @@ use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid
 /// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
 pub struct Writer<'a> {
     session: &'a mut Session,
+    readiness: &'a mut Readiness,
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
@@ -33,9 +35,13 @@ impl<'a> Writer<'a> {
     /// Create a new writer object.
     ///
     /// The `mid` parameter is required to have a corresponding media in `self.session`.
-    pub(crate) fn new(session: &'a mut Session, mid: Mid) -> Self {
+    ///
+    /// Mutations arm readiness within the method so read-only access leaves it
+    /// intact and no persistent drop guard extends the caller's borrow.
+    pub(crate) fn new(session: &'a mut Session, readiness: &'a mut Readiness, mid: Mid) -> Self {
         Writer {
             session,
+            readiness,
             mid,
             rid: None,
             start_of_talkspurt: None,
@@ -169,6 +175,8 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: impl Into<Arc<[u8]>>,
     ) -> Result<(), RtcError> {
+        let _wake = self.readiness.wake();
+
         if !self.session.codec_config.has_pt(pt) {
             return Err(RtcError::UnknownPt(pt));
         }
@@ -300,6 +308,8 @@ impl<'a> Writer<'a> {
             return Err(RtcError::NotReceivingDirection);
         }
 
+        // Requests become RTCP feedback on the next timeout, so arm both signals.
+        let _wake = self.readiness.wake();
         let midrid = MidRid(self.mid, rid);
 
         let stream = self

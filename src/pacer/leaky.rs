@@ -192,6 +192,7 @@ impl LeakyBucketPacer {
     pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig) {
         trace!(?config, "Probe start");
         self.probe_queue.push_back(ProbeClusterState::new(config));
+        self.request_immediate_timeout();
     }
 
     /// Get the cluster ID of the active probe, if any.

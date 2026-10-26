@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Avoid rescanning idle connections on repeated output polls #1011
   * Replace BWE `set_desired_bitrate` with `set_bitrate(minimum, desired)` (breaking) #1109
   * Drain NullPacer queues without a timeout after every send #1112
   * Align BWE probing with libwebrtc bd3d2d3150 #1108
