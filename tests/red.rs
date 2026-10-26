@@ -250,9 +250,9 @@ fn audio_fmts(sdp: &str) -> Vec<String> {
         .collect()
 }
 
-/// A browser sends with the first codec the other side lists. Chrome offers Opus before RED,
-/// so an answer that keeps that order negotiates RED but never receives it: the answer lists
-/// the negotiated RED before its primary, as does our own offer.
+/// libwebrtc enables RED only when it precedes the selected audio codec. Chrome offers Opus
+/// before RED, so an answer that keeps that order negotiates RED but does not make Chrome send it.
+/// The answer lists RED before Opus, as does our own offer.
 #[test]
 pub fn red_listed_before_its_primary() {
     init_log();
