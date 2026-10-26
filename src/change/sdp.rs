@@ -99,7 +99,7 @@ impl<'a> SdpApi<'a> {
             ));
         }
 
-        add_ice_details(&mut *self.rtc, &offer, None)?;
+        add_ice_details(&mut self.rtc, &offer, None)?;
 
         if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
@@ -117,7 +117,7 @@ impl<'a> SdpApi<'a> {
         }
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(&mut *self.rtc, &offer)?;
+        init_dtls(&mut self.rtc, &offer)?;
 
         let remote_max_message_size = extract_max_message_size(offer.media_lines.iter());
 
@@ -144,7 +144,7 @@ impl<'a> SdpApi<'a> {
                 .try_init_sctp(client, init_data, remote_max_message_size)?;
         }
 
-        let params = AsSdpParams::new(&*self.rtc, None);
+        let params = AsSdpParams::new(&self.rtc, None);
         let sdp = as_sdp(&self.rtc.session, params);
 
         debug!("Create answer");
@@ -193,10 +193,10 @@ impl<'a> SdpApi<'a> {
             ));
         }
 
-        add_ice_details(&mut *self.rtc, &answer, Some(&pending))?;
+        add_ice_details(&mut self.rtc, &answer, Some(&pending))?;
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(&mut *self.rtc, &answer)?;
+        init_dtls(&mut self.rtc, &answer)?;
 
         if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = answer.fingerprint() {
@@ -527,7 +527,7 @@ impl<'a> SdpApi<'a> {
         let requires_negotiation = self.changes.0.iter().any(requires_negotiation);
 
         if requires_negotiation {
-            let offer = create_offer(&mut *self.rtc, &self.changes);
+            let offer = create_offer(&mut self.rtc, &self.changes);
             let pending = SdpPendingOffer {
                 change_id,
                 changes: self.changes,
@@ -536,7 +536,7 @@ impl<'a> SdpApi<'a> {
             Some((offer, pending))
         } else {
             debug!("Apply direct changes");
-            apply_direct_changes(&mut *self.rtc, self.changes);
+            apply_direct_changes(&mut self.rtc, self.changes);
             None
         }
     }

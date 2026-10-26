@@ -604,7 +604,8 @@ mod tests {
         handler.closed_stream_ids.push(4);
         let replacement = handler.new_channel(&config);
         handler.confirm(replacement, config);
-        handler.handle_timeout(now, &mut sctp);
+        let mut readiness = crate::poll::Readiness::armed();
+        handler.handle_timeout(now, &mut sctp, &mut readiness.wake());
 
         assert_eq!(
             handler.poll_timeout(&sctp),

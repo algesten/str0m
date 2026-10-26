@@ -38,8 +38,7 @@ pub enum BweKind {
 
 /// Access to the Bandwidth Estimate subsystem.
 ///
-/// The inner `RtcMut` arms the readiness on mutable deref only; see
-/// [`crate::poll`].
+// The inner `RtcMut` arms the readiness on mutable deref only; see `crate::poll`.
 pub struct Bwe<'a>(pub(crate) RtcMut<'a>);
 
 impl<'a> Bwe<'a> {

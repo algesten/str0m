@@ -1738,7 +1738,9 @@ impl Rtc {
                                 return Err(RtcError::RemoteSdp(message));
                             } else if fingerprint != *expected {
                                 self.disconnect();
-                                return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
+                                return Err(RtcError::RemoteSdp(
+                                    "remote fingerprint no match".into(),
+                                ));
                             }
                         } else {
                             self.disconnect();

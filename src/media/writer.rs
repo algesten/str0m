@@ -23,7 +23,7 @@ use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid
 /// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
 pub struct Writer<'a> {
     session: &'a mut Session,
-    wake: Wake<'a>,
+    _wake: Wake<'a>,
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
@@ -41,7 +41,7 @@ impl<'a> Writer<'a> {
     pub(crate) fn new(session: &'a mut Session, wake: Wake<'a>, mid: Mid) -> Self {
         Writer {
             session,
-            wake,
+            _wake: wake,
             mid,
             rid: None,
             start_of_talkspurt: None,
@@ -316,10 +316,8 @@ impl<'a> Writer<'a> {
 
         stream.request_keyframe(kind);
 
-        // Local decision: a keyframe request only queues RTCP feedback, drained
-        // from the transmit path on the next poll. It moves no timer, so the
-        // timeout need not be recomputed on its behalf.
-        self.wake.no_timeout();
+        // Requests are turned into RTCP feedback by the next timeout, so keep
+        // both wake signals armed until this writer is dropped.
 
         Ok(())
     }

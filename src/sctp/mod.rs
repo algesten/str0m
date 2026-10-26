@@ -1593,7 +1593,8 @@ mod tests {
 
         // Past the deadline the open gives up and closes.
         let later = Instant::now() + STREAM_OPEN_TIMEOUT + Duration::from_secs(1);
-        client.handle_timeout(later);
+        let mut readiness = crate::poll::Readiness::armed();
+        client.handle_timeout(later, &mut readiness.wake());
         let event = client.do_poll();
 
         assert!(
