@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Reject SDP with conflicting RTX apt values instead of panicking #1113
   * Avoid rescanning idle connections on repeated output polls #1011
   * Replace BWE `set_desired_bitrate` with `set_bitrate(minimum, desired)` (breaking) #1109
   * Drain NullPacer queues without a timeout after every send #1112

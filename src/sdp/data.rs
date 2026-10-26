@@ -549,6 +549,27 @@ impl MediaLine {
                 ));
             }
         }
+
+        // An RTX PT must identify only one primary PT, including across multiple fmtp lines.
+        let mut rtx_apts = HashMap::new();
+        for attr in &self.attrs {
+            let Fmtp { pt, values } = attr else {
+                continue;
+            };
+            for value in values {
+                let FormatParam::Apt(apt) = value else {
+                    continue;
+                };
+                if let Some(previous) = rtx_apts.insert(*pt, *apt) {
+                    if previous != *apt {
+                        return Some(format!(
+                            "PT {pt} has conflicting apt values {previous} and {apt} for mid: {}",
+                            self.mid()
+                        ));
+                    }
+                }
+            }
+        }
         None
     }
 
