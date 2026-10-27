@@ -3,26 +3,28 @@ use std::time::{Duration, Instant};
 
 use crate::rtp_::Bitrate;
 
-/// Changes within tolerance are held back until older estimates age out of this window.
+/// Time window for averaging estimate changes.
 const ESTIMATE_WINDOW: Duration = Duration::from_secs(3);
 
 type TimeBitrate = (Instant, Bitrate);
 
 const TOLERANCE: f64 = 0.05;
 
-/// Emits the latest BWE estimate once it moves outside the tolerance of the last emitted one.
+/// Smooths BWE estimates by averaging over a time window, or passes on the latest one.
 pub struct EstimateSmoother {
     estimates: VecDeque<TimeBitrate>,
     maybe_emit: bool,
     emitted: Option<Bitrate>,
+    smoothing: bool,
 }
 
 impl EstimateSmoother {
-    pub fn new() -> Self {
+    pub fn new(smoothing: bool) -> Self {
         Self {
             estimates: VecDeque::new(),
             maybe_emit: false,
             emitted: None,
+            smoothing,
         }
     }
 
@@ -58,7 +60,14 @@ impl EstimateSmoother {
             return None;
         }
 
-        let &(_, rate) = self.estimates.back()?;
+        let &(_, latest) = self.estimates.back()?;
+
+        let rate: Bitrate = if self.smoothing {
+            let total: f64 = self.estimates.iter().map(|b| b.1.as_f64()).sum();
+            (total / self.estimates.len() as f64).into()
+        } else {
+            latest
+        };
 
         // This forces emitting if we have the first ever value, or a last
         // where the rest of the window is gone (estimates stop coming).
@@ -93,27 +102,47 @@ fn in_tolerance(b1: Bitrate, b2: Bitrate) -> bool {
 mod test {
     use super::*;
 
-    #[test]
-    fn emits_a_rise_without_waiting_for_the_window() {
-        let mut smoother = EstimateSmoother::new();
+    fn emitted(smoothing: bool, steps: &[(u64, u64)]) -> Vec<Option<Bitrate>> {
+        let mut smoother = EstimateSmoother::new(smoothing);
         let now = Instant::now();
-
-        smoother.record(now, Bitrate::kbps(500));
-        assert_eq!(smoother.poll(), Some(Bitrate::kbps(500)));
-
-        smoother.record(now + Duration::from_secs(2), Bitrate::kbps(1700));
-        assert_eq!(smoother.poll(), Some(Bitrate::kbps(1700)));
+        steps
+            .iter()
+            .map(|&(ms, kbps)| {
+                smoother.record(now + Duration::from_millis(ms), Bitrate::kbps(kbps));
+                smoother.poll()
+            })
+            .collect()
     }
 
     #[test]
-    fn holds_back_changes_within_tolerance() {
-        let mut smoother = EstimateSmoother::new();
-        let now = Instant::now();
+    fn smoothing_emits_the_mean_of_the_window() {
+        assert_eq!(
+            emitted(true, &[(0, 500), (2000, 1700)]),
+            [Some(Bitrate::kbps(500)), Some(Bitrate::kbps(1100))]
+        );
+    }
 
-        smoother.record(now, Bitrate::kbps(1000));
-        assert_eq!(smoother.poll(), Some(Bitrate::kbps(1000)));
+    #[test]
+    fn without_smoothing_emits_a_rise_at_once() {
+        assert_eq!(
+            emitted(false, &[(0, 500), (2000, 1700)]),
+            [Some(Bitrate::kbps(500)), Some(Bitrate::kbps(1700))]
+        );
+    }
 
-        smoother.record(now + Duration::from_millis(100), Bitrate::kbps(1040));
-        assert_eq!(smoother.poll(), None);
+    #[test]
+    fn without_smoothing_holds_back_changes_within_tolerance() {
+        assert_eq!(
+            emitted(false, &[(0, 1000), (100, 1040)]),
+            [Some(Bitrate::kbps(1000)), None]
+        );
+    }
+
+    #[test]
+    fn without_smoothing_emits_a_held_back_change_once_it_is_alone_in_the_window() {
+        assert_eq!(
+            emitted(false, &[(0, 1000), (100, 1040), (3200, 1040)]),
+            [Some(Bitrate::kbps(1000)), None, Some(Bitrate::kbps(1040))]
+        );
     }
 }
