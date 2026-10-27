@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Add `RtcConfig::set_bwe_smoothing()` to report the latest BWE estimate instead of the 3 s mean #1119
+  * Add an option, `RtcConfig::set_bwe_smoothing()`, to opt out of the 3 s mean of the BWE estimate #1119
 
 # 0.25.0
 
