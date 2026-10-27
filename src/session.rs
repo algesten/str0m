@@ -165,10 +165,10 @@ impl Session {
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
-        let (pacer, bwe) = if let Some(config) = &config.bwe_config {
-            let rate = config.initial_bitrate;
+        let (pacer, bwe) = if let Some(bwe_config) = &config.bwe_config {
+            let rate = bwe_config.initial_bitrate;
             let pacer = PacerImpl::leaky_bucket(rate * 2.0);
-            let bwe = Bwe::new(rate);
+            let bwe = Bwe::new(rate, config.bwe_smoothing);
             (pacer, Some(bwe))
         } else {
             (PacerImpl::null(), None)

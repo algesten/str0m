@@ -44,6 +44,7 @@ pub struct RtcConfig {
     pub(crate) stats_interval: Option<Duration>,
     pub(crate) intervals: RtcpReportIntervals,
     pub(crate) bwe_config: Option<BweConfig>,
+    pub(crate) bwe_smoothing: bool,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
     pub(crate) reordering_timeout_audio: Option<Duration>,
@@ -500,6 +501,34 @@ impl RtcConfig {
         self.bwe_config.as_ref().map(|c| c.initial_bitrate)
     }
 
+    /// Sets whether the estimate in
+    /// [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate] is the mean of the
+    /// estimates in the last 3 seconds.
+    ///
+    /// Turned off, it is the latest estimate, reported once it moves more than 5 % from the one
+    /// reported before, or once it has held for 3 seconds. That suits an application with its
+    /// own hysteresis, such as an SFU choosing layers.
+    ///
+    /// Only applies when BWE is enabled with [`Self::enable_bwe()`]. Defaults to true.
+    pub fn set_bwe_smoothing(mut self, enabled: bool) -> Self {
+        self.bwe_smoothing = enabled;
+        self
+    }
+
+    /// Returns the setting of [`Self::set_bwe_smoothing()`].
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to true.
+    /// assert!(config.bwe_smoothing());
+    /// assert!(!config.set_bwe_smoothing(false).bwe_smoothing());
+    /// ```
+    pub fn bwe_smoothing(&self) -> bool {
+        self.bwe_smoothing
+    }
+
     /// Sets the number of packets held back for reordering audio packets.
     ///
     /// Str0m tries to deliver the frames in order. This number determines how many
@@ -896,6 +925,7 @@ impl Default for RtcConfig {
                 video: Duration::from_secs(1),
             },
             bwe_config: None,
+            bwe_smoothing: true,
             reordering_size_audio: 15,
             reordering_size_video: 30,
             reordering_timeout_audio: Some(Duration::from_secs(1)),
