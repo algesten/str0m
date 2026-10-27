@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Add an option, `RtcConfig::set_bwe_smoothing()`, to opt out of the 3 s mean of the BWE estimate #1119
   * Reject SDP with conflicting RTX apt values instead of panicking #1113
   * Avoid rescanning idle connections on repeated output polls #1011
   * Replace BWE `set_desired_bitrate` with `set_bitrate(minimum, desired)` (breaking) #1109

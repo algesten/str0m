@@ -63,13 +63,13 @@ pub struct Bwe {
 }
 
 impl Bwe {
-    pub fn new(initial: Bitrate) -> Self {
+    pub fn new(initial: Bitrate, smoothing: bool) -> Self {
         let send_side_bwe = SendSideBandwidthEstimator::new(initial);
         Bwe {
             bwe: send_side_bwe,
             desired_bitrate: Bitrate::ZERO,
             minimum_bitrate: Bitrate::ZERO,
-            smoother: EstimateSmoother::new(),
+            smoother: EstimateSmoother::new(smoothing),
         }
     }
 
@@ -556,7 +556,7 @@ mod test {
 
     #[test]
     fn bitrate_targets_survive_estimator_reset() {
-        let mut bwe = Bwe::new(Bitrate::kbps(300));
+        let mut bwe = Bwe::new(Bitrate::kbps(300), true);
         bwe.set_bitrate(Bitrate::kbps(800), Bitrate::mbps(3));
         bwe.reset(Bitrate::kbps(200));
         assert_eq!(bwe.minimum_bitrate(), Bitrate::kbps(800));
@@ -566,7 +566,7 @@ mod test {
 
     #[test]
     fn minimum_is_clamped_to_desired_and_can_be_cleared() {
-        let mut bwe = Bwe::new(Bitrate::kbps(300));
+        let mut bwe = Bwe::new(Bitrate::kbps(300), true);
         bwe.set_bitrate(Bitrate::mbps(2), Bitrate::mbps(1));
         assert_eq!(bwe.minimum_bitrate(), Bitrate::mbps(1));
         assert_eq!(bwe.desired_bitrate, Bitrate::mbps(1));
