@@ -1,6 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
+use crate::rtp::dependency_descriptor::DependencyDescriptorError;
+
 /// Errors arising in packet- and depacketization.
 #[derive(Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -22,6 +24,7 @@ pub enum PacketError {
     ErrRedCorruptedPacket,
     InvalidTelephoneEvent(&'static str),
     ErrAmrWbCorruptedPacket,
+    InvalidDependencyDescriptor(DependencyDescriptorError),
 }
 
 impl fmt::Display for PacketError {
@@ -53,6 +56,7 @@ impl fmt::Display for PacketError {
                 write!(f, "Invalid telephone event: {reason}")
             }
             PacketError::ErrAmrWbCorruptedPacket => write!(f, "AMR-WB corrupted packet"),
+            PacketError::InvalidDependencyDescriptor(error) => write!(f, "{error}"),
         }
     }
 }

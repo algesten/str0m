@@ -238,15 +238,23 @@ mod tests {
 
     use crate::bwe::Bitrate;
     use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
-    use crate::media::MediaKind;
-    use crate::{Input, Output};
+    use crate::format::Codec;
+    use crate::io::Protocol;
+    use crate::media::{MediaKind, MediaTime};
+    use crate::packet::PacketError;
+    use crate::rtp::dependency_descriptor::{DependencyDescriptor, DependencyDescriptorError};
+    use crate::rtp::dependency_descriptor::{Serializer, URI};
+    use crate::rtp::{Extension, RawPacket};
+    use crate::{Input, Output, Reason, RtcConfig, RtcError, SendAddr};
     use std::time::Instant;
 
     fn idle_rtc() -> Rtc {
+        idle_rtc_with_config(Rtc::builder())
+    }
+
+    fn idle_rtc_with_config(config: RtcConfig) -> Rtc {
         let now = Instant::now();
-        let mut rtc = Rtc::builder()
-            .enable_bwe(Some(Bitrate::kbps(300)))
-            .build(now);
+        let mut rtc = config.enable_bwe(Some(Bitrate::kbps(300))).build(now);
         let profile = SrtpProfile::AEAD_AES_128_GCM;
         let mat = KeyingMaterial::new(&vec![0; profile.keying_material_len()]);
         rtc.session
@@ -260,6 +268,154 @@ mod tests {
         assert!(!rtc.readiness.wants_events());
         assert!(!rtc.readiness.wants_timeout());
         rtc
+    }
+
+    fn idle_rtc_with_dd() -> Rtc {
+        let config = Rtc::builder()
+            .enable_raw_packets(true)
+            .set_extension(14, Extension::with_serializer(URI, Serializer));
+        let mut rtc = idle_rtc_with_config(config);
+        rtc.send_addr = Some(SendAddr {
+            proto: Protocol::Udp,
+            source: ([127, 0, 0, 1], 1000).into(),
+            destination: ([127, 0, 0, 1], 2000).into(),
+        });
+        let pts = rtc
+            .codec_config()
+            .iter()
+            .map(|params| params.pt())
+            .collect();
+        rtc.session
+            .media_by_mid_mut("vid".into())
+            .unwrap()
+            .set_remote_pts(pts);
+        rtc.readiness.wake();
+        for _ in 0..32 {
+            let (deadline, _, _) = drain_dd_output(&mut rtc);
+            if deadline > rtc.last_now {
+                assert!(!rtc.readiness.wants_events());
+                assert!(!rtc.readiness.wants_timeout());
+                return rtc;
+            }
+            rtc.handle_input(Input::Timeout(deadline)).unwrap();
+        }
+        panic!("DD RTC did not reach a future cached deadline");
+    }
+
+    fn write_dd(rtc: &mut Rtc, descriptor: DependencyDescriptor) -> Result<(), RtcError> {
+        let pt = rtc
+            .codec_config()
+            .find(|params| params.spec().codec == Codec::Vp8)
+            .unwrap()
+            .pt();
+        let now = rtc.last_now;
+        rtc.writer("vid".into())
+            .unwrap()
+            .user_extension_value(descriptor)
+            .write(pt, now, MediaTime::ZERO, [0xaa; 10])
+    }
+
+    fn drain_dd_output(rtc: &mut Rtc) -> (Instant, Vec<DependencyDescriptor>, usize) {
+        let mut descriptors = Vec::new();
+        let mut transmits = 0;
+        for _ in 0..32 {
+            match rtc.poll_output().unwrap() {
+                Output::Event(event) => {
+                    if let Some(RawPacket::RtpTx(header, _)) = event.as_raw_packet()
+                        && let Some(descriptor) =
+                            header.ext_vals.user_values.get::<DependencyDescriptor>()
+                    {
+                        descriptors.push(descriptor.clone());
+                    }
+                }
+                Output::Transmit(_) => transmits += 1,
+                Output::Timeout(deadline) => return (deadline, descriptors, transmits),
+            }
+        }
+        panic!("DD output did not drain within 32 polls");
+    }
+
+    #[test]
+    fn readiness_dependency_descriptor_builder_preserves_cached_output() {
+        let mut rtc = idle_rtc_with_dd();
+        let before = rtc.cached_timeout;
+        let descriptor = DependencyDescriptor::from_bytes([0xc0, 0, 42, 0x80, 0, 0xe0]).unwrap();
+        let writer = rtc
+            .writer("vid".into())
+            .unwrap()
+            .user_extension_value(descriptor);
+        assert!(writer.payload_params().next().is_some());
+        assert!(!rtc.readiness.wants_events());
+        assert!(!rtc.readiness.wants_timeout());
+        assert_eq!(drain_dd_output(&mut rtc), (before, vec![], 0));
+    }
+
+    #[test]
+    fn readiness_dependency_descriptor_write_wakes_output_and_deadline() {
+        let mut rtc = idle_rtc_with_dd();
+        let now = rtc.last_now;
+        assert!(rtc.cached_timeout > now);
+        let descriptor = DependencyDescriptor::from_bytes([0xc0, 0, 42, 0x80, 0, 0xe0]).unwrap();
+        write_dd(&mut rtc, descriptor.clone()).unwrap();
+        assert!(rtc.readiness.wants_events());
+        assert!(rtc.readiness.wants_timeout());
+        assert_eq!(drain_dd_output(&mut rtc), (now, vec![], 0));
+        assert_eq!(rtc.last_timeout_reason(), Reason::Packetize);
+        rtc.handle_input(Input::Timeout(now)).unwrap();
+        let (_, descriptors, transmits) = drain_dd_output(&mut rtc);
+        assert_eq!(descriptors, [descriptor]);
+        assert!(transmits > 0, "DD write must produce an outgoing packet");
+    }
+
+    #[test]
+    fn readiness_dependency_descriptor_error_wakes_without_queuing_a_frame() {
+        let mut rtc = idle_rtc_with_dd();
+        let before = rtc.cached_timeout;
+        let malformed = DependencyDescriptor::from_bytes([0xc0, 0, 42, 0x80]).unwrap();
+        assert!(matches!(
+            write_dd(&mut rtc, malformed),
+            Err(RtcError::Packet(
+                _,
+                _,
+                PacketError::InvalidDependencyDescriptor(DependencyDescriptorError::NotEnoughBits)
+            ))
+        ));
+        assert!(rtc.readiness.wants_events());
+        assert!(rtc.readiness.wants_timeout());
+        assert_eq!(drain_dd_output(&mut rtc), (before, vec![], 0));
+    }
+
+    #[test]
+    fn readiness_dependency_descriptor_error_preserves_pending_wakes() {
+        for pending_frame in [false, true] {
+            let mut rtc = idle_rtc_with_dd();
+            let before = rtc.cached_timeout;
+            let now = rtc.last_now;
+            rtc.direct_api()
+                .send_app_specific_feedback(42.into(), 43.into(), vec![1, 2, 3, 4]);
+            assert!(rtc.readiness.wants_events());
+            assert!(!rtc.readiness.wants_timeout());
+            let descriptor =
+                DependencyDescriptor::from_bytes([0xc0, 0, 42, 0x80, 0, 0xe0]).unwrap();
+            if pending_frame {
+                write_dd(&mut rtc, descriptor.clone()).unwrap();
+            }
+            let malformed = DependencyDescriptor::from_bytes([0xc0, 0, 43, 0x80]).unwrap();
+            assert!(write_dd(&mut rtc, malformed).is_err());
+            assert!(rtc.readiness.wants_events());
+            assert!(rtc.readiness.wants_timeout());
+            let (deadline, descriptors, transmits) = drain_dd_output(&mut rtc);
+            assert_eq!(deadline, if pending_frame { now } else { before });
+            assert!(descriptors.is_empty());
+            assert!(transmits > 0, "pending feedback must remain sendable");
+            if pending_frame {
+                assert_eq!(rtc.last_timeout_reason(), Reason::Packetize);
+                rtc.handle_input(Input::Timeout(deadline)).unwrap();
+                let (_, descriptors, transmits) = drain_dd_output(&mut rtc);
+                assert_eq!(descriptors, [descriptor]);
+                assert!(transmits > 0, "pending DD frame must remain sendable");
+            }
+        }
     }
 
     #[test]
