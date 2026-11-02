@@ -7,9 +7,9 @@ Apple CryptoKit/CommonCrypto/Security framework backend for [str0m](https://gith
 Requires macOS 10.15+ or iOS 13+, and an Apple Swift toolchain (Swift 5.7+
 with the target SDK installed). Cargo compiles the local [Swift bridge](swift/)
 with `swiftc` and uses `swift-rs` to link the Swift runtime. There are no
-external Swift package dependencies. Cross-compiling between macOS
-architectures also requires Swift compatibility libraries for the target
-architecture; the Command Line Tools may include only the host architecture.
+external Swift package dependencies. Cross-compiling for older macOS versions
+may require Swift compatibility libraries for the target architecture; the
+Command Line Tools may include only the host architecture.
 
 Hashes, HMAC and AES-GCM call CryptoKit directly through the bridge.
 CommonCrypto supplies AES-ECB for SRTP key derivation and DTLS record number

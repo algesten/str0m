@@ -27,7 +27,7 @@ cargo test --locked --manifest-path "$script_dir/../Cargo.toml" --target "$cross
 cross_archive="$(find "$swift_test_target_dir/$cross_target/debug/build" \
   -name libStr0mCryptoKit.a -print -quit)"
 test -n "$cross_archive"
-xcrun lipo -verify_arch "$cross_arch" "$cross_archive"
+xcrun lipo "$cross_archive" -verify_arch "$cross_arch"
 if [[ "$cross_arch" == "x86_64" ]]; then
   mac_min_version="$(xcrun otool -l "$cross_archive" | awk '
     $1 == "cmd" && $2 == "LC_BUILD_VERSION" { in_build = 1; next }
@@ -41,16 +41,14 @@ fi
 
 for ios_target in aarch64-apple-ios aarch64-apple-ios-sim; do
   ios_expected_version=13.0
-  ios_expected_platform=2
   if [[ "$ios_target" == "aarch64-apple-ios-sim" ]]; then
     ios_expected_version=14.0
-    ios_expected_platform=7
   fi
   cargo build --locked --manifest-path "$script_dir/../Cargo.toml" --target "$ios_target"
   ios_archive="$(find "$swift_test_target_dir/$ios_target/debug/build" \
     -name libStr0mCryptoKit.a -print -quit)"
   test -n "$ios_archive"
-  xcrun lipo -verify_arch arm64 "$ios_archive"
+  xcrun lipo "$ios_archive" -verify_arch arm64
   ios_min_version="$(xcrun otool -l "$ios_archive" | awk '
     $1 == "cmd" && $2 == "LC_BUILD_VERSION" { in_build = 1; next }
     in_build && $1 == "minos" { print $2; in_build = 0 }
@@ -61,12 +59,13 @@ for ios_target in aarch64-apple-ios aarch64-apple-ios-sim; do
   fi
   ios_platform="$(xcrun otool -l "$ios_archive" | awk '
     $1 == "cmd" && $2 == "LC_BUILD_VERSION" { in_build = 1; next }
-    in_build && $1 == "platform" { print $2; in_build = 0 }
+    in_build && $1 == "platform" { print toupper($2); in_build = 0 }
   ')"
-  if [[ "$ios_platform" != "$ios_expected_platform" ]]; then
-    echo "$ios_target Swift bridge has platform '$ios_platform', expected $ios_expected_platform" >&2
-    exit 1
-  fi
+  case "$ios_target:$ios_platform" in
+    aarch64-apple-ios:2|aarch64-apple-ios:IOS) ;;
+    aarch64-apple-ios-sim:7|aarch64-apple-ios-sim:IOSSIMULATOR|aarch64-apple-ios-sim:IOS_SIMULATOR) ;;
+    *) echo "$ios_target Swift bridge has unexpected platform '$ios_platform'" >&2; exit 1 ;;
+  esac
 done
 
 # A newer deployment target must reach the Swift compiler as well as rustc.
