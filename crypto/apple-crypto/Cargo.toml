@@ -30,6 +30,7 @@ x509-cert.workspace = true
 subtle.workspace = true
 
 [build-dependencies]
+sha2.workspace = true
 swift-rs = { version = "1.0.9", features = ["build"] }
 
 [lints.rust]

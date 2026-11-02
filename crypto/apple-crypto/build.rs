@@ -3,6 +3,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+use sha2::{Digest, Sha256};
+
+fn hash_part(digest: &mut Sha256, bytes: &[u8]) {
+    digest.update((bytes.len() as u64).to_le_bytes());
+    digest.update(bytes);
+}
+
 fn deployment_target(variable: &str, minimum: &str) -> String {
     let target = env::var(variable).unwrap_or_else(|_| minimum.to_owned());
     let version = |value: &str| -> Vec<u32> {
@@ -24,6 +31,7 @@ fn deployment_target(variable: &str, minimum: &str) -> String {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=swift");
+    println!("cargo:rerun-if-changed=src/cryptokit.rs");
     println!("cargo:rerun-if-env-changed=DEVELOPER_DIR");
     println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
     println!("cargo:rerun-if-env-changed=IPHONEOS_DEPLOYMENT_TARGET");
@@ -82,16 +90,58 @@ fn main() {
     sources.sort();
     assert!(!sources.is_empty(), "no Swift bridge sources found");
 
+    // Different crate versions or source revisions can coexist in one process.
+    // Namespace both the C exports and Swift module by the private bridge code
+    // so a Rust wrapper cannot accidentally call another copy's implementation.
+    let mut digest = Sha256::new();
+    let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION not set");
+    hash_part(&mut digest, version.as_bytes());
+    let build_script = fs::read("build.rs").expect("failed to read build script");
+    hash_part(&mut digest, &build_script);
+    let rust_bridge = fs::read("src/cryptokit.rs").expect("failed to read Rust bridge source");
+    hash_part(&mut digest, &rust_bridge);
+    let swift_sources: Vec<_> = sources
+        .iter()
+        .map(|path| {
+            let source = fs::read_to_string(path).expect("failed to read Swift bridge source");
+            hash_part(&mut digest, path.to_string_lossy().as_bytes());
+            hash_part(&mut digest, source.as_bytes());
+            (path, source)
+        })
+        .collect();
+    let fingerprint: String = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let module_name = format!("Str0mCryptoKit_{fingerprint}");
+    let symbol_prefix = format!("str0m_cryptokit_{fingerprint}_");
+    let generated_dir = out_dir.join("swift-sources");
+    fs::create_dir_all(&generated_dir).expect("failed to create Swift source directory");
+    let generated_sources: Vec<_> = swift_sources
+        .iter()
+        .map(|(path, source)| {
+            let generated = generated_dir.join(path.file_name().expect("Swift source has no name"));
+            fs::write(
+                &generated,
+                source.replace("str0m_cryptokit_", &symbol_prefix),
+            )
+            .expect("failed to write namespaced Swift source");
+            generated
+        })
+        .collect();
+    println!("cargo:rustc-env=STR0M_CRYPTOKIT_PREFIX={symbol_prefix}");
+
     // swift-rs supplies the Swift runtime link paths. Compile our dependency-free
     // bridge directly so SwiftPM cannot substitute the host architecture, raise
     // the deployment target, or place the archive in an unexpected directory.
     let mut swiftc = Command::new("swiftc");
     swiftc
-        .args(["-emit-library", "-static", "-module-name", "Str0mCryptoKit"])
+        .args(["-emit-library", "-static", "-module-name", &module_name])
         .args(["-target", &swift_target, "-sdk", sdk_path.trim()])
         .arg("-o")
-        .arg(out_dir.join("libStr0mCryptoKit.a"))
-        .args(sources);
+        .arg(out_dir.join(format!("lib{module_name}.a")))
+        .args(generated_sources);
     if env::var("OPT_LEVEL").as_deref() != Ok("0") {
         swiftc.arg("-O");
     }
@@ -102,5 +152,5 @@ fn main() {
 
     swift_rs::SwiftLinker::new("10.15").with_ios("13.0").link();
     println!("cargo:rustc-link-search=native={}", out_dir.display());
-    println!("cargo:rustc-link-lib=static=Str0mCryptoKit");
+    println!("cargo:rustc-link-lib=static={module_name}");
 }

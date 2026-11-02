@@ -25,7 +25,7 @@ export CARGO_TARGET_DIR="$swift_test_target_dir"
 # requested macOS architecture. It does not require running the binary.
 cargo test --locked --manifest-path "$script_dir/../Cargo.toml" --target "$cross_target" --no-run
 cross_archive="$(find "$swift_test_target_dir/$cross_target/debug/build" \
-  -name libStr0mCryptoKit.a -print -quit)"
+  -name 'libStr0mCryptoKit_*.a' -print -quit)"
 test -n "$cross_archive"
 xcrun lipo "$cross_archive" -verify_arch "$cross_arch"
 if [[ "$cross_arch" == "x86_64" ]]; then
@@ -46,7 +46,7 @@ for ios_target in aarch64-apple-ios aarch64-apple-ios-sim; do
   fi
   cargo build --locked --manifest-path "$script_dir/../Cargo.toml" --target "$ios_target"
   ios_archive="$(find "$swift_test_target_dir/$ios_target/debug/build" \
-    -name libStr0mCryptoKit.a -print -quit)"
+    -name 'libStr0mCryptoKit_*.a' -print -quit)"
   test -n "$ios_archive"
   xcrun lipo "$ios_archive" -verify_arch arm64
   ios_min_version="$(xcrun otool -l "$ios_archive" | awk '
@@ -80,7 +80,7 @@ check_newer_deployment_target() {
     env "$deployment_var=$expected" CARGO_TARGET_DIR="$swift_test_target_dir/newer" \
       cargo build --locked --manifest-path "$script_dir/../Cargo.toml" --target "$target"
     archive="$(find "$swift_test_target_dir/newer/$target/debug/build" \
-      -name libStr0mCryptoKit.a -print -quit)"
+      -name 'libStr0mCryptoKit_*.a' -print -quit)"
     test -n "$archive"
     actual="$(xcrun otool -l "$archive" | awk '
       $1 == "cmd" && $2 == "LC_BUILD_VERSION" { in_build = 1; next }

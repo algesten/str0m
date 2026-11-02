@@ -4,7 +4,9 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 unsafe extern "C" {
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "hash")]
     fn str0m_cryptokit_hash(size: usize, input: *const u8, count: usize, output: *mut u8);
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "hmac")]
     fn str0m_cryptokit_hmac(
         size: usize,
         key: *const u8,
@@ -14,12 +16,19 @@ unsafe extern "C" {
         count: usize,
         output: *mut u8,
     );
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "hash_new")]
     fn str0m_cryptokit_hash_new(size: usize) -> *mut c_void;
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "hash_update")]
     fn str0m_cryptokit_hash_update(context: *mut c_void, input: *const u8, count: usize);
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "hash_snapshot")]
     fn str0m_cryptokit_hash_snapshot(context: *mut c_void, output: *mut u8);
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "hash_free")]
     fn str0m_cryptokit_hash_free(context: *mut c_void);
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "aes_gcm_key_new")]
     fn str0m_cryptokit_aes_gcm_key_new(key: *const u8, count: usize) -> *mut c_void;
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "aes_gcm_key_free")]
     fn str0m_cryptokit_aes_gcm_key_free(context: *mut c_void);
+    #[link_name = concat!(env!("STR0M_CRYPTOKIT_PREFIX"), "aes_gcm")]
     fn str0m_cryptokit_aes_gcm(
         encrypt: i32,
         context: *mut c_void,

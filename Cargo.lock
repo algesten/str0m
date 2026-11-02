@@ -2065,6 +2065,7 @@ dependencies = [
  "pkcs8",
  "sec1",
  "security-framework",
+ "sha2",
  "spki",
  "str0m-proto",
  "subtle",

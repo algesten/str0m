@@ -177,6 +177,7 @@ jobs:
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
           bash crypto/apple-crypto/tests/build-targets.sh
+          bash crypto/apple-crypto/tests/ffi-symbol-isolation.sh
 
   cargo-deny:
     runs-on: ubuntu-latest

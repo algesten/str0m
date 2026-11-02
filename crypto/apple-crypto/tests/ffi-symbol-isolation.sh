@@ -6,6 +6,11 @@ scratch="$(mktemp -d "${TMPDIR:-/tmp}/str0m-ffi-isolation.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/copy" "$scratch/probe/src/bin"
 git -C "$repo" archive HEAD | tar -xf - -C "$scratch/copy"
+# Include tracked worktree changes so the fixture also tests fixes before commit.
+git -C "$repo" diff --binary HEAD > "$scratch/worktree.patch"
+if [[ -s "$scratch/worktree.patch" ]]; then
+  git -C "$scratch/copy" apply --binary "$scratch/worktree.patch"
+fi
 cp "$repo/Cargo.lock" "$scratch/probe/Cargo.lock"
 
 # Simulate a second independently sourced release with a different private ABI:
