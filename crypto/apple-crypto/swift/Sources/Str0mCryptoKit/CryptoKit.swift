@@ -178,9 +178,8 @@ public func aesGcm(
             // ciphertext || tag, avoiding separate ciphertext/tag Data slices.
             guard let combined = sealed.combined else { return 1 }
             combined.withUnsafeBytes {
-                output.update(
-                    from: $0.baseAddress!.advanced(by: 12).assumingMemoryBound(to: UInt8.self),
-                    count: count + 16
+                UnsafeMutableRawPointer(output).copyMemory(
+                    from: $0.baseAddress!.advanced(by: 12), byteCount: count + 16
                 )
             }
         } else {
