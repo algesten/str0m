@@ -1,6 +1,23 @@
 # str0m-apple-crypto
 
-Apple CommonCrypto/Security framework backend for [str0m](https://github.com/algesten/str0m).
+Apple CryptoKit/CommonCrypto/Security framework backend for [str0m](https://github.com/algesten/str0m).
+
+## Building
+
+Requires macOS 10.15+ or iOS 13+, and an Apple Swift toolchain (Swift 5.7+
+with the target SDK installed). Cargo uses `swift-rs` at build time to compile
+the local [Swift bridge](swift/) and link it with the Swift runtime. There are
+no external Swift package dependencies.
+
+Hashes, HMAC and AES-GCM call CryptoKit directly through the bridge.
+CommonCrypto supplies AES-ECB for SRTP key derivation and DTLS record number
+protection; key and certificate operations use Security.framework.
+
+The bridge borrows input buffers directly, including fragmented HMAC messages
+and SRTP associated data. AES-GCM ciphers retain their CryptoKit key between
+packets. DTLS writes results back into its existing buffers after successful
+encryption or authentication. CryptoKit's public AES-GCM API still produces
+owned output, which the bridge copies into the caller's buffer.
 
 ## Usage
 

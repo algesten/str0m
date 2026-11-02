@@ -1,14 +1,14 @@
-//! Apple CommonCrypto SHA-256 implementation.
+//! Apple CryptoKit SHA-256 implementation.
 
 use str0m_proto::crypto::Sha256Provider;
 
-/// Apple CommonCrypto-based SHA-256 provider.
+/// Apple CryptoKit-based SHA-256 provider.
 #[derive(Debug)]
 pub(crate) struct AppleCryptoSha256Provider;
 
 impl Sha256Provider for AppleCryptoSha256Provider {
     fn sha256(&self, data: &[u8]) -> [u8; 32] {
-        apple_cryptokit::sha256_hash(data)
+        crate::cryptokit::sha256(data)
     }
 }
 
