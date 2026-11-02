@@ -45,11 +45,17 @@ public func hash(
     let data = UnsafeRawBufferPointer(start: input, count: count)
     switch size {
     case 20:
-        Insecure.SHA1.hash(data: data).withUnsafeBytes { output.copyMemory(from: $0.baseAddress!, byteCount: 20) }
+        Insecure.SHA1.hash(data: data).withUnsafeBytes {
+            output.copyMemory(from: $0.baseAddress!, byteCount: 20)
+        }
     case 32:
-        SHA256.hash(data: data).withUnsafeBytes { output.copyMemory(from: $0.baseAddress!, byteCount: 32) }
+        SHA256.hash(data: data).withUnsafeBytes {
+            output.copyMemory(from: $0.baseAddress!, byteCount: 32)
+        }
     case 48:
-        SHA384.hash(data: data).withUnsafeBytes { output.copyMemory(from: $0.baseAddress!, byteCount: 48) }
+        SHA384.hash(data: data).withUnsafeBytes {
+            output.copyMemory(from: $0.baseAddress!, byteCount: 48)
+        }
     default:
         preconditionFailure("Unsupported hash size")
     }
@@ -117,7 +123,8 @@ private func borrowedHashContext(_ pointer: UnsafeMutableRawPointer) -> any Hash
 }
 
 @_cdecl("str0m_cryptokit_hash_update")
-public func hashUpdate(_ context: UnsafeMutableRawPointer, _ input: UnsafeRawPointer, _ count: Int) {
+public func hashUpdate(_ context: UnsafeMutableRawPointer, _ input: UnsafeRawPointer, _ count: Int)
+{
     borrowedHashContext(context).update(UnsafeRawBufferPointer(start: input, count: count))
 }
 
