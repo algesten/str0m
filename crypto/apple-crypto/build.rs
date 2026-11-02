@@ -3,10 +3,30 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+fn deployment_target(variable: &str, minimum: &str) -> String {
+    let target = env::var(variable).unwrap_or_else(|_| minimum.to_owned());
+    let version = |value: &str| -> Vec<u32> {
+        value
+            .split('.')
+            .map(|part| {
+                part.parse()
+                    .unwrap_or_else(|_| panic!("invalid {variable}: {target}"))
+            })
+            .collect()
+    };
+    if version(&target) < version(minimum) {
+        minimum.to_owned()
+    } else {
+        target
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=swift");
     println!("cargo:rerun-if-env-changed=DEVELOPER_DIR");
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+    println!("cargo:rerun-if-env-changed=IPHONEOS_DEPLOYMENT_TARGET");
 
     if env::var("CARGO_CFG_TARGET_VENDOR").as_deref() != Ok("apple") {
         return;
@@ -19,19 +39,26 @@ fn main() {
     };
     let target = env::var("TARGET").expect("TARGET not set");
     let (sdk, swift_target) = match env::var("CARGO_CFG_TARGET_OS").as_deref() {
-        Ok("macos") => ("macosx", format!("{arch}-apple-macosx10.15")),
+        Ok("macos") => {
+            let minimum = deployment_target("MACOSX_DEPLOYMENT_TARGET", "10.15");
+            ("macosx", format!("{arch}-apple-macosx{minimum}"))
+        }
         Ok("ios") if target.ends_with("-macabi") => {
             panic!("Mac Catalyst is not supported by the Swift runtime linker")
         }
         Ok("ios") if target.ends_with("-sim") || arch == "x86_64" => {
             // Apple Silicon simulators first appeared in iOS 14.
             let minimum = if arch == "arm64" { "14.0" } else { "13.0" };
+            let minimum = deployment_target("IPHONEOS_DEPLOYMENT_TARGET", minimum);
             (
                 "iphonesimulator",
                 format!("{arch}-apple-ios{minimum}-simulator"),
             )
         }
-        Ok("ios") => ("iphoneos", format!("{arch}-apple-ios13.0")),
+        Ok("ios") => {
+            let minimum = deployment_target("IPHONEOS_DEPLOYMENT_TARGET", "13.0");
+            ("iphoneos", format!("{arch}-apple-ios{minimum}"))
+        }
         other => panic!("unsupported Apple target operating system: {other:?}"),
     };
 

@@ -76,7 +76,8 @@ check_newer_deployment_target() {
   local target="$1"
   local deployment_var="$2"
   local expected archive actual
-  for expected in 15.0 16.0; do
+  shift 2
+  for expected in "$@"; do
     env "$deployment_var=$expected" CARGO_TARGET_DIR="$swift_test_target_dir/newer" \
       cargo build --locked --manifest-path "$script_dir/../Cargo.toml" --target "$target"
     archive="$(find "$swift_test_target_dir/newer/$target/debug/build" \
@@ -93,5 +94,5 @@ check_newer_deployment_target() {
   done
 }
 
-check_newer_deployment_target "$cross_target" MACOSX_DEPLOYMENT_TARGET
-check_newer_deployment_target aarch64-apple-ios IPHONEOS_DEPLOYMENT_TARGET
+check_newer_deployment_target "$cross_target" MACOSX_DEPLOYMENT_TARGET 15.0 15.1
+check_newer_deployment_target aarch64-apple-ios IPHONEOS_DEPLOYMENT_TARGET 15.0 16.0
