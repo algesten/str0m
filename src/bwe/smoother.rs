@@ -15,16 +15,14 @@ pub struct EstimateSmoother {
     estimates: VecDeque<TimeBitrate>,
     maybe_emit: bool,
     emitted: Option<Bitrate>,
-    smoothing: bool,
 }
 
 impl EstimateSmoother {
-    pub fn new(smoothing: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             estimates: VecDeque::new(),
             maybe_emit: false,
             emitted: None,
-            smoothing,
         }
     }
 
@@ -55,14 +53,14 @@ impl EstimateSmoother {
     }
 
     /// Poll for an estimate to emit. Returns Some only when there's a new value to emit.
-    pub fn poll(&mut self) -> Option<Bitrate> {
+    pub fn poll(&mut self, smoothing: bool) -> Option<Bitrate> {
         if !self.maybe_emit {
             return None;
         }
 
         let &(_, latest) = self.estimates.back()?;
 
-        let rate: Bitrate = if self.smoothing {
+        let rate: Bitrate = if smoothing {
             let total: f64 = self.estimates.iter().map(|b| b.1.as_f64()).sum();
             (total / self.estimates.len() as f64).into()
         } else {
@@ -103,13 +101,13 @@ mod test {
     use super::*;
 
     fn emitted(smoothing: bool, steps: &[(u64, u64)]) -> Vec<Option<Bitrate>> {
-        let mut smoother = EstimateSmoother::new(smoothing);
+        let mut smoother = EstimateSmoother::new();
         let now = Instant::now();
         steps
             .iter()
             .map(|&(ms, kbps)| {
                 smoother.record(now + Duration::from_millis(ms), Bitrate::kbps(kbps));
-                smoother.poll()
+                smoother.poll(smoothing)
             })
             .collect()
     }
