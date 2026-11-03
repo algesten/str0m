@@ -53,18 +53,19 @@ impl EstimateSmoother {
     }
 
     /// Poll for an estimate to emit. Returns Some only when there's a new value to emit.
-    pub fn poll(&mut self) -> Option<Bitrate> {
+    pub fn poll(&mut self, smoothing: bool) -> Option<Bitrate> {
         if !self.maybe_emit {
             return None;
         }
 
-        if self.estimates.is_empty() {
-            return None;
-        }
+        let &(_, latest) = self.estimates.back()?;
 
-        let total: f64 = self.estimates.iter().map(|b| b.1.as_f64()).sum();
-        let avg = total / self.estimates.len() as f64;
-        let rate: Bitrate = avg.into();
+        let rate: Bitrate = if smoothing {
+            let total: f64 = self.estimates.iter().map(|b| b.1.as_f64()).sum();
+            (total / self.estimates.len() as f64).into()
+        } else {
+            latest
+        };
 
         // This forces emitting if we have the first ever value, or a last
         // where the rest of the window is gone (estimates stop coming).
@@ -93,4 +94,53 @@ fn in_tolerance(b1: Bitrate, b2: Bitrate) -> bool {
     let min = b1 * (1.0 - TOLERANCE);
     let max = b1 * (1.0 + TOLERANCE);
     b2 > min && b2 < max
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn emitted(smoothing: bool, steps: &[(u64, u64)]) -> Vec<Option<Bitrate>> {
+        let mut smoother = EstimateSmoother::new();
+        let now = Instant::now();
+        steps
+            .iter()
+            .map(|&(ms, kbps)| {
+                smoother.record(now + Duration::from_millis(ms), Bitrate::kbps(kbps));
+                smoother.poll(smoothing)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn smoothing_emits_the_mean_of_the_window() {
+        assert_eq!(
+            emitted(true, &[(0, 500), (2000, 1700)]),
+            [Some(Bitrate::kbps(500)), Some(Bitrate::kbps(1100))]
+        );
+    }
+
+    #[test]
+    fn without_smoothing_emits_a_rise_at_once() {
+        assert_eq!(
+            emitted(false, &[(0, 500), (2000, 1700)]),
+            [Some(Bitrate::kbps(500)), Some(Bitrate::kbps(1700))]
+        );
+    }
+
+    #[test]
+    fn without_smoothing_holds_back_changes_within_tolerance() {
+        assert_eq!(
+            emitted(false, &[(0, 1000), (100, 1040)]),
+            [Some(Bitrate::kbps(1000)), None]
+        );
+    }
+
+    #[test]
+    fn without_smoothing_emits_a_held_back_change_once_it_is_alone_in_the_window() {
+        assert_eq!(
+            emitted(false, &[(0, 1000), (100, 1040), (3200, 1040)]),
+            [Some(Bitrate::kbps(1000)), None, Some(Bitrate::kbps(1040))]
+        );
+    }
 }

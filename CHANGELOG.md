@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Allow disabling BWE estimate smoothing #1119
+
 # 0.25.0
 
   * Reject SDP with conflicting RTX apt values instead of panicking #1113

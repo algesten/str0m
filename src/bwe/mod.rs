@@ -101,8 +101,8 @@ impl Bwe {
         self.bwe.update(records, now);
     }
 
-    pub fn poll_estimate(&mut self) -> Option<Bitrate> {
-        self.smoother.poll()
+    pub fn poll_estimate(&mut self, smoothing: bool) -> Option<Bitrate> {
+        self.smoother.poll(smoothing)
     }
 
     pub fn poll_timeout(&self) -> (Option<Instant>, Reason) {

@@ -99,6 +99,7 @@ pub(crate) struct Session {
 
     bwe: Option<Bwe>,
     bwe_last_event: Option<(Bitrate, bool)>,
+    bwe_smoothing: bool,
 
     enable_twcc_feedback: bool,
 
@@ -204,6 +205,7 @@ impl Session {
             max_rx_seq_lookup: HashMap::new(),
             bwe,
             bwe_last_event: None,
+            bwe_smoothing: config.bwe_smoothing,
             enable_twcc_feedback: false,
             pacer,
             pacer_control: PacerControl::new(),
@@ -1020,7 +1022,7 @@ impl Session {
             self.bwe.is_some() && self.srtp_tx.is_some() && self.probe_media().is_some();
         if let Some(bwe) = &mut self.bwe {
             // Drain estimates even while unavailable so they cannot be delivered later.
-            let estimate = bwe.poll_estimate();
+            let estimate = bwe.poll_estimate(self.bwe_smoothing);
             let estimate = match (can_probe, self.bwe_last_event) {
                 (false, Some((last, true))) => Some(last),
                 (false, _) => None,
