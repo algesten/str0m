@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Follow RED per m-line across renegotiation and expose `Media::red_allowed` #1122
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 

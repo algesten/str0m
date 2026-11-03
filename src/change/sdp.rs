@@ -799,6 +799,8 @@ fn process_remote_sctp_init(
 }
 
 fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
+    // As for a=setup: pending changes mean we are writing an offer, none an answer.
+    let answering = params.pending.is_none();
     let (media_lines, mids, stream_ids) = {
         let mut v = as_media_lines(session);
 
@@ -840,7 +842,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
                     .cloned()
                     .collect();
 
-                m.as_media_line(attrs, &ssrcs, &session.exts, &params)
+                m.as_media_line(attrs, &ssrcs, &session.exts, &params, answering)
             })
             .collect::<Vec<_>>();
 
@@ -1294,12 +1296,21 @@ fn update_media(
     }
 
     // Narrowing/ordering of of PT
-    let pts: Vec<Pt> = m
-        .rtp_params()
-        .into_iter()
-        .filter_map(|p| config.sdp_match_remote(p, m.direction()))
+    let remote_params = m.rtp_params();
+    let pts: Vec<Pt> = remote_params
+        .iter()
+        .filter_map(|p| config.sdp_match_remote(*p, m.direction()))
         .collect();
     media.set_remote_pts(pts);
+
+    // Which primaries the remote still pairs with RED. Unlike the PT list, this follows every
+    // renegotiation, so a peer can drop RED (e.g. with setCodecPreferences) and have it stay off.
+    let red: Vec<Pt> = remote_params
+        .iter()
+        .filter(|p| p.red.is_some())
+        .filter_map(|p| config.sdp_match_remote(*p, m.direction()))
+        .collect();
+    media.set_remote_red(red);
 
     let mut remote_extmap = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {
@@ -1396,6 +1407,7 @@ trait AsSdpMediaLine {
         ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
         exts: &ExtensionMap,
         params: &[PayloadParams],
+        answering: bool,
     ) -> MediaLine;
 }
 
@@ -1418,6 +1430,7 @@ impl AsSdpMediaLine for (Mid, usize) {
         _ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
         _exts: &ExtensionMap,
         _params: &[PayloadParams],
+        _answering: bool,
     ) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.0));
         attrs.push(MediaAttribute::SctpPort(5000));
@@ -1452,10 +1465,11 @@ impl AsSdpMediaLine for Media {
         ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
         exts: &ExtensionMap,
         params: &[PayloadParams],
+        answering: bool,
     ) -> MediaLine {
         if self.app_tmp {
             let app = (self.mid(), self.index());
-            return app.as_media_line(attrs, ssrcs_tx, exts, params);
+            return app.as_media_line(attrs, ssrcs_tx, exts, params, answering);
         }
 
         attrs.push(MediaAttribute::Mid(self.mid()));
@@ -1482,7 +1496,11 @@ impl AsSdpMediaLine for Media {
         let mut pts = vec![];
 
         for p in effective_params {
-            let p = *p;
+            let mut p = *p;
+            // The session keeps the RED PT, but an answer lists RED only where the offer did.
+            if answering && !self.remote_allows_red(p.pt()) {
+                p.red = None;
+            }
             p.as_media_attrs(&mut attrs);
 
             // The pts that will be advertised in the SDP. A negotiated RED goes before its

@@ -138,9 +138,18 @@ pub struct Media {
     /// Payloaders for outoing RTP packets.
     payloaders: HashMap<(Pt, Option<Rid>), PayloaderEntry>,
 
-    /// Whether outgoing packets are wrapped in RFC 2198 RED right now. RED availability is fixed at
-    /// negotiation (or set up via DirectAPI); this is the runtime send-side lever, toggled with no
-    /// renegotiation. Defaults to `true`, so a negotiated RED PT wraps unless it is turned off.
+    /// The primary PTs whose RED PT the remote listed for this m-line in its latest SDP, or `None`
+    /// before the remote has described the m-line.
+    ///
+    /// The RED PT itself stays fixed for the session, but unlike `remote_pts` this follows every
+    /// renegotiation. A peer that drops RED from a later offer or answer must not be sent RED (RFC
+    /// 3264 section 8.3.2). Our answer to such an offer leaves RED out too: RFC 3264 would allow
+    /// listing it, but libWebRTC then keeps sending RED the application removed.
+    remote_red: Option<Vec<Pt>>,
+
+    /// Whether outgoing packets are wrapped in RFC 2198 RED right now. RED availability comes from
+    /// negotiation (or DirectAPI) and `remote_red`; this is the runtime send-side lever, toggled with
+    /// no renegotiation. Defaults to `true`, so a negotiated RED PT wraps unless it is turned off.
     red_send_enabled: bool,
 
     /// Outgoing payloads ordered by their send deadlines or media wallclock times.
@@ -621,7 +630,7 @@ impl Media {
         // The RED PT to wrap into, if RED is negotiated for this codec and send-side wrapping is
         // on. When off we send on the plain PT even though RED stays negotiated on the m-line (it
         // can be toggled back on with no renegotiation).
-        let red_pt = if self.red_send_enabled {
+        let red_pt = if self.red_send_enabled && self.remote_allows_red(pt) {
             params.iter().find(|p| p.pt == pt).and_then(|p| p.red)
         } else {
             None
@@ -646,6 +655,31 @@ impl Media {
         };
 
         result.map_err(|e| RtcError::Packet(self.mid, pt, e))
+    }
+
+    pub(crate) fn set_remote_red(&mut self, primary_pts: Vec<Pt>) {
+        if self.remote_red.as_ref() != Some(&primary_pts) {
+            debug!(
+                "Mid ({}) remote RED for primary PTs: {:?}",
+                self.mid, primary_pts
+            );
+        }
+        self.remote_red = Some(primary_pts);
+    }
+
+    /// Whether RED negotiated for the primary codec `primary` may be used on this m-line.
+    ///
+    /// The RED PT in [`PayloadParams::red`][crate::format::PayloadParams::red] is fixed for the
+    /// session, but a remote can drop RED from a later offer or answer for one m-line. In RTP mode
+    /// the application writes the RED packets itself and should check this before it does.
+    pub fn red_allowed(&self, primary: Pt) -> bool {
+        self.remote_allows_red(primary)
+    }
+
+    pub(crate) fn remote_allows_red(&self, primary: Pt) -> bool {
+        self.remote_red
+            .as_ref()
+            .is_none_or(|pts| pts.contains(&primary))
     }
 
     pub(crate) fn set_remote_pts(&mut self, pts: Vec<Pt>) {
@@ -739,6 +773,7 @@ impl Default for Media {
             last_tele_end: None,
             need_open_event: true,
             need_changed_event: false,
+            remote_red: None,
             red_send_enabled: true,
         }
     }

@@ -169,6 +169,19 @@ consider valid to send on that m-line. In practice, browsers keep stable PT/code
 sets for an existing m-line, and we have not seen a real interoperability problem
 from keeping the initial list.
 
+RED is the exception. libWebRTC drops RED from an existing m-line when the
+application removes it with `setCodecPreferences` ([RFC 9429 section
+4.2.6][rfc9429-prefs]), and it keeps sending RED for as long as our answer lists it.
+RED is safe to narrow where the PT list is not: dropping it removes a wrapper, not
+the codec the m-line is using, and the RED PT stays reserved so no mapping changes.
+So str0m follows RED per m-line: an answer lists RED only where the offer it answers
+does, and whenever the remote's latest offer or answer for an m-line leaves RED out
+we stop wrapping outgoing audio in it, as RFC 3264 section 8.3.2 requires. Our own
+offers still list a configured RED and let the answer decide. The RED payload type
+stays reserved for the session, so RED comes back as soon as it is negotiated again.
+In RTP mode the application writes RED itself; `Media::red_allowed` tells it whether
+RED is still on for an m-line.
+
 ### Side note about asymmetry
 
 > The answerer MUST send using a media format in the offer that is also listed in the answer,
@@ -269,6 +282,7 @@ m-line (max-bundle style).
 [^plan-b]: Plan B was the better direction. :)
 
 [rfc9429]: https://www.rfc-editor.org/rfc/rfc9429.html#section-5.2.2
+[rfc9429-prefs]: https://www.rfc-editor.org/rfc/rfc9429.html#section-4.2.6
 [rfc8830]: https://www.rfc-editor.org/rfc/rfc8830.html#section-3.2.3
 [sdpspec]: https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
 [rfc8843]: https://datatracker.ietf.org/doc/html/rfc8843

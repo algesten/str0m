@@ -1490,7 +1490,7 @@ impl Session {
     }
 
     /// Toggle RFC 2198 RED wrapping on the send side at runtime. No renegotiation: RED availability
-    /// is fixed at negotiation (or via DirectAPI); this only decides whether we wrap right now.
+    /// comes from negotiation (or DirectAPI); this only decides whether we wrap right now.
     /// Returns whether the setting changed.
     pub fn set_red_send(&mut self, mid: Mid, enabled: bool) -> bool {
         let Some(media) = self.media_by_mid_mut(mid) else {

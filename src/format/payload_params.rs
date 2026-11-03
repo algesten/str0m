@@ -776,7 +776,8 @@ impl PayloadParams {
                 );
             }
 
-            if self.red != first.red {
+            // Dropping RED is honoured per m-line (`Media::red_allowed`); only a PT change is ignored.
+            if first.red.is_some() && self.red != first.red {
                 warn!(
                     "Ignore remote PT RED change {:?} => {:?}",
                     self.red, first.red

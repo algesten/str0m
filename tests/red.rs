@@ -443,6 +443,290 @@ pub fn red_send_toggle_no_renegotiation() {
     assert!(saw_opus, "phase 2 should send plain Opus after the toggle");
 }
 
+/// Remove `red_pt` from every audio m-line of `sdp`, as `setCodecPreferences` without RED would.
+fn without_red(sdp: &str, red_pt: &str) -> String {
+    sdp.split("\r\n")
+        .filter(|l| {
+            !l.starts_with(&format!("a=rtpmap:{red_pt} "))
+                && !l.starts_with(&format!("a=fmtp:{red_pt} "))
+        })
+        .map(|l| {
+            if l.starts_with("m=audio ") {
+                l.split(' ')
+                    .filter(|w| *w != red_pt)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            } else {
+                l.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n")
+}
+
+/// A peer that drops RED in a later offer (libwebrtc does so after `setCodecPreferences`) must get
+/// an answer without RED and plain Opus on the wire, even though the session keeps the RED PT.
+/// Re-offering RED turns it back on.
+#[test]
+pub fn red_follows_renegotiation() {
+    init_log();
+    init_crypto_default();
+
+    let mut l = rtc_with_red(Peer::Left, false); // frame mode: wraps outgoing Opus in RED
+
+    let now = Instant::now();
+    let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_opus(true, true);
+    if let Some(crypto) = Peer::Right.crypto_provider() {
+        r_builder = r_builder.set_crypto_provider(crypto);
+    }
+    let mut r = TestRtc::new_with_rtc(Peer::Right.span(), r_builder.build(now));
+
+    l.set_forced_time_advance(Duration::from_millis(1));
+    r.set_forced_time_advance(Duration::from_millis(1));
+
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+    let mut change = l.sdp_api();
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.rtc.sdp_api().accept_offer(offer).unwrap();
+    l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+
+    loop {
+        if l.is_connected() || r.is_connected() {
+            break;
+        }
+        progress(&mut l, &mut r).unwrap();
+    }
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    let red_pt = l.params_opus().red().expect("RED negotiated");
+    let opus_pt = l.params_opus().pt();
+    let red = red_pt.to_string();
+
+    // R re-offers; `strip` removes RED from it. Returns the answer's first audio m-line formats.
+    let renegotiate = |l: &mut TestRtc, r: &mut TestRtc, strip: bool| {
+        let mut change = r.rtc.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+        let (offer, pending) = change.apply().unwrap();
+        let sdp = offer.to_sdp_string();
+        let sdp = if strip { without_red(&sdp, &red) } else { sdp };
+        let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+        let answer = l.rtc.sdp_api().accept_offer(offer).unwrap();
+        let fmts = audio_fmts(&answer.to_sdp_string());
+        r.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+        fmts
+    };
+
+    // Payload types R received in events `from..to`, past the packets that were already queued.
+    let pts_between = |r: &TestRtc, from: usize, to: usize| -> Vec<u8> {
+        r.events[from..to]
+            .iter()
+            .filter_map(|(_, e)| match e {
+                Event::RtpPacket(p) => Some(*p.header.payload_type),
+                _ => None,
+            })
+            .skip(5)
+            .collect()
+    };
+
+    let data = vec![1_u8; 80];
+    let mut start_of_talk_spurt = true;
+    let mut phase_starts = vec![r.events.len()];
+    for phase in 0..3 {
+        if phase == 1 {
+            let fmts = renegotiate(&mut l, &mut r, true);
+            assert!(!fmts.contains(&red), "answer must drop RED: {fmts:?}");
+            phase_starts.push(r.events.len());
+        } else if phase == 2 {
+            let fmts = renegotiate(&mut l, &mut r, false);
+            assert!(fmts.contains(&red), "answer must offer RED again: {fmts:?}");
+            phase_starts.push(r.events.len());
+        }
+        let until = l.duration() + Duration::from_secs(1);
+        while l.duration() < until {
+            let wallclock = l.start + l.duration();
+            let time = l.duration().into();
+            l.writer(mid)
+                .unwrap()
+                .start_of_talkspurt(start_of_talk_spurt)
+                .write(opus_pt, wallclock, time, data.clone())
+                .unwrap();
+            start_of_talk_spurt = false;
+            progress(&mut l, &mut r).unwrap();
+        }
+    }
+
+    assert!(
+        l.params_opus().red().is_some(),
+        "the session keeps the RED PT"
+    );
+
+    phase_starts.push(r.events.len());
+    let phase = |i: usize| pts_between(&r, phase_starts[i], phase_starts[i + 1]);
+    let (with_red, dropped, restored) = (phase(0), phase(1), phase(2));
+    assert!(!with_red.is_empty() && with_red.iter().all(|pt| *pt == *red_pt));
+    assert!(
+        !dropped.is_empty() && dropped.iter().all(|pt| *pt == *opus_pt),
+        "{dropped:?}"
+    );
+    assert!(
+        !restored.is_empty() && restored.iter().all(|pt| *pt == *red_pt),
+        "{restored:?}"
+    );
+}
+
+/// RED is tracked per m-line: dropping it on one audio m-line leaves it on the others.
+#[test]
+pub fn red_is_tracked_per_m_line() {
+    init_log();
+    init_crypto_default();
+
+    let mut l = rtc_with_red(Peer::Left, false);
+    let mut r = rtc_with_red(Peer::Right, false);
+
+    let mut change = l.sdp_api();
+    let first = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let second = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.rtc.sdp_api().accept_offer(offer).unwrap();
+    l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+
+    let opus = l.params_opus().pt();
+    let red = l.params_opus().red().expect("RED negotiated").to_string();
+
+    // R re-offers with RED removed from the first audio m-line only.
+    let mut change = r.rtc.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let sdp = offer.to_sdp_string();
+    let (head, rest) = sdp.split_at(sdp.find("m=audio").unwrap());
+    let next = rest.find("\r\nm=").map(|i| i + 2).unwrap();
+    let sdp = format!(
+        "{head}{}{}",
+        without_red(&rest[..next], &red),
+        &rest[next..]
+    );
+    let answer = l
+        .rtc
+        .sdp_api()
+        .accept_offer(SdpOffer::from_sdp_string(&sdp).unwrap())
+        .unwrap();
+
+    let mlines: Vec<Vec<String>> = answer
+        .to_sdp_string()
+        .split("m=audio")
+        .skip(1)
+        .map(|m| audio_fmts(&format!("m=audio{m}")))
+        .collect();
+    assert!(
+        !mlines[0].contains(&red),
+        "first m-line drops RED: {mlines:?}"
+    );
+    assert!(
+        mlines[1].contains(&red),
+        "second m-line keeps RED: {mlines:?}"
+    );
+
+    assert!(!l.rtc.media(first).unwrap().red_allowed(opus));
+    assert!(l.rtc.media(second).unwrap().red_allowed(opus));
+    r.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+}
+
+/// An answer that leaves RED out stops our RED wrapping (RFC 3264 section 8.3.2), while our next
+/// offer still lists RED so the peer can take it back.
+#[test]
+pub fn red_send_stops_when_the_answer_drops_it() {
+    init_log();
+    init_crypto_default();
+
+    let mut l = rtc_with_red(Peer::Left, false); // frame mode: wraps outgoing Opus in RED
+
+    let now = Instant::now();
+    let mut r_builder = Rtc::builder().set_rtp_mode(true).enable_opus(true, true);
+    if let Some(crypto) = Peer::Right.crypto_provider() {
+        r_builder = r_builder.set_crypto_provider(crypto);
+    }
+    let mut r = TestRtc::new_with_rtc(Peer::Right.span(), r_builder.build(now));
+
+    l.set_forced_time_advance(Duration::from_millis(1));
+    r.set_forced_time_advance(Duration::from_millis(1));
+
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+    let mut change = l.sdp_api();
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.rtc.sdp_api().accept_offer(offer).unwrap();
+    l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+
+    loop {
+        if l.is_connected() || r.is_connected() {
+            break;
+        }
+        progress(&mut l, &mut r).unwrap();
+    }
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    let red_pt = l.params_opus().red().expect("RED negotiated");
+    let opus_pt = l.params_opus().pt();
+    let red = red_pt.to_string();
+
+    // L re-offers and R answers without RED, as a peer that has set codec preferences would.
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.rtc.sdp_api().accept_offer(offer).unwrap();
+    let stripped = without_red(&answer.to_sdp_string(), &red);
+    let answer = str0m::change::SdpAnswer::from_sdp_string(&stripped).unwrap();
+    l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+
+    let from = r.events.len();
+    let data = vec![1_u8; 80];
+    let mut start_of_talk_spurt = true;
+    let until = l.duration() + Duration::from_secs(1);
+    while l.duration() < until {
+        let wallclock = l.start + l.duration();
+        let time = l.duration().into();
+        l.writer(mid)
+            .unwrap()
+            .start_of_talkspurt(start_of_talk_spurt)
+            .write(opus_pt, wallclock, time, data.clone())
+            .unwrap();
+        start_of_talk_spurt = false;
+        progress(&mut l, &mut r).unwrap();
+    }
+
+    let pts: Vec<u8> = r.events[from..]
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Event::RtpPacket(p) => Some(*p.header.payload_type),
+            _ => None,
+        })
+        .skip(5)
+        .collect();
+    assert!(
+        !pts.is_empty() && pts.iter().all(|pt| *pt == *opus_pt),
+        "{pts:?}"
+    );
+
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+    let (offer, _pending) = change.apply().unwrap();
+    assert!(
+        audio_fmts(&offer.to_sdp_string()).contains(&red),
+        "our offer keeps offering RED"
+    );
+}
+
 /// In RTP mode the RED packets are forwarded as-is: the receiver sees `Event::RtpPacket` carrying
 /// the RED payload type, and the RED structure is parseable with the public decoder.
 #[test]
