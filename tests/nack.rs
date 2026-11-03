@@ -751,9 +751,14 @@ pub fn rtx_recovery_does_not_change_primary_jitter() -> Result<(), RtcError> {
     let repairs = r
         .events
         .iter()
-        .filter(|(_, event)| matches!(event.as_raw_packet(),
+        .filter(|(_, event)| {
+            matches!(event.as_raw_packet(),
             Some(RawPacket::RtpRx(header, body))
-                if header.ssrc == rtx && !header.has_padding && body.len() > 2 && body.starts_with(&missing.to_be_bytes())))
+                if header.ssrc == rtx
+                    && !header.has_padding
+                    && body.len() > 2
+                    && body.starts_with(&missing.to_be_bytes()))
+        })
         .count();
     assert!(
         repairs > 1,
