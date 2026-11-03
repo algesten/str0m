@@ -10,7 +10,7 @@ type TimeBitrate = (Instant, Bitrate);
 
 const TOLERANCE: f64 = 0.05;
 
-/// Smooths BWE estimates by averaging over a time window, or passes on the latest one.
+/// Smooths BWE estimates by averaging over a time window.
 pub struct EstimateSmoother {
     estimates: VecDeque<TimeBitrate>,
     maybe_emit: bool,
@@ -26,7 +26,7 @@ impl EstimateSmoother {
         }
     }
 
-    /// Record a new estimate.
+    /// Record a new estimate and update the smoothed average.
     pub fn record(&mut self, now: Instant, estimate: Bitrate) {
         // Did value change from previous?
         let do_update = self.estimates.back().map(|b| b.1) != Some(estimate);
