@@ -676,3 +676,105 @@ pub fn nack_timer_finishes_pending_retries_after_pause() -> Result<(), RtcError>
 
     Ok(())
 }
+
+#[test]
+pub fn rtx_recovery_does_not_change_primary_jitter() -> Result<(), RtcError> {
+    init_crypto_default();
+    let (mut l, mut r) = connect_l_r();
+    // Original packets have constant transit time; RTX carries an older frame's timestamp.
+    let delay = Duration::from_millis(800);
+    r.set_netem(NetemConfig::new().latency(delay));
+    let mid = "vid".into();
+    let ssrc = 42.into();
+    let rtx = 44.into();
+    let missing = 1020u16;
+    l.direct_api().declare_media(mid, MediaKind::Video);
+    l.direct_api().declare_stream_tx(ssrc, Some(rtx), mid, None);
+    r.direct_api().declare_media(mid, MediaKind::Video);
+    r.direct_api().expect_stream_rx(ssrc, Some(rtx), mid, None);
+    let pt = l.params_vp8().pt();
+    let start = l.last.max(r.last);
+    l.last = start;
+    r.last = start;
+    for seq in 1000..1100u16 {
+        while l.last < start + Duration::from_millis(u64::from(seq - 1000) * 30) {
+            progress(&mut l, &mut r)?;
+        }
+        if seq == missing {
+            r.set_netem(
+                NetemConfig::new()
+                    .latency(delay)
+                    .loss(RandomLoss::new(Probability::new(1.0))),
+            );
+        }
+        let now = l.last;
+        let time = ((now - start).as_micros() * 90_000 / 1_000_000) as u32;
+        l.direct_api().stream_tx(&ssrc).unwrap().write_rtp(
+            RtpWrite::new(
+                pt,
+                u64::from(seq).into(),
+                time,
+                now,
+                [0x10, (seq - 1000) as u8],
+            )
+            .marker(true)
+            .nackable(true),
+        );
+        common::rtc_timeout(&mut l, now, &mut r.pending)?;
+        if seq == missing {
+            r.set_netem(NetemConfig::new().latency(delay));
+        }
+    }
+    while l.last < start + Duration::from_secs(6) {
+        progress(&mut l, &mut r)?;
+    }
+    let mut packets = r
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::RtpPacket(packet) => {
+                assert_eq!(
+                    packet.payload.as_ref(),
+                    &[0x10, (packet.header.sequence_number - 1000) as u8]
+                );
+                Some(packet.header.sequence_number)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    packets.sort();
+    assert_eq!(
+        packets,
+        (1000..1100).collect::<Vec<_>>(),
+        "recovery must deliver every packet once"
+    );
+    let repairs = r
+        .events
+        .iter()
+        .filter(|(_, event)| matches!(event.as_raw_packet(),
+            Some(RawPacket::RtpRx(header, body))
+                if header.ssrc == rtx && !header.has_padding && body.len() > 2 && body.starts_with(&missing.to_be_bytes())))
+        .count();
+    assert!(
+        repairs > 1,
+        "multiple repairs must exercise recovery deduplication"
+    );
+    let jitter = r
+        .events
+        .iter()
+        .filter_map(|(_, event)| match event.as_raw_packet() {
+            Some(RawPacket::RtcpTx(Rtcp::ReceiverReport(report))) => Some(report),
+            _ => None,
+        })
+        .flat_map(|rr| rr.reports.iter())
+        .filter(|report| report.ssrc == ssrc)
+        .map(|report| report.jitter)
+        .collect::<Vec<_>>();
+    println!("accepted RTX packets: {repairs}; primary jitter samples: {jitter:?}");
+    assert!(!jitter.is_empty());
+    assert!(
+        jitter.iter().all(|value| *value == 0),
+        "RTX must not alter constant-transit primary jitter: {jitter:?}"
+    );
+    Ok(())
+}

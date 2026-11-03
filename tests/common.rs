@@ -325,7 +325,7 @@ fn netem_to_rtc(
 }
 
 /// Process rtc timeout and poll until next timeout, queueing transmits in other_netem.
-fn rtc_timeout(
+pub(crate) fn rtc_timeout(
     rtc: &mut TestRtc,
     time: Instant,
     other_netem: &mut Netem<PendingPacket>,

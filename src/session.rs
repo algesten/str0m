@@ -746,6 +746,10 @@ impl Session {
 
         // Register reception in nack registers.
         let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
+        if !is_repair {
+            // RTX recovery updates the primary sequence register, but its arrival belongs to RTX.
+            stream.update_jitter(now, &header, clock_rate);
+        }
 
         // RED-recovered packets (frame mode) are collected here and delivered after the
         // primary, filling single-packet losses from the next packet's redundancy.

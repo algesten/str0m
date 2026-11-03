@@ -508,6 +508,18 @@ impl StreamRx {
         self.remember_recent(seq_no, time);
     }
 
+    pub(crate) fn update_jitter(
+        &mut self,
+        now: Instant,
+        header: &RtpHeader,
+        clock_rate: Frequency,
+    ) {
+        self.register
+            .as_mut()
+            .unwrap()
+            .update_time(now, header.timestamp, clock_rate.get());
+    }
+
     pub(crate) fn update_register(
         &mut self,
         now: Instant,
@@ -533,10 +545,7 @@ impl StreamRx {
             is_new
         } else {
             // extend_seq() initializes the main register before this update.
-            self.register
-                .as_mut()
-                .unwrap()
-                .update(seq_no, now, header.timestamp, clock_rate.get())
+            self.register.as_mut().unwrap().update_seq(seq_no)
         };
 
         // Get the previous time for comparison
