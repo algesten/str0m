@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Add an option, `RtcConfig::set_bwe_smoothing()`, to opt out of the 3 s mean of the BWE estimate #1119
+  * Allow disabling BWE estimate smoothing #1119
 
 # 0.25.0
 
