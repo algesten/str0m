@@ -88,7 +88,14 @@ impl ReceiverRegister {
         self.nack.update(seq);
     }
 
-    pub fn update_seq(&mut self, seq: SeqNo) -> bool {
+    pub fn update(
+        &mut self,
+        seq: SeqNo,
+        arrival: Instant,
+        rtp_time: u32,
+        clock_rate: u32,
+        update_jitter: bool,
+    ) -> bool {
         if self.first.is_none() {
             self.first = Some(seq);
         }
@@ -97,6 +104,10 @@ impl ReceiverRegister {
 
         if new {
             self.count += 1;
+        }
+
+        if update_jitter {
+            self.update_time(arrival, rtp_time, clock_rate);
         }
 
         new
@@ -159,7 +170,7 @@ impl ReceiverRegister {
         self.jitter = 0.0;
     }
 
-    pub fn update_time(&mut self, arrival: Instant, rtp_time: u32, clock_rate: u32) {
+    fn update_time(&mut self, arrival: Instant, rtp_time: u32, clock_rate: u32) {
         let tp = TimePoint {
             arrival,
             rtp_time,
@@ -295,16 +306,13 @@ mod test {
     fn clearing_register_resets_nack_timing() {
         let mut reg = ReceiverRegister::new(None);
         let now = Instant::now();
-        reg.update_seq(10.into());
-        reg.update_time(now, 0, 90_000);
-        reg.update_seq(12.into());
-        reg.update_time(now, 3000, 90_000);
+        reg.update(10.into(), now, 0, 90_000, true);
+        reg.update(12.into(), now, 3000, 90_000, true);
         assert!(reg.nack_report(now, None).is_some());
         assert!(reg.nack_report(now, None).is_none());
         reg.clear(Some(10.into()));
         assert!(!reg.has_pending_nacks());
-        reg.update_seq(12.into());
-        reg.update_time(now, 3000, 90_000);
+        reg.update(12.into(), now, 3000, 90_000, true);
         let nacks: Vec<_> = reg.nack_report(now, None).expect("fresh loss").collect();
         assert_eq!(nacks[0].reports[0].pid, 11);
     }
@@ -319,10 +327,20 @@ mod test {
         let start = Instant::now();
         let dur = Duration::from_micros(10_000);
 
-        r.update_time(start + 4 * dur, 1234 + 4 * 900, 90_000);
-        r.update_time(start + 5 * dur, 1234 + 5 * 900, 90_000);
-        r.update_time(start + 6 * dur, 1234 + 6 * 900, 90_000);
-        r.update_time(start + 7 * dur, 1234 + 7 * 900, 90_000);
+        r.update(4.into(), start + 4 * dur, 1234 + 4 * 900, 90_000, true);
+        r.update(5.into(), start + 5 * dur, 1234 + 5 * 900, 90_000, true);
+        // A recovered packet counts as received without replacing the primary clock sample.
+        assert!(r.update(
+            6.into(),
+            start + 5 * dur + dur / 2,
+            1234 + 3 * 900,
+            48_000,
+            false
+        ));
+        assert_eq!(r.count, 3);
+        assert_eq!(r.time_point_prior.unwrap().clock_rate, 90_000);
+        r.update(7.into(), start + 6 * dur, 1234 + 6 * 900, 90_000, true);
+        r.update(8.into(), start + 7 * dur, 1234 + 7 * 900, 90_000, true);
         assert_eq!(r.jitter, 0.0);
     }
 
@@ -343,8 +361,7 @@ mod test {
             } else {
                 start + i * dur + off
             };
-            r.update_seq((i as u64).into());
-            r.update_time(arrival, 1234 + i * 900, 90_000);
+            r.update((i as u64).into(), arrival, 1234 + i * 900, 90_000, true);
         }
 
         // jitter should converge on 20.0
@@ -405,11 +422,9 @@ mod test {
 
         // 50 % lost
         for i in 10..14 {
-            r.update_seq((i as u64).into());
-            r.update_time(now, rtp_time, 90_000);
+            r.update((i as u64).into(), now, rtp_time, 90_000, true);
         }
-        r.update_seq(19.into());
-        r.update_time(now, rtp_time, 90_000);
+        r.update(19.into(), now, rtp_time, 90_000, true);
 
         let report = r.reception_report().expect("some report");
         assert_eq!(128, report.fraction_lost);
