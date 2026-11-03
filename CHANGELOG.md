@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 
 # 0.25.0
