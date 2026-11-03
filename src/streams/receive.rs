@@ -515,6 +515,7 @@ impl StreamRx {
         clock_rate: Frequency,
         is_repair: bool,
         seq_no: SeqNo,
+        is_resend: bool,
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
@@ -533,10 +534,13 @@ impl StreamRx {
             is_new
         } else {
             // extend_seq() initializes the main register before this update.
-            self.register
-                .as_mut()
-                .unwrap()
-                .update(seq_no, now, header.timestamp, clock_rate.get())
+            self.register.as_mut().unwrap().update(
+                seq_no,
+                now,
+                header.timestamp,
+                clock_rate.get(),
+                is_resend,
+            )
         };
 
         // Get the previous time for comparison
@@ -1077,7 +1081,8 @@ mod tests {
         };
 
         let seq_no = stream.extend_seq(&header, false, |_| None);
-        let receipt = stream.update_register(now, &header, Frequency::NINETY_KHZ, false, seq_no);
+        let receipt =
+            stream.update_register(now, &header, Frequency::NINETY_KHZ, false, seq_no, false);
 
         assert!(
             receipt.time.numer() > previous_time,
@@ -1104,7 +1109,14 @@ mod tests {
                 ..Default::default()
             };
             let seq_no = stream.extend_seq(&header, false, |_| None);
-            stream.update_register(now, &header, Frequency::FORTY_EIGHT_KHZ, false, seq_no);
+            stream.update_register(
+                now,
+                &header,
+                Frequency::FORTY_EIGHT_KHZ,
+                false,
+                seq_no,
+                false,
+            );
         }
         stream
     }
@@ -1427,6 +1439,7 @@ mod tests {
             Frequency::NINETY_KHZ,
             true,
             extended,
+            true,
         );
         assert!(receipt.is_new_packet);
     }
