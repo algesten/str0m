@@ -183,7 +183,3 @@ required-features = ["examples"]
 [[example]]
 name = "http-post"
 required-features = ["examples"]
-
-# Local fix for SwiftPM build product discovery; remove after an upstream release.
-[patch.crates-io]
-apple-cryptokit-rs = { path = "vendor/apple-cryptokit-rs" }

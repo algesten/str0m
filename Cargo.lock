@@ -84,14 +84,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "apple-cryptokit-rs"
-version = "0.2.1"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -183,6 +175,12 @@ name = "base64"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
+
+[[package]]
+name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64ct"
@@ -1717,7 +1715,7 @@ version = "3.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3716fbf57fc1084d7a706adf4e445298d123e4a44294c4e8213caf1b85fcc921"
 dependencies = [
- "base64",
+ "base64 0.13.1",
  "brotli",
  "chrono",
  "deflate",
@@ -1790,7 +1788,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5eebeaeb360c87bfb72e84abdb3447159c0eaececf1bef2aecd65a8be949d1c9"
 dependencies = [
- "base64",
+ "base64 0.13.1",
 ]
 
 [[package]]
@@ -2061,17 +2059,17 @@ dependencies = [
 name = "str0m-apple-crypto"
 version = "0.7.0"
 dependencies = [
- "apple-cryptokit-rs",
- "cc",
  "core-foundation",
  "der",
  "dimpl",
  "pkcs8",
  "sec1",
  "security-framework",
+ "sha2",
  "spki",
  "str0m-proto",
  "subtle",
+ "swift-rs",
  "time",
  "x509-cert",
 ]
@@ -2152,6 +2150,17 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "swift-rs"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cefd87076fd385308ee4aff597256c902f1fbb4d031de1558efc12f8ffefadd9"
+dependencies = [
+ "base64 0.21.7",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "syn"

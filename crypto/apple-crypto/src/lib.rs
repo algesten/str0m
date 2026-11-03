@@ -1,5 +1,5 @@
-//! Apple CommonCrypto/Security framework implementation of cryptographic functions.
-//! DTLS via dimpl with Apple CommonCrypto as crypto backend.
+//! Apple CryptoKit/CommonCrypto/Security framework implementation of cryptographic functions.
+//! DTLS via dimpl with Apple's native cryptography.
 
 // Avoid rewriting existing code: nested conditions are often more readable than long if-chains.
 #![allow(clippy::collapsible_if)]
@@ -9,6 +9,7 @@
 
 mod cert;
 mod common_crypto;
+mod cryptokit;
 mod dimpl_provider;
 mod dtls;
 mod sha1;
@@ -22,10 +23,10 @@ use sha1::{AppleCryptoSha1HmacProvider, AppleCryptoSha1Provider};
 use sha256::AppleCryptoSha256Provider;
 use srtp::AppleCryptoSrtpProvider;
 
-/// Create the default Apple CommonCrypto crypto provider.
+/// Create the default Apple crypto provider.
 ///
 /// This provider implements all cryptographic operations required for WebRTC:
-/// - DTLS 1.2 for secure key exchange (using dimpl protocol + Apple CommonCrypto)
+/// - DTLS 1.2 for secure key exchange (using dimpl protocol + Apple cryptography)
 /// - SRTP for encrypted media
 /// - SHA1-HMAC for STUN message integrity
 /// - SHA-1 and SHA-256 for certificate fingerprints
@@ -51,10 +52,10 @@ pub fn default_provider() -> CryptoProvider {
     }
 }
 
-/// Create the Apple CommonCrypto crypto provider used by the Dimpl DTLS backend.
+/// Create the Apple crypto provider used by the Dimpl DTLS backend.
 ///
 /// This allows callers that need non-default Dimpl configuration to construct
-/// `dimpl::Config` directly while retaining the Apple CommonCrypto implementation.
+/// `dimpl::Config` directly while retaining the Apple crypto implementation.
 pub fn dimpl_crypto_provider() -> dimpl::crypto::CryptoProvider {
     dimpl_provider::default_provider()
 }

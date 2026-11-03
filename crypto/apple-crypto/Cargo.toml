@@ -1,7 +1,7 @@
 [package]
 name = "str0m-apple-crypto"
 version = "0.7.0"
-description = "Apple CommonCrypto/Security framework backend for str0m WebRTC"
+description = "Apple CryptoKit/CommonCrypto/Security framework backend for str0m WebRTC"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/algesten/str0m"
@@ -16,7 +16,6 @@ dimpl.workspace = true
 time.workspace = true
 
 # Apple platform bindings
-apple-cryptokit-rs = "0.2.1"
 core-foundation = "0.10"
 security-framework = "3.5"
 
@@ -31,9 +30,8 @@ x509-cert.workspace = true
 subtle.workspace = true
 
 [build-dependencies]
-# Compiles a tiny stub object that satisfies the Swift back-deployment autolink
-# symbols removed in Xcode 26.x (see build.rs).
-cc = "1"
+sha2.workspace = true
+swift-rs = { version = "1.0.9", features = ["build"] }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

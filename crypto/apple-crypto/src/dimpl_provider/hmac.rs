@@ -1,4 +1,4 @@
-//! HMAC implementations using Apple CommonCrypto.
+//! HMAC implementations using Apple CryptoKit.
 
 use dimpl::crypto::HmacProvider;
 use dimpl::{CryptoError, CryptoOperation};
@@ -8,8 +8,7 @@ pub(super) struct AppleHmacProvider;
 
 impl HmacProvider for AppleHmacProvider {
     fn hmac_sha256(&self, key: &[u8], data: &[u8]) -> Result<[u8; 32], CryptoError> {
-        apple_cryptokit::hmac_sha256(key, data)
-            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
+        Ok(crate::cryptokit::hmac(key, &[data]))
     }
 
     fn hmac(
@@ -20,30 +19,11 @@ impl HmacProvider for AppleHmacProvider {
         out: &mut [u8],
     ) -> Result<usize, CryptoError> {
         match hash {
-            dimpl::HashAlgorithm::SHA256 => {
-                let result = apple_cryptokit::hmac_sha256(key, data)
-                    .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))?;
-                let hmac_len = result.len();
-                if hmac_len <= out.len() {
-                    out[0..hmac_len].copy_from_slice(&result);
-                    Ok(hmac_len)
-                } else {
-                    Err(CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
-                }
-            }
-            dimpl::HashAlgorithm::SHA384 => {
-                let result = apple_cryptokit::hmac_sha384(key, data)
-                    .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))?;
-                let hmac_len = result.len();
-                if hmac_len <= out.len() {
-                    out[0..hmac_len].copy_from_slice(&result);
-                    Ok(hmac_len)
-                } else {
-                    Err(CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
-                }
-            }
-            _ => Err(CryptoError::UnsupportedHmacHash(hash)),
+            dimpl::HashAlgorithm::SHA256 => crate::cryptokit::hmac_into::<32>(key, &[data], out),
+            dimpl::HashAlgorithm::SHA384 => crate::cryptokit::hmac_into::<48>(key, &[data], out),
+            _ => return Err(CryptoError::UnsupportedHmacHash(hash)),
         }
+        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::ComputeHmac))
     }
 }
 

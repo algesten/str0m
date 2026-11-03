@@ -170,6 +170,14 @@ jobs:
         run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path ${{ matrix.dir.name }}/Cargo.toml -- -D warnings
       - name: test
         run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path ${{ matrix.dir.name }}/Cargo.toml
+      - name: Check Apple crypto cross-targets
+        if: matrix.rust == 'stable' && matrix.dir.name == 'crypto/apple-crypto'
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.toolchain.outputs.name }}
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
+          bash crypto/apple-crypto/tests/build-targets.sh
+          bash crypto/apple-crypto/tests/ffi-symbol-isolation.sh
 
   cargo-deny:
     runs-on: ubuntu-latest

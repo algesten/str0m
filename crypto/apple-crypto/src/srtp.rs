@@ -1,4 +1,4 @@
-//! SRTP cipher implementations using Apple CommonCrypto.
+//! SRTP cipher implementations using Apple CryptoKit and CommonCrypto.
 use str0m_proto::crypto::SupportedAeadAes128Gcm;
 use str0m_proto::crypto::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, AeadAes256GcmCipher};
 use str0m_proto::crypto::{Aes128CmSha1_80Cipher, CryptoError, SrtpProvider};
@@ -42,7 +42,7 @@ impl Aes128CmSha1_80Cipher for AppleCryptoAes128CmSha1_80Cipher {
 // AEAD-AES-128-GCM Cipher
 
 struct AppleCryptoAeadAes128GcmCipher {
-    key: [u8; 16],
+    key: crate::cryptokit::AesGcm,
 }
 
 impl std::fmt::Debug for AppleCryptoAeadAes128GcmCipher {
@@ -80,7 +80,7 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
 // AEAD-AES-256-GCM Cipher
 
 struct AppleCryptoAeadAes256GcmCipher {
-    key: [u8; 32],
+    key: crate::cryptokit::AesGcm,
 }
 
 impl std::fmt::Debug for AppleCryptoAeadAes256GcmCipher {
@@ -116,7 +116,7 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
 }
 
 fn aes_gcm_encrypt(
-    key: &[u8],
+    key: &crate::cryptokit::AesGcm,
     iv: &[u8],
     input: &[u8],
     aad: &[u8],
@@ -127,27 +127,20 @@ fn aes_gcm_encrypt(
         "Associated data length MUST be at least 12 octets"
     );
 
-    apple_cryptokit::symmetric::aes::aes_gcm_encrypt_to_with_aad(key, iv, input, aad, output)
+    key.encrypt(iv, input, aad, output)
         .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
 
     Ok(())
 }
 
 fn aes_gcm_decrypt(
-    key: &[u8],
+    key: &crate::cryptokit::AesGcm,
     iv: &[u8],
     aads: &[&[u8]],
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, CryptoError> {
-    static EMPTY: [u8; 0] = [];
-    let aad = match aads.len() {
-        0 => &EMPTY,
-        1 => aads[0],
-        _ => &aads.concat(),
-    };
-
-    apple_cryptokit::symmetric::aes::aes_gcm_decrypt_to_with_aad(key, iv, input, aad, output)
+    key.decrypt(iv, input, aads, output)
         .map_err(|err| CryptoError::Other(format!("{err:?}")))
 }
 
@@ -178,7 +171,9 @@ impl std::fmt::Debug for AppleCryptoSupportedAeadAes128Gcm {
 
 impl SupportedAeadAes128Gcm for AppleCryptoSupportedAeadAes128Gcm {
     fn create_cipher(&self, key: [u8; 16], _encrypt: bool) -> Box<dyn AeadAes128GcmCipher> {
-        Box::new(AppleCryptoAeadAes128GcmCipher { key })
+        Box::new(AppleCryptoAeadAes128GcmCipher {
+            key: crate::cryptokit::AesGcm::new(&key).expect("valid AES-128 key"),
+        })
     }
 }
 
@@ -192,7 +187,9 @@ impl std::fmt::Debug for AppleCryptoSupportedAeadAes256Gcm {
 
 impl SupportedAeadAes256Gcm for AppleCryptoSupportedAeadAes256Gcm {
     fn create_cipher(&self, key: [u8; 32], _encrypt: bool) -> Box<dyn AeadAes256GcmCipher> {
-        Box::new(AppleCryptoAeadAes256GcmCipher { key })
+        Box::new(AppleCryptoAeadAes256GcmCipher {
+            key: crate::cryptokit::AesGcm::new(&key).expect("valid AES-256 key"),
+        })
     }
 }
 
@@ -494,7 +491,7 @@ mod test {
         let expected_tag = hex_to_vec("5bc94fbc3221a5db94fae95ae7121a47");
 
         let mut cipher = AppleCryptoAeadAes128GcmCipher {
-            key: key.try_into().unwrap(),
+            key: crate::cryptokit::AesGcm::new(&key).unwrap(),
         };
         let mut output = vec![0u8; plaintext.len() + 16];
         cipher
@@ -537,7 +534,7 @@ mod test {
         input.extend_from_slice(&tag);
 
         let mut cipher = AppleCryptoAeadAes128GcmCipher {
-            key: key.try_into().unwrap(),
+            key: crate::cryptokit::AesGcm::new(&key).unwrap(),
         };
         let mut output = vec![0u8; ciphertext.len()];
         let len = cipher
@@ -571,7 +568,7 @@ mod test {
         input.extend_from_slice(&bad_tag);
 
         let mut cipher = AppleCryptoAeadAes128GcmCipher {
-            key: key.try_into().unwrap(),
+            key: crate::cryptokit::AesGcm::new(&key).unwrap(),
         };
         let mut output = vec![0u8; ciphertext.len()];
         let result = cipher.decrypt(&iv.try_into().unwrap(), &[&aad], &input, &mut output);
@@ -608,7 +605,7 @@ mod test {
         let expected_tag = hex_to_vec("76fc6ece0f4e1768cddf8853bb2d551b");
 
         let mut cipher = AppleCryptoAeadAes256GcmCipher {
-            key: key.try_into().unwrap(),
+            key: crate::cryptokit::AesGcm::new(&key).unwrap(),
         };
         let mut output = vec![0u8; plaintext.len() + 16];
         cipher
@@ -654,7 +651,7 @@ mod test {
         input.extend_from_slice(&tag);
 
         let mut cipher = AppleCryptoAeadAes256GcmCipher {
-            key: key.try_into().unwrap(),
+            key: crate::cryptokit::AesGcm::new(&key).unwrap(),
         };
         let mut output = vec![0u8; ciphertext.len()];
         let len = cipher

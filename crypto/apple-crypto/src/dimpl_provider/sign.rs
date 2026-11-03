@@ -72,23 +72,17 @@ impl SigningKeyTrait for EcdsaSigningKey {
         }
 
         // Sized to the largest hash size we support.
-        let mut hash_buffer = [0; apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE];
+        let mut hash_buffer = [0; 48];
 
         // Hash the data first (Security framework needs pre-hashed data for digest algorithms)
         let (hash_length, algorithm) = match self.curve {
             EcCurve::P256 => {
-                apple_cryptokit::hashing::sha256_hash_to(data, hash_buffer.as_mut_slice());
-                (
-                    apple_cryptokit::hashing::sha256::SHA256_OUTPUT_SIZE,
-                    Algorithm::ECDSASignatureDigestX962SHA256,
-                )
+                hash_buffer[..32].copy_from_slice(&crate::cryptokit::sha256(data));
+                (32, Algorithm::ECDSASignatureDigestX962SHA256)
             }
             EcCurve::P384 => {
-                apple_cryptokit::hashing::sha384_hash_to(data, hash_buffer.as_mut_slice());
-                (
-                    apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE,
-                    Algorithm::ECDSASignatureDigestX962SHA384,
-                )
+                hash_buffer.copy_from_slice(&crate::cryptokit::sha384(data));
+                (48, Algorithm::ECDSASignatureDigestX962SHA384)
             }
         };
 
@@ -310,23 +304,17 @@ impl SignatureVerifier for AppleCryptoSignatureVerifier {
         };
 
         // Sized to the largest hash size we support.
-        let mut hash_buffer = [0; apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE];
+        let mut hash_buffer = [0; 48];
 
         // Hash the data
         let (hash_length, algorithm) = match hash_alg {
             HashAlgorithm::SHA256 => {
-                apple_cryptokit::hashing::sha256_hash_to(data, hash_buffer.as_mut_slice());
-                (
-                    apple_cryptokit::hashing::sha256::SHA256_OUTPUT_SIZE,
-                    Algorithm::ECDSASignatureDigestX962SHA256,
-                )
+                hash_buffer[..32].copy_from_slice(&crate::cryptokit::sha256(data));
+                (32, Algorithm::ECDSASignatureDigestX962SHA256)
             }
             HashAlgorithm::SHA384 => {
-                apple_cryptokit::hashing::sha384_hash_to(data, hash_buffer.as_mut_slice());
-                (
-                    apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE,
-                    Algorithm::ECDSASignatureDigestX962SHA384,
-                )
+                hash_buffer.copy_from_slice(&crate::cryptokit::sha384(data));
+                (48, Algorithm::ECDSASignatureDigestX962SHA384)
             }
             _ => {
                 return Err(CryptoError::UnsupportedSignaturePair {

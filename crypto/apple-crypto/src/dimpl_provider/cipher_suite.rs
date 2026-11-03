@@ -1,4 +1,4 @@
-//! Cipher suite implementations using Apple CommonCrypto.
+//! Cipher suite implementations using Apple CryptoKit.
 
 use dimpl::crypto::SupportedDtls12CipherSuite;
 use dimpl::crypto::SupportedDtls13CipherSuite;
@@ -8,9 +8,9 @@ use dimpl::{CryptoError, CryptoOperation};
 
 const AES_GCM_TAG_LEN: usize = 16;
 
-/// AES-GCM cipher implementation using CommonCrypto.
+/// AES-GCM cipher implementation using CryptoKit.
 struct AesGcm {
-    key: Vec<u8>,
+    key: crate::cryptokit::AesGcm,
 }
 
 impl std::fmt::Debug for AesGcm {
@@ -26,24 +26,21 @@ impl AesGcm {
                 actual: key.len().min(u16::MAX as usize) as u16,
             });
         }
-        Ok(Self { key: key.to_vec() })
+        Ok(Self {
+            key: crate::cryptokit::AesGcm::new(key)
+                .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?,
+        })
     }
 }
 
 impl Cipher for AesGcm {
     fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), CryptoError> {
-        let ciphertext_length = plaintext.len() + AES_GCM_TAG_LEN;
-        let mut ciphertext = OutputBuffer::new(ciphertext_length);
-        let output_size = apple_cryptokit::symmetric::aes::aes_gcm_encrypt_to_with_aad(
-            &self.key,
-            &nonce,
-            plaintext,
-            &aad,
-            ciphertext.as_mut_slice(),
-        )
-        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Encrypt))?;
-        plaintext.clear();
-        plaintext.extend_from_slice(&ciphertext.as_slice()[..output_size]);
+        let original_len = plaintext.len();
+        plaintext.resize(original_len + AES_GCM_TAG_LEN, 0);
+        if self.key.encrypt_in_place(&nonce, &aad, plaintext).is_err() {
+            plaintext.resize(original_len, 0);
+            return Err(CryptoError::OperationFailed(CryptoOperation::Encrypt));
+        }
         Ok(())
     }
 
@@ -59,20 +56,11 @@ impl Cipher for AesGcm {
                 actual: ciphertext.len().min(u8::MAX as usize) as u8,
             });
         }
-        let plaintext_length = ciphertext.len() - AES_GCM_TAG_LEN;
-        let mut output = OutputBuffer::new(plaintext_length);
-        let output_size = apple_cryptokit::symmetric::aes::aes_gcm_decrypt_to_with_aad(
-            &self.key,
-            &nonce,
-            ciphertext.as_ref(),
-            &aad,
-            output.as_mut_slice(),
-        )
-        .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
+        let output_size = self
+            .key
+            .decrypt_in_place(&nonce, &aad, ciphertext.as_mut())
+            .map_err(|_| CryptoError::OperationFailed(CryptoOperation::Decrypt))?;
         ciphertext.truncate(output_size);
-        ciphertext
-            .as_mut()
-            .copy_from_slice(&output.as_slice()[0..output_size]);
         Ok(())
     }
 }
@@ -227,36 +215,58 @@ fn aes_ecb_encrypt(key: &[u8], input: &[u8; 16]) -> [u8; 16] {
     output
 }
 
-#[allow(clippy::large_enum_variant)]
-enum OutputBuffer {
-    Stack([u8; Self::STACK_BUFFER_SIZE]),
-    Heap(Vec<u8>),
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl OutputBuffer {
-    // How large the buffer stored on the stack is. Buffers larger than this
-    // will require allocation via the creation of a Vec.
-    const STACK_BUFFER_SIZE: usize = 1024;
+    fn aad() -> Aad {
+        let mut aad = Aad(Default::default());
+        aad.0.try_extend_from_slice(b"aad").unwrap();
+        aad
+    }
 
-    fn new(size: usize) -> Self {
-        if size < Self::STACK_BUFFER_SIZE {
-            Self::Stack([0u8; Self::STACK_BUFFER_SIZE])
-        } else {
-            Self::Heap(vec![0; size])
+    #[test]
+    fn dtls_cipher_reuses_buffer_storage() {
+        for key in [&[0; 16][..], &[0; 32][..]] {
+            let mut cipher = AesGcm::new(key).unwrap();
+            for size in [0, 1, 16, 1023, 1024, 1500, 4096] {
+                let mut buffer = Buf::new();
+                buffer.resize(size + AES_GCM_TAG_LEN, 0xab);
+                buffer.resize(size, 0);
+                let pointer = buffer.as_ptr();
+                cipher.encrypt(&mut buffer, aad(), Nonce([0; 12])).unwrap();
+                assert_eq!(buffer.len(), size + AES_GCM_TAG_LEN);
+                assert_eq!(buffer.as_ptr(), pointer);
+
+                let mut tmp = TmpBuf::new(&mut buffer);
+                cipher.decrypt(&mut tmp, aad(), Nonce([0; 12])).unwrap();
+                assert_eq!(tmp.len(), size);
+                assert_eq!(tmp.as_ref(), &vec![0xab; size]);
+                assert_eq!(tmp.as_ref().as_ptr(), pointer);
+            }
         }
     }
 
-    const fn as_mut_slice(&mut self) -> &mut [u8] {
-        match self {
-            Self::Stack(buffer) => buffer.as_mut_slice(),
-            Self::Heap(buffer) => buffer.as_mut_slice(),
-        }
-    }
+    #[test]
+    fn dtls_decrypt_failure_preserves_ciphertext_and_length() {
+        let mut cipher = AesGcm::new(&[0; 16]).unwrap();
+        let mut buffer = Buf::new();
+        buffer.extend_from_slice(b"hello");
+        cipher.encrypt(&mut buffer, aad(), Nonce([0; 12])).unwrap();
+        buffer[0] ^= 1;
+        let expected = buffer.to_vec();
+        let mut tmp = TmpBuf::new(&mut buffer);
+        assert!(cipher.decrypt(&mut tmp, aad(), Nonce([0; 12])).is_err());
+        assert_eq!(tmp.len(), expected.len());
+        assert_eq!(tmp.as_ref(), expected);
 
-    const fn as_slice(&self) -> &[u8] {
-        match self {
-            Self::Stack(buffer) => buffer.as_slice(),
-            Self::Heap(buffer) => buffer.as_slice(),
-        }
+        let mut short = [0xa5; 15];
+        let mut tmp = TmpBuf::new(&mut short);
+        assert!(matches!(
+            cipher.decrypt(&mut tmp, aad(), Nonce([0; 12])),
+            Err(CryptoError::CiphertextTooShort { .. })
+        ));
+        assert_eq!(tmp.len(), 15);
+        assert_eq!(tmp.as_ref(), &[0xa5; 15]);
     }
 }
