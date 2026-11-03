@@ -746,7 +746,7 @@ impl Session {
 
         // Register reception in nack registers.
         let receipt_outer =
-            stream.update_register(now, &header, clock_rate, is_repair, seq_no, !is_repair);
+            stream.update_register(now, &header, clock_rate, is_repair, seq_no, is_repair);
 
         // RED-recovered packets (frame mode) are collected here and delivered after the
         // primary, filling single-packet losses from the next packet's redundancy.
@@ -781,7 +781,7 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Update primary recovery state, but RTX arrival must not update primary jitter.
-            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no, false);
+            let receipt = stream.update_register(now, &header, clock_rate, false, seq_no, true);
             (receipt, data)
         } else if is_red && !self.rtp_mode {
             // Frame mode: RED rides the main SSRC/seq. Decode to the primary (Opus) payload
