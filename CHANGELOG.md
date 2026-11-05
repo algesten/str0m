@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Do not queue a NACKed packet twice, and stop queueing NACK resends once resent plus queued bytes reach `rtx_ratio_cap`
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 

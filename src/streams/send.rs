@@ -37,6 +37,9 @@ const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 
 pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
+/// Bytes of NACK-driven resends always allowed, whatever the share (about 8 packets).
+const NACK_BUDGET_FLOOR: usize = 10_000;
+
 pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
 /// A recently sampled view of an outgoing stream's send queue.
@@ -132,7 +135,8 @@ pub struct StreamTx {
     /// Audio defaults to not being paced.
     unpaced: Option<bool>,
 
-    /// Scheduled resends due to NACK or spurious padding.
+    /// Scheduled resends due to NACK. (Spurious padding does not use this queue: it takes
+    /// packets straight from the RTX cache in `poll_packet_padding`.)
     resends: VecDeque<Resend>,
 
     /// Requested padding, that has not been turned into packets yet.
@@ -1062,12 +1066,29 @@ impl StreamTx {
         let seq_no = self.rtx_cache.last_cached_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
+        // How many bytes of resends we may still queue (see `nack_budget`).
+        let mut budget = self.nack_budget(now);
+
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
             let Some(packet) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
                 // Packet was not available in RTX cache, it has probably expired.
                 continue;
             };
+
+            // Asking again for a packet that is already waiting for its resend adds nothing.
+            if self.resends.iter().any(|r| r.seq_no == seq_no) {
+                continue;
+            }
+
+            if let Some(left) = budget.as_mut() {
+                if packet.payload.len() > *left {
+                    // Over budget: the peer is asking for more than the cap allows, so
+                    // don't even walk the rest of the entries.
+                    break;
+                }
+                *left -= packet.payload.len();
+            }
 
             let resend = Resend {
                 seq_no,
@@ -1078,6 +1099,30 @@ impl StreamTx {
         }
 
         Some(())
+    }
+
+    /// Bytes of resends the cap still allows us to queue, or `None` if there is no cap.
+    ///
+    /// `rtx_ratio_cap` is otherwise only applied when a resend is about to be sent, from a
+    /// ratio that is at most 50 ms old and does not count what is already queued. A peer that
+    /// asks for the whole cache in one NACK therefore gets a burst out before the cap reacts.
+    /// Counting the queue here keeps `retransmitted + queued` within the cap from the start.
+    fn nack_budget(&mut self, now: Instant) -> Option<usize> {
+        let cap = self.rtx_ratio_cap?;
+        let tx = self.stats.bytes_transmitted.as_mut()?;
+        let rtx = self.stats.bytes_retransmitted.as_mut()?;
+        tx.purge_old(now);
+        rtx.purge_old(now);
+        let (tx, rtx) = (tx.sum() as f64, rtx.sum() as f64);
+        let queued: usize = self.resends.iter().map(|r| r.payload_size).sum();
+
+        // retransmitted / (retransmitted + transmitted) <= cap
+        let allowed = (cap as f64) * tx / (1.0 - cap as f64);
+        // On a nearly idle stream the share says little; still allow a few packets a second.
+        // The floor is part of the allowance, so what is queued and sent still counts
+        // against it: it is not extra on every call.
+        let allowed = allowed.max(NACK_BUDGET_FLOOR as f64);
+        Some((allowed - rtx - queued as f64).max(0.0) as usize)
     }
 
     pub(crate) fn need_sr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
@@ -1461,6 +1506,115 @@ mod test {
         // The five queued packets are 0, 10, 20, 30 and 40 ms old.
         assert_eq!(snapshot.packet_count, 5);
         assert_eq!(snapshot.total_queue_time(now), Duration::from_millis(100));
+    }
+
+    /// A stream that has sent `count` packets of 1000 bytes, 10 ms apart, with the RTX
+    /// cache configured as given. Returns the stream and the time of the last packet.
+    fn stream_that_sent(
+        streams: &mut crate::streams::Streams,
+        count: u64,
+        cap: Option<f32>,
+    ) -> Instant {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        // Only a payload type with an RTX counterpart is nackable.
+        let pt = codecs
+            .params()
+            .iter()
+            .find(|p| p.resend().is_some())
+            .expect("a default codec with RTX")
+            .pt();
+        let exts = ExtensionMap::standard();
+        let stream =
+            streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
+        stream.set_rtx_cache(1000, Duration::from_secs(3), cap);
+        let mut buf = vec![];
+        let mut now = start;
+        for i in 0..count {
+            now = start + Duration::from_millis(i * 10);
+            stream.write_rtp(RtpWrite::new(pt, i.into(), 0, now, vec![0_u8; 1000]).nackable(true));
+            stream.send_queue.handle_timeout(now);
+            stream
+                .poll_packet(now, &exts, None, codecs.params(), &mut buf)
+                .expect("a queued packet to send");
+        }
+        now
+    }
+
+    fn nack_all(count: u64) -> Vec<NackEntry> {
+        (0..count)
+            .map(|i| NackEntry {
+                pid: i as u16,
+                blp: 0,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn nack_for_a_packet_that_is_already_queued_adds_nothing() {
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let now = stream_that_sent(&mut streams, 20, None);
+        let stream = streams.stream_tx(&42.into()).unwrap();
+
+        // The same packet asked for three times in one feedback, and again in the next.
+        let entry = NackEntry { pid: 5, blp: 0 };
+        stream.handle_nack([entry, entry, entry].into_iter(), now);
+        stream.handle_nack([entry].into_iter(), now);
+
+        assert_eq!(stream.resends.len(), 1);
+    }
+
+    #[test]
+    fn nack_queues_no_more_than_the_ratio_cap_allows() {
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let now = stream_that_sent(&mut streams, 100, Some(0.15));
+        let stream = streams.stream_tx(&42.into()).unwrap();
+
+        // 100 kB sent in the last second: resends up to 0.15 / 0.85 of that, about 17 kB.
+        stream.handle_nack(nack_all(100).into_iter(), now);
+        assert_eq!(stream.resends.len(), 17);
+
+        // Asking for everything again does not add to what is waiting.
+        stream.handle_nack(nack_all(100).into_iter(), now);
+        assert_eq!(stream.resends.len(), 17);
+    }
+
+    #[test]
+    fn nack_budget_counts_what_was_already_resent() {
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let now = stream_that_sent(&mut streams, 100, Some(0.15));
+        let codecs = CodecConfig::new_with_defaults();
+        let exts = ExtensionMap::standard();
+        let stream = streams.stream_tx(&42.into()).unwrap();
+
+        stream.handle_nack(nack_all(100).into_iter(), now);
+        let mut buf = vec![];
+        while !stream.resends.is_empty() {
+            stream
+                .poll_packet(now, &exts, None, codecs.params(), &mut buf)
+                .expect("a resend to send");
+        }
+
+        // The queue is empty again, but 17 kB went out in the last second: nothing more fits.
+        stream.handle_nack(nack_all(100).into_iter(), now);
+        assert!(stream.resends.is_empty());
+
+        // Once the one-second window has moved on, neither the transmitted nor the resent
+        // bytes count any more; what is left is the floor (10 kB, ten packets here).
+        let later = now + Duration::from_millis(1500);
+        stream.handle_nack(nack_all(100).into_iter(), later);
+        assert_eq!(stream.resends.len(), 10);
+    }
+
+    #[test]
+    fn a_nearly_idle_stream_still_answers_a_few_nacks() {
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let now = stream_that_sent(&mut streams, 3, Some(0.15));
+        let stream = streams.stream_tx(&42.into()).unwrap();
+
+        // 3 kB sent: the ratio alone would allow about half a packet.
+        stream.handle_nack(nack_all(3).into_iter(), now);
+        assert_eq!(stream.resends.len(), 3);
     }
 
     #[test]
