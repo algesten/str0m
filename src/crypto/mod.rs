@@ -41,7 +41,7 @@ pub fn from_feature_flags() -> CryptoProvider {
     #[cfg(feature = "rust-crypto")]
     return str0m_rust_crypto::default_provider();
 
-    #[cfg(any(feature = "openssl", feature = "openssl-dimpl"))]
+    #[cfg(feature = "openssl")]
     return str0m_openssl::default_provider();
 
     #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
@@ -52,7 +52,7 @@ pub fn from_feature_flags() -> CryptoProvider {
 
     panic!(
         "No crypto provider available. Enable one of: aws-lc-rs, 
-             rust-crypto, openssl, openssl-dimpl, wincrypto (Windows only)
+             rust-crypto, openssl, wincrypto (Windows only)
              or use str0m-apple-crypto crate"
     );
 }

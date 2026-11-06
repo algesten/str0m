@@ -2,7 +2,7 @@
 #![cfg(any(
     feature = "aws-lc-rs",
     feature = "rust-crypto",
-    feature = "openssl-dimpl",
+    feature = "openssl",
     feature = "wincrypto",
     feature = "apple-crypto",
 ))]
