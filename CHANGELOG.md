@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Remove native OpenSSL DTLS and use only dimpl + OpenSSL crypto (breaking) #1031
+  * Remove native OpenSSL DTLS and use only dimpl + OpenSSL crypto (breaking) #1129
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 
