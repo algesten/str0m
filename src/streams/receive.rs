@@ -532,6 +532,7 @@ impl StreamRx {
         // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
         let register = register_ref.as_mut().unwrap();
 
+        let advances_sequence = register.max_seq().is_none_or(|previous| seq_no > previous);
         let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
 
         // Get the previous time for comparison
@@ -540,7 +541,9 @@ impl StreamRx {
         // Calculate the extended timestamp
         let mut time_u32 = extend_u32(previous_time, header.timestamp);
 
-        if was_paused && Some(time_u32) < previous_time {
+        // Late primary packets and RTX still belong to the previous timeline. Resuming
+        // reception alone is not evidence that the sender restarted its timestamp clock.
+        if was_paused && !is_repair && advances_sequence && Some(time_u32) < previous_time {
             // In 32-bit RTP timestamps, adding 2^31 (MAX/2) flips to the other half of timestamp space
             // This forces extend_u32 to produce a value in the next cycle
             const HALF_CYCLE: u32 = 1u32 << 31;
@@ -1039,6 +1042,106 @@ mod tests {
             "expected repaired media time to move forward"
         );
         assert!(!stream.paused);
+    }
+
+    #[test]
+    fn paused_late_primary_keeps_its_original_timestamp() {
+        for (first, latest, late) in [(90_000, 97_200, 93_600), (u32::MAX - 1000, 6199, 2599)] {
+            let now = already_happened();
+            let mut stream = stream_with(&[(10, first), (12, latest)]);
+            let previous = stream.last_time.unwrap();
+            stream.handle_timeout(now + Duration::from_secs(2));
+            assert!(stream.paused);
+
+            let header = RtpHeader {
+                payload_type: Pt::new_with_value(111),
+                sequence_number: 11,
+                timestamp: late,
+                ssrc: 7.into(),
+                ..Default::default()
+            };
+            let seq_no = stream.extend_seq(&header, false, |_| None);
+            let receipt = stream.update_register(
+                now + Duration::from_secs(2),
+                &header,
+                Frequency::FORTY_EIGHT_KHZ,
+                false,
+                seq_no,
+            );
+            assert!(receipt.is_new_packet);
+            assert_eq!(receipt.time.numer(), previous.numer() - 3600);
+            assert_eq!(receipt.time.numer() as u32, header.timestamp);
+            assert!(!stream.paused);
+
+            let next = RtpHeader {
+                sequence_number: 13,
+                timestamp: latest.wrapping_add(3600),
+                ..header
+            };
+            let seq_no = stream.extend_seq(&next, false, |_| None);
+            let receipt = stream.update_register(
+                now + Duration::from_millis(2040),
+                &next,
+                Frequency::FORTY_EIGHT_KHZ,
+                false,
+                seq_no,
+            );
+            assert_eq!(receipt.time.numer(), previous.numer() + 3600);
+        }
+    }
+
+    #[test]
+    fn paused_rtx_does_not_invent_a_new_primary_timestamp_epoch() {
+        let now = already_happened();
+        let mut stream = stream_with(&[(10, 90_000), (12, 97_200)]);
+        let previous = stream.last_time;
+        stream.handle_timeout(now + Duration::from_secs(2));
+        assert!(stream.paused);
+        let header = RtpHeader {
+            payload_type: Pt::new_with_value(112),
+            sequence_number: 42,
+            timestamp: 93_600,
+            ssrc: 8.into(),
+            ..Default::default()
+        };
+        let seq_no = stream.extend_seq(&header, true, |_| None);
+        let receipt = stream.update_register(
+            now + Duration::from_secs(2),
+            &header,
+            Frequency::FORTY_EIGHT_KHZ,
+            true,
+            seq_no,
+        );
+        assert_eq!(receipt.time.numer(), 93_600);
+        assert_eq!(stream.last_time, previous);
+        assert!(!stream.paused);
+    }
+
+    #[test]
+    fn paused_forward_primary_retains_timestamp_restart_handling() {
+        for (last_seq, next_seq) in [(10, 11), (u16::MAX, 0)] {
+            let now = already_happened();
+            let mut stream = stream_with(&[(last_seq, 90_000)]);
+            stream.handle_timeout(now + Duration::from_secs(2));
+            assert!(stream.paused);
+            let header = RtpHeader {
+                payload_type: Pt::new_with_value(111),
+                sequence_number: next_seq,
+                timestamp: 0,
+                ssrc: 7.into(),
+                ..Default::default()
+            };
+            let seq_no = stream.extend_seq(&header, false, |_| None);
+            let receipt = stream.update_register(
+                now + Duration::from_secs(2),
+                &header,
+                Frequency::FORTY_EIGHT_KHZ,
+                false,
+                seq_no,
+            );
+            assert_eq!(receipt.time.numer(), 1 << 31);
+            assert!(!stream.paused);
+        }
     }
 
     /// Feed packets `(seq, rtp_time)` into a fresh stream, as received on the wire.
