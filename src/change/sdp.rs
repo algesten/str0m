@@ -299,29 +299,14 @@ impl<'a> SdpApi<'a> {
     ) -> Mid {
         let mid = self.new_mid();
 
-        // https://www.rfc-editor.org/rfc/rfc8830
-        // msid-id = 1*64token-char
-        fn is_token_char(c: &char) -> bool {
-            // token-char = %x21 / %x23-27 / %x2A-2B / %x2D-2E / %x30-39
-            // / %x41-5A / %x5E-7E
-            let u = *c as u32;
-            u == 0x21
-                || (0x23..=0x27).contains(&u)
-                || (0x2a..=0x2b).contains(&u)
-                || (0x2d..=0x2e).contains(&u)
-                || (0x30..=0x39).contains(&u)
-                || (0x41..=0x5a).contains(&u)
-                || (0x5e..0x7e).contains(&u)
-        }
-
         let stream_id = if let Some(stream_id) = stream_id {
-            stream_id.chars().filter(is_token_char).take(64).collect()
+            Msid::sanitize_id(&stream_id)
         } else {
             Id::<20>::random().to_string()
         };
 
         let track_id = if let Some(track_id) = track_id {
-            track_id.chars().filter(is_token_char).take(64).collect()
+            Msid::sanitize_id(&track_id)
         } else {
             Id::<20>::random().to_string()
         };

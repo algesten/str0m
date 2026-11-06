@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Allow setting a=msid stream and track ids via DirectApi::set_msid #1128
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 

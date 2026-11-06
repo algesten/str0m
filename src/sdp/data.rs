@@ -1455,6 +1455,26 @@ impl Msid {
             track_id: Id::<30>::random().to_string(),
         }
     }
+
+    /// Strip characters that are not allowed in an msid-id and cap the length at 64.
+    pub(crate) fn sanitize_id(id: &str) -> String {
+        // https://www.rfc-editor.org/rfc/rfc8830
+        // msid-id = 1*64token-char
+        fn is_token_char(c: &char) -> bool {
+            // token-char = %x21 / %x23-27 / %x2A-2B / %x2D-2E / %x30-39
+            // / %x41-5A / %x5E-7E
+            let u = *c as u32;
+            u == 0x21
+                || (0x23..=0x27).contains(&u)
+                || (0x2a..=0x2b).contains(&u)
+                || (0x2d..=0x2e).contains(&u)
+                || (0x30..=0x39).contains(&u)
+                || (0x41..=0x5a).contains(&u)
+                || (0x5e..0x7e).contains(&u)
+        }
+
+        id.chars().filter(is_token_char).take(64).collect()
+    }
 }
 
 impl fmt::Display for SimulcastGroups {
@@ -4362,5 +4382,13 @@ f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
                 assert!(serialized.contains(&format!("level-id={}", level_id)));
             }
         }
+    }
+
+    #[test]
+    fn msid_sanitize_id() {
+        assert_eq!(Msid::sanitize_id("a b\u{7f}c\td"), "abcd");
+        assert_eq!(Msid::sanitize_id("{stream}-1"), "{stream}-1");
+        assert_eq!(Msid::sanitize_id(&"x".repeat(100)).len(), 64);
+        assert_eq!(Msid::sanitize_id(" \n"), "");
     }
 }
