@@ -415,7 +415,7 @@ impl Streams {
     }
 
     pub(crate) fn paused_at(&self) -> Option<Instant> {
-        self.streams_rx.values().find_map(|s| s.paused_at())
+        self.streams_rx.values().filter_map(|s| s.paused_at()).min()
     }
 
     pub(crate) fn send_stream(&self) -> Option<Instant> {
@@ -783,5 +783,56 @@ impl fmt::Debug for RtpPacket {
             .field("nackable", &self.nackable)
             .field("timestamp", &self.timestamp)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rtp_::Frequency;
+
+    #[test]
+    fn paused_at_returns_the_earliest_deadline_in_any_stream_order() {
+        let now = Instant::now();
+        let threshold = Duration::from_millis(1500);
+        let mut streams = Streams::new(false, 1200, threshold);
+        assert_eq!(streams.paused_at(), None);
+        for id in 1..=3 {
+            streams.expect_stream_rx(id.into(), None, MidRid("mid".into(), None), true);
+        }
+        assert_eq!(streams.paused_at(), None);
+
+        // Assign deadlines after observing the map order, so the regression
+        // never depends on which random hash seed the test happens to receive.
+        let order: Vec<_> = streams.streams_rx.keys().copied().collect();
+        for (earliest, now) in [(0, now), (1, now + Duration::from_secs(2))] {
+            for (index, ssrc) in order[..2].iter().enumerate() {
+                let stream = streams.streams_rx.get_mut(ssrc).unwrap();
+                let received_at = now
+                    + if index == earliest {
+                        Duration::ZERO
+                    } else {
+                        Duration::from_millis(100)
+                    };
+                let header = RtpHeader {
+                    ssrc: *ssrc,
+                    ..Default::default()
+                };
+                let seq = stream.extend_seq(&header, false, |_| None);
+                stream.update_register(received_at, &header, Frequency::NINETY_KHZ, false, seq);
+            }
+
+            let first = now + threshold;
+            let last = first + Duration::from_millis(100);
+            assert_eq!(streams.paused_at(), Some(first));
+            for stream in streams.streams_rx.values_mut() {
+                stream.handle_timeout(first);
+            }
+            assert_eq!(streams.paused_at(), Some(last));
+            for stream in streams.streams_rx.values_mut() {
+                stream.handle_timeout(last);
+            }
+            assert_eq!(streams.paused_at(), None);
+        }
     }
 }
