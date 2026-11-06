@@ -12,6 +12,7 @@ use crate::poll::RtcMut;
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::{ChannelConfig, SctpInitData};
+use crate::sdp::Msid;
 use crate::streams::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP, StreamRx, StreamTx};
 
 /// Direct change strategy.
@@ -236,6 +237,31 @@ impl<'a> DirectApi<'a> {
 
         self.rtc.session.medias.push(m);
         self.rtc.session.medias.last_mut().unwrap()
+    }
+
+    /// Set the `a=msid` stream and track ids of a media.
+    ///
+    /// This is meant for media declared with [`Self::declare_media()`]; changing the ids of
+    /// media that has already been signalled in SDP is not recommended. The ids are sanitised
+    /// the same way as in [`SdpApi::add_media()`][crate::change::SdpApi::add_media]: characters
+    /// that are not RFC 8830 token chars are removed and the result is cut to 64 characters.
+    /// The new ids are reported by [`Media::stream_id()`] and [`Media::track_id()`].
+    ///
+    /// Returns `false` if no media has the given `mid`.
+    pub fn set_msid(
+        &mut self,
+        mid: Mid,
+        stream_id: impl Into<String>,
+        track_id: impl Into<String>,
+    ) -> bool {
+        let Some(media) = self.rtc.session.media_by_mid_mut(mid) else {
+            return false;
+        };
+        media.set_msid(Msid {
+            stream_id: Msid::sanitize_id(&stream_id.into()),
+            track_id: Msid::sanitize_id(&track_id.into()),
+        });
+        true
     }
 
     /// Remove `Media`.
