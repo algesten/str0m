@@ -537,6 +537,9 @@ impl ProbeControl {
     fn queue_probe(&mut self, bitrate: Bitrate, kind: ProbeKind, desired: Bitrate, now: Instant) {
         // Cap at 2× desired bitrate.
         let max = desired * MAX_PROBE_BITRATE_FACTOR;
+        // A cap that brings the target below the current estimate makes a cluster that cannot
+        // confirm that estimate (see `ProbeClusterConfig::capped_below`).
+        let capped_below = self.last_estimate.filter(|e| bitrate > max && max < *e);
         let bitrate = bitrate.min(max);
 
         // No probe at too small values.
@@ -549,7 +552,8 @@ impl ProbeControl {
         let config = ProbeClusterConfig::new(cluster_id, bitrate, kind)
             .with_min_packet_count(self.config.min_probe_packets_sent)
             .with_duration(self.config.min_probe_duration)
-            .with_min_probe_delta(self.config.min_probe_delta);
+            .with_min_probe_delta(self.config.min_probe_delta)
+            .with_capped_below(capped_below);
 
         // Threshold for further exponential probing (probe_bitrate * 0.7).
         let probe_further = bitrate * self.config.further_probe_threshold;

@@ -38,6 +38,11 @@ pub struct ProbeClusterConfig {
 
     /// The kind of probe this is.
     kind: ProbeKind,
+
+    /// The estimate when the probe was queued, when the 2x desired bitrate cap brought the
+    /// target below it: the cluster cannot show that the link carries that estimate, so a
+    /// result below it is not applied.
+    capped_below: Option<Bitrate>,
 }
 
 /// Kind of probe
@@ -75,7 +80,19 @@ impl ProbeClusterConfig {
             // WebRTC default for general probing (not initial/network-state): 2ms.
             min_probe_delta: Duration::from_millis(2),
             kind,
+            capped_below: None,
         }
+    }
+
+    /// Mark the target as capped below `estimate` (see [`Self::capped_below`]).
+    pub(crate) fn with_capped_below(mut self, estimate: Option<Bitrate>) -> Self {
+        self.capped_below = estimate;
+        self
+    }
+
+    /// The estimate the target was capped below when the probe was queued, if it was.
+    pub(crate) fn capped_below(&self) -> Option<Bitrate> {
+        self.capped_below
     }
 
     /// Set a custom target duration for this probe.
