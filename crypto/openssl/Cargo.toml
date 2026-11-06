@@ -13,16 +13,14 @@ rust-version = "1.89.0"
 
 [features]
 vendored = ["openssl/vendored"]
-dimpl = ["dep:dimpl"]
+# Compatibility alias: DTLS always uses dimpl.
+dimpl = []
 fips140 = []
 
 [dependencies]
-tracing.workspace = true
 str0m-proto = { workspace = true, features = ["dtls", "openssl"] }
 openssl.workspace = true
-openssl-sys.workspace = true
-libc.workspace = true
-dimpl = { workspace = true, optional = true }
+dimpl.workspace = true
 
 [dev-dependencies]
 arrayvec = "0.7"

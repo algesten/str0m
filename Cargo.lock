@@ -2098,11 +2098,8 @@ version = "0.7.0"
 dependencies = [
  "arrayvec",
  "dimpl",
- "libc",
  "openssl",
- "openssl-sys",
  "str0m-proto",
- "tracing",
 ]
 
 [[package]]

@@ -39,9 +39,9 @@ impl SrtpProfile {
 }
 
 pub enum SrtpCrypto {
-    #[cfg(any(feature = "openssl", feature = "openssl-dimpl"))]
+    #[cfg(feature = "openssl")]
     OpenSsl(super::ossl::OsslSrtpCryptoImpl),
-    #[cfg(not(any(feature = "openssl", feature = "openssl-dimpl")))]
+    #[cfg(not(feature = "openssl"))]
     OpenSsl(DummySrtpCryptoImpl),
     #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl),
@@ -55,12 +55,12 @@ pub enum SrtpCrypto {
 
 #[allow(clippy::unit_arg)]
 impl SrtpCrypto {
-    #[cfg(any(feature = "openssl", feature = "openssl-dimpl"))]
+    #[cfg(feature = "openssl")]
     pub fn new_openssl() -> SrtpCrypto {
         Self::OpenSsl(super::ossl::OsslSrtpCryptoImpl)
     }
 
-    #[cfg(not(any(feature = "openssl", feature = "openssl-dimpl")))]
+    #[cfg(not(feature = "openssl"))]
     pub fn new_openssl() -> SrtpCrypto {
         Self::OpenSsl(DummySrtpCryptoImpl(CryptoProvider::OpenSsl))
     }

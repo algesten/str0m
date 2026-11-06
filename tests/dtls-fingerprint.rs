@@ -4,7 +4,6 @@
     feature = "aws-lc-rs",
     feature = "rust-crypto",
     feature = "openssl",
-    feature = "openssl-dimpl",
     feature = "wincrypto",
     feature = "apple-crypto",
 ))]
