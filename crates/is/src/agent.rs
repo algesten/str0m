@@ -658,6 +658,7 @@ impl IceAgent {
         let local_idx = if let Some((idx, other)) = maybe_redundant {
             if other.discarded() && c.kind() == other.kind() && c.raddr() == other.raddr() {
                 debug!("Re-enable previously discarded local: {:?}", other);
+                other.set_ufrag(&self.local_credentials.ufrag);
                 other.set_discarded(false);
                 idx
             } else {
@@ -2196,6 +2197,36 @@ mod test {
         // this is redundant given we have the direct host candidate above.
         let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1(), "udp"));
         assert!(x1.is_none());
+    }
+
+    #[test]
+    fn re_adding_invalidated_local_candidate_updates_ufrag() {
+        let mut agent = IceAgent::new(IceCreds {
+            ufrag: "generation-a".into(),
+            pass: "password-a".into(),
+        });
+        let host = Candidate::host(ipv4_1(), "udp").unwrap();
+        let mut expected = agent.add_local_candidate(host.clone()).unwrap().clone();
+        assert_eq!(expected.ufrag(), Some("generation-a"));
+
+        agent.add_remote_candidate(Candidate::host(ipv4_2(), "udp").unwrap());
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+
+        agent.set_local_credentials(IceCreds {
+            ufrag: "generation-b".into(),
+            pass: "password-b".into(),
+        });
+        assert!(agent.invalidate_candidate(&host));
+        assert_eq!(agent.local_candidates().count(), 0);
+        assert_eq!(agent.pair_indexes(), []);
+
+        expected.set_ufrag("generation-b");
+        let reactivated = agent.add_local_candidate(host).unwrap();
+        assert_eq!(reactivated.ufrag(), Some("generation-b"));
+        assert_eq!(reactivated, &expected);
+        assert_eq!(agent.local_candidates().collect::<Vec<_>>(), [expected]);
+        assert_eq!(agent.local_candidates.len(), 1);
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
     }
 
     #[test]
