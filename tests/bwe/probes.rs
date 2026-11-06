@@ -7,7 +7,9 @@ use netem::{DataSize, NetemConfig};
 use str0m::RtcError;
 use str0m::bwe::Bitrate;
 
-use crate::common::{BweTestContext, Step, connect_with_bwe, init_crypto_default, init_log};
+use crate::common::{
+    BweTestContext, Step, connect_with_bwe, get_last_bwe_estimate, init_crypto_default, init_log,
+};
 
 #[test]
 fn initial_exponential_probes_3x_and_6x() -> Result<(), RtcError> {
@@ -136,6 +138,87 @@ fn probes_respect_max_bitrate_cap() -> Result<(), RtcError> {
     let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(10));
     let mut ctx = BweTestContext::new(&mut l, &mut r);
     ctx.run_plan(&mut l, &mut r, &plan)?;
+
+    Ok(())
+}
+
+#[test]
+fn capped_initial_probes_keep_the_start_estimate() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    // The desired bitrate is far below the start estimate when the first packet goes out, so
+    // the initial 3x and 6x probes are capped at 2x the desired bitrate (200 kbps).
+    let plan = vec![
+        Step::Conditions {
+            description: "High bandwidth network",
+            config: NetemConfig::new()
+                .link(Bitrate::mbps(10), DataSize::kbytes(200))
+                .seed(42),
+        },
+        Step::Media {
+            description: "Low desired bitrate, low media rate",
+            desired_bitrate: Bitrate::kbps(100),
+            media_send_rate: Bitrate::kbps(100),
+        },
+        Step::Run {
+            description: "Initial probing",
+            duration: Duration::from_secs(2),
+        },
+        Step::CheckProbe {
+            description: "The initial probes are capped at 2x the desired bitrate",
+            check: Arc::new(|_index, probe| {
+                probe.target_bitrate() <= Bitrate::kbps(200) && !probe.is_alr_probe()
+            }),
+        },
+        Step::Check {
+            description: "A capped probe does not lower the estimate below the start",
+            at_least: Bitrate::kbps(1_500),
+        },
+    ];
+
+    let (mut l, mut r) = connect_with_bwe(Bitrate::kbps(1_500), Bitrate::kbps(100));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    ctx.run_plan(&mut l, &mut r, &plan)?;
+
+    Ok(())
+}
+
+#[test]
+fn capped_initial_probes_do_not_mask_overuse() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    // As above, but the media sent exceeds the link: the delay-based overuse still lowers the
+    // estimate.
+    let plan = vec![
+        Step::Conditions {
+            description: "A link slower than the media",
+            config: NetemConfig::new()
+                .latency(Duration::from_millis(20))
+                .link(Bitrate::kbps(500), DataSize::kbytes(50))
+                .seed(42),
+        },
+        Step::Media {
+            description: "Low desired bitrate, media above the link",
+            desired_bitrate: Bitrate::kbps(100),
+            media_send_rate: Bitrate::mbps(1),
+        },
+        Step::Run {
+            description: "Overuse",
+            duration: Duration::from_secs(3),
+        },
+    ];
+
+    let (mut l, mut r) = connect_with_bwe(Bitrate::kbps(1_500), Bitrate::kbps(100));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    ctx.run_plan(&mut l, &mut r, &plan)?;
+
+    let estimate = get_last_bwe_estimate(&l).expect("a BWE estimate");
+    assert!(
+        estimate < Bitrate::kbps(1_000),
+        "overuse lowers the estimate: {estimate}"
+    );
 
     Ok(())
 }
