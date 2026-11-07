@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Resend a NACKed packet at most once per round trip
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 
