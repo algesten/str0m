@@ -79,6 +79,18 @@ fn ordinary_peer_falls_back_without_embedding() -> Result<(), RtcError> {
 }
 
 #[test]
+fn cancellation_before_ice_selection_discards_unsendable_early_flights() -> Result<(), RtcError> {
+    use str0m::Output;
+    let (mut left, mut right) = peers(true, true, DtlsVersion::Dtls13)?;
+    for peer in [&mut left, &mut right] {
+        peer.close()?;
+        assert!(!peer.is_alive());
+        assert!(matches!(peer.poll_output()?, Output::Timeout(_)));
+    }
+    Ok(())
+}
+
+#[test]
 fn ice_restart_preserves_authenticated_dtls_and_renegotiates_sped() -> Result<(), RtcError> {
     let (mut left, mut right) = peers(true, true, DtlsVersion::Dtls13)?;
     connect(&mut left, &mut right)?;

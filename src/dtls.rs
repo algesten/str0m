@@ -155,6 +155,10 @@ impl Dtls {
         self.pending_packets.pop_front()
     }
 
+    pub fn discard_packets(&mut self) {
+        self.pending_packets.clear();
+    }
+
     pub fn latest_packet(&self) -> Option<(u64, &[u8])> {
         self.pending_packets
             .back()

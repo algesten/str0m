@@ -2133,6 +2133,16 @@ impl Rtc {
 
         self.sped.cancel();
 
+        // Before ICE selects a route, queued early flights and close_notify
+        // have nowhere to drain. Cancellation must not wait for connectivity
+        // or expose readiness while trying to finish that handshake.
+        if self.send_addr.is_none() {
+            self.dtls.discard_packets();
+            self.next_dtls_timeout = None;
+            self.disconnect();
+            return Ok(());
+        }
+
         // Closing queues RTCP BYE and a DTLS close_notify that must be drained
         // from the pipeline, so re-poll the whole tree.
         self.wake_all();
