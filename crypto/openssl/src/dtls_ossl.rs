@@ -8,7 +8,7 @@ use std::{io, mem};
 use openssl::pkey::PKey;
 use openssl::srtp::SrtpProfileId;
 use openssl::ssl::{HandshakeError, MidHandshakeSslStream, Ssl};
-use openssl::ssl::{SslContext, SslContextBuilder, SslMethod};
+use openssl::ssl::{SslContext, SslContextBuilder, SslMethod, SslVersion};
 use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::X509;
 
@@ -376,6 +376,8 @@ impl OsslDtlsImpl {
 fn dtls_create_ctx(cert: &DtlsCert) -> Result<SslContext, CryptoError> {
     let mut ctx = SslContextBuilder::new(SslMethod::dtls())?;
 
+    ctx.set_min_proto_version(Some(SslVersion::DTLS1_2))?;
+    ctx.set_max_proto_version(Some(SslVersion::DTLS1_2))?;
     ctx.set_cipher_list(DTLS_CIPHERS)?;
 
     let srtp_profiles = {
