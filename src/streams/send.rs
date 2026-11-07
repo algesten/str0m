@@ -39,6 +39,12 @@ pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
 pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
+/// Round trip time assumed for resends before a reception report has measured one.
+const DEFAULT_RTT: Duration = Duration::from_millis(100);
+
+/// How many recent resends are remembered. Older ones may be resent again.
+const MAX_RECENT_RESENDS: usize = 4096;
+
 /// A recently sampled view of an outgoing stream's send queue.
 ///
 /// str0m refreshes this information as part of its regular pacer and bandwidth-estimation
@@ -134,6 +140,9 @@ pub struct StreamTx {
 
     /// Scheduled resends due to NACK or spurious padding.
     resends: VecDeque<Resend>,
+
+    /// Recently resent packets, to resend each at most once per round trip.
+    recent_resends: VecDeque<(SeqNo, Instant)>,
 
     /// Requested padding, that has not been turned into packets yet.
     padding: usize,
@@ -377,6 +386,7 @@ impl StreamTx {
             queue_info: None,
             unpaced: None,
             resends: VecDeque::new(),
+            recent_resends: VecDeque::new(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
@@ -889,6 +899,18 @@ impl StreamTx {
             break pkt.seq_no;
         };
 
+        // Remember the resend; what is older than a round trip may go again.
+        let window = self.resend_window();
+        self.recent_resends.push_back((seq_no, now));
+        while self
+            .recent_resends
+            .front()
+            .is_some_and(|(_, at)| now.saturating_duration_since(*at) > window)
+            || self.recent_resends.len() > MAX_RECENT_RESENDS
+        {
+            self.recent_resends.pop_front();
+        }
+
         // Borrow checker gymnastics.
         let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
 
@@ -1062,12 +1084,27 @@ impl StreamTx {
         let seq_no = self.rtx_cache.last_cached_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
+        let window = self.resend_window();
+
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
             let Some(packet) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
                 // Packet was not available in RTX cache, it has probably expired.
                 continue;
             };
+
+            // A receiver repeats its NACK for a packet until the resend arrives. Behind a
+            // congested link that takes longer than its NACK interval, and queueing the packet
+            // again for every NACK multiplies the resends exactly where there is no room for
+            // them. Like libwebrtc, resend a packet at most once per round trip.
+            if self.resends.iter().any(|r| r.seq_no == seq_no)
+                || self
+                    .recent_resends
+                    .iter()
+                    .any(|(s, at)| *s == seq_no && now.saturating_duration_since(*at) < window)
+            {
+                continue;
+            }
 
             let resend = Resend {
                 seq_no,
@@ -1078,6 +1115,10 @@ impl StreamTx {
         }
 
         Some(())
+    }
+
+    fn resend_window(&self) -> Duration {
+        self.stats.rtt().unwrap_or(DEFAULT_RTT)
     }
 
     pub(crate) fn need_sr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
@@ -1435,6 +1476,53 @@ mod test {
             assert!(header.ssrc.is_probe());
             assert!(header.has_padding);
         }
+    }
+
+    #[test]
+    fn repeated_nacks_resend_a_packet_once_per_round_trip() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        let pt = codecs
+            .params()
+            .iter()
+            .find(|p| p.resend().is_some())
+            .expect("a default codec with RTX")
+            .pt();
+        let exts = ExtensionMap::standard();
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let stream =
+            streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
+        stream.set_rtx_cache(100, Duration::from_secs(3), None);
+        let mut buf = vec![];
+        for i in 0..10_u64 {
+            let write = RtpWrite::new(pt, i.into(), 0, start, vec![0_u8; 1000]).nackable(true);
+            stream.write_rtp(write);
+            stream.send_queue.handle_timeout(start);
+            stream
+                .poll_packet(start, &exts, None, codecs.params(), &mut buf)
+                .expect("a queued packet to send");
+        }
+        let nack = |stream: &mut StreamTx, at: Instant| {
+            stream.handle_nack([NackEntry { pid: 3, blp: 0 }].into_iter(), at);
+        };
+
+        // A receiver repeats its NACK every few ms while the resend is under way.
+        for ms in [0, 5, 10] {
+            nack(stream, start + Duration::from_millis(ms));
+        }
+        assert_eq!(stream.resends.len(), 1, "queued once, not once per NACK");
+
+        let sent = start + Duration::from_millis(10);
+        assert!(stream.poll_packet_resend(sent).is_some());
+        nack(stream, sent + Duration::from_millis(50));
+        assert!(
+            stream.resends.is_empty(),
+            "already resent within a round trip"
+        );
+
+        // After a round trip without the packet, the receiver may really need it again.
+        nack(stream, sent + DEFAULT_RTT + Duration::from_millis(1));
+        assert_eq!(stream.resends.len(), 1, "resent again after a round trip");
     }
 
     #[test]
