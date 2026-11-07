@@ -6,7 +6,7 @@ mod seq_no_window;
 pub(crate) use seq_no_window::SeqNoWindow;
 
 mod ext;
-pub use ext::{AbsCaptureTime, UserExtensionValues, VideoOrientation};
+pub use ext::{AbsCaptureTime, UserExtensionValues, VideoColorSpace, VideoOrientation};
 pub use ext::{Extension, ExtensionMap, ExtensionSerializer, ExtensionValues};
 
 mod dir;

@@ -737,8 +737,10 @@ impl Extension {
                 Some(4)
             }
             ColorSpace => {
-                // TODO HDR color space
-                None
+                // The short form without HDR metadata.
+                let v = ev.color_space?;
+                buf[..4].copy_from_slice(&v.to_bytes());
+                Some(4)
             }
             UnknownUri(_, serializer) => {
                 let n = serializer.write_to(buf, ev);
@@ -866,7 +868,10 @@ impl Extension {
                 ev.frame_mark = Some(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
             }
             ColorSpace => {
-                // TODO HDR color space
+                // The first four bytes are the same in the long form with HDR metadata
+                // (28 bytes); that metadata is not read.
+                let b = buf.first_chunk::<4>()?;
+                ev.color_space = Some(VideoColorSpace::from_bytes(*b));
             }
             UnknownUri(_, serializer) => {
                 let success = serializer.parse_value(buf, ev);
@@ -922,6 +927,10 @@ pub struct ExtensionValues {
     pub mid: Option<Mid>,
     #[doc(hidden)]
     pub frame_mark: Option<u32>,
+
+    /// Color space of the video, from the `color-space` extension. Without it, Chrome showed
+    /// nothing of a full-range VP9 stream from str0m until it requested a new keyframe.
+    pub color_space: Option<VideoColorSpace>,
 
     /// User values for [`ExtensionSerializer`] to parse into and write from.
     pub user_values: UserExtensionValues,
@@ -1133,9 +1142,60 @@ impl fmt::Debug for ExtensionValues {
         if let Some(t) = &self.frame_mark {
             write!(f, " frame_mark: {t}")?;
         }
+        if let Some(t) = &self.color_space {
+            write!(f, " color_space: {t:?}")?;
+        }
 
         write!(f, " }}")?;
         Ok(())
+    }
+}
+
+/// Color space from the `color-space` RTP header extension, without HDR metadata.
+///
+/// The values follow the WebRTC extension, which takes them from ITU-T H.273: for example
+/// BT.709 is `primaries: 1, transfer: 1, matrix: 1`. `range` is 0 (invalid), 1 (limited),
+/// 2 (full) or 3 (derived); the chroma siting fields are 0 (unspecified), 1 (collocated with
+/// the luma sample) or 2 (half way between). Each of the last three uses only two bits.
+///
+/// <http://www.webrtc.org/experiments/rtp-hdrext/color-space>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VideoColorSpace {
+    /// Colour primaries, H.273 table 2.
+    pub primaries: u8,
+    /// Transfer characteristics, H.273 table 3.
+    pub transfer: u8,
+    /// Matrix coefficients, H.273 table 4.
+    pub matrix: u8,
+    /// 0 invalid, 1 limited, 2 full, 3 derived.
+    pub range: u8,
+    /// Horizontal chroma siting: 0 unspecified, 1 collocated, 2 half.
+    pub chroma_siting_horizontal: u8,
+    /// Vertical chroma siting: 0 unspecified, 1 collocated, 2 half.
+    pub chroma_siting_vertical: u8,
+}
+
+impl VideoColorSpace {
+    fn to_bytes(self) -> [u8; 4] {
+        [
+            self.primaries,
+            self.transfer,
+            self.matrix,
+            (self.range & 0b11) << 4
+                | (self.chroma_siting_horizontal & 0b11) << 2
+                | (self.chroma_siting_vertical & 0b11),
+        ]
+    }
+
+    fn from_bytes(b: [u8; 4]) -> Self {
+        VideoColorSpace {
+            primaries: b[0],
+            transfer: b[1],
+            matrix: b[2],
+            range: (b[3] >> 4) & 0b11,
+            chroma_siting_horizontal: (b[3] >> 2) & 0b11,
+            chroma_siting_vertical: b[3] & 0b11,
+        }
     }
 }
 
@@ -1335,6 +1395,48 @@ mod test {
         let abs = if now > now2 { now - now2 } else { now2 - now };
 
         assert!(abs < Duration::from_millis(1));
+    }
+
+    #[test]
+    fn color_space_roundtrip() {
+        let mut exts = ExtensionMap::empty();
+        exts.set(8, Extension::ColorSpace);
+        // BT.709, full range: what a VP9 encoder signals with VP9E_SET_COLOR_RANGE = 1.
+        let cs = VideoColorSpace {
+            primaries: 1,
+            transfer: 1,
+            matrix: 1,
+            range: 2,
+            chroma_siting_horizontal: 1,
+            chroma_siting_vertical: 2,
+        };
+        let ev = ExtensionValues {
+            color_space: Some(cs),
+            ..Default::default()
+        };
+
+        let mut buf = vec![0_u8; 16];
+        let n = exts.write_to(&mut buf[..], &ev, ExtensionsForm::OneByte);
+        assert!(n > 0);
+        // One-byte header: id 8, length 4 (encoded as 3), then the four bytes.
+        assert_eq!(&buf[..5], &[0x83, 1, 1, 1, 0b0010_0110]);
+
+        let mut ev2 = ExtensionValues::default();
+        exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
+        assert_eq!(ev2.color_space, Some(cs));
+    }
+
+    #[test]
+    fn color_space_is_left_out_without_a_value() {
+        let mut exts = ExtensionMap::empty();
+        exts.set(8, Extension::ColorSpace);
+        let mut buf = vec![0_u8; 16];
+        let n = exts.write_to(
+            &mut buf[..],
+            &ExtensionValues::default(),
+            ExtensionsForm::OneByte,
+        );
+        assert_eq!(n, 0);
     }
 
     #[test]
