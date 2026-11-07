@@ -65,6 +65,30 @@ impl Sdp {
             .or_else(|| self.media_lines.iter().find_map(|m| m.fingerprint()))
     }
 
+    pub(crate) fn supports_sped(&self) -> bool {
+        let session = self.session.attrs.iter().any(|a| matches!(a, SessionAttribute::IceOptions(options) if options.split_ascii_whitespace().any(|option| option == "sped")));
+        // This Rtc has one bundled ICE transport. A media-level option applies
+        // only on the BUNDLE tag, or the first active unbundled section.
+        let tag = self.bundle_mids().and_then(|mids| mids.first());
+        self.media_lines
+            .iter()
+            .find(|media| tag.map_or(!media.disabled, |tag| media.mid() == *tag))
+            .map_or(session, |media| {
+                media
+                    .attrs
+                    .iter()
+                    .find_map(|a| match a {
+                        MediaAttribute::IceOptions(options) => Some(
+                            options
+                                .split_ascii_whitespace()
+                                .any(|option| option == "sped"),
+                        ),
+                        _ => None,
+                    })
+                    .unwrap_or(session)
+            })
+    }
+
     pub(crate) fn ice_creds(&self) -> Option<IceCreds> {
         self.session
             .ice_creds()
@@ -1867,6 +1891,36 @@ mod test {
             sdp.push_str("a=sendrecv\r\na=rtpmap:111 opus/48000/2\r\n");
         }
         Sdp::parse(&sdp).unwrap()
+    }
+
+    #[test]
+    fn sped_requires_an_exact_option_on_the_ice_transport() {
+        let mut sdp = sdp_with_mids("0 1", &["0", "1"]);
+        sdp.media_lines[1]
+            .attrs
+            .push(MediaAttribute::IceOptions("sped".into()));
+        assert!(
+            !sdp.supports_sped(),
+            "an unrelated m-line cannot negotiate this ICE transport"
+        );
+        sdp.session
+            .attrs
+            .push(SessionAttribute::IceOptions("trickle sped".into()));
+        assert!(sdp.supports_sped());
+        sdp.media_lines[0]
+            .attrs
+            .push(MediaAttribute::IceOptions("trickle sped-other".into()));
+        assert!(
+            !sdp.supports_sped(),
+            "media-level options override the session default"
+        );
+        sdp.media_lines[0]
+            .attrs
+            .retain(|a| !matches!(a, MediaAttribute::IceOptions(_)));
+        sdp.media_lines[0]
+            .attrs
+            .push(MediaAttribute::IceOptions("trickle sped".into()));
+        assert!(sdp.supports_sped());
     }
 
     #[test]

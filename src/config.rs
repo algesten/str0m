@@ -58,6 +58,7 @@ pub struct RtcConfig {
     pub(crate) dtls_version: DtlsVersion,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
+    pub(crate) sped_enabled: bool,
     pub(crate) mtu: RangeInclusive<usize>,
 }
 
@@ -812,6 +813,14 @@ impl RtcConfig {
         self
     }
 
+    /// Offer SPED (`draft-hancke-webrtc-sped-01`) using libwebrtc's experimental
+    /// STUN attribute IDs. Only negotiated peers embed DTLS; others use normal
+    /// ICE/DTLS. Default: false. DTLS fingerprint verification is unchanged.
+    pub fn set_sped_enabled(mut self, enabled: bool) -> Self {
+        self.sped_enabled = enabled;
+        self
+    }
+
     /// Set which DTLS version to use.
     ///
     /// Defaults to [`DtlsVersion::Dtls12`].
@@ -939,6 +948,7 @@ impl Default for RtcConfig {
             dtls_version: DtlsVersion::Dtls12,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
+            sped_enabled: false,
             mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
         }
     }

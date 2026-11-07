@@ -724,10 +724,12 @@ pub mod crypto;
 use crypto::Fingerprint;
 
 mod dtls;
+mod sped;
 use crate::crypto::dtls::DtlsOutput;
 use crate::crypto::{CryptoProvider, DtlsError, from_feature_flags};
 use crate::dtls::is_would_block;
 use dtls::Dtls;
+pub use sped::{SpedFallback, SpedStats};
 
 use is::IceAgent;
 use is::IceAgentEvent;
@@ -916,7 +918,15 @@ pub struct Rtc {
     state: RtcState,
     ice: IceAgent,
     dtls: Dtls,
+    dtls_setup: (
+        crate::crypto::dtls::DtlsCert,
+        crate::crypto::dtls::DtlsVersion,
+        std::ops::RangeInclusive<usize>,
+    ),
+    sped: sped::Sped,
     dtls_connected: bool,
+    dtls_verified: bool,
+    connected_emitted: bool,
     dtls_buf: Vec<u8>,
     next_dtls_timeout: Option<Instant>,
     sctp: RtcSctp,
@@ -951,6 +961,7 @@ enum RtcState {
     Closed,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 struct SendAddr {
     proto: net::Protocol,
     source: SocketAddr,
@@ -1282,19 +1293,29 @@ impl Rtc {
         }
         sctp.set_max_buffered_amount(config.sctp_max_buffered_amount);
 
+        let dtls_mtu = if config.sped_enabled {
+            (*mtu.start()).saturating_sub(256).max(64)..=*mtu.end()
+        } else {
+            mtu
+        };
+
         Ok(Rtc {
             state: RtcState::Alive,
             ice,
+            sped: sped::Sped::new(config.sped_enabled),
             dtls: Dtls::new(
                 &dtls_cert,
                 crypto_provider.dtls_provider,
                 crypto_provider.sha256_provider,
                 start,
                 config.dtls_version,
-                mtu,
+                dtls_mtu.clone(),
             )
             .expect("DTLS to init without problem"),
+            dtls_setup: (dtls_cert, config.dtls_version, dtls_mtu),
             dtls_connected: false,
+            dtls_verified: false,
+            connected_emitted: false,
             dtls_buf: vec![0; 2000],
             next_dtls_timeout: None,
             session,
@@ -1359,6 +1380,7 @@ impl Rtc {
     /// assert!(!rtc.is_alive());
     /// ```
     pub fn disconnect(&mut self) {
+        self.sped.cancel();
         self.state = RtcState::Closed;
     }
 
@@ -1659,11 +1681,13 @@ impl Rtc {
                         Pii(destination),
                         proto,
                     );
-                    self.send_addr = Some(SendAddr {
+                    let path = SendAddr {
                         proto,
                         source,
                         destination,
-                    });
+                    };
+                    self.sped.select(path.clone());
+                    self.send_addr = Some(path);
                 }
             }
         }
@@ -1678,14 +1702,15 @@ impl Rtc {
                 if let Err(error) = self.dtls.handle_timeout(self.last_now) {
                     // A failed timer transition leaves DTLS unrecoverable. Close the
                     // RTC so continued polling cannot expose the same due timeout again.
-                    self.disconnect();
-                    return Err(error.into());
+                    if !self.fallback_early_dtls()? {
+                        self.disconnect();
+                        return Err(error.into());
+                    }
                 }
             }
         }
 
         // Poll DTLS output - collect packets, handle events
-        let mut just_connected = false;
         loop {
             match self.dtls.poll_output(&mut self.dtls_buf) {
                 DtlsOutput::Packet(_) => {
@@ -1695,7 +1720,6 @@ impl Rtc {
                     if !self.dtls_connected {
                         debug!("DTLS connected");
                         self.dtls_connected = true;
-                        just_connected = true;
                     }
                 }
                 DtlsOutput::KeyingMaterial(km, profile) => {
@@ -1746,11 +1770,17 @@ impl Rtc {
                         self.disconnect();
                         return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                     }
+                    self.dtls_verified = true;
                 }
                 DtlsOutput::ApplicationData(data) => {
-                    self.sctp.handle_input(self.last_now, data);
+                    if self.dtls_verified {
+                        self.sctp.handle_input(self.last_now, data);
+                    }
                 }
                 DtlsOutput::Timeout(t) => {
+                    if let Some((generation, packet)) = self.dtls.latest_packet() {
+                        self.sped.capture(generation, packet);
+                    }
                     self.next_dtls_timeout = Some(t);
                     break;
                 }
@@ -1766,11 +1796,24 @@ impl Rtc {
             }
         }
 
-        if just_connected {
+        if self.dtls_connected && self.dtls_verified {
+            self.sped.finish();
+        }
+
+        if self.state == RtcState::Alive
+            && self.dtls_connected
+            && self.dtls_verified
+            && self.send_addr.is_some()
+            && !self.connected_emitted
+        {
+            self.connected_emitted = true;
             return Ok(Some(Output::Event(Event::Connected)));
         }
 
-        while let Some(e) = self.sctp.poll() {
+        while let Some(e) = (self.connected_emitted || self.state == RtcState::Closing)
+            .then(|| self.sctp.poll())
+            .flatten()
+        {
             match e {
                 SctpEvent::Transmit { mut packets } => {
                     if let Some(v) = packets.front() {
@@ -1805,6 +1848,9 @@ impl Rtc {
                     }
                 }
                 SctpEvent::Open { id, label } => {
+                    if self.state != RtcState::Alive {
+                        continue;
+                    }
                     self.chan.ensure_channel_id_for(id);
                     let id = self.chan.channel_id_by_stream_id(id).unwrap();
                     return Ok(Some(Output::Event(Event::ChannelOpen(id, label))));
@@ -1833,6 +1879,9 @@ impl Rtc {
                     return Ok(Some(Output::Event(Event::Closed)));
                 }
                 SctpEvent::Data { id, binary, data } => {
+                    if self.state != RtcState::Alive {
+                        continue;
+                    }
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
                         warn!("Drop ChannelData event for id: {:?}", id);
                         continue;
@@ -1867,7 +1916,20 @@ impl Rtc {
             }));
         }
 
-        if let Some(v) = self.ice.poll_transmit() {
+        if let Some(mut v) = self.ice.poll_transmit() {
+            let path = SendAddr {
+                proto: v.proto,
+                source: v.source,
+                destination: v.destination,
+            };
+            let (data, ack) = self.sped.outgoing(&path);
+            if self.ice.add_dtls_to_transmit(
+                &mut v,
+                data.as_deref(),
+                (!ack.is_empty()).then_some(ack.as_slice()),
+            ) {
+                self.sped.stats.embedded_sent += 1;
+            }
             return Ok(Some(Output::Transmit(v)));
         }
 
@@ -1938,6 +2000,17 @@ impl Rtc {
     /// ```
     pub fn last_timeout_reason(&self) -> Reason {
         self.last_timeout_reason
+    }
+
+    /// Whether SPED was negotiated and whether DTLS was actually embedded.
+    pub fn sped_stats(&self) -> SpedStats {
+        self.sped.stats
+    }
+
+    /// DTLS completed and its peer certificate passed SDP fingerprint verification.
+    /// ICE selection is a separate condition for application readiness.
+    pub fn is_dtls_connected(&self) -> bool {
+        self.dtls_connected && self.dtls_verified
     }
 
     /// Check if this `Rtc` instance accepts the given input. This is used for demultiplexing
@@ -2058,6 +2131,8 @@ impl Rtc {
             return Ok(());
         }
 
+        self.sped.cancel();
+
         // Closing queues RTCP BYE and a DTLS close_notify that must be drained
         // from the pipeline, so re-poll the whole tree.
         self.wake_all();
@@ -2174,14 +2249,9 @@ impl Rtc {
 
         self.peer_bytes_rx += bytes_rx as u64;
 
-        // Disjoint borrows so each subsystem gets its own armed `Wake`.
-        let Rtc {
-            ice,
-            dtls,
-            session,
-            readiness,
-            ..
-        } = self;
+        if matches!(r.contents.inner, Rtp(_) | Rtcp(_)) && !self.connected_emitted {
+            return Ok(());
+        }
 
         match r.contents.inner {
             Stun(stun) => {
@@ -2192,18 +2262,117 @@ impl Rtc {
                     message: stun,
                 };
                 // ICE is an external crate; arm both on its behalf.
-                ice.handle_packet(recv_time, packet);
-                drop(readiness.wake());
+                let authenticated = self.ice.accepts_packet(&packet);
+                self.ice.handle_packet(recv_time, packet);
+                drop(self.readiness.wake());
+                if authenticated && (self.sped.stats.negotiated || self.sped.offered) {
+                    let path = SendAddr {
+                        proto: r.proto,
+                        source: r.destination,
+                        destination: r.source,
+                    };
+                    if self.sped.stats.negotiated {
+                        if let Some(ack) = stun.dtls_ack() {
+                            self.sped.acknowledge(ack);
+                        }
+                        if let Some(data) = stun.dtls_data() {
+                            self.receive_sped(recv_time, path, data)?;
+                        }
+                    } else if let (Some(data), Some((_, ufrag))) =
+                        (stun.dtls_data(), stun.split_username())
+                    {
+                        self.sped.buffer_early(sped::EarlyPacket {
+                            path,
+                            ufrag: ufrag.to_owned(),
+                            data: data.to_vec(),
+                            at: recv_time,
+                        });
+                    }
+                }
             }
             Dtls(dtls_packet) => {
                 // A failed receive can still change DTLS state and timers.
-                let _wake = readiness.wake();
-                dtls.handle_receive(dtls_packet)?;
+                let _wake = self.readiness.wake();
+                self.dtls.handle_receive(dtls_packet)?;
+                if self.sped.stats.negotiated && !self.dtls_connected {
+                    self.sped.received(
+                        &SendAddr {
+                            proto: r.proto,
+                            source: r.destination,
+                            destination: r.source,
+                        },
+                        dtls_packet,
+                        false,
+                    );
+                }
             }
-            Rtp(rtp) => session.handle_rtp_receive(recv_time, rtp, &mut readiness.wake()),
-            Rtcp(rtcp) => session.handle_rtcp_receive(recv_time, rtcp, &mut readiness.wake()),
+            Rtp(rtp) => self
+                .session
+                .handle_rtp_receive(recv_time, rtp, &mut self.readiness.wake()),
+            Rtcp(rtcp) => {
+                self.session
+                    .handle_rtcp_receive(recv_time, rtcp, &mut self.readiness.wake())
+            }
         }
 
+        Ok(())
+    }
+
+    fn receive_sped(&mut self, _now: Instant, path: SendAddr, data: &[u8]) -> Result<(), RtcError> {
+        if self.sped.stats.fallback == Some(SpedFallback::EarlyDtlsFailed) {
+            return Ok(());
+        }
+        if let Err(error) = self.dtls.handle_receive(data) {
+            if !self.fallback_early_dtls()? {
+                return Err(error.into());
+            }
+            return Ok(());
+        }
+        self.sped.received(&path, data, true);
+        drop(self.readiness.wake());
+        Ok(())
+    }
+
+    fn fallback_early_dtls(&mut self) -> Result<bool, RtcError> {
+        if !self.sped.stats.negotiated
+            || self.dtls_connected
+            || self.dtls_verified
+            || self.sped.stats.fallback == Some(SpedFallback::EarlyDtlsFailed)
+        {
+            return Ok(false);
+        }
+        let active = self.dtls.is_active();
+        let (certificate, version, mtu) = &self.dtls_setup;
+        self.dtls = Dtls::new(
+            certificate,
+            self.crypto_provider.dtls_provider,
+            self.crypto_provider.sha256_provider,
+            self.last_now,
+            *version,
+            mtu.clone(),
+        )?;
+        self.next_dtls_timeout = None;
+        self.sped.stats.fallback = Some(SpedFallback::EarlyDtlsFailed);
+        self.sped.stop(SpedFallback::EarlyDtlsFailed);
+        if let Some(active) = active {
+            self.init_dtls(active)?;
+        }
+        drop(self.readiness.wake());
+        Ok(true)
+    }
+
+    fn apply_early_sped(&mut self) -> Result<(), RtcError> {
+        while let Some(packet) = self.sped.early.pop_front() {
+            if self.sped.stats.negotiated
+                && self
+                    .ice
+                    .remote_credentials()
+                    .is_some_and(|creds| creds.ufrag == packet.ufrag)
+            {
+                self.receive_sped(packet.at, packet.path, &packet.data)?;
+            }
+        }
+        self.sped.offered = false;
         Ok(())
     }
 

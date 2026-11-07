@@ -117,6 +117,22 @@ pub struct StunMessage<'a> {
 }
 
 impl<'a> StunMessage<'a> {
+    /// Experimental libwebrtc SPED attributes, covered by MESSAGE-INTEGRITY.
+    pub fn with_dtls(mut self, data: Option<&'a [u8]>, acknowledgements: Option<&'a [u8]>) -> Self {
+        self.attrs.dtls_data = data;
+        self.attrs.dtls_ack = acknowledgements;
+        self
+    }
+
+    /// Embedded DTLS packet, if present before MESSAGE-INTEGRITY.
+    pub fn dtls_data(&self) -> Option<&'a [u8]> {
+        self.attrs.dtls_data
+    }
+
+    /// CRC-32 acknowledgements, if present before MESSAGE-INTEGRITY.
+    pub fn dtls_ack(&self) -> Option<&'a [u8]> {
+        self.attrs.dtls_ack
+    }
     /// Parse a STUN message from a slice of bytes.
     pub fn parse(buf: &'a [u8]) -> Result<StunMessage<'a>, StunError> {
         if buf.len() < 4 {
@@ -566,6 +582,8 @@ impl Method {
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[rustfmt::skip]
 pub struct Attributes<'a> {
+    dtls_data: Option<&'a [u8]>,
+    dtls_ack: Option<&'a [u8]>,
     username: Option<&'a str>,               // < 128 utf8 chars
     message_integrity: Option<&'a [u8]>,     // 20 bytes sha-1
     error_code: Option<(u16, &'a str)>,      // 300-699 and reason phrase < 128 utf8 chars
@@ -699,6 +717,10 @@ impl<'a> Attributes<'a> {
     const USE_CANDIDATE: u16 = 0x0025;
 
     const NETWORK_COST: u16 = 0xc057;
+    // Experimental assignments used by libwebrtc; draft-hancke-webrtc-sped-01
+    // still lists the IANA assignments as TBD.
+    const DTLS_IN_STUN_DATA: u16 = 0xc070;
+    const DTLS_IN_STUN_ACK: u16 = 0xc071;
 
     fn padded_len(&self) -> usize {
         const ATTR_TLV_LENGTH: usize = 4;
@@ -762,6 +784,12 @@ impl<'a> Attributes<'a> {
             .unwrap_or_default();
 
         username
+            + self
+                .dtls_data
+                .map_or(0, |d| 4 + d.len() + calculate_pad(d.len()))
+            + self
+                .dtls_ack
+                .map_or(0, |d| 4 + d.len() + calculate_pad(d.len()))
             + ice_controlled
             + ice_controlling
             + priority
@@ -778,6 +806,20 @@ impl<'a> Attributes<'a> {
     }
 
     fn to_bytes(self, out: &mut dyn Write, trans_id: &TransId) -> io::Result<()> {
+        for (typ, value) in [
+            (Self::DTLS_IN_STUN_DATA, self.dtls_data),
+            (Self::DTLS_IN_STUN_ACK, self.dtls_ack),
+        ] {
+            if let Some(value) = value {
+                let len = u16::try_from(value.len()).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "SPED attribute too long")
+                })?;
+                out.write_all(&typ.to_be_bytes())?;
+                out.write_all(&len.to_be_bytes())?;
+                out.write_all(value)?;
+                out.write_all(&PAD[..calculate_pad(value.len())])?;
+            }
+        }
         if let Some(v) = self.username {
             out.write_all(&Self::USERNAME.to_be_bytes())?;
             encode_str(Self::USERNAME, v, out)?;
@@ -901,6 +943,9 @@ impl<'a> Attributes<'a> {
             if buf.is_empty() {
                 break;
             }
+            if buf.len() < 4 {
+                return Err(StunError::Parse("Truncated STUN attribute header".into()));
+            }
             let typ = u16::from_le_bytes([buf[1], buf[0]]);
             let len = u16::from_le_bytes([buf[3], buf[2]]) as usize;
             // trace!(
@@ -918,6 +963,18 @@ impl<'a> Attributes<'a> {
             }
             if !ignore_rest || typ == Self::FINGERPRINT {
                 match typ {
+                    Self::DTLS_IN_STUN_DATA => {
+                        // Empty and non-DTLS values are not injected into DTLS.
+                        if len > 0 && (20..=63).contains(&buf[4]) && attributes.dtls_data.is_none()
+                        {
+                            attributes.dtls_data = Some(&buf[4..4 + len]);
+                        }
+                    }
+                    Self::DTLS_IN_STUN_ACK => {
+                        if len <= 16 && len.is_multiple_of(4) && attributes.dtls_ack.is_none() {
+                            attributes.dtls_ack = Some(&buf[4..4 + len]);
+                        }
+                    }
                     Self::MAPPED_ADDRESS => {
                         warn!("STUN got MappedAddress");
                     }
@@ -1073,6 +1130,9 @@ impl<'a> Attributes<'a> {
             // attributes are on even 32 bit boundaries
             let pad = calculate_pad(len);
             let pad_len = len + pad;
+            if 4 + pad_len > buf.len() {
+                return Err(StunError::Parse("Truncated STUN padding".into()));
+            }
             buf = &buf[(4 + pad_len)..];
             off += 4 + pad_len;
         }
@@ -1476,6 +1536,78 @@ mod test {
     }
 
     #[test]
+    fn sped_attributes_are_padded_authenticated_and_never_read_after_integrity() {
+        let data = [22, 1, 2, 3, 4];
+        let acknowledgements = [0, 0, 0, 1, 0, 0, 0, 2];
+        let message =
+            StunMessage::binding_request("local:remote", TransId::new(), true, 42, 100, false)
+                .with_dtls(Some(&data), Some(&acknowledgements));
+        let mut bytes = [0_u8; 1500];
+        let len = message
+            .to_bytes(Some(b"secret"), &mut bytes, sha1_hmac)
+            .unwrap();
+        let parsed = StunMessage::parse(&bytes[..len]).unwrap();
+        assert_eq!(parsed.dtls_data(), Some(data.as_slice()));
+        assert_eq!(parsed.dtls_ack(), Some(acknowledgements.as_slice()));
+        assert!(parsed.verify(b"secret", sha1_hmac));
+        assert!(!parsed.verify(b"wrong", sha1_hmac));
+        bytes[25] ^= 1;
+        assert!(
+            !StunMessage::parse(&bytes[..len])
+                .unwrap()
+                .verify(b"secret", sha1_hmac)
+        );
+
+        let ordinary =
+            StunMessage::binding_request("local:remote", TransId::new(), true, 42, 100, false);
+        let len = ordinary
+            .to_bytes(Some(b"secret"), &mut bytes, sha1_hmac)
+            .unwrap();
+        // Insert a forged SPED attribute after MESSAGE-INTEGRITY but before
+        // FINGERPRINT. Its bytes are outside the authenticated prefix.
+        let mut forged = bytes[..len - 8].to_vec();
+        forged.extend([0xc0, 0x70, 0, 1, 22, 0, 0, 0]);
+        forged.extend_from_slice(&bytes[len - 8..len]);
+        let size = (forged.len() - 20) as u16;
+        forged[2..4].copy_from_slice(&size.to_be_bytes());
+        let parsed = StunMessage::parse(&forged).unwrap();
+        assert!(parsed.verify(b"secret", sha1_hmac));
+        assert!(parsed.dtls_data().is_none());
+    }
+
+    #[test]
+    fn invalid_sped_values_are_ignored_and_truncated_padding_is_rejected() {
+        for data in [&[][..], &[19][..], &[64][..]] {
+            let message =
+                StunMessage::binding_request("local:remote", TransId::new(), true, 42, 100, false)
+                    .with_dtls(Some(data), Some(&[1, 2, 3]));
+            let mut bytes = [0; 1500];
+            let len = message
+                .to_bytes(Some(b"secret"), &mut bytes, sha1_hmac)
+                .unwrap();
+            let parsed = StunMessage::parse(&bytes[..len]).unwrap();
+            assert!(parsed.dtls_data().is_none());
+            assert!(parsed.dtls_ack().is_none());
+        }
+        // Parse all truncations of a valid packet: no untrusted length or
+        // missing 32-bit padding can cause a panic.
+        let message =
+            StunMessage::binding_request("local:remote", TransId::new(), true, 42, 100, false)
+                .with_dtls(Some(&[22, 0, 1]), None);
+        let mut bytes = [0; 1500];
+        let len = message
+            .to_bytes(Some(b"secret"), &mut bytes, sha1_hmac)
+            .unwrap();
+        for length in 0..len {
+            let mut truncated = bytes[..length].to_vec();
+            if length >= 20 {
+                truncated[2..4].copy_from_slice(&((length - 20) as u16).to_be_bytes());
+            }
+            let _ = StunMessage::parse(&truncated);
+        }
+    }
+
+    #[test]
     fn parse_stun_message() {
         const PACKET: &[u8] = &[
             0x00, 0x01, 0x00, 0x50, 0x21, 0x12, 0xa4, 0x42, 0x6a, 0x75, 0x63, 0x31, 0x35, 0x75,
@@ -1528,6 +1660,8 @@ mod test {
             ice_controlled: Some(10),
             ice_controlling: Some(100),
             network_cost: Some((10, 10)),
+            dtls_data: None,
+            dtls_ack: None,
         };
 
         let dbg_print = format!("{attrs:?}");

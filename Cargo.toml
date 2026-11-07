@@ -128,6 +128,7 @@ _internal_test_exports = ["str0m-proto/_internal_test_exports", "is/_internal_te
 drv = ["dep:drv"]
 
 [dependencies]
+crc.workspace = true
 tracing.workspace = true
 fastrand.workspace = true
 sctp-proto.workspace = true

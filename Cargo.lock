@@ -2028,6 +2028,7 @@ dependencies = [
  "arrayvec",
  "base64ct",
  "combine",
+ "crc",
  "dimpl",
  "drv",
  "fastrand",

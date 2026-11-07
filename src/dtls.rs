@@ -31,6 +31,7 @@ pub struct Dtls {
 
     /// Packets to be sent.
     pending_packets: VecDeque<DatagramSend>,
+    packet_generation: u64,
 
     /// Target MTU (start) and warn threshold (end). The target is forwarded to
     /// the backend's fragmenter; outgoing records larger than the warn
@@ -78,6 +79,7 @@ impl Dtls {
             remote_fingerprint: None,
             active_state: None,
             pending_packets: VecDeque::new(),
+            packet_generation: 0,
             mtu,
         })
     }
@@ -140,6 +142,7 @@ impl Dtls {
                 warn!("DTLS above MTU {}: {}", self.mtu_warn(), packet.len());
             }
             self.pending_packets.push_back(packet.to_vec().into());
+            self.packet_generation = self.packet_generation.wrapping_add(1);
 
             // Return timeout indicating we want another poll straight away
             return DtlsOutput::Timeout(already_happened());
@@ -150,6 +153,12 @@ impl Dtls {
 
     pub fn poll_packet(&mut self) -> Option<DatagramSend> {
         self.pending_packets.pop_front()
+    }
+
+    pub fn latest_packet(&self) -> Option<(u64, &[u8])> {
+        self.pending_packets
+            .back()
+            .map(|packet| (self.packet_generation, packet.as_ref()))
     }
 
     /// Handle an incoming DTLS packet.

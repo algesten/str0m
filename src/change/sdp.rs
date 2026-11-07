@@ -100,6 +100,7 @@ impl<'a> SdpApi<'a> {
         }
 
         add_ice_details(&mut self.rtc, &offer, None)?;
+        self.rtc.sped.negotiate(offer.supports_sped());
 
         if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
@@ -194,6 +195,7 @@ impl<'a> SdpApi<'a> {
         }
 
         add_ice_details(&mut self.rtc, &answer, Some(&pending))?;
+        self.rtc.sped.negotiate(answer.supports_sped());
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
         init_dtls(&mut self.rtc, &answer)?;
@@ -206,6 +208,8 @@ impl<'a> SdpApi<'a> {
                 return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
             }
         }
+
+        self.rtc.apply_early_sped()?;
 
         // Extract a=sctp-init from remote answer before apply_answer consumes it.
         let remote_sctp_init = answer.sctp_init().map(|v| v.to_owned());
@@ -656,6 +660,7 @@ fn apply_direct_changes(rtc: &mut Rtc, mut changes: Changes) {
 }
 
 fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
+    rtc.sped.offered = rtc.sped.enabled;
     if !rtc.dtls.is_inited() {
         // The side that makes the first offer is the controlling side, unless they
         // are ICE Lite, in which case the roles are reversed (see RFC 5245).
@@ -711,6 +716,7 @@ fn add_ice_details(
             (IceCreds::new(), true)
         };
 
+        rtc.sped.restart();
         rtc.ice
             .ice_restart(new_local_creds.clone(), keep_local_candidates);
     }
@@ -1579,6 +1585,7 @@ struct AsSdpParams<'a, 'b> {
     pub pending: Option<&'b Changes>,
     pub local_sctp_init: Option<String>,
     pub local_max_message_size: u32,
+    pub sped: bool,
 }
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
@@ -1629,6 +1636,11 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             pending,
             local_sctp_init: rtc.sctp.local_sctp_init_for_sdp(),
             local_max_message_size: rtc.sctp.local_max_message_size(),
+            sped: if pending.is_some() {
+                rtc.sped.enabled
+            } else {
+                rtc.sped.stats.negotiated
+            },
         }
     }
 
@@ -1646,7 +1658,9 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
 
         v.push(IceUfrag(self.creds.ufrag.clone()));
         v.push(IcePwd(self.creds.pass.clone()));
-        v.push(IceOptions("trickle".into()));
+        v.push(IceOptions(
+            if self.sped { "trickle sped" } else { "trickle" }.into(),
+        ));
         v.push(Fingerprint(self.fingerprint.clone()));
         v.push(Setup(self.setup));
 

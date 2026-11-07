@@ -1166,7 +1166,7 @@ impl IceAgent {
 
         // Regardless of whether we have remote_creds at this point, we can
         // at least check the message integrity.
-        if !self.accepts_message(&packet.message) {
+        if !self.accepts_packet(&packet) {
             debug!("Message not accepted");
             return false;
         }
@@ -1295,6 +1295,59 @@ impl IceAgent {
             trace!("Poll transmit: {:?}", x);
         }
         x
+    }
+
+    /// Decorate the next queued ICE check with SPED before computing integrity.
+    /// This never schedules an extra check and never exceeds the target MTU.
+    /// Returns whether a DTLS packet was embedded.
+    pub fn add_dtls_to_transmit(
+        &self,
+        packet: &mut Transmit,
+        data: Option<&[u8]>,
+        ack: Option<&[u8]>,
+    ) -> bool {
+        let Ok(message) = StunMessage::parse(&packet.contents) else {
+            return false;
+        };
+        if !message.is_binding_request() && !message.is_successful_binding_response() {
+            return false;
+        }
+        let (_, password) = self.stun_credentials(!message.is_binding_request());
+        let hmac =
+            |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
+        let mut buf = vec![0; self.mtu()];
+        let decorated = message.with_dtls(data, ack);
+        if let Ok(len) = decorated.to_bytes(Some(password.as_bytes()), &mut buf, hmac) {
+            buf.truncate(len);
+            packet.contents = buf.into();
+            return data.is_some();
+        }
+        // Preserve ICE connectivity if a flight does not fit on this path.
+        false
+    }
+
+    /// Verify both ICE credentials and the candidate-pair transport identity.
+    /// SPED must not deliver DTLS from a response replayed onto another path.
+    pub fn accepts_packet(&self, packet: &StunPacket<'_>) -> bool {
+        if !self.accepts_message(&packet.message) {
+            return false;
+        }
+        if packet.message.is_binding_request() {
+            return self.local_candidates.iter().any(|local| {
+                !local.discarded()
+                    && local.proto() == packet.proto
+                    && local.base() == packet.destination
+            });
+        }
+        packet.message.is_successful_binding_response()
+            && self.candidate_pairs.iter().any(|pair| {
+                let local = pair.local_candidate(&self.local_candidates);
+                let remote = pair.remote_candidate(&self.remote_candidates);
+                pair.binding_attempt(packet.message.trans_id()).is_some()
+                    && local.proto() == packet.proto
+                    && local.base() == packet.destination
+                    && remote.addr() == packet.source
+            })
     }
 
     /// Poll for the next time to call [`IceAgent::handle_timeout`].
@@ -3124,5 +3177,60 @@ mod test {
         agent.set_mtu(900..=1280);
         assert_eq!(agent.mtu(), 900);
         assert_eq!(agent.mtu_warn(), 1280);
+    }
+}
+
+#[cfg(test)]
+mod sped_security_tests {
+    use super::*;
+    use crate::DefaultSha1HmacProvider;
+
+    #[test]
+    fn sped_response_is_bound_to_transaction_protocol_and_candidate_pair() {
+        let now = Instant::now();
+        let mut agent = IceAgent::new(IceCreds::new());
+        let local = "192.0.2.1:10000".parse().unwrap();
+        let remote = "192.0.2.2:20000".parse().unwrap();
+        agent.add_local_candidate(Candidate::host(local, "udp").unwrap());
+        agent.add_remote_candidate(Candidate::host(remote, "udp").unwrap());
+        let creds = IceCreds::new();
+        agent.set_remote_credentials(creds.clone());
+        agent.set_controlling(true);
+        agent.handle_timeout(now);
+        let request = agent.poll_transmit().unwrap();
+        let transaction = StunMessage::parse(&request.contents).unwrap().trans_id();
+        let data = [22, 0, 1];
+        let response = StunMessage::binding_reply(transaction, local).with_dtls(Some(&data), None);
+        let mut bytes = [0; 1200];
+        let hmac =
+            |key: &[u8], payloads: &[&[u8]]| DefaultSha1HmacProvider.sha1_hmac(key, payloads);
+        let len = response
+            .to_bytes(Some(creds.pass.as_bytes()), &mut bytes, hmac)
+            .unwrap();
+        let message = StunMessage::parse(&bytes[..len]).unwrap();
+        let mut packet = StunPacket {
+            proto: Protocol::Udp,
+            source: remote,
+            destination: local,
+            message,
+        };
+        assert!(agent.accepts_packet(&packet));
+        packet.source = "192.0.2.3:30000".parse().unwrap();
+        assert!(!agent.accepts_packet(&packet));
+        assert!(!agent.handle_packet(now, packet));
+        let mut packet = StunPacket {
+            proto: Protocol::Udp,
+            source: remote,
+            destination: local,
+            message,
+        };
+        packet.proto = Protocol::Tcp;
+        assert!(!agent.accepts_packet(&packet));
+        packet.proto = Protocol::Udp;
+        packet.destination = "192.0.2.1:10001".parse().unwrap();
+        assert!(!agent.accepts_packet(&packet));
+        packet.destination = local;
+        agent.ice_restart(IceCreds::new(), true);
+        assert!(!agent.accepts_packet(&packet));
     }
 }
