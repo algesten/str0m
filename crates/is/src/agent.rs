@@ -1339,7 +1339,8 @@ impl IceAgent {
                     && local.base() == packet.destination
             });
         }
-        packet.message.is_successful_binding_response()
+        (packet.message.is_successful_binding_response()
+            || packet.message.is_failed_binding_response())
             && self.candidate_pairs.iter().any(|pair| {
                 let local = pair.local_candidate(&self.local_candidates);
                 let remote = pair.remote_candidate(&self.remote_candidates);
@@ -3230,6 +3231,21 @@ mod sped_security_tests {
         packet.destination = "192.0.2.1:10001".parse().unwrap();
         assert!(!agent.accepts_packet(&packet));
         packet.destination = local;
+        let failure = StunMessage::binding_role_conflict_reply(transaction);
+        let mut failure_bytes = [0; 1200];
+        let len = failure
+            .to_bytes(Some(creds.pass.as_bytes()), &mut failure_bytes, hmac)
+            .unwrap();
+        let failure = StunMessage::parse(&failure_bytes[..len]).unwrap();
+        assert!(
+            agent.accepts_packet(&StunPacket {
+                message: failure,
+                proto: Protocol::Udp,
+                source: remote,
+                destination: local
+            }),
+            "valid 487 responses must still reach ICE role conflict handling"
+        );
         agent.ice_restart(IceCreds::new(), true);
         assert!(!agent.accepts_packet(&packet));
     }

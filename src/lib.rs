@@ -2262,7 +2262,8 @@ impl Rtc {
                     message: stun,
                 };
                 // ICE is an external crate; arm both on its behalf.
-                let authenticated = self.ice.accepts_packet(&packet);
+                let authenticated = self.ice.accepts_packet(&packet)
+                    && (stun.is_binding_request() || stun.is_successful_binding_response());
                 self.ice.handle_packet(recv_time, packet);
                 drop(self.readiness.wake());
                 if authenticated && (self.sped.stats.negotiated || self.sped.offered) {
