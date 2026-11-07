@@ -1923,11 +1923,13 @@ impl Rtc {
                 destination: v.destination,
             };
             let (data, ack) = self.sped.outgoing(&path);
-            if self.ice.add_dtls_to_transmit(
-                &mut v,
-                data.as_deref(),
-                (!ack.is_empty()).then_some(ack.as_slice()),
-            ) {
+            if (data.is_some() || !ack.is_empty())
+                && self.ice.add_dtls_to_transmit(
+                    &mut v,
+                    data.as_deref(),
+                    (!ack.is_empty()).then_some(ack.as_slice()),
+                )
+            {
                 self.sped.stats.embedded_sent += 1;
             }
             return Ok(Some(Output::Transmit(v)));
