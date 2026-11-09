@@ -298,23 +298,29 @@ impl SrtpProvider for OsslSrtpProvider {
         &OsslSupportedAeadAes256Gcm
     }
 
-    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16] {
         let mut aes =
             Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
+        aes.pad(false);
 
-        let count = aes.update(input, output).expect("AES update");
+        let mut output = [0; 16 + 16];
+        let count = aes.update(input, &mut output).expect("AES update");
         let rest = aes.finalize(&mut output[count..]).expect("AES finalize");
+        assert_eq!(count + rest, 16);
 
-        assert_eq!(count + rest, 16 + 16);
+        output[..16].try_into().unwrap()
     }
 
-    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16] {
         let mut aes =
             Crypter::new(Cipher::aes_256_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
+        aes.pad(false);
 
-        let count = aes.update(input, output).expect("AES update");
+        let mut output = [0; 16 + 16];
+        let count = aes.update(input, &mut output).expect("AES update");
         let rest = aes.finalize(&mut output[count..]).expect("AES finalize");
+        assert_eq!(count + rest, 16);
 
-        assert_eq!(count + rest, 16 + 16);
+        output[..16].try_into().unwrap()
     }
 }

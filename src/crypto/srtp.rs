@@ -125,19 +125,19 @@ impl SrtpCrypto {
         }
     }
 
-    pub fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    pub fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16] {
         match self {
-            SrtpCrypto::OpenSsl(v) => v.srtp_aes_128_ecb_round(key, input, output),
-            SrtpCrypto::WinCrypto(v) => v.srtp_aes_128_ecb_round(key, input, output),
-            SrtpCrypto::AwsLc(v) => v.srtp_aes_128_ecb_round(key, input, output),
+            SrtpCrypto::OpenSsl(v) => v.srtp_aes_128_ecb_round(key, input),
+            SrtpCrypto::WinCrypto(v) => v.srtp_aes_128_ecb_round(key, input),
+            SrtpCrypto::AwsLc(v) => v.srtp_aes_128_ecb_round(key, input),
         }
     }
 
-    pub fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    pub fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16] {
         match self {
-            SrtpCrypto::OpenSsl(v) => v.srtp_aes_256_ecb_round(key, input, output),
-            SrtpCrypto::WinCrypto(v) => v.srtp_aes_256_ecb_round(key, input, output),
-            SrtpCrypto::AwsLc(v) => v.srtp_aes_256_ecb_round(key, input, output),
+            SrtpCrypto::OpenSsl(v) => v.srtp_aes_256_ecb_round(key, input),
+            SrtpCrypto::WinCrypto(v) => v.srtp_aes_256_ecb_round(key, input),
+            SrtpCrypto::AwsLc(v) => v.srtp_aes_256_ecb_round(key, input),
         }
     }
 }
@@ -167,9 +167,9 @@ pub trait SrtpCryptoImpl {
         <Self::AeadAes256Gcm as aead_aes_256_gcm::CipherCtx>::new(key, encrypt)
     }
 
-    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
+    fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16];
 
-    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
+    fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16];
 }
 
 pub mod aes_128_cm_sha1_80 {
@@ -434,11 +434,11 @@ impl SrtpCryptoImpl for DummySrtpCryptoImpl {
         panic!("Must enable feature: {}", self.0)
     }
 
-    fn srtp_aes_128_ecb_round(&self, _: &[u8], _: &[u8], _: &mut [u8]) {
+    fn srtp_aes_128_ecb_round(&self, _: &[u8; 16], _: &[u8; 16]) -> [u8; 16] {
         panic!("Must enable feature: {}", self.0)
     }
 
-    fn srtp_aes_256_ecb_round(&self, _: &[u8], _: &[u8], _: &mut [u8]) {
+    fn srtp_aes_256_ecb_round(&self, _: &[u8; 32], _: &[u8; 16]) -> [u8; 16] {
         panic!("Must enable feature: {}", self.0)
     }
 }

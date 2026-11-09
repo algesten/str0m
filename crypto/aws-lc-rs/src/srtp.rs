@@ -289,39 +289,29 @@ impl SrtpProvider for AwsLcRsSrtpProvider {
         &AwsLcRsSupportedAeadAes256Gcm
     }
 
-    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16] {
         use aws_lc_rs::cipher::{AES_128, EncryptingKey, EncryptionContext, UnboundCipherKey};
 
         let unbound_key = UnboundCipherKey::new(&AES_128, key).expect("valid key");
         let encrypting_key = EncryptingKey::ecb(unbound_key).expect("ECB mode");
 
-        // Copy input to output buffer for in-place encryption
-        output[..input.len()].copy_from_slice(input);
-
-        // ECB mode uses EncryptionContext::None
-        let _decryption_context = encrypting_key
-            .less_safe_encrypt(&mut output[..input.len()], EncryptionContext::None)
+        let mut output = *input;
+        encrypting_key
+            .less_safe_encrypt(&mut output, EncryptionContext::None)
             .expect("AES-128-ECB encryption");
-
-        // The less_safe_encrypt returns a DecryptionContext which includes the padding info
-        // For ECB with PKCS7 padding, 16 bytes input becomes 32 bytes output
+        output
     }
 
-    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16] {
         use aws_lc_rs::cipher::{AES_256, EncryptingKey, EncryptionContext, UnboundCipherKey};
 
         let unbound_key = UnboundCipherKey::new(&AES_256, key).expect("valid key");
         let encrypting_key = EncryptingKey::ecb(unbound_key).expect("ECB mode");
 
-        // Copy input to output buffer for in-place encryption
-        output[..input.len()].copy_from_slice(input);
-
-        // ECB mode uses EncryptionContext::None
-        let _decryption_context = encrypting_key
-            .less_safe_encrypt(&mut output[..input.len()], EncryptionContext::None)
+        let mut output = *input;
+        encrypting_key
+            .less_safe_encrypt(&mut output, EncryptionContext::None)
             .expect("AES-256-ECB encryption");
-
-        // The less_safe_encrypt returns a DecryptionContext which includes the padding info
-        // For ECB with PKCS7 padding, 16 bytes input becomes 32 bytes output
+        output
     }
 }

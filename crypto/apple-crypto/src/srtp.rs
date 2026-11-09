@@ -216,12 +216,16 @@ impl SrtpProvider for AppleCryptoSrtpProvider {
         &AppleCryptoSupportedAeadAes256Gcm
     }
 
-    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        common_crypto::aes_ecb_round(key, input, output).unwrap();
+    fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16] {
+        let mut output = [0; 16];
+        common_crypto::aes_ecb_round(key, input, &mut output).unwrap();
+        output
     }
 
-    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        common_crypto::aes_ecb_round(key, input, output).unwrap();
+    fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16] {
+        let mut output = [0; 16];
+        common_crypto::aes_ecb_round(key, input, &mut output).unwrap();
+        output
     }
 }
 
@@ -305,97 +309,105 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_1() {
         let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
-            &key,
-            &hex_to_vec("6bc1bee22e409f96e93d7e117393172a"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("6bc1bee22e409f96e93d7e117393172a")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "3ad77bb40d7a3660a89ecaf32466ef97");
+        assert_eq!(slice_to_hex(&out), "3ad77bb40d7a3660a89ecaf32466ef97");
     }
 
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_2() {
         let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
-            &key,
-            &hex_to_vec("ae2d8a571e03ac9c9eb76fac45af8e51"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("ae2d8a571e03ac9c9eb76fac45af8e51")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "f5d3d58503b9699de785895a96fdbaaf");
+        assert_eq!(slice_to_hex(&out), "f5d3d58503b9699de785895a96fdbaaf");
     }
 
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_3() {
         let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
-            &key,
-            &hex_to_vec("30c81c46a35ce411e5fbc1191a0a52ef"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("30c81c46a35ce411e5fbc1191a0a52ef")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "43b1cd7f598ece23881b00e3ed030688");
+        assert_eq!(slice_to_hex(&out), "43b1cd7f598ece23881b00e3ed030688");
     }
 
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_4() {
         let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
-            &key,
-            &hex_to_vec("f69f2445df4f9b17ad2b417be66c3710"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_128_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("f69f2445df4f9b17ad2b417be66c3710")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "7b0c785e27e8ad3f8223207104725dd4");
+        assert_eq!(slice_to_hex(&out), "7b0c785e27e8ad3f8223207104725dd4");
     }
 
     #[test]
     fn test_srtp_aes_256_ecb_round_test_vec_1() {
         let key = hex_to_vec("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
-            &key,
-            &hex_to_vec("6bc1bee22e409f96e93d7e117393172a"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("6bc1bee22e409f96e93d7e117393172a")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "f3eed1bdb5d2a03c064b5a7e3db181f8");
+        assert_eq!(slice_to_hex(&out), "f3eed1bdb5d2a03c064b5a7e3db181f8");
     }
 
     #[test]
     fn test_srtp_aes_256_ecb_round_test_vec_2() {
         let key = hex_to_vec("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
-            &key,
-            &hex_to_vec("ae2d8a571e03ac9c9eb76fac45af8e51"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("ae2d8a571e03ac9c9eb76fac45af8e51")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "591ccb10d410ed26dc5ba74a31362870");
+        assert_eq!(slice_to_hex(&out), "591ccb10d410ed26dc5ba74a31362870");
     }
 
     #[test]
     fn test_srtp_aes_256_ecb_round_test_vec_3() {
         let key = hex_to_vec("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
-            &key,
-            &hex_to_vec("30c81c46a35ce411e5fbc1191a0a52ef"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("30c81c46a35ce411e5fbc1191a0a52ef")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "b6ed21b99ca6f4f9f153e7b1beafed1d");
+        assert_eq!(slice_to_hex(&out), "b6ed21b99ca6f4f9f153e7b1beafed1d");
     }
 
     #[test]
     fn test_srtp_aes_256_ecb_round_test_vec_4() {
         let key = hex_to_vec("603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
-        let mut out = [0u8; 32];
-        AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
-            &key,
-            &hex_to_vec("f69f2445df4f9b17ad2b417be66c3710"),
-            &mut out,
+        let out = AppleCryptoSrtpProvider.srtp_aes_256_ecb_round(
+            key.as_slice().try_into().unwrap(),
+            hex_to_vec("f69f2445df4f9b17ad2b417be66c3710")
+                .as_slice()
+                .try_into()
+                .unwrap(),
         );
-        assert_eq!(slice_to_hex(&out[..16]), "23304b7a39f9f3ff067d8d8f9e24ecc7");
+        assert_eq!(slice_to_hex(&out), "23304b7a39f9f3ff067d8d8f9e24ecc7");
     }
 
     // AES-128-CTR Test Vectors from NIST SP 800-38A

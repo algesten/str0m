@@ -813,7 +813,6 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
         input[0..SL].copy_from_slice(&self.salt[..]);
         input[7] ^= label;
 
-        let mut buf = [0; 16 + 16]; // output from each AES
         let mut round: u16 = 0; // counter for each AES round
 
         // loop each AES round
@@ -826,15 +825,14 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
             input[14..].copy_from_slice(&round.to_be_bytes()[..]);
 
             // default key derivation function, which uses AES-128 in Counter Mode
-            match ML {
-                16 => crypto.srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]),
-                32 => crypto.srtp_aes_256_ecb_round(&self.master, &input[..], &mut buf[..]),
+            // unwrap: ML matches the array length in each arm.
+            let buf = match ML {
+                16 => crypto.srtp_aes_128_ecb_round(self.master[..].try_into().unwrap(), &input),
+                32 => crypto.srtp_aes_256_ecb_round(self.master[..].try_into().unwrap(), &input),
                 _ => panic!("Only valid for 128 or 256 bit master keys"),
-            }
+            };
 
-            // Copy to output. Even if we get 32 bytes of output with AES 128 ECB, we
-            // only use the first 16. That matches the tests in the RFC.
-            for j in buf.iter().take(16) {
+            for j in buf.iter() {
                 if i == out.len() {
                     break;
                 }

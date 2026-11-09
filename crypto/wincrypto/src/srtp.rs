@@ -23,16 +23,20 @@ impl SrtpProvider for WinCryptoSrtpProvider {
         &WinCryptoAeadAes256GcmFactory
     }
 
-    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16] {
         let key = sys::SrtpKey::create_aes_ecb_key(key).expect("AES-128 ECB key");
-        let count = sys::srtp_aes_ecb_round(&key, input, output).expect("AES-128 ECB");
+        let mut output = [0; 16 + 16];
+        let count = sys::srtp_aes_ecb_round(&key, input, &mut output).expect("AES-128 ECB");
         assert_eq!(count, 16 + 16); // block size + padding
+        output[..16].try_into().unwrap()
     }
 
-    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16] {
         let key = sys::SrtpKey::create_aes_ecb_key(key).expect("AES-256 ECB key");
-        let count = sys::srtp_aes_ecb_round(&key, input, output).expect("AES-256 ECB");
+        let mut output = [0; 16 + 16];
+        let count = sys::srtp_aes_ecb_round(&key, input, &mut output).expect("AES-256 ECB");
         assert_eq!(count, 16 + 16); // block size + padding
+        output[..16].try_into().unwrap()
     }
 }
 

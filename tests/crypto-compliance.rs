@@ -472,11 +472,9 @@ mod aead_aes_256_gcm {
 mod srtp_aes_128_ecb_round {
     const TEST_KEY: [u8; 16] = hex_as_bytes!(b"2b7e151628aed2a6abf7158809cf4f3c");
 
-    fn verify_test_vector(key: &[u8], input: &[u8], expected: &[u8]) {
+    fn verify_test_vector(key: &[u8; 16], input: &[u8; 16], expected: &[u8; 16]) {
         let srtp_provider = super::get_provider().srtp_provider;
-        let mut out = [0u8; 2048];
-        srtp_provider.srtp_aes_128_ecb_round(key, input, out.as_mut_slice());
-        assert_eq!(expected, &out[0..input.len()])
+        assert_eq!(expected, &srtp_provider.srtp_aes_128_ecb_round(key, input))
     }
 
     // Test vectors from NIST SP 800-38A:
@@ -523,11 +521,9 @@ mod srtp_aes_256_ecb_round {
     const TEST_KEY: [u8; 32] =
         hex_as_bytes!(b"603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
 
-    fn verify_test_vector(key: &[u8], input: &[u8], expected: &[u8]) {
+    fn verify_test_vector(key: &[u8; 32], input: &[u8; 16], expected: &[u8; 16]) {
         let srtp_provider = super::get_provider().srtp_provider;
-        let mut out = [0u8; 2048];
-        srtp_provider.srtp_aes_256_ecb_round(key, input, out.as_mut_slice());
-        assert_eq!(expected, &out[0..input.len()])
+        assert_eq!(expected, &srtp_provider.srtp_aes_256_ecb_round(key, input))
     }
 
     // Test vectors from NIST SP 800-38A:

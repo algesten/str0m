@@ -280,49 +280,21 @@ impl SrtpProvider for RustCryptoSrtpProvider {
         &RustCryptoSupportedAeadAes256Gcm
     }
 
-    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        // Use aes crate for ECB mode
+    fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16] {
         use aes::Aes128;
         use aes::cipher::{BlockCipherEncrypt, KeyInit};
 
-        let cipher = Aes128::new(key.try_into().expect("valid AES key length"));
-
-        // Input is 16 bytes, output needs to be 32 bytes (with PKCS7 padding)
-        // For a 16-byte input, PKCS7 adds a full block of padding (16 bytes of 0x10)
-        assert!(input.len() == 16);
-        assert!(output.len() >= 32);
-
-        // First block: encrypt the input
-        let mut block1 = Array::try_from(&input[0..16]).expect("AES block length");
-        cipher.encrypt_block(&mut block1);
-        output[0..16].copy_from_slice(&block1);
-
-        // Second block: PKCS7 padding (16 bytes of 0x10)
-        let mut block2 = Array::from([0x10u8; 16]);
-        cipher.encrypt_block(&mut block2);
-        output[16..32].copy_from_slice(&block2);
+        let mut block = Array::from(*input);
+        Aes128::new(&Array::from(*key)).encrypt_block(&mut block);
+        block.into()
     }
 
-    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        // Use aes crate for ECB mode
+    fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16] {
         use aes::Aes256;
         use aes::cipher::{BlockCipherEncrypt, KeyInit};
 
-        let cipher = Aes256::new(key.try_into().expect("valid AES key length"));
-
-        // Input is 16 bytes, output needs to be 32 bytes (with PKCS7 padding)
-        // For a 16-byte input, PKCS7 adds a full block of padding (16 bytes of 0x10)
-        assert!(input.len() == 16);
-        assert!(output.len() >= 32);
-
-        // First block: encrypt the input
-        let mut block1 = Array::try_from(&input[0..16]).expect("AES block length");
-        cipher.encrypt_block(&mut block1);
-        output[0..16].copy_from_slice(&block1);
-
-        // Second block: PKCS7 padding (16 bytes of 0x10)
-        let mut block2 = Array::from([0x10u8; 16]);
-        cipher.encrypt_block(&mut block2);
-        output[16..32].copy_from_slice(&block2);
+        let mut block = Array::from(*input);
+        Aes256::new(&Array::from(*key)).encrypt_block(&mut block);
+        block.into()
     }
 }

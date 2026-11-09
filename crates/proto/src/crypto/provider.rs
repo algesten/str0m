@@ -104,11 +104,11 @@ pub trait SrtpProvider: CryptoSafe {
     /// Factory for AEAD-AES-256-GCM ciphers.
     fn aead_aes_256_gcm(&self) -> &'static dyn SupportedAeadAes256Gcm;
 
-    /// Perform AES-128-ECB round for key derivation.
-    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
+    /// Encrypt one block with AES-128 for SRTP key derivation.
+    fn srtp_aes_128_ecb_round(&self, key: &[u8; 16], input: &[u8; 16]) -> [u8; 16];
 
-    /// Perform AES-256-ECB round for key derivation.
-    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
+    /// Encrypt one block with AES-256 for SRTP key derivation.
+    fn srtp_aes_256_ecb_round(&self, key: &[u8; 32], input: &[u8; 16]) -> [u8; 16];
 }
 
 /// SHA-1 hash provider for legacy certificate fingerprints.
