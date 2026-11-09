@@ -932,3 +932,68 @@ pub fn channel_config_with_protocol() -> Result<(), RtcError> {
 
     Ok(())
 }
+
+/// RFC 8831 §6.6: empty messages are sent as a single zero byte with the
+/// "Empty" PPID, and arrive as empty messages, in order with the others.
+#[test]
+pub fn empty_messages_are_delivered() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let (mut l, mut r) = connect_l_r();
+    let config = ChannelConfig {
+        label: "empty".into(),
+        negotiated: Some(1),
+        ..Default::default()
+    };
+    let cid = l.direct_api().create_data_channel(config.clone());
+    r.direct_api().create_data_channel(config);
+
+    loop {
+        progress(&mut l, &mut r)?;
+        let open = l
+            .events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::ChannelOpen(id, _) if *id == cid));
+        if open {
+            break;
+        }
+        assert!(
+            l.duration() < Duration::from_secs(10),
+            "negotiated channel should open"
+        );
+    }
+
+    {
+        let mut chan = l.channel(cid).expect("channel to exist");
+        assert!(chan.write(false, b"").expect("to write empty string"));
+        assert!(chan.write(true, b"").expect("to write empty binary"));
+        assert!(chan.write(false, b"after").expect("to write string"));
+    }
+
+    let received = loop {
+        progress(&mut l, &mut r)?;
+        let received: Vec<_> = r
+            .events
+            .iter()
+            .filter_map(|(_, e)| match e {
+                Event::ChannelData(d) => Some((d.binary, d.data.clone())),
+                _ => None,
+            })
+            .collect();
+        if received.len() == 3 {
+            break received;
+        }
+        assert!(
+            l.duration() < Duration::from_secs(20),
+            "all three messages should arrive, got {received:?}"
+        );
+    };
+
+    assert_eq!(
+        received,
+        vec![(false, vec![]), (true, vec![]), (false, b"after".to_vec())]
+    );
+
+    Ok(())
+}

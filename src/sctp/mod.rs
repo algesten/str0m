@@ -649,6 +649,14 @@ impl RtcSctp {
             PayloadProtocolIdentifier::String
         };
 
+        if buf.is_empty() {
+            // RFC 8831 §6.6: SCTP does not support zero-length user messages, so an empty
+            // message is sent as a single zero byte with the "Empty" PPID. The receiver
+            // discards that byte. Nothing of the caller's buffer was written.
+            stream.write_with_ppi(&[0], ppi)?;
+            return Ok(0);
+        }
+
         Ok(stream.write_with_ppi(buf, ppi)?)
     }
 
@@ -1600,6 +1608,37 @@ mod tests {
             .unwrap();
         transfer_transmits(&mut client, &mut server);
         assert_close_before_idle(&mut server, 0);
+    }
+
+    /// RFC 8831 §6.6: an empty message goes on the wire as one zero byte with the
+    /// "Empty" PPID (57 for a string, 56 for binary).
+    #[test]
+    fn empty_message_is_one_zero_byte_with_empty_ppid() {
+        let (mut client, mut server) = connect_client_server();
+        let config = ChannelConfig {
+            negotiated: Some(0),
+            ..Default::default()
+        };
+        client.open_stream(0, config.clone());
+        server.open_stream(0, config);
+        assert!(matches!(client.poll(), Some(SctpEvent::Open { id: 0, .. })));
+        assert!(matches!(server.poll(), Some(SctpEvent::Open { id: 0, .. })));
+
+        assert_eq!(client.write(0, false, &[]).unwrap(), 0);
+        assert_eq!(client.write(0, true, &[]).unwrap(), 0);
+        transfer_transmits(&mut client, &mut server);
+
+        let mut stream = server.assoc.as_mut().unwrap().stream(0).unwrap();
+        for ppi in [
+            PayloadProtocolIdentifier::StringEmpty,
+            PayloadProtocolIdentifier::BinaryEmpty,
+        ] {
+            let chunks = stream.read().unwrap().expect("an empty message");
+            assert_eq!(chunks.ppi, ppi);
+            let mut buf = vec![0xff; chunks.len()];
+            assert_eq!(chunks.read(&mut buf).unwrap(), 1);
+            assert_eq!(buf, [0]);
+        }
     }
 
     #[test]

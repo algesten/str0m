@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Send empty data channel messages as one zero byte with the Empty PPID (RFC 8831 §6.6)
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 
