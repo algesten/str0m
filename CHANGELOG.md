@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Keep the loss-based BWE estimate at or above its min bitrate, so sustained loss cannot panic the pacer #1137
   * Reject conflicting payload type mappings in remote SDP #1154
   * Keep `~` in sanitised msid ids #1142
   * Saturate VLA resolutions of 65536 instead of overflowing #1153
