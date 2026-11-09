@@ -1,5 +1,6 @@
 # Unreleased
 
+  * SRTP ECB rounds take fixed-size arrays (breaking for `SrtpProvider` impls) #1139
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 
