@@ -9,8 +9,9 @@
 ))]
 
 use std::net::Ipv4Addr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use str0m::channel::{ChannelConfig, ChannelId};
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
 use str0m::rtp::{RawPacket, Ssrc};
@@ -80,6 +81,27 @@ fn progress_until(
     panic!("{label} did not complete");
 }
 
+fn open_channel(l: &mut TestRtc, r: &mut TestRtc) -> ChannelId {
+    let config = ChannelConfig {
+        negotiated: Some(1),
+        label: "chan".into(),
+        ..Default::default()
+    };
+    let cid = l.direct_api().create_data_channel(config.clone());
+    r.direct_api().create_data_channel(config);
+
+    progress_until(l, r, "channel open", |l, r| {
+        let is_open = |rtc: &TestRtc| {
+            rtc.events
+                .iter()
+                .any(|(_, event)| matches!(event, Event::ChannelOpen(..)))
+        };
+        is_open(l) && is_open(r)
+    });
+
+    cid
+}
+
 fn next_transmit(rtc: &mut TestRtc) -> str0m::net::Transmit {
     for _ in 0..100 {
         match rtc.rtc.poll_output().unwrap() {
@@ -116,6 +138,17 @@ fn deliver_until_closed_event(
     }
 
     panic!("expected remote closed event");
+}
+
+/// Whether `rtc` had an event matching `first` before one matching `second`.
+fn is_before(
+    rtc: &TestRtc,
+    first: impl Fn(&Event) -> bool,
+    second: impl Fn(&Event) -> bool,
+) -> bool {
+    let first_at = rtc.events.iter().position(|(_, event)| first(event));
+    let second_at = rtc.events.iter().position(|(_, event)| second(event));
+    first_at.is_some_and(|first_at| Some(first_at) < second_at)
 }
 
 #[test]
@@ -181,6 +214,106 @@ fn close_sends_rtcp_bye_for_local_senders() -> Result<(), RtcError> {
             )
         })
     });
+
+    Ok(())
+}
+
+#[test]
+fn close_sends_rtcp_bye_before_dtls_close_notify() -> Result<(), RtcError> {
+    let (mut l, mut r) = direct_pair_with_config(|c| c.enable_raw_packets(true));
+    let mid = "aud".into();
+    let ssrc: Ssrc = 42.into();
+
+    l.direct_api().declare_media(mid, MediaKind::Audio);
+    l.direct_api().declare_stream_tx(ssrc, None, mid, None);
+
+    l.rtc.close()?;
+
+    progress_until(&mut l, &mut r, "remote close", |_, r| {
+        r.events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::Closed))
+    });
+
+    let is_bye = |event: &Event| {
+        matches!(
+            event.as_raw_packet(),
+            Some(RawPacket::RtcpRx(Rtcp::Goodbye(bye))) if bye.reports.iter().any(|s| *s == ssrc)
+        )
+    };
+    assert!(
+        is_before(&r, is_bye, |event| matches!(event, Event::Closed)),
+        "the peer must have the RTCP BYE before the DTLS close_notify"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn close_delivers_queued_channel_data() -> Result<(), RtcError> {
+    let (mut l, mut r) = direct_pair();
+    let cid = open_channel(&mut l, &mut r);
+
+    l.channel(cid).expect("open channel").write(true, b"bye")?;
+    l.rtc.close()?;
+
+    progress_until(&mut l, &mut r, "local close", |l, r| {
+        !l.rtc.is_alive()
+            && r.events
+                .iter()
+                .any(|(_, event)| matches!(event, Event::Closed))
+    });
+
+    assert!(
+        is_before(
+            &r,
+            |event| matches!(event, Event::ChannelData(data) if data.data == b"bye"),
+            |event| matches!(event, Event::Closed),
+        ),
+        "data queued before close must reach the peer before the DTLS close_notify"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn close_waits_for_the_peer_to_acknowledge_written_data() -> Result<(), RtcError> {
+    let (mut l, mut r) = direct_pair();
+    let cid = open_channel(&mut l, &mut r);
+
+    l.channel(cid).expect("open channel").write(true, b"bye")?;
+    l.rtc.close()?;
+
+    // Nothing reaches the peer, so it does not acknowledge the write.
+    let resume_at = l.last + Duration::from_secs(10);
+    for _ in 0..100_000 {
+        if l.last >= resume_at {
+            break;
+        }
+        if let Output::Timeout(t) = l.rtc.poll_output()? {
+            l.last = t.clamp(l.last, resume_at);
+            l.rtc.handle_input(Input::Timeout(l.last))?;
+        }
+    }
+
+    assert_eq!(l.last, resume_at);
+    assert!(l.rtc.is_alive(), "close must wait for the acknowledgement");
+
+    // An SCTP retransmission reaches the peer once the network is back.
+    for _ in 0..10_000 {
+        if !l.rtc.is_alive() {
+            break;
+        }
+        progress(&mut l, &mut r)?;
+    }
+
+    assert!(!l.rtc.is_alive());
+    assert!(
+        r.events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::ChannelData(data) if data.data == b"bye")),
+        "data written before close must reach the peer"
+    );
 
     Ok(())
 }
