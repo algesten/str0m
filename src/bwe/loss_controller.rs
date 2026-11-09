@@ -320,6 +320,12 @@ impl LossController {
             }
         }
 
+        // Never let the estimate fall below the min bitrate. Under sustained loss every update
+        // can pick the 0.95x candidate, and without this floor the estimate decays
+        // geometrically towards zero.
+        best_candidate.loss_limited_bandwidth =
+            best_candidate.loss_limited_bandwidth.max(self.min_bitrate);
+
         let loss_limited_bandwidth = best_candidate.loss_limited_bandwidth;
 
         // HOLD check (WebRTC lines 321-334): If in Decreasing state and HOLD timer active, cap at HOLD rate
@@ -423,10 +429,15 @@ impl LossController {
             result.bandwidth_estimate = Some(
                 loss_limited_bandwidth
                     .min(self.delay_based_estimate)
-                    .min(instant_upper_bound),
+                    .min(instant_upper_bound)
+                    .max(self.min_bitrate),
             )
         } else {
-            result.bandwidth_estimate = Some(loss_limited_bandwidth.min(instant_upper_bound))
+            result.bandwidth_estimate = Some(
+                loss_limited_bandwidth
+                    .min(instant_upper_bound)
+                    .max(self.min_bitrate),
+            )
         }
 
         result
@@ -1125,6 +1136,39 @@ mod test {
         fn lost(&self) -> bool {
             self.lost
         }
+    }
+
+    #[test]
+    fn sustained_loss_does_not_drive_estimate_below_min_bitrate() {
+        // Without a lower bound, each update under heavy loss can pick the 0.95x candidate and
+        // the estimate decays geometrically: ~0.07 bps after 500 observations, ~1e-15 bps
+        // after 1500.
+        let mut lbc = LossController::new();
+        lbc.set_min_bitrate(Bitrate::kbps(50));
+
+        lbc.set_acknowledged_bitrate(Bitrate::kbps(400));
+        lbc.set_bandwidth_estimate(Bitrate::mbps(2));
+
+        let mut pkt_builder = PacketBuilder::new(Instant::now())
+            .with_loss(0.6)
+            .num_packets(26);
+
+        // 2000 observations (~8 minutes) at 60% loss
+        for _ in 0..2000 {
+            let result = pkt_builder.build_packets();
+            lbc.update_bandwidth_estimate(&result, Bitrate::mbps(2));
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
+        }
+
+        let LossBasedBweResult {
+            bandwidth_estimate, ..
+        } = lbc.loss_based_result();
+
+        assert_eq!(
+            bandwidth_estimate,
+            Some(Bitrate::kbps(50)),
+            "Estimate should be held at the min bitrate"
+        );
     }
 
     #[test]
