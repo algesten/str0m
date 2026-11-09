@@ -41,6 +41,7 @@ pub const DEFAULT_REMOTE_MAX_MESSAGE_SIZE: u32 = 64 * 1024;
 
 pub(crate) struct RtcSctp {
     state: RtcSctpState,
+    close_state: Option<CloseState>,
     endpoint: Endpoint,
     fake_addr: SocketAddr,
     handle: AssociationHandle,
@@ -86,6 +87,19 @@ impl RtcSctpState {
             RtcSctpState::AwaitAssociationEstablished | RtcSctpState::Established
         )
     }
+}
+
+/// How far SCTP has closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseState {
+    /// Waiting until no stream buffers written data. sctp-proto drops data it
+    /// has not sent when the shutdown starts.
+    AwaitSendBuffer,
+    /// Shutdown requested, waiting until polling has handed out the SHUTDOWN.
+    AwaitShutdownSent,
+    /// The association is gone or has handed out its SHUTDOWN. Polling yields
+    /// nothing.
+    Closed,
 }
 
 #[derive(Debug)]
@@ -307,6 +321,7 @@ impl RtcSctp {
 
         RtcSctp {
             state: RtcSctpState::Uninited,
+            close_state: None,
             endpoint,
             fake_addr,
             handle: AssociationHandle(0), // temporary
@@ -337,11 +352,12 @@ impl RtcSctp {
     }
 
     pub fn is_closing(&self) -> bool {
-        self.assoc.as_ref().is_some_and(|a| a.is_closing())
+        self.close_state.is_some() || self.assoc.as_ref().is_some_and(|a| a.is_closing())
     }
 
+    /// Whether SCTP has nothing more for the transport.
     pub fn is_closed(&self) -> bool {
-        self.assoc.as_ref().is_none_or(|a| a.is_closed())
+        self.close_state == Some(CloseState::Closed)
     }
 
     pub fn init(
@@ -574,16 +590,26 @@ impl RtcSctp {
         }
     }
 
-    pub fn close(&mut self) -> Result<(), SctpError> {
-        let Some(assoc) = &mut self.assoc else {
-            return Ok(());
-        };
-
-        if assoc.is_closing() || assoc.is_closed() {
-            return Ok(());
+    /// Start closing. The association shuts down once the peer has
+    /// acknowledged the data written before the close, or a partially reliable
+    /// stream has abandoned it. That wait has no limit.
+    pub fn close(&mut self) {
+        if self.close_state.is_some() {
+            return;
         }
 
-        Ok(assoc.shutdown()?)
+        // Without an association there is nothing to deliver or shut down.
+        self.close_state = Some(if self.assoc.is_none() {
+            CloseState::Closed
+        } else {
+            CloseState::AwaitSendBuffer
+        });
+    }
+
+    /// Close at once, discarding buffered data without telling the peer. For
+    /// when the transport no longer carries SCTP.
+    pub fn abort(&mut self) {
+        self.close_state = Some(CloseState::Closed);
     }
 
     pub fn is_open(&self, id: u16) -> bool {
@@ -707,8 +733,8 @@ impl RtcSctp {
     }
 
     pub fn handle_timeout(&mut self, now: Instant, wake: &mut Wake) {
-        if self.state == RtcSctpState::Uninited {
-            // Need to call `init()` before any timeouts are accepted.
+        if self.state == RtcSctpState::Uninited || self.close_state == Some(CloseState::Closed) {
+            // Before `init()` and after closing, timeouts have nothing to drive.
             wake.no_events();
             wake.no_timeout();
             return;
@@ -752,8 +778,9 @@ impl RtcSctp {
         // an idle result. Each restart advances a handshake or opens/closes a stream;
         // use a loop so draining many channels does not grow the stack.
         'restart: loop {
-            if self.state == RtcSctpState::Uninited {
-                // Need to call `init()` before any polling starts.
+            if self.state == RtcSctpState::Uninited || self.close_state == Some(CloseState::Closed)
+            {
+                // Before `init()` and after closing, polling has nothing to give.
                 return None;
             }
 
@@ -794,6 +821,7 @@ impl RtcSctp {
                     // No reset can complete on a dead association.
                     self.reset_pending.clear();
                     self.reset_complete.clear();
+                    self.close_state = Some(CloseState::Closed);
                     return Some(SctpEvent::AssociationLost);
                 }
 
@@ -840,6 +868,21 @@ impl RtcSctp {
                         _ => {}
                     }
                 }
+            }
+
+            match self.close_state {
+                Some(CloseState::AwaitSendBuffer) if is_send_buffer_empty(assoc, &self.entries) => {
+                    if let Err(e) = assoc.shutdown() {
+                        debug!("No SCTP shutdown on close: {e}");
+                    }
+                    self.close_state = Some(CloseState::AwaitShutdownSent);
+                    continue 'restart;
+                }
+                Some(CloseState::AwaitShutdownSent) => {
+                    self.close_state = Some(CloseState::Closed);
+                    return None;
+                }
+                _ => {}
             }
 
             // Must wait for association state to be established before opening streams.
@@ -1148,6 +1191,10 @@ impl RtcSctp {
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
+        if self.close_state == Some(CloseState::Closed) {
+            return None;
+        }
+
         let assoc_timeout = self.assoc.as_mut().and_then(|a| a.poll_timeout());
 
         // Wakeup backstop for entries whose open_stream() is being retried.
@@ -1224,6 +1271,18 @@ fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Vec<u8>>> {
     };
 
     Some(v.into_iter().map(|b| b.to_vec()).collect())
+}
+
+/// Whether no stream buffers written data: the peer acknowledged it or, on a
+/// partially reliable stream, SCTP abandoned it.
+fn is_send_buffer_empty(assoc: &mut Association, entries: &[StreamEntry]) -> bool {
+    entries.iter().all(|e| {
+        assoc
+            .stream(e.id)
+            .ok()
+            .and_then(|s| s.buffered_amount().ok())
+            .is_none_or(|amount| amount == 0)
+    })
 }
 
 fn set_state(current_state: &mut RtcSctpState, state: RtcSctpState) {

@@ -1,5 +1,6 @@
 # Unreleased
 
+  * `Rtc::close` waits for SCTP to deliver data channel data written before it instead of dropping it, and sends DTLS `close_notify` after RTCP BYE
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 

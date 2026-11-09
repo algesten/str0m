@@ -934,7 +934,6 @@ pub struct Rtc {
     last_timeout_reason: Reason,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
-    close_dtls_started: bool,
     // Signals which halves of the tree may need re-polling. Written locally by
     // the components that mutate, via the `Wake` guard handed down the tree;
     // read (and cleared) by `poll_output`. See the `poll` module.
@@ -1312,7 +1311,6 @@ impl Rtc {
             last_timeout_reason: Reason::NotHappening,
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
-            close_dtls_started: false,
             readiness: Readiness::armed(),
             cached_timeout: start,
         })
@@ -1622,7 +1620,8 @@ impl Rtc {
         drop(self.readiness.wake());
     }
 
-    // Returns None when polling must restart after handling an SCTP packet.
+    // Returns None when polling must restart, such as after handling an SCTP
+    // packet.
     fn do_poll_output(&mut self) -> Result<Option<Output>, RtcError> {
         if self.state == RtcState::Closed {
             self.last_timeout_reason = Reason::NotHappening;
@@ -1755,7 +1754,9 @@ impl Rtc {
                     break;
                 }
                 DtlsOutput::CloseNotify => {
-                    self.start_close()?;
+                    // DTLS carries no more SCTP.
+                    self.sctp.abort();
+                    self.start_close();
                     return Ok(Some(Output::Event(Event::Closed)));
                 }
                 other => {
@@ -1829,7 +1830,7 @@ impl Rtc {
                 }
                 SctpEvent::AssociationLost => {
                     self.chan.association_lost();
-                    self.start_close()?;
+                    self.start_close();
                     return Ok(Some(Output::Event(Event::Closed)));
                 }
                 SctpEvent::Data { id, binary, data } => {
@@ -1889,6 +1890,10 @@ impl Rtc {
         } else {
             // Don't allow accumulated feedback to build up indefinitely
             self.session.clear_feedback();
+        }
+
+        if self.progress_close()? {
+            return Ok(None);
         }
 
         self.readiness.clear_events();
@@ -2044,44 +2049,55 @@ impl Rtc {
 
     /// Starts local shutdown.
     ///
-    /// The `Rtc` instance schedules RTCP BYE, requests SCTP shutdown, and sends
-    /// DTLS close_notify without waiting for remote replies. It enters a closing
-    /// drain state where app-facing operations stop, but [`Rtc::poll_output()`]
-    /// continues polling until pending local close output has drained. Once the
-    /// drain is complete, [`Rtc::is_alive()`] returns `false`.
+    /// The `Rtc` instance schedules RTCP BYE. Once SCTP no longer buffers data
+    /// written to data channels before the close, because the peer acknowledged
+    /// it or a partially reliable channel abandoned it, the instance shuts SCTP
+    /// down. That wait has no limit; to stop waiting, call [`Rtc::disconnect()`]
+    /// or drop the `Rtc`. DTLS close_notify follows the RTCP BYE and the SCTP
+    /// shutdown. The instance enters a closing drain state where app-facing
+    /// operations stop, but [`Rtc::poll_output()`] continues polling until
+    /// pending local close output has drained. Once the drain is complete,
+    /// [`Rtc::is_alive()`] returns `false`.
     pub fn close(&mut self) -> Result<(), RtcError> {
-        self.start_close()
-    }
-
-    fn start_close(&mut self) -> Result<(), RtcError> {
-        if self.state == RtcState::Closed {
-            return Ok(());
-        }
-
-        // Closing queues RTCP BYE and a DTLS close_notify that must be drained
-        // from the pipeline, so re-poll the whole tree.
-        self.wake_all();
-
-        if self.state != RtcState::Closing {
-            self.session.close_rtp();
-            self.sctp.close()?;
-            self.state = RtcState::Closing;
-        }
-
-        self.start_dtls_close()
-    }
-
-    fn start_dtls_close(&mut self) -> Result<(), RtcError> {
-        if !self.close_dtls_started {
-            self.dtls.close()?;
-            self.close_dtls_started = true;
-        }
-
+        self.start_close();
         Ok(())
     }
 
+    fn start_close(&mut self) {
+        if self.state != RtcState::Alive {
+            return;
+        }
+
+        // Closing queues RTCP BYE that must be drained from the pipeline, so
+        // re-poll the whole tree.
+        self.wake_all();
+
+        self.session.close_rtp();
+        self.sctp.close();
+        self.state = RtcState::Closing;
+    }
+
+    /// Close DTLS once RTP and SCTP have closed. DTLS carries SCTP, and the
+    /// peer stops reading SRTP once it has the DTLS close_notify.
+    ///
+    /// Returns `true` when polling must restart to drain the close_notify.
+    fn progress_close(&mut self) -> Result<bool, RtcError> {
+        let is_dtls_due = self.state == RtcState::Closing
+            && !self.dtls.is_closing()
+            && self.session.is_rtp_closed()
+            && self.sctp.is_closed();
+        if !is_dtls_due {
+            return Ok(false);
+        }
+
+        // Re-poll the whole tree to drain the close_notify.
+        self.wake_all();
+        self.dtls.close()?;
+        Ok(true)
+    }
+
     fn close_drain_complete(&self) -> bool {
-        self.close_dtls_started && self.dtls.is_closed() && self.session.is_rtp_closed()
+        self.session.is_rtp_closed() && self.sctp.is_closed() && self.dtls.is_closed()
     }
 
     fn init_time(&mut self, now: Instant) {

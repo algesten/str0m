@@ -32,6 +32,9 @@ pub struct Dtls {
     /// Packets to be sent.
     pending_packets: VecDeque<DatagramSend>,
 
+    /// Set once [`Dtls::close()`] succeeds.
+    closing: bool,
+
     /// Target MTU (start) and warn threshold (end). The target is forwarded to
     /// the backend's fragmenter; outgoing records larger than the warn
     /// threshold log a warning.
@@ -78,6 +81,7 @@ impl Dtls {
             remote_fingerprint: None,
             active_state: None,
             pending_packets: VecDeque::new(),
+            closing: false,
             mtu,
         })
     }
@@ -118,8 +122,14 @@ impl Dtls {
         self.instance.protocol_version()
     }
 
+    pub fn is_closing(&self) -> bool {
+        self.closing
+    }
+
+    /// Whether a [`Dtls::close()`] has finished: its packets have been handed
+    /// out and the backend reports the instance closed.
     pub fn is_closed(&self) -> bool {
-        self.pending_packets.is_empty() && self.instance.is_closed()
+        self.closing && self.pending_packets.is_empty() && self.instance.is_closed()
     }
 
     /// Set the remote fingerprint (extracted from peer certificate).
@@ -202,9 +212,16 @@ impl Dtls {
 
     /// Initiate graceful shutdown by sending a close_notify alert.
     pub fn close(&mut self) -> Result<(), DtlsError> {
-        self.instance
-            .close()
-            .map_err(|e| DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e))))
+        if self.closing {
+            return Ok(());
+        }
+
+        self.instance.close().map_err(|e| {
+            DtlsError::CryptoError(CryptoError::Other(format!("DTLS error: {}", e)))
+        })?;
+        self.closing = true;
+
+        Ok(())
     }
 }
 
