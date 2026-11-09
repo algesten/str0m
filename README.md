@@ -338,6 +338,9 @@ If multiple backend features are enabled, str0m automatically selects the backen
 priority order: `aws-lc-rs`, `rust-crypto`, `openssl-dimpl`, `openssl`, `apple-crypto`
 (Apple platforms only), `wincrypto` (Windows only).
 
+Third-party backends live outside this repository, such as
+[`rind-str0m`](https://crates.io/crates/rind-str0m) (dimpl + rind, pure Rust).
+
 If you disable the default features, you MUST explicitly configure an alternative
 crypto backend either process-wide or per-instance.
 
