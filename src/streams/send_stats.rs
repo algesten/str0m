@@ -84,6 +84,11 @@ impl StreamTxStats {
         self.firs += 1;
     }
 
+    /// The round trip time from the last reception report, if any.
+    pub(crate) fn rtt(&self) -> Option<Duration> {
+        self.rtt
+    }
+
     pub fn update_with_rr(&mut self, now: Instant, last_sent_seq_no: SeqNo, r: ReceptionReport) {
         let ntp_time = now.to_ntp_duration();
         let rtt = calculate_rtt(ntp_time, r.last_sr_delay, r.last_sr_time);
