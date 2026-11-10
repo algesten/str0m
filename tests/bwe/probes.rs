@@ -222,3 +222,38 @@ fn capped_initial_probes_do_not_mask_overuse() -> Result<(), RtcError> {
 
     Ok(())
 }
+
+#[test]
+fn capped_periodic_probe_keeps_start_estimate() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+    let plan = vec![
+        Step::Conditions {
+            description: "High bandwidth network",
+            config: NetemConfig::new()
+                .link(Bitrate::mbps(10), DataSize::kbytes(200))
+                .seed(42),
+        },
+        Step::Media {
+            description: "Low desired bitrate and media rate",
+            desired_bitrate: Bitrate::kbps(100),
+            media_send_rate: Bitrate::kbps(100),
+        },
+        Step::Run {
+            description: "Initial and periodic ALR probing",
+            duration: Duration::from_secs(8),
+        },
+        Step::CheckProbe {
+            description: "A periodic ALR probe was sent",
+            check: Arc::new(|_, probe| probe.is_alr_probe()),
+        },
+        Step::Check {
+            description: "Low-rate probes do not lower the start estimate",
+            at_least: Bitrate::kbps(1_500),
+        },
+    ];
+    let (mut l, mut r) = connect_with_bwe(Bitrate::kbps(1_500), Bitrate::kbps(100));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    ctx.run_plan(&mut l, &mut r, &plan)?;
+    Ok(())
+}
