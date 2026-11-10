@@ -311,7 +311,7 @@ impl<'a> SdpApi<'a> {
                 || (0x2d..=0x2e).contains(&u)
                 || (0x30..=0x39).contains(&u)
                 || (0x41..=0x5a).contains(&u)
-                || (0x5e..0x7e).contains(&u)
+                || (0x5e..=0x7e).contains(&u)
         }
 
         let stream_id = if let Some(stream_id) = stream_id {
@@ -1854,6 +1854,26 @@ mod test {
 
     fn get_setup_from_media_line(line: &MediaLine) -> Setup {
         line.setup().expect("Expected a=setup attribute in SDP")
+    }
+
+    /// RFC 8830 token-char runs up to and including 0x7e, so `~` must survive sanitising.
+    #[test]
+    fn add_media_keeps_tilde_in_msid() {
+        crate::init_crypto_default();
+
+        let mut rtc = Rtc::new(Instant::now());
+        let mut change = rtc.sdp_api();
+        change.add_media(
+            MediaKind::Audio,
+            Direction::SendRecv,
+            Some("stream~1".into()),
+            Some("track~1".into()),
+            None,
+        );
+        let (offer, _pending) = change.apply().unwrap();
+
+        let sdp = offer.to_sdp_string();
+        assert!(sdp.contains("a=msid:stream~1 track~1"), "{sdp}");
     }
 
     /// RFC 8842 §5.2: an offer MUST use a=setup:actpass regardless of DTLS role.
