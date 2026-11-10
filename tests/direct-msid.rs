@@ -40,6 +40,18 @@ pub fn direct_api_set_msid_sanitizes() {
 }
 
 #[test]
+pub fn direct_api_set_msid_preserves_valid_tilde() {
+    init_crypto_default();
+    let mut rtc = Rtc::new(Instant::now());
+    let mid: Mid = "vid".into();
+    rtc.direct_api().declare_media(mid, MediaKind::Video);
+    assert!(rtc.direct_api().set_msid(mid, "stream~id", "track~id"));
+    let media = rtc.media(mid).unwrap();
+    assert_eq!(media.stream_id(), "stream~id");
+    assert_eq!(media.track_id(), "track~id");
+}
+
+#[test]
 pub fn direct_api_set_msid_unknown_mid() {
     init_log();
     init_crypto_default();
