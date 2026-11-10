@@ -1470,7 +1470,7 @@ impl Msid {
                 || (0x2d..=0x2e).contains(&u)
                 || (0x30..=0x39).contains(&u)
                 || (0x41..=0x5a).contains(&u)
-                || (0x5e..0x7e).contains(&u)
+                || (0x5e..=0x7e).contains(&u)
         }
 
         id.chars().filter(is_token_char).take(64).collect()

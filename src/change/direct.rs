@@ -246,6 +246,7 @@ impl<'a> DirectApi<'a> {
     /// the same way as in [`SdpApi::add_media()`][crate::change::SdpApi::add_media]: characters
     /// that are not RFC 8830 token chars are removed and the result is cut to 64 characters.
     /// The new ids are reported by [`Media::stream_id()`] and [`Media::track_id()`].
+    /// This only changes local metadata; the caller must signal the ids to the remote peer.
     ///
     /// Returns `false` if no media has the given `mid`.
     pub fn set_msid(
