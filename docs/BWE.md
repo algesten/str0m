@@ -784,6 +784,10 @@ transmission smoothing and padding generation respectively.
    - **Impact**: Simplified API. Probing behavior differs: str0m allows
      probing up to 2× desired rate without a separate hard cap, while WebRTC
      constrains by the minimum of the two values
+   - **Probe results**: When that desired-rate limit makes a probe target
+     lower than the estimate at queue time, str0m ignores results below that
+     estimate. WebRTC applies valid probe results without this filter. Delay
+     and loss signals can still reduce str0m's estimate.
 
 5. **Periodic ALR Probing:**
    - **WebRTC**: Optional periodic ALR probes at 2× current estimate

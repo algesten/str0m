@@ -539,7 +539,7 @@ impl ProbeControl {
         let max = desired * MAX_PROBE_BITRATE_FACTOR;
         // A cap that brings the target below the current estimate makes a cluster that cannot
         // confirm that estimate (see `ProbeClusterConfig::capped_below`).
-        let capped_below = self.last_estimate.filter(|e| bitrate > max && max < *e);
+        let capped_below = self.last_estimate.filter(|e| bitrate >= max && max < *e);
         let bitrate = bitrate.min(max);
 
         // No probe at too small values.
