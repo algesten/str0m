@@ -5,9 +5,9 @@ use crate::RtcError;
 use crate::format::{CodecConfig, PayloadParams};
 use crate::packet::PacketError;
 use crate::poll::Readiness;
-use crate::rtp_::AbsCaptureTime;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
+use crate::rtp_::{AbsCaptureTime, VideoColorSpace};
 use crate::session::Session;
 use crate::streams::Streams;
 
@@ -108,6 +108,14 @@ impl<'a> Writer<'a> {
     /// whether the video requires to be rotated to show correctly.
     pub fn video_orientation(mut self, o: VideoOrientation) -> Self {
         self.ext_vals.video_orientation = Some(o);
+        self
+    }
+
+    /// Set the color space of this frame, sent in the `color-space` extension if it is
+    /// negotiated. libwebrtc senders put it on keyframes; for Chrome as receiver that was
+    /// enough in our tests.
+    pub fn color_space(mut self, color_space: VideoColorSpace) -> Self {
+        self.ext_vals.color_space = Some(color_space);
         self
     }
 

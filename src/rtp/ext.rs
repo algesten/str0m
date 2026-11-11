@@ -144,6 +144,9 @@ impl Extension {
     fn requires_two_byte_form(&self, ev: &ExtensionValues) -> bool {
         match self {
             Extension::UnknownUri(_, serializer) => serializer.requires_two_byte_form(ev),
+            // The optional HDR metadata needs the two-byte form. Use it for every
+            // packet when color space is negotiated, even without extmap-allow-mixed.
+            Extension::ColorSpace => true,
             _ => false,
         }
     }
@@ -737,8 +740,14 @@ impl Extension {
                 Some(4)
             }
             ColorSpace => {
-                // TODO HDR color space
-                None
+                let v = ev.color_space.as_ref()?;
+                buf[..4].copy_from_slice(&v.to_bytes());
+                if let Some(hdr) = &v.hdr_metadata {
+                    hdr.write_to(&mut buf[4..28]);
+                    Some(28)
+                } else {
+                    Some(4)
+                }
             }
             UnknownUri(_, serializer) => {
                 let n = serializer.write_to(buf, ev);
@@ -866,7 +875,15 @@ impl Extension {
                 ev.frame_mark = Some(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
             }
             ColorSpace => {
-                // TODO HDR color space
+                if buf.len() != 4 && buf.len() != 28 {
+                    return None;
+                }
+                let b = buf.first_chunk::<4>()?;
+                let mut color_space = VideoColorSpace::from_bytes(*b);
+                if buf.len() == 28 {
+                    color_space.hdr_metadata = Some(HdrMetadata::parse(&buf[4..]));
+                }
+                ev.color_space = Some(color_space);
             }
             UnknownUri(_, serializer) => {
                 let success = serializer.parse_value(buf, ev);
@@ -922,6 +939,10 @@ pub struct ExtensionValues {
     pub mid: Option<Mid>,
     #[doc(hidden)]
     pub frame_mark: Option<u32>,
+
+    /// Color space of the video, from the `color-space` extension. Without it, Chrome showed
+    /// nothing of a full-range VP9 stream from str0m until it requested a new keyframe.
+    pub color_space: Option<VideoColorSpace>,
 
     /// User values for [`ExtensionSerializer`] to parse into and write from.
     pub user_values: UserExtensionValues,
@@ -1133,9 +1154,143 @@ impl fmt::Debug for ExtensionValues {
         if let Some(t) = &self.frame_mark {
             write!(f, " frame_mark: {t}")?;
         }
+        if let Some(t) = &self.color_space {
+            write!(f, " color_space: {t:?}")?;
+        }
 
         write!(f, " }}")?;
         Ok(())
+    }
+}
+
+/// Color space from the `color-space` RTP header extension.
+///
+/// The values follow the WebRTC extension, which takes them from ITU-T H.273: for example
+/// BT.709 is `primaries: 1, transfer: 1, matrix: 1`. `range` is 0 (invalid), 1 (limited),
+/// 2 (full) or 3 (derived); the chroma siting fields are 0 (unspecified), 1 (collocated with
+/// the luma sample) or 2 (half way between). Each of the last three uses only two bits.
+///
+/// <http://www.webrtc.org/experiments/rtp-hdrext/color-space>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct VideoColorSpace {
+    /// Colour primaries, H.273 table 2.
+    pub primaries: u8,
+    /// Transfer characteristics, H.273 table 3.
+    pub transfer: u8,
+    /// Matrix coefficients, H.273 table 4.
+    pub matrix: u8,
+    /// 0 invalid, 1 limited, 2 full, 3 derived.
+    pub range: u8,
+    /// Horizontal chroma siting: 0 unspecified, 1 collocated, 2 half.
+    pub chroma_siting_horizontal: u8,
+    /// Vertical chroma siting: 0 unspecified, 1 collocated, 2 half.
+    pub chroma_siting_vertical: u8,
+    /// Optional HDR mastering and light-level metadata.
+    pub hdr_metadata: Option<HdrMetadata>,
+}
+
+impl VideoColorSpace {
+    fn to_bytes(self) -> [u8; 4] {
+        [
+            self.primaries,
+            self.transfer,
+            self.matrix,
+            (self.range & 0b11) << 4
+                | (self.chroma_siting_horizontal & 0b11) << 2
+                | (self.chroma_siting_vertical & 0b11),
+        ]
+    }
+
+    fn from_bytes(b: [u8; 4]) -> Self {
+        VideoColorSpace {
+            primaries: b[0],
+            transfer: b[1],
+            matrix: b[2],
+            range: (b[3] >> 4) & 0b11,
+            chroma_siting_horizontal: (b[3] >> 2) & 0b11,
+            chroma_siting_vertical: b[3] & 0b11,
+            hdr_metadata: None,
+        }
+    }
+}
+
+/// HDR mastering display and content light-level metadata.
+///
+/// Values use the exact integer units of the WebRTC color-space extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HdrMetadata {
+    /// Maximum mastering display luminance, in nits.
+    pub luminance_max: u16,
+    /// Minimum mastering display luminance, in units of 1/10,000 nit.
+    pub luminance_min: u16,
+    /// Chromaticity of the mastering display's red primary.
+    pub primary_red: Chromaticity,
+    /// Chromaticity of the mastering display's green primary.
+    pub primary_green: Chromaticity,
+    /// Chromaticity of the mastering display's blue primary.
+    pub primary_blue: Chromaticity,
+    /// Chromaticity of the mastering display's white point.
+    pub white_point: Chromaticity,
+    /// Maximum content light level, in nits.
+    pub max_content_light_level: u16,
+    /// Maximum frame average light level, in nits.
+    pub max_frame_average_light_level: u16,
+}
+
+/// CIE 1931 chromaticity coordinates, in units of 1/50,000.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Chromaticity {
+    /// Horizontal chromaticity coordinate.
+    pub x: u16,
+    /// Vertical chromaticity coordinate.
+    pub y: u16,
+}
+
+impl HdrMetadata {
+    fn write_to(self, buf: &mut [u8]) {
+        let values = [
+            self.luminance_max,
+            self.luminance_min,
+            self.primary_red.x,
+            self.primary_red.y,
+            self.primary_green.x,
+            self.primary_green.y,
+            self.primary_blue.x,
+            self.primary_blue.y,
+            self.white_point.x,
+            self.white_point.y,
+            self.max_content_light_level,
+            self.max_frame_average_light_level,
+        ];
+        for (chunk, value) in buf.as_chunks_mut::<2>().0.iter_mut().zip(values) {
+            chunk.copy_from_slice(&value.to_be_bytes());
+        }
+    }
+
+    fn parse(buf: &[u8]) -> Self {
+        let value = |i: usize| u16::from_be_bytes([buf[i * 2], buf[i * 2 + 1]]);
+        HdrMetadata {
+            luminance_max: value(0),
+            luminance_min: value(1),
+            primary_red: Chromaticity {
+                x: value(2),
+                y: value(3),
+            },
+            primary_green: Chromaticity {
+                x: value(4),
+                y: value(5),
+            },
+            primary_blue: Chromaticity {
+                x: value(6),
+                y: value(7),
+            },
+            white_point: Chromaticity {
+                x: value(8),
+                y: value(9),
+            },
+            max_content_light_level: value(10),
+            max_frame_average_light_level: value(11),
+        }
     }
 }
 
@@ -1335,6 +1490,91 @@ mod test {
         let abs = if now > now2 { now - now2 } else { now2 - now };
 
         assert!(abs < Duration::from_millis(1));
+    }
+
+    #[test]
+    fn color_space_roundtrip() {
+        let mut exts = ExtensionMap::empty();
+        exts.set(8, Extension::ColorSpace);
+        // BT.709, full range: what a VP9 encoder signals with VP9E_SET_COLOR_RANGE = 1.
+        let cs = VideoColorSpace {
+            primaries: 1,
+            transfer: 1,
+            matrix: 1,
+            range: 2,
+            chroma_siting_horizontal: 1,
+            chroma_siting_vertical: 2,
+            hdr_metadata: None,
+        };
+        let ev = ExtensionValues {
+            color_space: Some(cs),
+            ..Default::default()
+        };
+
+        let mut buf = vec![0_u8; 16];
+        let n = exts.write_to(&mut buf[..], &ev, ExtensionsForm::OneByte);
+        assert!(n > 0);
+        // One-byte header: id 8, length 4 (encoded as 3), then the four bytes.
+        assert_eq!(&buf[..5], &[0x83, 1, 1, 1, 0b0010_0110]);
+
+        let mut ev2 = ExtensionValues::default();
+        exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
+        assert_eq!(ev2.color_space, Some(cs));
+    }
+
+    #[test]
+    fn color_space_hdr_wire_format() {
+        let mut exts = ExtensionMap::empty();
+        exts.set(8, Extension::ColorSpace);
+        let hdr = HdrMetadata {
+            luminance_max: 1,
+            luminance_min: 2,
+            primary_red: Chromaticity { x: 3, y: 4 },
+            primary_green: Chromaticity { x: 5, y: 6 },
+            primary_blue: Chromaticity { x: 7, y: 8 },
+            white_point: Chromaticity { x: 9, y: 10 },
+            max_content_light_level: 11,
+            max_frame_average_light_level: 12,
+        };
+        let cs = VideoColorSpace {
+            primaries: 9,
+            transfer: 16,
+            matrix: 9,
+            range: 2,
+            chroma_siting_horizontal: 1,
+            chroma_siting_vertical: 2,
+            hdr_metadata: Some(hdr),
+        };
+        let ev = ExtensionValues {
+            color_space: Some(cs),
+            ..Default::default()
+        };
+        assert_eq!(exts.form(&ev), ExtensionsForm::TwoByte);
+        let mut buf = [0; 32];
+        assert_eq!(exts.write_to(&mut buf, &ev, exts.form(&ev)), 30);
+        assert_eq!(
+            &buf[..30],
+            &[
+                8, 28, 9, 16, 9, 0x26, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, 0, 9, 0, 10,
+                0, 11, 0, 12
+            ]
+        );
+        let mut parsed = ExtensionValues::default();
+        exts.parse(&buf[..30], ExtensionsForm::TwoByte, &mut parsed);
+        assert_eq!(parsed.color_space, Some(cs));
+    }
+
+    #[test]
+    fn color_space_is_left_out_without_a_value() {
+        let mut exts = ExtensionMap::empty();
+        exts.set(8, Extension::ColorSpace);
+        let mut buf = vec![0_u8; 16];
+        let n = exts.write_to(
+            &mut buf[..],
+            &ExtensionValues::default(),
+            ExtensionsForm::OneByte,
+        );
+        assert_eq!(n, 0);
     }
 
     #[test]
