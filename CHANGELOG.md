@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Write and read the `color-space` RTP header extension with optional HDR metadata #1135
+  * Write and read the `color-space` RTP header extension #1135
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
 

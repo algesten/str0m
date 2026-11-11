@@ -144,10 +144,9 @@ impl Extension {
     fn requires_two_byte_form(&self, ev: &ExtensionValues) -> bool {
         match self {
             Extension::UnknownUri(_, serializer) => serializer.requires_two_byte_form(ev),
-            Extension::ColorSpace => ev
-                .color_space
-                .as_ref()
-                .is_some_and(|v| v.hdr_metadata.is_some()),
+            // The optional HDR metadata needs the two-byte form. Use it for every
+            // packet when color space is negotiated, even without extmap-allow-mixed.
+            Extension::ColorSpace => true,
             _ => false,
         }
     }
@@ -884,7 +883,7 @@ impl Extension {
                 if buf.len() == 28 {
                     color_space.hdr_metadata = Some(HdrMetadata::parse(&buf[4..]));
                 }
-                ev.color_space = Some(Box::new(color_space));
+                ev.color_space = Some(color_space);
             }
             UnknownUri(_, serializer) => {
                 let success = serializer.parse_value(buf, ev);
@@ -943,7 +942,7 @@ pub struct ExtensionValues {
 
     /// Color space of the video, from the `color-space` extension. Without it, Chrome showed
     /// nothing of a full-range VP9 stream from str0m until it requested a new keyframe.
-    pub color_space: Option<Box<VideoColorSpace>>,
+    pub color_space: Option<VideoColorSpace>,
 
     /// User values for [`ExtensionSerializer`] to parse into and write from.
     pub user_values: UserExtensionValues,
@@ -1172,7 +1171,7 @@ impl fmt::Debug for ExtensionValues {
 /// the luma sample) or 2 (half way between). Each of the last three uses only two bits.
 ///
 /// <http://www.webrtc.org/experiments/rtp-hdrext/color-space>
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct VideoColorSpace {
     /// Colour primaries, H.273 table 2.
     pub primaries: u8,
@@ -1191,7 +1190,7 @@ pub struct VideoColorSpace {
 }
 
 impl VideoColorSpace {
-    fn to_bytes(&self) -> [u8; 4] {
+    fn to_bytes(self) -> [u8; 4] {
         [
             self.primaries,
             self.transfer,
@@ -1508,7 +1507,7 @@ mod test {
             hdr_metadata: None,
         };
         let ev = ExtensionValues {
-            color_space: Some(Box::new(cs.clone())),
+            color_space: Some(cs),
             ..Default::default()
         };
 
@@ -1520,7 +1519,7 @@ mod test {
 
         let mut ev2 = ExtensionValues::default();
         exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
-        assert_eq!(ev2.color_space.as_deref(), Some(&cs));
+        assert_eq!(ev2.color_space, Some(cs));
     }
 
     #[test]
@@ -1547,7 +1546,7 @@ mod test {
             hdr_metadata: Some(hdr),
         };
         let ev = ExtensionValues {
-            color_space: Some(Box::new(cs.clone())),
+            color_space: Some(cs),
             ..Default::default()
         };
         assert_eq!(exts.form(&ev), ExtensionsForm::TwoByte);
@@ -1562,7 +1561,7 @@ mod test {
         );
         let mut parsed = ExtensionValues::default();
         exts.parse(&buf[..30], ExtensionsForm::TwoByte, &mut parsed);
-        assert_eq!(parsed.color_space.as_deref(), Some(&cs));
+        assert_eq!(parsed.color_space, Some(cs));
     }
 
     #[test]

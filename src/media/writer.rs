@@ -115,7 +115,7 @@ impl<'a> Writer<'a> {
     /// negotiated. libwebrtc senders put it on keyframes; for Chrome as receiver that was
     /// enough in our tests.
     pub fn color_space(mut self, color_space: VideoColorSpace) -> Self {
-        self.ext_vals.color_space = Some(Box::new(color_space));
+        self.ext_vals.color_space = Some(color_space);
         self
     }
 

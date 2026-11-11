@@ -2354,7 +2354,8 @@ mod test {
     #[test]
     fn event_is_reasonably_sized() {
         let n = std::mem::size_of::<Event>();
-        assert!(n < 530);
+        // The inline color-space extension includes optional HDR metadata.
+        assert!(n < 560);
     }
 }
 

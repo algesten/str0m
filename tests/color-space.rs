@@ -64,15 +64,13 @@ fn color_space_with_and_without_hdr() -> Result<(), RtcError> {
         for _ in 0..100 {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
-            l.writer(mid).unwrap().color_space(cs.clone()).write(
-                pt,
-                wallclock,
-                time,
-                vec![0xaa; 5000],
-            )?;
+            l.writer(mid)
+                .unwrap()
+                .color_space(cs)
+                .write(pt, wallclock, time, vec![0xaa; 5000])?;
             progress(&mut l, &mut r)?;
             if r.events[before..].iter().any(
-                |(_, e)| matches!(e, Event::MediaData(d) if d.ext_vals.color_space.as_deref() == Some(&cs)),
+                |(_, e)| matches!(e, Event::MediaData(d) if d.ext_vals.color_space == Some(cs)),
             ) {
                 break;
             }
@@ -82,7 +80,7 @@ fn color_space_with_and_without_hdr() -> Result<(), RtcError> {
         }
         assert!(
             r.events[before..].iter().any(
-                |(_, e)| matches!(e, Event::MediaData(d) if d.ext_vals.color_space.as_deref() == Some(&cs))
+                |(_, e)| matches!(e, Event::MediaData(d) if d.ext_vals.color_space == Some(cs))
             ),
             "missing {cs:?}"
         );
@@ -139,12 +137,10 @@ fn no_mixed_extension_headers_without_sdp_negotiation() -> Result<(), RtcError> 
         for _ in 0..100 {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
-            l.writer(mid).unwrap().color_space(cs.clone()).write(
-                pt,
-                wallclock,
-                time,
-                vec![0xaa; 200],
-            )?;
+            l.writer(mid)
+                .unwrap()
+                .color_space(cs)
+                .write(pt, wallclock, time, vec![0xaa; 200])?;
             let got = capture_rtp_profiles(&mut l, &mut r)?;
             if !got.is_empty() {
                 profiles.extend(got);
