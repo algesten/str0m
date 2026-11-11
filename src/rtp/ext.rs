@@ -144,9 +144,7 @@ impl Extension {
     fn requires_two_byte_form(&self, ev: &ExtensionValues) -> bool {
         match self {
             Extension::UnknownUri(_, serializer) => serializer.requires_two_byte_form(ev),
-            // The optional HDR metadata needs the two-byte form. Use it for every
-            // packet when color space is negotiated, even without extmap-allow-mixed.
-            Extension::ColorSpace => true,
+            Extension::ColorSpace => ev.color_space.is_some_and(|v| v.hdr_metadata.is_some()),
             _ => false,
         }
     }
@@ -353,7 +351,10 @@ impl Extension {
 
 /// Mapping between RTP extension id to what extension that is.
 #[derive(Clone, PartialEq, Eq)]
-pub struct ExtensionMap([Option<MapEntry>; MAX_ID as usize]); // index 0 is extmap:1.
+pub struct ExtensionMap(
+    [Option<MapEntry>; MAX_ID as usize], // index 0 is extmap:1.
+    bool,                                // peer allows mixing one-byte and two-byte forms.
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MapEntry {
@@ -364,7 +365,7 @@ struct MapEntry {
 impl ExtensionMap {
     /// Create an empty map.
     pub fn empty() -> Self {
-        ExtensionMap(std::array::from_fn(|_| None))
+        ExtensionMap(std::array::from_fn(|_| None), false)
     }
 
     /// Creates a map with the "standard" mappings.
@@ -462,10 +463,19 @@ impl ExtensionMap {
 
     pub(crate) fn cloned_with_type(&self, audio: bool) -> Self {
         let mut x = ExtensionMap::empty();
+        x.1 = self.1;
         for (id, ext) in self.iter_by_media_type(audio) {
             x.set(id, ext.clone());
         }
         x
+    }
+
+    pub(crate) fn allow_mixed(&self) -> bool {
+        self.1
+    }
+
+    pub(crate) fn set_allow_mixed(&mut self, allow: bool) {
+        self.1 = allow;
     }
 
     // https://tools.ietf.org/html/rfc5285
@@ -529,10 +539,11 @@ impl ExtensionMap {
     }
 
     pub(crate) fn form(&self, ev: &ExtensionValues) -> ExtensionsForm {
-        if self
-            .iter()
-            .any(|(id, ext)| id > MAX_ID_ONE_BYTE_FORM || ext.requires_two_byte_form(ev))
-        {
+        if self.iter().any(|(id, ext)| {
+            id > MAX_ID_ONE_BYTE_FORM
+                || (!self.1 && matches!(ext, Extension::ColorSpace))
+                || ext.requires_two_byte_form(ev)
+        }) {
             ExtensionsForm::TwoByte
         } else {
             ExtensionsForm::OneByte

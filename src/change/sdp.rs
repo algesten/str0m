@@ -126,6 +126,11 @@ impl<'a> SdpApi<'a> {
 
         let has_snap = process_remote_sctp_init(&mut self.rtc.sctp, remote_sctp_init.as_deref())?;
 
+        let allow_mixed = offer.session.attrs.iter().any(|a| {
+            matches!(a, SessionAttribute::AllowMixedExts)
+                || matches!(a, SessionAttribute::Unused(v) if v == "extmap-allow-mixed")
+        });
+
         // Modify session with offer.
         apply_offer(&mut self.rtc.session, offer)?;
 
@@ -145,7 +150,12 @@ impl<'a> SdpApi<'a> {
         }
 
         let params = AsSdpParams::new(&self.rtc, None);
-        let sdp = as_sdp(&self.rtc.session, params);
+        let mut sdp = as_sdp(&self.rtc.session, params);
+        if !allow_mixed {
+            sdp.session
+                .attrs
+                .retain(|a| !matches!(a, SessionAttribute::AllowMixedExts));
+        }
 
         debug!("Create answer");
         Ok(sdp.into())
@@ -879,11 +889,8 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
         (lines, mids, stream_ids)
     };
 
-    // AllowMixedExts adds "a=extmap-allow-mixed" at session level to signal
-    // support for mixing one-byte and two-byte RTP header extensions.
-    // TODO: It would make sense to perform an actual negotiation, however
-    //       just adding this line should work fine:
-    // https://github.com/meetecho/janus-gateway/blob/d2e74fdf9bb8aa7a39ed68ed28394afe1e0cd22d/src/sdp.c#L1519
+    // Advertise support for mixing one-byte and two-byte RTP extensions.
+    // Answers remove this attribute if the offer did not include it.
     let mut attrs = vec![
         SessionAttribute::Group {
             typ: "BUNDLE".into(),
@@ -1187,6 +1194,12 @@ fn add_new_lines(
 /// Update session level properties like
 /// Extensions from offer or answer.
 fn update_session(session: &mut Session, sdp: &Sdp) {
+    session
+        .exts
+        .set_allow_mixed(sdp.session.attrs.iter().any(|a| {
+            matches!(a, SessionAttribute::AllowMixedExts)
+                || matches!(a, SessionAttribute::Unused(v) if v == "extmap-allow-mixed")
+        }));
     // Does any m-line contain a a=rtcp-fb:xx transport-cc?
     let has_transport_cc = sdp
         .media_lines
@@ -1302,6 +1315,7 @@ fn update_media(
     media.set_remote_pts(pts);
 
     let mut remote_extmap = ExtensionMap::empty();
+    remote_extmap.set_allow_mixed(exts.allow_mixed());
     for (id, ext) in m.extmaps().into_iter() {
         // The remapping of extensions should already have happened, which
         // means the ID are matching in the session to the remote.
