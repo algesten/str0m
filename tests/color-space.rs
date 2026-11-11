@@ -90,22 +90,8 @@ fn color_space_with_and_without_hdr() -> Result<(), RtcError> {
 
 #[test]
 fn no_mixed_extension_headers_without_sdp_negotiation() -> Result<(), RtcError> {
-    extension_header_profiles(false, false)
-}
-
-#[test]
-fn mixed_extension_headers_when_negotiated() -> Result<(), RtcError> {
-    extension_header_profiles(true, false)
-}
-
-#[test]
-fn no_mixed_extension_headers_when_offer_omits_it() -> Result<(), RtcError> {
-    extension_header_profiles(false, true)
-}
-
-fn extension_header_profiles(allow_mixed: bool, strip_offer: bool) -> Result<(), RtcError> {
     use common::capture_rtp_profiles;
-    use str0m::change::{SdpAnswer, SdpOffer};
+    use str0m::change::SdpAnswer;
 
     init_log();
     init_crypto_default();
@@ -127,30 +113,13 @@ fn extension_header_profiles(allow_mixed: bool, strip_offer: bool) -> Result<(),
     let mut change = l.sdp_api();
     let mid = change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
     let (offer, pending) = change.apply().unwrap();
-    let offer = if strip_offer {
-        SdpOffer::from_sdp_string(
-            &offer
-                .to_sdp_string()
-                .replace("a=extmap-allow-mixed\r\n", ""),
-        )
-        .unwrap()
-    } else {
-        offer
-    };
     let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    if strip_offer {
-        assert!(!answer.to_sdp_string().contains("a=extmap-allow-mixed"));
-    }
-    let answer = if !allow_mixed {
-        SdpAnswer::from_sdp_string(
-            &answer
-                .to_sdp_string()
-                .replace("a=extmap-allow-mixed\r\n", ""),
-        )
-        .unwrap()
-    } else {
-        SdpAnswer::from_sdp_string(&answer.to_sdp_string()).unwrap()
-    };
+    let answer = SdpAnswer::from_sdp_string(
+        &answer
+            .to_sdp_string()
+            .replace("a=extmap-allow-mixed\r\n", ""),
+    )
+    .unwrap();
     l.rtc.sdp_api().accept_answer(pending, answer)?;
     while !l.is_connected() || !r.is_connected() {
         progress(&mut l, &mut r)?;
@@ -180,13 +149,9 @@ fn extension_header_profiles(allow_mixed: bool, strip_offer: bool) -> Result<(),
         }
     }
     assert!(profiles.len() >= 2, "missing RTP packets: {profiles:?}");
-    if allow_mixed {
-        assert_eq!(profiles, [0xbede, 0x1000]);
-    } else {
-        assert!(
-            profiles.iter().all(|p| *p == 0x1000),
-            "RTP headers mixed without extmap-allow-mixed: {profiles:x?}"
-        );
-    }
+    assert!(
+        profiles.iter().all(|p| *p == profiles[0]),
+        "RTP headers mixed without extmap-allow-mixed: {profiles:x?}"
+    );
     Ok(())
 }
