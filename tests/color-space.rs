@@ -89,3 +89,73 @@ fn color_space_with_and_without_hdr() -> Result<(), RtcError> {
     }
     Ok(())
 }
+
+#[test]
+fn no_mixed_extension_headers_without_sdp_negotiation() -> Result<(), RtcError> {
+    use common::capture_rtp_profiles;
+    use str0m::change::SdpAnswer;
+
+    init_log();
+    init_crypto_default();
+    let now = Instant::now();
+    let mut l = TestRtc::new_with_rtc(
+        Peer::Left.span(),
+        Rtc::builder()
+            .set_extension(8, Extension::ColorSpace)
+            .build(now),
+    );
+    let mut r = TestRtc::new_with_rtc(
+        Peer::Right.span(),
+        Rtc::builder()
+            .set_extension(8, Extension::ColorSpace)
+            .build(now),
+    );
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+    let mut change = l.sdp_api();
+    let mid = change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.rtc.sdp_api().accept_offer(offer)?;
+    let answer = SdpAnswer::from_sdp_string(
+        &answer
+            .to_sdp_string()
+            .replace("a=extmap-allow-mixed\r\n", ""),
+    )
+    .unwrap();
+    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    while !l.is_connected() || !r.is_connected() {
+        progress(&mut l, &mut r)?;
+    }
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+    let pt = l.params_vp8().pt();
+    let mut profiles = Vec::new();
+    for hdr in [None, Some(HdrMetadata::default())] {
+        let cs = VideoColorSpace {
+            hdr_metadata: hdr,
+            ..Default::default()
+        };
+        for _ in 0..100 {
+            let wallclock = l.start + l.duration();
+            let time = l.duration().into();
+            l.writer(mid).unwrap().color_space(cs.clone()).write(
+                pt,
+                wallclock,
+                time,
+                vec![0xaa; 200],
+            )?;
+            let got = capture_rtp_profiles(&mut l, &mut r)?;
+            if !got.is_empty() {
+                profiles.extend(got);
+                break;
+            }
+        }
+    }
+    assert!(profiles.len() >= 2, "missing RTP packets: {profiles:?}");
+    assert!(
+        profiles.iter().all(|p| *p == profiles[0]),
+        "RTP headers mixed without extmap-allow-mixed: {profiles:x?}"
+    );
+    Ok(())
+}

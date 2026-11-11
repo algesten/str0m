@@ -1,5 +1,5 @@
 #![allow(unused)]
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::io::Cursor;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
@@ -255,6 +255,7 @@ thread_local! {
     /// When set, [`rtc_poll_to_timeout`] asserts every [`Output::Transmit`]
     /// for which `contents.len() <= mtu`.
     static STRICT_MTU: Cell<Option<usize>> = const { Cell::new(None) };
+    static CAPTURE_RTP_PROFILES: RefCell<Option<Vec<u16>>> = const { RefCell::new(None) };
 }
 
 struct StrictMtuGuard(Option<usize>);
@@ -269,6 +270,13 @@ pub fn progress_strict_mtu(l: &mut TestRtc, r: &mut TestRtc, mtu: usize) -> Resu
     let prev = STRICT_MTU.with(|c| c.replace(Some(mtu)));
     let _guard = StrictMtuGuard(prev);
     progress(l, r)
+}
+
+pub fn capture_rtp_profiles(l: &mut TestRtc, r: &mut TestRtc) -> Result<Vec<u16>, RtcError> {
+    CAPTURE_RTP_PROFILES.with(|c| *c.borrow_mut() = Some(Vec::new()));
+    let result = progress(l, r);
+    let profiles = CAPTURE_RTP_PROFILES.with(|c| c.borrow_mut().take().unwrap());
+    result.map(|_| profiles)
 }
 
 fn progress_one(
@@ -353,6 +361,21 @@ fn rtc_poll_to_timeout(
                 break;
             }
             Output::Transmit(v) => {
+                let b = v.contents.as_ref();
+                if b.len() >= 16
+                    && b[0] >> 6 == 2
+                    && b[0] & 0x10 != 0
+                    && !(192..=223).contains(&b[1])
+                {
+                    let offset = 12 + 4 * (b[0] as usize & 15);
+                    if b.len() >= offset + 2 {
+                        CAPTURE_RTP_PROFILES.with(|c| {
+                            if let Some(profiles) = c.borrow_mut().as_mut() {
+                                profiles.push(u16::from_be_bytes([b[offset], b[offset + 1]]));
+                            }
+                        });
+                    }
+                }
                 if let Some(mtu) = STRICT_MTU.with(|c| c.get()) {
                     assert!(
                         v.contents.len() <= mtu,
