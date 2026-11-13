@@ -76,6 +76,14 @@ impl Iterator for TwccIter {
             return None;
         }
 
+        // A zero-length run covers no packets and the parser reads no deltas for it.
+        // Chunks are only popped once `index` reaches their length, so skip these
+        // here, or the run's status would be applied to every remaining packet and
+        // consume deltas that belong to later chunks.
+        while let Some(PacketChunk::Run(_, 0)) = self.twcc.chunks.front() {
+            self.twcc.chunks.pop_front();
+        }
+
         let head = self.twcc.chunks.front()?;
 
         let (status, amount) = match head {
@@ -2174,6 +2182,43 @@ mod test {
         .count();
 
         assert_eq!(twcc_iter_count, status_count as usize);
+    }
+
+    #[test]
+    fn test_twcc_iter_skips_zero_length_runs() {
+        // Without skipping, the first zero run's status is applied to every later
+        // packet, which panics with "Incorrect large delta size" at seq 2.
+        let buf = [
+            0, 0, 0, 1, // sender ssrc
+            0, 0, 0, 2, // media ssrc
+            0, 1, // base seq
+            0, 4, // status count
+            0, 0, 0, // reference time
+            0, // feedback count
+            0x20, 0x00, // run of 0 small delta
+            0x20, 0x01, // run of 1 small delta
+            0x00, 0x00, // run of 0 not received
+            0x20, 0x00, // run of 0 small delta
+            0xe1, 0x00, // 2-bit vector: large, not received, small, 4 x not received
+            0x04, // small delta 1ms
+            0x01, 0x90, // large delta 100ms
+            0x08, // small delta 2ms
+        ];
+        let twcc = Twcc::try_from(&buf[..]).unwrap();
+
+        let now = Instant::now();
+        let result: Vec<_> = twcc.into_iter(now, 1.into()).collect();
+
+        let ms = Duration::from_millis;
+        assert_eq!(
+            result,
+            vec![
+                (1.into(), ReceivedSmallDelta, Some(now + ms(1))),
+                (2.into(), ReceivedLargeOrNegativeDelta, Some(now + ms(101))),
+                (3.into(), NotReceived, None),
+                (4.into(), ReceivedSmallDelta, Some(now + ms(103))),
+            ]
+        );
     }
 
     #[test]
