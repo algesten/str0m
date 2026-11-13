@@ -117,3 +117,54 @@ fn loss_controller_only_reduces_never_increases() -> Result<(), RtcError> {
 
     Ok(())
 }
+
+#[test]
+fn sustained_heavy_loss_keeps_estimate_above_minimum() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    // A receiver behind a link that drops most packets for minutes. Each loss-based
+    // update may pick the 0.95x candidate, so without a lower bound the estimate decays
+    // geometrically towards zero, and the pacer then divides its debt by it.
+    let plan = vec![
+        Step::Conditions {
+            description: "Link losing 60% of packets",
+            config: NetemConfig::new()
+                .latency(Duration::from_millis(20))
+                .loss(RandomLoss::new(Probability::new(0.60)))
+                .link(Bitrate::mbps(5), DataSize::kbytes(100))
+                .seed(42),
+        },
+        Step::Media {
+            description: "Send at 2 Mbps",
+            desired_bitrate: Bitrate::mbps(5),
+            media_send_rate: Bitrate::mbps(2),
+        },
+        Step::Run {
+            description: "Sustained heavy loss",
+            duration: Duration::from_secs(420),
+        },
+        // The sender pauses, e.g. a muted camera. With the queue empty the pacer falls back
+        // from its queue-drain rate to the pacing rate derived from the estimate, and divides
+        // the media debt it built up while draining by that rate.
+        Step::Media {
+            description: "Sender pauses",
+            desired_bitrate: Bitrate::mbps(5),
+            media_send_rate: Bitrate::ZERO,
+        },
+        Step::Run {
+            description: "Paused",
+            duration: Duration::from_secs(10),
+        },
+        Step::Check {
+            description: "Estimate stays at or above the loss controller minimum",
+            at_least: Bitrate::kbps(1),
+        },
+    ];
+
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(5));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    ctx.run_plan(&mut l, &mut r, &plan)?;
+
+    Ok(())
+}

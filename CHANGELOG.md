@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Keep the loss-based BWE estimate at or above its min bitrate, so sustained loss cannot panic the pacer #1137
   * Write and read the `color-space` RTP header extension #1135
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
