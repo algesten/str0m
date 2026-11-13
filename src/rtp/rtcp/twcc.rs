@@ -950,7 +950,7 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
                 PacketChunk::Run(PacketStatus::ReceivedLargeOrNegativeDelta, n) => {
                     let n = *n as usize;
                     twcc.delta.extend(read_delta_large(buf, n)?);
-                    buf = &buf[n..];
+                    buf = &buf[n * 2..];
                 }
                 PacketChunk::VectorSingle(v, _) => {
                     let n = v.count_ones() as usize;
@@ -1582,6 +1582,26 @@ mod test {
 
         assert_eq!(header, report.header());
         assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn parse_large_delta_run_followed_by_more_deltas() {
+        let buf = [
+            0, 0, 0, 1, // sender ssrc
+            0, 0, 0, 2, // media ssrc
+            0, 1, // base seq
+            0, 3, // status count
+            0, 0, 0, // reference time
+            0, // feedback count
+            0x40, 0x02, // run of 2 large or negative delta
+            0x20, 0x01, // run of 1 small delta
+            0x01, 0x90, // large delta 100ms
+            0xff, 0xf0, // negative delta -4ms
+            0x08, // small delta 2ms
+        ];
+        let twcc = Twcc::try_from(&buf[..]).unwrap();
+
+        assert_eq!(twcc.delta, vec![Large(400), Large(-16), Small(8)]);
     }
 
     #[test]
