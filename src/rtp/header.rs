@@ -52,9 +52,9 @@ impl RtpHeader {
         buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
 
         let csrc_len = self.csrc_count * 4;
-        for i in 0..self.csrc_count {
+        for (i, csrc) in self.csrc.iter().take(self.csrc_count).enumerate() {
             let offset = 12 + i * 4;
-            buf[offset..offset + 4].copy_from_slice(&self.csrc[i].to_be_bytes());
+            buf[offset..offset + 4].copy_from_slice(&csrc.to_be_bytes());
         }
 
         let ext_start = 12 + csrc_len;
