@@ -148,11 +148,7 @@ impl RateControl {
 
         // If throughput is critically low (< 50% of estimate), allow immediate decrease
         let threshold = self.estimated_bitrate * 0.5;
-        if observed_bitrate < threshold {
-            return true;
-        }
-
-        false
+        observed_bitrate < threshold
     }
 
     /// The current estimated bitrate.

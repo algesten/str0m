@@ -1670,12 +1670,9 @@ impl Changes {
     }
 
     pub fn contains_add_app(&self) -> bool {
-        for i in 0..self.0.len() {
-            if matches!(&self.0[i], Change::AddApp(_)) {
-                return true;
-            }
-        }
-        false
+        self.0
+            .iter()
+            .any(|change| matches!(change, Change::AddApp(_)))
     }
 
     pub fn take_new_channels(&mut self) -> Vec<(ChannelId, ChannelConfig)> {

@@ -1996,11 +1996,7 @@ impl Rtc {
         // Slow path: Occasionally, traffic comes in on a socket address corresponding
         // to a successful candidate pair other than the one we've currently nominated.
         // This typically happens at the beginning of the connection
-        if self.ice.has_viable_remote_candidate(r.source) {
-            return true;
-        }
-
-        false
+        self.ice.has_viable_remote_candidate(r.source)
     }
 
     /// Provide input to this `Rtc` instance. Input is either a [`Input::Timeout`] for some
