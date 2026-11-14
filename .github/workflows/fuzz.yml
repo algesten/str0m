@@ -8,7 +8,8 @@ on:
 jobs:
   cargo-fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # Targets run one after another for FUZZ_TIMEOUT each; grow this with the target count.
+    timeout-minutes: 300
     env:
       # Run each fuzz target for 10 minutes
       FUZZ_TIMEOUT: 600 # Seconds

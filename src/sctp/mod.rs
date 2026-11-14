@@ -22,8 +22,7 @@ mod snap;
 pub use snap::SctpInitData;
 
 mod dcep;
-use dcep::DcepAck;
-use dcep::DcepOpen;
+pub(crate) use dcep::{DcepAck, DcepOpen};
 
 mod error;
 pub use error::SctpError;
