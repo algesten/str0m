@@ -2662,7 +2662,19 @@ mod test {
             .to_sdp_string()
             .replacen("a=fmtp:100 profile-id=2\r\n", "", 1);
         let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+        let offered: Vec<_> = offer.media_lines.iter().map(|m| m.rtp_params()).collect();
 
-        rtc2.sdp_api().accept_offer(offer).unwrap();
+        let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
+        for (media, offered) in answer.media_lines.iter().zip(offered) {
+            for answered in media.rtp_params() {
+                let remote = offered.iter().find(|p| p.pt() == answered.pt()).unwrap();
+                assert!(
+                    answered.match_score(remote).is_some(),
+                    "answer changed the codec configuration for PT {} in mid {}",
+                    answered.pt(),
+                    media.mid()
+                );
+            }
+        }
     }
 }

@@ -537,16 +537,24 @@ impl CodecConfig {
         remote_params: PayloadParams,
         remote_dir: Direction,
     ) -> Option<Pt> {
-        // If we have no matching parameters locally, we can't accept the remote in any way.
-        let our_params = self.match_params(remote_params)?;
-
         if remote_dir.sdp_is_receiving() {
-            // The remote is talking about its own receive requirements. The PTs are not suggestions.
+            // A compatible codec at a different PT cannot satisfy the remote's receive mapping.
+            let matches = self
+                .params
+                .iter()
+                .any(|p| p.pt() == remote_params.pt() && p.match_score(&remote_params).is_some());
+            if !matches {
+                debug!(
+                    "Ignoring remote receive PT {} without matching local parameters",
+                    remote_params.pt()
+                );
+                return None;
+            }
             Some(remote_params.pt())
         } else {
             // We can override the remote with our local config. We would have adjusted to
             // the remote earlier if we can.
-            Some(our_params.pt())
+            self.match_params(remote_params).map(PayloadParams::pt)
         }
     }
 
@@ -929,6 +937,11 @@ mod test {
             .expect("configured VP8 payload");
         assert!(!vp8.locked);
         assert_eq!((*vp8.pt(), vp8.resend().map(|pt| *pt)), (110, Some(111)));
+        assert_eq!(
+            config.sdp_match_remote(remote_vp8, Direction::RecvOnly),
+            None,
+            "the answer must not advertise H264 under the remote's VP8 PT"
+        );
     }
 
     #[test]
