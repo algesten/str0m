@@ -523,8 +523,7 @@ fn build_interims(
         if diff_seq > 1 {
             let mut todo = diff_seq - 1;
             while todo > 0 {
-                // max 2^13 run length in each missing chunk
-                let n = todo.min(8192);
+                let n = todo.min(MAX_RUN_LENGTH as u64);
                 interims.push_back(ChunkInterim::Missing(n as u16));
                 todo -= n;
             }
@@ -637,6 +636,9 @@ impl ChunkInterim {
     }
 }
 
+/// The run length of a run-length chunk has 13 bits.
+const MAX_RUN_LENGTH: u16 = 0x1fff;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketChunk {
     Run(PacketStatus, u16), // 13 bit repeat
@@ -743,7 +745,7 @@ impl PacketChunk {
 
     fn free(&self) -> u16 {
         match self {
-            PacketChunk::Run(_, n) => 8192 - *n,
+            PacketChunk::Run(_, n) => MAX_RUN_LENGTH - *n,
             PacketChunk::VectorSingle(_, filled) => 14 - *filled,
             PacketChunk::VectorDouble(_, filled) => 7 - *filled,
         }
@@ -763,7 +765,7 @@ impl PacketChunk {
             PacketChunk::Run(s, n) => {
                 let mut x = 0_u16;
                 x |= (*s as u16) << 13;
-                assert!(*n <= 8192);
+                assert!(*n <= MAX_RUN_LENGTH);
                 x |= n;
                 x
             }
@@ -1777,25 +1779,45 @@ mod test {
     }
 
     #[test]
-    fn run_max_is_8192() {
+    fn run_max_is_8191() {
         let mut reg = TwccRecvRegister::new(100);
 
         let now = Instant::now();
 
         reg.update_seq(0.into(), now + Duration::from_millis(0));
-        reg.update_seq(8194.into(), now + Duration::from_millis(10));
+        reg.update_seq(8206.into(), now + Duration::from_millis(10));
 
         let report = reg.build_report(1000).unwrap();
 
-        assert_eq!(report.status_count, 8195);
+        assert_eq!(report.status_count, 8207);
         assert_eq!(
             report.chunks,
             vec![
                 VectorSingle(8192, 14),
-                Run(NotReceived, 8180),
-                Run(ReceivedSmallDelta, 1)
+                Run(NotReceived, 8191),
+                VectorSingle(4096, 14)
             ]
         );
+    }
+
+    #[test]
+    fn long_loss_round_trips() {
+        // The run length has 13 bits. A run of 8192 lost packets used to overflow into the
+        // status and was sent as a zero-length run of received packets.
+        let mut reg = TwccRecvRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(0.into(), now);
+        reg.update_seq(20_000.into(), now + Duration::from_millis(10));
+
+        let report = reg.build_report(1000).unwrap();
+        assert_eq!(report.status_count, 20_001);
+
+        let mut buf = vec![0; report.length_words() * 4];
+        let n = report.write_to(&mut buf);
+        let parsed: Twcc = (&buf[4..n]).try_into().unwrap();
+        assert_eq!(parsed, report);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Cap TWCC feedback runs at 8191 packets, longer runs were sent as zero-length runs #1150
   * Write and read the `color-space` RTP header extension #1135
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
