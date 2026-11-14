@@ -16,8 +16,8 @@ use crate::format::Codec;
 use crate::io::MultiplexKind;
 use crate::media::{Direction, MediaKind, Mid, Pt, Simulcast, SimulcastLayer};
 use crate::net::{Protocol, Receive};
-use crate::packet::{CodecDepacketizer, CodecExtra, Depacketizer, DepacketizingBuffer, RtpMeta};
-use crate::rtp::{Extension, ExtensionValues, RtpWrite, Ssrc};
+use crate::packet::{CodecExtra, Depacketizer, DepacketizingBuffer, RtpMeta};
+use crate::rtp::{Extension, ExtensionValues, RtpWrite, Ssrc, Vp8Descriptor};
 use crate::rtp_::{Frequency, MediaTime, Rtcp, RtcpFb, RtcpPacket, RtpHeader, SrtpContext};
 use crate::rtp_::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRegister, extend_u16};
 use crate::sctp::{ChannelConfig, DcepAck, DcepOpen, SctpInitData};
@@ -27,7 +27,7 @@ use crate::{Bitrate, Input, Output, Rtc, RtcConfig, SendAddr};
 
 use super::Rng;
 #[allow(unused)]
-use super::setup::{random_config, random_extmap};
+use super::setup::{random_config, random_depacketizer, random_extmap};
 
 pub fn rtx_buffer(data: &[u8]) {
     if data.len() < 4 {
@@ -108,11 +108,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
         _ => unreachable!(),
     };
 
-    let mut cd: CodecDepacketizer = codec.into();
-    // AMR-WB has two on-the-wire layouts (RFC 4867); fuzz both.
-    if let CodecDepacketizer::AmrWb(ref mut amr) = cd {
-        amr.octet_align = rng.bool()?;
-    }
+    let cd = random_depacketizer(&mut rng, codec)?;
 
     let mut depack = DepacketizingBuffer::new(cd, rng.usize(300)?);
 
@@ -218,12 +214,17 @@ pub fn stun(data: &[u8]) -> Option<()> {
     Some(())
 }
 
-/// Fuzz RTCP compound-packet parsing and the feedback conversion.
+/// Fuzz RTCP compound packets, including lazily decoded TWCC statuses.
 pub fn rtcp(data: &[u8]) -> Option<()> {
     let mut feedback = VecDeque::new();
     Rtcp::read_packet(data, &mut feedback);
-    // Exercise the feedback conversion as well.
-    let _ = RtcpFb::from_rtcp(feedback.drain(..)).count();
+    let now = Instant::now();
+    for feedback in RtcpFb::from_rtcp(feedback) {
+        if let RtcpFb::Twcc(report) = feedback {
+            let base = u64::from(report.base_seq).into();
+            let _ = report.into_iter(now, base).count();
+        }
+    }
     Some(())
 }
 
@@ -283,6 +284,7 @@ pub fn twcc(data: &[u8]) -> Option<()> {
                 // Our own feedback must be readable by the remote (and by us).
                 let max_size = rng.usize(1400)? + 100;
                 if let Some(report) = recv.build_report(max_size) {
+                    assert!(report.length_words() * 4 <= max_size);
                     let mut buf = vec![0; report.length_words() * 4];
                     let n = report.write_to(&mut buf);
 
@@ -446,16 +448,14 @@ pub fn ice_agent(data: &[u8]) -> Option<()> {
                 4 => Candidate::server_reflexive(addr, "10.0.0.1:5000".parse().unwrap(), *proto),
                 _ => Candidate::host(addr, *proto),
             };
-            if let Ok(c) = c {
-                agent.add_local_candidate(c);
-            }
+            agent.add_local_candidate(c.expect("valid local candidate fixture"));
         }
     }
     for (addr, proto) in ICE_REMOTE {
         if rng.bool()? {
-            if let Ok(c) = Candidate::host(addr.parse().unwrap(), *proto) {
-                agent.add_remote_candidate(c);
-            }
+            let c = Candidate::host(addr.parse().unwrap(), *proto)
+                .expect("valid remote candidate fixture");
+            agent.add_remote_candidate(c);
         }
     }
 
@@ -660,7 +660,9 @@ fn signed_stun(
     let sha1_hmac = |k: &[u8], p: &[&[u8]]| hmac.sha1_hmac(k, p);
 
     let mut buf = vec![0; 1500];
-    let n = msg.to_bytes(None, &mut buf, sha1_hmac).ok()?;
+    let n = msg
+        .to_bytes(None, &mut buf, sha1_hmac)
+        .expect("STUN fixture fits the output buffer");
     // Drop the trailing FINGERPRINT, it is optional.
     buf.truncate(n - 8);
 
@@ -727,22 +729,21 @@ pub fn candidate(data: &[u8]) -> Option<()> {
     // Either the raw input, or a candidate line assembled from mostly valid fields so the fuzzer
     // gets past the keywords and into the values.
     let line = if rng.bool()? {
-        let len = rng.usize(300)?;
-        String::from_utf8_lossy(rng.slice(len)?).into_owned()
+        String::from_utf8_lossy(rng.rest()).into_owned()
     } else {
         candidate_line(&mut rng)?
     };
 
     let c = Candidate::from_sdp_string(&line).ok()?;
-    let _ = Candidate::from_sdp_string(&c.to_sdp_string());
+    Candidate::from_sdp_string(&c.to_sdp_string()).expect("serialized candidate must parse");
 
     fastrand::seed(0);
     let hmac = crate::crypto::test_default_provider().sha1_hmac_provider;
     let mut agent = IceAgent::with_hmac(IceCreds::new(), hmac);
     for (addr, proto) in ICE_LOCAL.iter().take(3) {
-        if let Ok(local) = Candidate::host(addr.parse().unwrap(), *proto) {
-            agent.add_local_candidate(local);
-        }
+        let local =
+            Candidate::host(addr.parse().unwrap(), *proto).expect("valid local candidate fixture");
+        agent.add_local_candidate(local);
     }
     agent.set_remote_credentials(IceCreds {
         ufrag: "rufrag".into(),
@@ -769,11 +770,11 @@ fn candidate_line(rng: &mut Rng) -> Option<String> {
         let n = rng.usize(16)?;
         Some(String::from_utf8_lossy(rng.slice(n)?).into_owned())
     }
-    fn number(rng: &mut Rng) -> Option<String> {
+    fn number(rng: &mut Rng, max: u64) -> Option<String> {
         if rng.u8(7)? > 0 {
-            return Some(rng.u64(u64::MAX)?.to_string());
+            return Some(rng.u64(max)?.to_string());
         }
-        token(rng, &["0", "-1", "1"])
+        token(rng, &["0", "-1", "1", "18446744073709551615"])
     }
     fn ip(rng: &mut Rng) -> Option<String> {
         Some(match rng.u8(3)? {
@@ -789,20 +790,20 @@ fn candidate_line(rng: &mut Rng) -> Option<String> {
     let mut s = format!(
         "candidate:{} {} {} {} {} {} typ {}",
         token(rng, &["1", "abc", "4234997325"])?,
-        number(rng)?,
+        number(rng, 2)?,
         token(rng, &["udp", "tcp", "UDP", "TCP", "ssltcp", "tls"])?,
-        number(rng)?,
+        number(rng, u32::MAX as u64)?,
         ip(rng)?,
-        number(rng)?,
+        number(rng, u16::MAX as u64)?,
         token(rng, &["host", "srflx", "prflx", "relay"])?,
     );
     for _ in 0..rng.usize(4)? {
         let ext = match rng.u8(5)? {
             0 => format!(" raddr {}", ip(rng)?),
-            1 => format!(" rport {}", number(rng)?),
+            1 => format!(" rport {}", number(rng, u16::MAX as u64)?),
             2 => format!(" tcptype {}", token(rng, &["active", "passive", "so"])?),
             3 => format!(" ufrag {}", token(rng, &["rufrag", "other"])?),
-            4 => format!(" generation {}", number(rng)?),
+            4 => format!(" generation {}", number(rng, u32::MAX as u64)?),
             _ => format!(" {}", token(rng, &["network-id", "network-cost"])?),
         };
         s.push_str(&ext);
@@ -1049,7 +1050,17 @@ impl MediaPeer {
     /// Our media, written through the direct API.
     fn send_media(&mut self, rng: &mut Rng) -> Option<()> {
         let i = rng.usize(1)?;
-        let pts = self.pts(i == 0);
+        let kind = if i == 0 {
+            MediaKind::Audio
+        } else {
+            MediaKind::Video
+        };
+        let pts: Vec<_> = self
+            .rtc
+            .codec_config()
+            .all_for_kind(kind, false)
+            .map(|p| p.pt())
+            .collect();
         let pt = pts[rng.usize(pts.len() - 1)?];
         let seq = self.tx_seq[i];
         self.tx_seq[i] += 1;
@@ -1063,6 +1074,7 @@ impl MediaPeer {
         let rtp = RtpWrite::new(pt, seq.into(), (seq * 960) as u32, now, payload);
         stream.write_rtp(rtp.marker(marker).nackable(true));
 
+        let _ = self.rtc.handle_input(Input::Timeout(now));
         self.drain();
         Some(())
     }
@@ -1138,7 +1150,8 @@ impl MediaPeer {
                         Some((ssrc, _, _)) if rng.bool()? => ssrc,
                         _ => self.local_ssrc(rng)?,
                     };
-                    buf.extend_from_slice(&media.to_be_bytes());
+                    let remb = pt == 206 && fmt == 15 && rng.bool()?;
+                    buf.extend_from_slice(&if remb { 0_u32 } else { media }.to_be_bytes());
                     match (pt, fmt, sent) {
                         (205, 1, Some((_, seq, _))) => {
                             // Packet id of a NACK entry.
@@ -1154,8 +1167,27 @@ impl MediaPeer {
                                 buf.extend_from_slice(&base.to_be_bytes());
                             }
                         }
+                        (206, 4, _) => {
+                            buf.extend_from_slice(&media.to_be_bytes());
+                            buf.extend_from_slice(&[rng.u8(u8::MAX)?, 0, 0, 0]);
+                        }
+                        (206, 15, _) if remb => {
+                            buf.extend_from_slice(b"REMB");
+                            buf.push(1);
+                            buf.extend_from_slice(rng.slice(3)?);
+                            buf.extend_from_slice(&media.to_be_bytes());
+                        }
                         _ => {}
                     }
+                }
+                207 => {
+                    if rng.bool()? {
+                        buf.extend_from_slice(&[5, 0, 0, 3]); // one DLRR sub-block
+                        buf.extend_from_slice(&self.local_ssrc(rng)?.to_be_bytes());
+                    } else {
+                        buf.extend_from_slice(&[4, 0, 0, 2]); // RRTR
+                    }
+                    buf.extend_from_slice(rng.slice(8)?);
                 }
                 _ => {}
             }
@@ -1266,7 +1298,7 @@ pub fn sdp_accept_offer(data: &[u8]) -> Option<()> {
     let offer = SdpOffer::from_sdp_string(&sdp).ok()?;
 
     if let Ok(answer) = rtc.sdp_api().accept_offer(offer) {
-        let _ = SdpAnswer::from_sdp_string(&answer.to_sdp_string());
+        SdpAnswer::from_sdp_string(&answer.to_sdp_string()).expect("serialized answer must parse");
     }
     run_negotiated(&mut rtc, now);
 
@@ -1600,11 +1632,7 @@ pub fn depack_direct(data: &[u8]) -> Option<()> {
         _ => unreachable!(),
     };
 
-    let mut depack: CodecDepacketizer = codec.into();
-    // AMR-WB has two on-the-wire layouts (RFC 4867); fuzz both.
-    if let CodecDepacketizer::AmrWb(ref mut amr) = depack {
-        amr.octet_align = rng.bool()?;
-    }
+    let mut depack = random_depacketizer(&mut rng, codec)?;
     let mut out = Vec::new();
     let mut extra = CodecExtra::None;
 
@@ -1616,6 +1644,13 @@ pub fn depack_direct(data: &[u8]) -> Option<()> {
         let _ = depack.depacketize(packet, &mut out, &mut extra);
         let _ = depack.is_partition_head(packet);
         let _ = depack.is_partition_tail(marker, packet);
+
+        // The standalone descriptor parser is independent of the depacketizer.
+        if codec == Codec::Vp8 {
+            if let Ok(descriptor) = Vp8Descriptor::parse(packet) {
+                std::hint::black_box(descriptor.starts_keyframe(packet));
+            }
+        }
 
         // Keep memory bounded across iterations.
         if out.len() > 4_000_000 {

@@ -37,3 +37,11 @@ jobs:
               -max_total_time=$FUZZ_TIMEOUT \
               --stop-after-first-failure -max_len=200000
           done
+
+      - name: Save crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashes
+          path: crates/fuzz/artifacts
+          if-no-files-found: ignore

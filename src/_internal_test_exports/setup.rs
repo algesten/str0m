@@ -2,10 +2,23 @@ use std::time::Duration;
 
 use crate::Bitrate;
 use crate::RtcConfig;
+use crate::format::Codec;
+use crate::packet::CodecDepacketizer;
 use crate::rtp::vla;
 use crate::rtp::{Extension, ExtensionMap};
 
 use super::Rng;
+
+pub fn random_depacketizer(rng: &mut Rng, codec: Codec) -> Option<CodecDepacketizer> {
+    let mut depack: CodecDepacketizer = codec.into();
+    match &mut depack {
+        CodecDepacketizer::AmrWb(amr) => amr.octet_align = rng.bool()?,
+        CodecDepacketizer::H265(h265) => h265.with_donl(rng.bool()?),
+        CodecDepacketizer::H266(h266) => h266.with_donl(rng.bool()?),
+        _ => {}
+    }
+    Some(depack)
+}
 
 pub fn random_extmap(rng: &mut Rng, to_set: usize) -> Option<ExtensionMap> {
     use Extension::*;

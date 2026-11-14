@@ -9,7 +9,7 @@ macro_rules! rng_primary {
             Some(if max == $unit::MAX {
                 u
             } else {
-                ((u as $above * max as $above) / $unit::MAX as $above) as $unit
+                ((u as $above * (max as $above + 1)) / ($unit::MAX as $above + 1)) as $unit
             })
         }
     };
@@ -60,4 +60,22 @@ impl<'a> Rng<'a> {
     rng_primary!(u32, u64);
     rng_primary!(u64, u128);
     rng_primary!(usize, u128);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Rng;
+
+    #[test]
+    fn inclusive_choices_cover_the_input_range() {
+        let mut counts = [0; 4];
+        for byte in 0..=u8::MAX {
+            counts[Rng::new(&[byte]).u8(3).unwrap() as usize] += 1;
+        }
+        assert_eq!(counts, [64; 4]);
+
+        let upper_half = (1_usize << (usize::BITS - 1)).to_be_bytes();
+        assert_eq!(Rng::new(&upper_half).usize(1), Some(1));
+        assert_eq!(Rng::new(&[u8::MAX; 8]).u64(u64::MAX), Some(u64::MAX));
+    }
 }
