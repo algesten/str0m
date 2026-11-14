@@ -896,6 +896,78 @@ mod test {
     }
 
     #[test]
+    fn remote_dictated_pt_collision_leaves_payload_unlocked() {
+        // The remote receives, so it dictates PTs, and gives VP8 the PT H264 locked. Locking
+        // it twice used to panic.
+        let mut claimed = PayloadParams::new(
+            96.into(),
+            Some(97.into()),
+            CodecSpec {
+                codec: Codec::H264,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+        claimed.locked = true;
+
+        let vp8 = CodecSpec {
+            codec: Codec::Vp8,
+            clock_rate: Frequency::NINETY_KHZ,
+            channels: None,
+            format: FormatParams::default(),
+        };
+        let local_vp8 = PayloadParams::new(110.into(), Some(111.into()), vp8);
+        let remote_vp8 = PayloadParams::new(96.into(), Some(98.into()), vp8);
+
+        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_vp8]);
+        config.update_params(&[remote_vp8], Direction::RecvOnly);
+
+        let vp8 = config
+            .iter()
+            .find(|p| p.spec().codec == Codec::Vp8)
+            .expect("configured VP8 payload");
+        assert!(!vp8.locked);
+        assert_eq!((*vp8.pt(), vp8.resend().map(|pt| *pt)), (110, Some(111)));
+    }
+
+    #[test]
+    fn remote_dictated_rtx_collision_drops_rtx() {
+        // The remote receives, so it dictates PTs, and gives VP8 the RTX PT H264 locked.
+        // Locking it twice used to panic.
+        let mut claimed = PayloadParams::new(
+            96.into(),
+            Some(97.into()),
+            CodecSpec {
+                codec: Codec::H264,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+        );
+        claimed.locked = true;
+
+        let vp8 = CodecSpec {
+            codec: Codec::Vp8,
+            clock_rate: Frequency::NINETY_KHZ,
+            channels: None,
+            format: FormatParams::default(),
+        };
+        let local_vp8 = PayloadParams::new(110.into(), Some(111.into()), vp8);
+        let remote_vp8 = PayloadParams::new(98.into(), Some(97.into()), vp8);
+
+        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_vp8]);
+        config.update_params(&[remote_vp8], Direction::RecvOnly);
+
+        let vp8 = config
+            .iter()
+            .find(|p| p.spec().codec == Codec::Vp8)
+            .expect("configured VP8 payload");
+        assert!(vp8.locked);
+        assert_eq!((*vp8.pt(), vp8.resend()), (98, None));
+    }
+
+    #[test]
     fn enable_comfort_noise_uses_static_8khz_payload_type() {
         let mut config = CodecConfig::empty();
 

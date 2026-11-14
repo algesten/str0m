@@ -642,14 +642,11 @@ impl PayloadParams {
     ) {
         let Some((first, _)) = remote_pts
             .iter()
-            // One unrestricted AMR-WB payload can match several local mode sets.
-            // Leave the other alternatives unlocked once its PT has been claimed.
-            .filter(|p| {
-                self.spec.codec != Codec::AmrWb
-                    || self.locked
-                    || local_is_controlling
-                    || !claimed.is_claimed(p.pt)
-            })
+            // When the remote dictates the PTs, one that another local payload already locked
+            // can't be ours as well. One remote payload can match several local ones, like an
+            // unrestricted AMR-WB payload against several mode sets, and a remote can reuse a
+            // PT for another codec configuration in a later m-line. Leave those unlocked.
+            .filter(|p| self.locked || local_is_controlling || !claimed.is_claimed(p.pt))
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
             .max_by_key(|(_, s)| *s)
         else {
@@ -809,22 +806,25 @@ impl PayloadParams {
             claimed.assert_claim_once(remote_pt);
 
             // Check if RTX PT also conflicts
-            if local_is_controlling {
-                if let Some(rtx) = remote_rtx {
-                    if claimed.is_claimed(rtx) {
-                        let new_rtx = self
-                            .resend
-                            .filter(|pt| !claimed.is_claimed(*pt))
-                            .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+            if let Some(rtx) = remote_rtx.filter(|rtx| claimed.is_claimed(*rtx)) {
+                if local_is_controlling {
+                    let new_rtx = self
+                        .resend
+                        .filter(|pt| !claimed.is_claimed(*pt))
+                        .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
 
-                        if let Some(new_rtx) = new_rtx {
-                            debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
-                            remote_rtx = Some(new_rtx);
-                            unlocked.remove(&new_rtx);
-                        } else {
-                            panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
-                        }
+                    if let Some(new_rtx) = new_rtx {
+                        debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
+                        remote_rtx = Some(new_rtx);
+                        unlocked.remove(&new_rtx);
+                    } else {
+                        panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                     }
+                } else {
+                    // The remote dictated an RTX PT that is already taken. We can't reassign PTs
+                    // the remote controls, so go without RTX rather than claim it twice.
+                    debug!("Conflicting remote RTX PT {}; dropping it", rtx);
+                    remote_rtx = None;
                 }
             }
 

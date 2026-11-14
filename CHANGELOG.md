@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Don't panic accepting remote SDP that gives a locked payload type to another codec #1154
   * Keep `~` in sanitised msid ids #1142
   * Saturate VLA resolutions of 65536 instead of overflowing #1153
   * Cap TWCC feedback runs at 8191 packets, longer runs were sent as zero-length runs #1150

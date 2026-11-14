@@ -2642,4 +2642,27 @@ mod test {
             "a=max-message-size larger than u32::MAX should be treated as unbounded"
         );
     }
+
+    #[test]
+    fn offer_reusing_pt_for_another_codec_config() {
+        crate::init_crypto_default();
+
+        let now = Instant::now();
+        let mut rtc1 = Rtc::new(now);
+        let mut rtc2 = Rtc::new(now);
+
+        let mut change = rtc1.sdp_api();
+        change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        let (offer, _) = change.apply().unwrap();
+
+        // Without its fmtp, PT 100 in the first m-line is VP9 profile 0 like PT 98, while it
+        // stays profile 2 in the second. Accepting this used to panic.
+        let sdp = offer
+            .to_sdp_string()
+            .replacen("a=fmtp:100 profile-id=2\r\n", "", 1);
+        let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+
+        rtc2.sdp_api().accept_offer(offer).unwrap();
+    }
 }
