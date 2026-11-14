@@ -1727,16 +1727,17 @@ mod test {
 
         let now = Instant::now();
 
-        for (i, seq) in [0_u64, 30_000, 60_000, 90_000].into_iter().enumerate() {
+        for (i, seq) in [0_u64, 65_534, 65_535].into_iter().enumerate() {
             reg.update_seq(seq.into(), now + Duration::from_millis(i as u64));
         }
 
         let report1 = reg.build_report(1000).unwrap();
-        assert_eq!(report1.status_count, 60_001);
+        assert_eq!(report1.status_count, u16::MAX);
 
         let report2 = reg.build_report(1000).unwrap();
-        assert_eq!(report2.base_seq, 90_000_u64 as u16);
+        assert_eq!(report2.base_seq, 65_535);
         assert_eq!(report2.status_count, 1);
+        assert!(reg.build_report(1000).is_none());
     }
 
     #[test]
