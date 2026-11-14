@@ -56,6 +56,8 @@ pub struct TemporalLayerAllocation {
 
 /// A resolution and a frame rate, tied together because that's how it's formed in
 /// the header extension. Either they are both there or neither are there.
+///
+/// Wire dimensions of 65536 pixels saturate to [`u16::MAX`] when parsed.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ResolutionAndFramerate {
     /// Width in number of pixels
@@ -814,6 +816,8 @@ mod test {
         assert_eq!(resolution.width, u16::MAX);
         assert_eq!(resolution.height, u16::MAX);
         assert_eq!(resolution.framerate, 30);
+        let encoded = serialize(Some(&vla));
+        assert_eq!(VideoLayersAllocation::parse(&encoded), Some(vla));
     }
 
     #[test]
