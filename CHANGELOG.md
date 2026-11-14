@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Saturate VLA resolutions of 65536 instead of overflowing #1153
   * Write and read the `color-space` RTP header extension #1135
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119
