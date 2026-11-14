@@ -2852,6 +2852,7 @@ mod test {
             ("3.4.5.6:0", ipv4_1()),
             ("0.0.0.0:5000", ipv4_1()),
             ("[::]:5000", ipv6_1()),
+            ("[::ffff:0.0.0.0]:5000", ipv6_1()),
         ] {
             let mut agent = new_test_agent();
             for local in [ipv4_1(), ipv6_1()] {
