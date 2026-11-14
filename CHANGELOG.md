@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Ignore TWCC sequence numbers from before the first one instead of overflowing #1152
   * Write and read the `color-space` RTP header extension #1135
   * Exclude recovered RTX packets from primary stream jitter reports #1121
   * Allow disabling BWE estimate smoothing #1119

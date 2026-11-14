@@ -45,8 +45,9 @@ impl Twcc {
     pub fn into_iter(self, time_zero: Instant, extend_from: TwccSeq) -> TwccIter {
         let millis = self.reference_time as u64 * 64;
         let time_base = time_zero + Duration::from_millis(millis);
+        // A report starting before sequence number 0 extends to near u64::MAX and wraps.
         let base_seq = extend_u16(Some(*extend_from), self.base_seq);
-        let last_seq = base_seq + self.status_count as u64;
+        let last_seq = base_seq.wrapping_add(self.status_count as u64);
 
         TwccIter {
             base_seq,
@@ -70,7 +71,7 @@ impl Iterator for TwccIter {
     type Item = (TwccSeq, PacketStatus, Option<Instant>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let seq: TwccSeq = (self.base_seq + self.index as u64).into();
+        let seq: TwccSeq = self.base_seq.wrapping_add(self.index as u64).into();
 
         if *seq == self.last_seq {
             return None;
@@ -133,7 +134,7 @@ impl Iterator for TwccIter {
         self.index += 1;
         if self.index == amount as usize {
             self.twcc.chunks.pop_front();
-            self.base_seq = *seq + 1;
+            self.base_seq = seq.wrapping_add(1);
             self.index = 0;
         }
 
@@ -280,6 +281,22 @@ impl TwccRecvRegister {
         // The highest seq must be the last since update_seq inserts values
         // using a binary search.
         self.queue.back().map(|r| r.seq)
+    }
+
+    /// Extend the TWCC sequence number of a received packet, or `None` if the packet was
+    /// sent before the first one we received.
+    pub fn extend_seq(&self, seq: u16) -> Option<TwccSeq> {
+        let prev = self.max_seq().map(|s| *s);
+        let extended = extend_u16(prev, seq);
+
+        // Extending backwards past 0 wraps around to near u64::MAX. That can't be reported,
+        // and as the new maximum it would throw off extending every later sequence number.
+        // Extending otherwise never goes more than half the range past the maximum.
+        if prev.is_some_and(|p| extended > p.saturating_add(1 << 15)) {
+            return None;
+        }
+
+        Some(extended.into())
     }
 
     pub fn update_seq(&mut self, seq: TwccSeq, time: Instant) {
@@ -489,7 +506,7 @@ impl TwccRecvRegister {
         // sequence numbers rather than RTP sequence numbers.
         let max_seq = self.receive_window.max_seq?;
         let base_seq = self.receive_window.base_seq?;
-        let expected = *max_seq - *base_seq + 1_u64;
+        let expected = (*max_seq - *base_seq).saturating_add(1);
 
         let expected_interval = expected - self.receive_window.expected_prior;
         self.receive_window.expected_prior = expected;
@@ -1582,6 +1599,61 @@ mod test {
 
         assert_eq!(header, report.header());
         assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn received_seq_from_before_the_first_is_ignored() {
+        // Extending backwards past 0 wraps around to near u64::MAX. That used to become the
+        // maximum, and later sequence numbers were extended from it to near u64::MAX too.
+        let mut reg = TwccRecvRegister::new(100);
+        let now = Instant::now();
+
+        for seq in [5, 65_530, 6, 20_000, 40_000, 60_000, 1] {
+            if let Some(seq) = reg.extend_seq(seq) {
+                reg.update_seq(seq, now);
+            }
+        }
+
+        let seqs: Vec<u64> = reg.queue.iter().map(|r| *r.seq).collect();
+        assert_eq!(seqs, [5, 6, 20_000, 40_000, 60_000, 65_537]);
+        assert!(reg.loss().is_some());
+
+        // Recorded without extending, such a number used to overflow the loss.
+        let mut reg = TwccRecvRegister::new(100);
+        reg.update_seq(0.into(), now);
+        reg.update_seq(u64::MAX.into(), now);
+        assert!(reg.loss().is_some());
+    }
+
+    #[test]
+    fn report_from_before_the_first_seq_does_not_overflow() {
+        // A report starting just before sequence number 0 extends to near u64::MAX.
+        let mut reg = TwccSendRegister::new(25);
+        let now = Instant::now();
+        for seq in 0..4 {
+            reg.register_seq(TwccPacketId::new(seq), now, 0);
+        }
+
+        let twcc = Twcc {
+            sender_ssrc: 1.into(),
+            ssrc: 2.into(),
+            base_seq: 65_534,
+            status_count: 4,
+            reference_time: 0,
+            feedback_count: 0,
+            chunks: [Run(ReceivedSmallDelta, 4)].into(),
+            delta: [Small(4); 4].into(),
+        };
+
+        let seqs: Vec<u64> = twcc
+            .clone()
+            .into_iter(now, 3.into())
+            .map(|(seq, _, _)| *seq)
+            .collect();
+        assert_eq!(seqs, [u64::MAX - 1, u64::MAX, 0, 1]);
+
+        // No send record matches the first status, so the report is ignored.
+        assert!(reg.apply_report(twcc, now).is_none());
     }
 
     #[test]
