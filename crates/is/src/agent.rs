@@ -174,6 +174,12 @@ fn role_name(controlling: bool) -> &'static str {
     }
 }
 
+/// Whether `addr` can reach a peer. Port 0 can't be sent to, and an unspecified
+/// IP (`0.0.0.0`, `::` or `::ffff:0.0.0.0`) is delivered to the local host.
+fn is_valid_peer_addr(addr: SocketAddr) -> bool {
+    addr.port() != 0 && !addr.ip().to_canonical().is_unspecified()
+}
+
 const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
 
 /// States the ICE connection can be in.
@@ -724,14 +730,18 @@ impl IceAgent {
 
     /// Adds a remote candidate.
     ///
-    /// Returns `false` if the candidate was not added because it is redundant.
-    /// Adding loopback addresses or multicast/broadcast addresses causes
-    /// an error.
+    /// Candidates with port 0 or an unspecified IP address (`0.0.0.0` or `::`)
+    /// are ignored, since neither can reach the remote peer.
     pub fn add_remote_candidate(&mut self, mut c: Candidate) {
         // This is a a:rtcp-mux-only implementation. The only component
         // we accept is 1 for RTP.
         if c.component_id() != 1 {
             debug!("Reject candidate for component other than 1: {:?}", Pii(&c));
+            return;
+        }
+
+        if !is_valid_peer_addr(c.addr()) {
+            debug!("Reject candidate that can't reach the peer: {:?}", Pii(&c));
             return;
         }
 
@@ -1163,6 +1173,15 @@ impl IceAgent {
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
     pub fn handle_packet(&mut self, now: Instant, packet: StunPacket) -> bool {
         trace!("Handle receive: {:?}", &packet.message);
+
+        // We can't reply to such an address, nor use it as a peer-reflexive candidate.
+        if !is_valid_peer_addr(packet.source) {
+            debug!(
+                "Drop STUN message from invalid address: {}",
+                Pii(packet.source)
+            );
+            return false;
+        }
 
         // Regardless of whether we have remote_creds at this point, we can
         // at least check the message integrity.
@@ -2799,6 +2818,72 @@ mod test {
         );
 
         assert!(agent.poll_transmit().is_none());
+    }
+
+    #[test]
+    fn ignores_remote_candidates_that_cant_reach_the_peer() {
+        for addr in [
+            "3.4.5.6 0",
+            "0.0.0.0 5000",
+            ":: 5000",
+            "::ffff:0.0.0.0 5000",
+        ] {
+            let mut agent = new_test_agent();
+            agent.set_remote_credentials(IceCreds::new());
+            for local in [ipv4_1(), ipv6_1()] {
+                agent
+                    .add_local_candidate(Candidate::host(local, "udp").unwrap())
+                    .unwrap();
+            }
+
+            let sdp = format!("candidate:1 1 udp 2130706431 {addr} typ host");
+            agent.add_remote_candidate(Candidate::from_sdp_string(&sdp).unwrap());
+
+            assert_eq!(agent.remote_candidates().count(), 0, "{addr}");
+            assert_eq!(agent.num_candidate_pairs(), 0, "{addr}");
+            agent.handle_timeout(Instant::now());
+            assert!(agent.poll_transmit().is_none(), "{addr}");
+        }
+    }
+
+    #[test]
+    fn ignores_binding_requests_from_addresses_that_cant_be_replied_to() {
+        for (source, destination) in [
+            ("3.4.5.6:0", ipv4_1()),
+            ("0.0.0.0:5000", ipv4_1()),
+            ("[::]:5000", ipv6_1()),
+            ("[::ffff:0.0.0.0]:5000", ipv6_1()),
+        ] {
+            let mut agent = new_test_agent();
+            for local in [ipv4_1(), ipv6_1()] {
+                agent
+                    .add_local_candidate(Candidate::host(local, "udp").unwrap())
+                    .unwrap();
+            }
+            let remote_creds = IceCreds::new();
+            agent.set_remote_credentials(remote_creds.clone());
+
+            let request = make_serialized_binding_request(
+                &agent.local_credentials,
+                &remote_creds,
+                !agent.controlling(),
+                1,
+            );
+
+            agent.handle_packet(
+                Instant::now(),
+                StunPacket {
+                    proto: Protocol::Udp,
+                    source: source.parse().unwrap(),
+                    destination,
+                    message: StunMessage::parse(&request).unwrap(),
+                },
+            );
+
+            // Neither a peer-reflexive candidate nor a reply.
+            assert_eq!(agent.remote_candidates().count(), 0, "{source}");
+            assert!(agent.poll_transmit().is_none(), "{source}");
+        }
     }
 
     #[test]
