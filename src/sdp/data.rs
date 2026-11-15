@@ -354,90 +354,135 @@ impl MediaLine {
     }
 
     pub fn rtp_params(&self) -> Vec<PayloadParams> {
-        self.rtp_params_iter().collect()
-    }
+        let mut rtp_maps: Vec<_> = self
+            .attrs
+            .iter()
+            .filter_map(|a| {
+                if let MediaAttribute::RtpMap { pt, value: c } = a {
+                    Some((*pt, *c))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
-    pub(crate) fn rtp_params_iter(&self) -> impl Iterator<Item = PayloadParams> + '_ {
-        self.rtp_maps()
+        for pt in &self.pts {
+            if !rtp_maps.iter().any(|(mapped, _)| mapped == pt) {
+                if let Some(spec) = CodecSpec::from_static_pt(*pt) {
+                    rtp_maps.push((*pt, spec.into()));
+                }
+            }
+        }
+
+        let fmtps: Vec<_> = self
+            .attrs
+            .iter()
+            .filter_map(|a| {
+                if let MediaAttribute::Fmtp { pt, values } = a {
+                    Some((pt, values))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let fbs: Vec<_> = self
+            .attrs
+            .iter()
+            .filter_map(|a| {
+                if let MediaAttribute::RtcpFb { pt, value } = a {
+                    Some((pt, value))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut params: Vec<_> = rtp_maps
+            .iter()
             .filter(|(pt, c)| {
                 c.codec.is_audio()
                     || c.codec.is_video()
                     || (c.codec.is_tele() && self.pts.contains(pt))
             })
-            .filter_map(|(pt, c)| self.rtp_param(pt, c))
-    }
+            .filter_map(|(pt, c)| {
+                let mut p = PayloadParams::new(*pt, None, (*c).into());
+                p.spec.format = FormatParams::from_sdp_fmtp(
+                    c.codec,
+                    fmtps
+                        .iter()
+                        .filter(|(fmtp_pt, _)| **fmtp_pt == *pt)
+                        .map(|(_, values)| values.as_slice()),
+                )?;
+                // Remote TWCC feedback is supported only when explicitly advertised.
+                p.set_fb_transport_cc(false);
+                Some(p)
+            })
+            .collect();
 
-    fn rtp_maps(&self) -> impl Iterator<Item = (Pt, RtpMap)> + '_ {
-        let explicit = self.attrs.iter().filter_map(|a| match a {
-            MediaAttribute::RtpMap { pt, value } => Some((*pt, *value)),
-            _ => None,
-        });
-        let implicit = self.pts.iter().filter_map(move |pt| {
-            if self
-                .attrs
-                .iter()
-                .any(|a| matches!(a, MediaAttribute::RtpMap { pt: mapped, .. } if mapped == pt))
-            {
-                return None;
-            }
-            CodecSpec::from_static_pt(*pt).map(|spec| (*pt, spec.into()))
-        });
-        explicit.chain(implicit)
-    }
-
-    fn rtp_param(&self, pt: Pt, c: RtpMap) -> Option<PayloadParams> {
-        let mut p = PayloadParams::new(pt, None, c.into());
-        let fmtps = self.attrs.iter().filter_map(|a| match a {
-            MediaAttribute::Fmtp {
-                pt: fmtp_pt,
-                values,
-            } if *fmtp_pt == pt => Some(values.as_slice()),
-            _ => None,
-        });
-        p.spec.format = FormatParams::from_sdp_fmtp(c.codec, fmtps)?;
-        p.set_fb_transport_cc(false);
-
-        for attr in &self.attrs {
-            match attr {
-                MediaAttribute::Fmtp { pt: repair, values } => {
-                    self.set_repair_params(&mut p, *repair, values);
+        for p in &mut params {
+            for (pt, values) in fmtps.iter() {
+                // find resend pt, if there is one.
+                for fp in values.iter() {
+                    if let FormatParam::Apt(v) = fp {
+                        if *v == p.pt {
+                            // ensure this is a rtx
+                            let is_rtx = rtp_maps
+                                .iter()
+                                .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Rtx);
+                            if is_rtx {
+                                p.resend = Some(**pt);
+                            }
+                        }
+                    }
                 }
-                MediaAttribute::RtcpFb {
-                    pt: feedback_pt,
-                    value,
-                } if *feedback_pt == pt => match value.as_str() {
-                    "goog-remb" => p.fb_remb = true,
-                    "transport-cc" => p.fb_transport_cc = true,
-                    "ccm fir" => p.fb_fir = true,
-                    "nack" => p.fb_nack = true,
-                    "nack pli" => p.fb_pli = true,
-                    _ => {}
-                },
-                _ => {}
+            }
+
+            for (pt, values) in fmtps.iter() {
+                // A slash-separated PT list is RED only when its rtpmap says RED.
+                let is_red = rtp_maps
+                    .iter()
+                    .any(|(cpt, c)| cpt == *pt && c.codec == Codec::Red);
+                if !is_red || !p.spec.codec.is_audio() {
+                    continue;
+                }
+                for fp in values.iter() {
+                    if let FormatParam::BarePtList(primary) | FormatParam::Red(primary) = fp {
+                        if *primary == p.pt {
+                            p.red = Some(**pt);
+                        }
+                    }
+                }
+            }
+
+            // rtcp feedback mechanisms
+            for (pt, value) in fbs.iter() {
+                if **pt == p.pt {
+                    match &value[..] {
+                        "goog-remb" => {
+                            p.fb_remb = true;
+                        }
+                        "transport-cc" => {
+                            p.fb_transport_cc = true;
+                        }
+                        "ccm fir" => {
+                            p.fb_fir = true;
+                        }
+                        "nack" => {
+                            p.fb_nack = true;
+                        }
+                        "nack pli" => {
+                            p.fb_pli = true;
+                        }
+                        _ => {
+                            //
+                        }
+                    }
+                }
             }
         }
-        Some(p)
-    }
 
-    fn set_repair_params(&self, p: &mut PayloadParams, repair: Pt, values: &[FormatParam]) {
-        let codec = self
-            .rtp_maps()
-            .find(|(pt, _)| *pt == repair)
-            .map(|(_, c)| c.codec);
-        for value in values {
-            match (codec, value) {
-                (Some(Codec::Rtx), FormatParam::Apt(primary)) if *primary == p.pt => {
-                    p.resend = Some(repair);
-                }
-                (
-                    Some(Codec::Red),
-                    FormatParam::BarePtList(primary) | FormatParam::Red(primary),
-                ) if *primary == p.pt && p.spec.codec.is_audio() => {
-                    p.red = Some(repair);
-                }
-                _ => {}
-            }
-        }
+        params
     }
 
     pub fn check_consistent(&self) -> Option<String> {

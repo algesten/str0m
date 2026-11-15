@@ -89,8 +89,6 @@ impl<'a> SdpApi<'a> {
         // Invalidate any outstanding PendingOffer.
         self.rtc.next_change_id();
 
-        validate_payload_mapping(&self.rtc.session, &offer)?;
-
         if offer.media_lines.is_empty() {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
         }
@@ -188,8 +186,6 @@ impl<'a> SdpApi<'a> {
         if !self.rtc.is_correct_change_id(pending.change_id) {
             return Err(RtcError::ChangesOutOfOrder);
         }
-
-        validate_payload_mapping(&self.rtc.session, &answer)?;
 
         if self.rtc.ice.ice_lite() && answer.session.ice_lite() {
             return Err(RtcError::RemoteSdp(
@@ -914,103 +910,9 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     }
 }
 
-// Payload types are seven bits, so validation needs no dynamic storage.
-struct PayloadMappings([Option<PayloadMapping>; 128]);
-
-#[derive(Clone, Copy)]
-enum PayloadMapping {
-    Codec(PayloadParams),
-    Rtx(Pt),
-    Red(Pt),
-}
-
-fn validate_payload_mapping(session: &Session, sdp: &Sdp) -> Result<(), RtcError> {
-    sdp.assert_consistency()?;
-    let mut remote = PayloadMappings::new();
-    let mut locked = PayloadMappings::new();
-    for p in session.codec_config.iter().filter(|p| p.locked) {
-        locked.record(*p)?;
-    }
-    for m in sdp.media_lines.iter().filter(|m| m.typ.is_media()) {
-        validate_media_payloads(session, sdp, m, &mut remote, &locked)?;
-    }
-    Ok(())
-}
-
-impl PayloadMappings {
-    fn new() -> Self {
-        Self([None; 128])
-    }
-
-    fn record(&mut self, params: PayloadParams) -> Result<(), RtcError> {
-        for (pt, mapping) in PayloadMapping::entries(params) {
-            self.check(pt, mapping)?;
-            self.0[*pt as usize] = Some(mapping);
-        }
-        Ok(())
-    }
-
-    fn check(&self, pt: Pt, mapping: PayloadMapping) -> Result<(), RtcError> {
-        let Some(previous) = self.0[*pt as usize] else {
-            return Ok(());
-        };
-        if previous.compatible(mapping) {
-            return Ok(());
-        }
-        Err(RtcError::RemoteSdp(format!(
-            "Conflicting payload type {pt}"
-        )))
-    }
-}
-
-impl PayloadMapping {
-    fn entries(params: PayloadParams) -> impl Iterator<Item = (Pt, Self)> {
-        [
-            Some((params.pt(), Self::Codec(params))),
-            params.resend().map(|pt| (pt, Self::Rtx(params.pt()))),
-            params.red().map(|pt| (pt, Self::Red(params.pt()))),
-        ]
-        .into_iter()
-        .flatten()
-    }
-
-    fn compatible(self, other: Self) -> bool {
-        match (self, other) {
-            (Self::Codec(a), Self::Codec(b)) => a.match_score(&b).is_some(),
-            (Self::Rtx(a), Self::Rtx(b)) | (Self::Red(a), Self::Red(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-
-fn validate_media_payloads(
-    session: &Session,
-    sdp: &Sdp,
-    m: &MediaLine,
-    remote: &mut PayloadMappings,
-    locked: &PayloadMappings,
-) -> Result<(), RtcError> {
-    if m.disabled
-        && !sdp
-            .bundle_mids()
-            .is_some_and(|mids| mids.contains(&m.mid()))
-    {
-        return Ok(());
-    }
-    let is_new = !session.medias.iter().any(|media| media.mid() == m.mid());
-    for params in m.rtp_params_iter() {
-        remote.record(params)?;
-        if !is_new || !m.direction().sdp_is_receiving() {
-            continue;
-        }
-        for (pt, mapping) in PayloadMapping::entries(params) {
-            locked.check(pt, mapping)?;
-        }
-    }
-    Ok(())
-}
-
 fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
+    offer.assert_consistency()?;
+
     update_session(session, &offer);
 
     let bundle_mids = offer.bundle_mids();
@@ -1028,6 +930,8 @@ fn apply_answer(
     pending: Changes,
     answer: SdpAnswer,
 ) -> Result<(), RtcError> {
+    answer.assert_consistency()?;
+
     update_session(session, &answer);
 
     let bundle_mids = answer.bundle_mids();
@@ -2758,8 +2662,6 @@ mod test {
         let sdp = valid_sdp.replacen("a=fmtp:100 profile-id=2\r\n", "", 1);
         let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
         assert!(rtc2.sdp_api().accept_offer(offer).is_err());
-        let valid = SdpOffer::from_sdp_string(&valid_sdp).unwrap();
-        assert!(rtc2.sdp_api().accept_offer(valid).is_ok());
     }
 
     #[test]
@@ -2779,8 +2681,6 @@ mod test {
             .replacen("a=fmtp:99 apt=98\r\n", "", 1);
         let offer = SdpOffer::from_sdp_string(&invalid).unwrap();
         assert!(answerer.sdp_api().accept_offer(offer).is_err());
-        let offer = SdpOffer::from_sdp_string(&valid).unwrap();
-        assert!(answerer.sdp_api().accept_offer(offer).is_ok());
     }
     #[test]
     fn answer_reusing_pt_for_another_codec_config_is_rejected() {

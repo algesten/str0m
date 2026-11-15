@@ -143,9 +143,10 @@ str0m does this too. Sauce for the goose…
 
 ### Conflicting payload mappings
 
-str0m requires a payload type to describe a compatible codec configuration
-throughout the bundle. An offer or answer that reuses a payload type for
-incompatible codecs or RTX associations is rejected with an SDP error.
+str0m keeps one locked payload mapping for the session. If a receiving remote
+requires a payload type already locked to another codec configuration, or changes
+a locked payload's PT or RTX association, negotiation returns an error. A
+sending-only remote proposes payload types, which str0m can remap as described above.
 
 ### TWCC feedback across m-lines
 

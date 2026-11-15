@@ -26,7 +26,7 @@ pub(crate) const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
 ];
 
 pub(crate) trait Claimed {
-    fn assert_claim_once(&mut self, pt: Pt);
+    fn claim(&mut self, pt: Pt) -> Result<(), String>;
     fn is_claimed(&self, pt: Pt) -> bool;
     fn find_unclaimed(
         &self,
@@ -36,10 +36,13 @@ pub(crate) trait Claimed {
 }
 
 impl Claimed for [bool; 128] {
-    fn assert_claim_once(&mut self, pt: Pt) {
+    fn claim(&mut self, pt: Pt) -> Result<(), String> {
         let idx = *pt as usize;
-        assert!(!self[idx], "Pt locked multiple times: {}", pt);
+        if self[idx] {
+            return Err(format!("Payload type {pt} is already locked"));
+        }
         self[idx] = true;
+        Ok(())
     }
     fn is_claimed(&self, pt: Pt) -> bool {
         let idx = *pt as usize;
@@ -758,22 +761,24 @@ impl PayloadParams {
         let mut remote_rtx = first.resend;
 
         if self.locked {
-            // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
-            // (receive-direction). We only want to warn if we get receive direction changes.
+            // Sending-only remotes propose PTs; our locked mapping takes precedence.
             if local_is_controlling {
                 return Ok(());
             }
-            // Just verify it's still the same. We should validate this in apply_offer/answer instead
-            // of ever seeing this error message.
+            // A receiving remote requires its mapping. The shared session configuration
+            // cannot represent a second PT or RTX association for this locked payload.
             if self.pt != remote_pt {
-                warn!("Ignore remote PT change {} => {}", self.pt, remote_pt);
+                return Err(format!(
+                    "Remote changed locked payload type {} to {}",
+                    self.pt, remote_pt
+                ));
             }
 
             if self.resend != remote_rtx {
-                warn!(
-                    "Ignore remote PT RTX change {:?} => {:?}",
-                    self.resend, remote_rtx
-                );
+                return Err(format!(
+                    "Remote changed RTX for locked payload type {}",
+                    self.pt
+                ));
             }
 
             if self.red != first.red {
@@ -805,11 +810,8 @@ impl PayloadParams {
             }
 
             // Lock down the PT
-            if claimed.is_claimed(remote_pt) {
-                return Err(format!("Conflicting remote payload type {remote_pt}"));
-            }
+            claimed.claim(remote_pt)?;
             self.pt = remote_pt;
-            claimed.assert_claim_once(remote_pt);
 
             // Check if RTX PT also conflicts
             if local_is_controlling {
@@ -832,13 +834,10 @@ impl PayloadParams {
             }
 
             // Lock down the RTX PT
-            self.resend = remote_rtx;
             if let Some(rtx) = remote_rtx {
-                if claimed.is_claimed(rtx) {
-                    return Err(format!("Conflicting remote RTX payload type {rtx}"));
-                }
-                claimed.assert_claim_once(rtx);
+                claimed.claim(rtx)?;
             }
+            self.resend = remote_rtx;
 
             // RED is opt-in on our side and audio-only: keep it only if the matched remote also
             // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
@@ -873,7 +872,7 @@ impl PayloadParams {
             }
             self.red = remote_red;
             if let Some(red) = remote_red {
-                claimed.assert_claim_once(red);
+                claimed.claim(red)?;
             }
 
             // This is now locked.

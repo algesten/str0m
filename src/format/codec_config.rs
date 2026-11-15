@@ -616,14 +616,14 @@ impl CodecConfig {
                 continue;
             }
 
-            claimed.assert_claim_once(p.pt);
+            claimed.claim(p.pt)?;
 
             if let Some(rtx) = p.resend {
-                claimed.assert_claim_once(rtx);
+                claimed.claim(rtx)?;
             }
 
             if let Some(red) = p.red {
-                claimed.assert_claim_once(red);
+                claimed.claim(red)?;
             }
         }
 
@@ -661,14 +661,13 @@ impl CodecConfig {
 
             if claimed.is_claimed(p.pt) {
                 let Some(pt) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
-                    // TODO: handle this gracefully.
                     return Err("Exhausted payload types during SDP negotiation".into());
                 };
 
                 debug!("Reassigned PT {} => {}", p.pt, pt);
                 p.pt = pt;
 
-                claimed.assert_claim_once(pt);
+                claimed.claim(pt)?;
                 unlocked.remove(&pt);
             }
 
@@ -679,7 +678,7 @@ impl CodecConfig {
                         Some(new_red) => {
                             debug!("Reassigned RED PT {:?} => {:?}", p.red, new_red);
                             p.red = Some(new_red);
-                            claimed.assert_claim_once(new_red);
+                            claimed.claim(new_red)?;
                             unlocked.remove(&new_red);
                         }
                         // RED is opt-in; drop it rather than panic if no PT is free.
@@ -697,14 +696,13 @@ impl CodecConfig {
 
             if claimed.is_claimed(rtx) {
                 let Some(rtx) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
-                    // TODO: handle this gracefully.
                     return Err("Exhausted payload types during SDP negotiation".into());
                 };
 
                 debug!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
                 p.resend = Some(rtx);
 
-                claimed.assert_claim_once(rtx);
+                claimed.claim(rtx)?;
                 unlocked.remove(&rtx);
             }
         }
