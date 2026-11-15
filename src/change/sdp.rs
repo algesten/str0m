@@ -1140,47 +1140,46 @@ fn add_new_lines(
 ) -> Result<(), String> {
     for (idx, m) in new_lines {
         let idx = *idx;
-
-        if m.typ.is_media() {
-            let mut media = Media::from_remote_media_line(m, idx, is_offer);
-
-            // For disabled (rejected) m-lines, don't fire open event
-            // and the direction will be set to Inactive by update_media.
-            // In max-bundle, port=0 with the MID in BUNDLE group is NOT rejected.
-            let is_in_bundle = bundle_mids
-                .map(|mids| mids.contains(&m.mid()))
-                .unwrap_or(false);
-            let is_rejected = m.disabled && !is_in_bundle;
-            media.need_open_event = is_offer && !is_rejected;
-
-            // Rejected sections do not participate in codec negotiation.
-            if !is_rejected {
-                session
-                    .codec_config
-                    .update_params(&m.rtp_params(), m.direction())?;
-            }
-
-            // Remap the extension to that of the answer.
-            session.exts.remap(&m.extmaps());
-
-            update_media(
-                &mut media,
-                m,
-                &session.codec_config,
-                &session.exts,
-                &mut session.streams,
-                bundle_mids,
-            );
-
-            session.add_media(media);
-        } else if m.typ.is_channel() {
+        if m.typ.is_channel() {
             session.set_app(m.mid(), idx)?;
-        } else {
+            continue;
+        }
+        if !m.typ.is_media() {
             return Err(format!(
                 "New m-line is neither media nor channel: {}",
                 m.mid()
             ));
         }
+
+        let mut media = Media::from_remote_media_line(m, idx, is_offer);
+        // Port zero inside BUNDLE is active, rather than rejected.
+        let is_in_bundle = bundle_mids
+            .map(|mids| mids.contains(&m.mid()))
+            .unwrap_or(false);
+        let is_rejected = m.disabled && !is_in_bundle;
+        media.need_open_event = is_offer && !is_rejected;
+        if is_rejected {
+            media.mark_stopped();
+            media.set_direction(Direction::Inactive);
+            session.add_media(media);
+            continue;
+        }
+
+        session
+            .codec_config
+            .update_params(&m.rtp_params(), m.direction())?;
+
+        // Remap the extension to that of the answer.
+        session.exts.remap(&m.extmaps());
+        update_media(
+            &mut media,
+            m,
+            &session.codec_config,
+            &session.exts,
+            &mut session.streams,
+            bundle_mids,
+        );
+        session.add_media(media);
     }
 
     Ok(())
