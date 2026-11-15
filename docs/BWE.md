@@ -294,15 +294,10 @@ prevents the loss controller from causing premature rate reductions based
 on transient loss while still catching cases where delay signals miss
 congestion.
 
-Like libwebrtc's default configuration, the loss controller bounds its
-estimate from below by `max(1 kbps, acknowledged bitrate)` when acknowledged
-throughput is available, and by 1 kbps otherwise. This floor applies after
-the delay-based and loss-based upper bounds. It also raises the Hold rate
-when acknowledged throughput increases. The internal candidate is bounded
-separately from the reported estimate, so Hold can cap the reported rate
-without discarding internal recovery. The final combined estimate remains
-capped by the delay-based estimate. This controller floor is separate from
-the application's `Bwe::set_bitrate(minimum, desired)` transmit target.
+Like libwebrtc, the controller uses acknowledged throughput as a lower
+bound, with a minimum of 1 kbps. This prevents sustained loss from driving
+the estimate toward zero despite evidence that packets are still being
+delivered.
 
 The controller integrates with ALR detection and link capacity tracking.
 When in ALR, it uses proven link capacity from successful ALR probes as an
