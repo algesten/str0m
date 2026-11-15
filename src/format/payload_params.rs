@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::packet::H264ProfileLevel;
-use crate::packet::{H265Level, H265ProfileTierLevel};
-use crate::packet::{H266Level, H266ProfileTierLevel};
+use crate::packet::H265ProfileTierLevel;
+use crate::packet::H266ProfileTierLevel;
 use crate::rtp_::Pt;
 
 use super::codec::{Codec, CodecSpec};
@@ -135,13 +135,6 @@ impl PartialEq for PayloadParams {
 }
 
 impl Eq for PayloadParams {}
-
-/// Session negotiation history, independent of the fmtp fields currently advertised.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct VideoLevelCaps {
-    h265: Option<H265Level>,
-    h266: Option<H266Level>,
-}
 
 impl PayloadParams {
     /// Maximum match score.
@@ -509,7 +502,7 @@ impl PayloadParams {
     /// - **Levels** penalize score by `|c0_level - c1_level|` but never reject.
     ///   Both H.264 and H.265 tolerate level mismatches in either direction at
     ///   match time. For H.265, `update_param` additionally narrows the
-    ///   negotiated level to `min(local, remote)` afterward; H.264 does not.
+    ///   negotiated level to `min(local, remote)` before locking; H.264 does not.
     ///
     /// # Matching Rules — Profile-only (at least one side lacks tier+level)
     ///
@@ -549,7 +542,7 @@ impl PayloadParams {
                 }
 
                 // Level difference penalizes score but never causes rejection.
-                // Actual level narrowing to min(local, remote) is done in update_param.
+                // Initial level narrowing happens in update_param, before locking.
                 let level_difference: usize =
                     c0_ptl.level().ordinal().abs_diff(c1_ptl.level().ordinal());
 
@@ -649,7 +642,6 @@ impl PayloadParams {
         claimed: &mut [bool; 128],
         local_is_controlling: bool,
         unlocked: &mut HashSet<Pt>,
-        levels: &mut VideoLevelCaps,
     ) -> Result<(), String> {
         let prefer_locked_pt = self.locked && !local_is_controlling;
         let Some((first, _)) = remote_pts
@@ -663,21 +655,38 @@ impl PayloadParams {
                     || !claimed.is_claimed(p.pt)
             })
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
-            // A compatible locked PT takes precedence over a closer fmtp match at
-            // another PT when the remote dictates the receiving mapping.
-            .max_by_key(|(p, s)| (prefer_locked_pt && p.pt == self.pt, *s))
+            // Prefer candidates that preserve the locked mapping and packet layout.
+            // Send-only PT numbers remain suggestions, but their layout must agree.
+            .max_by_key(|(p, s)| {
+                let preserves_locked = self.locked
+                    && self
+                        .validate_locked_mapping(p, local_is_controlling)
+                        .is_ok();
+                (preserves_locked, prefer_locked_pt && p.pt == self.pt, *s)
+            })
         else {
             return Ok(());
         };
 
-        // Validate the locked mapping before negotiating fmtp, so rejected updates
-        // cannot change established parameters. Send-only remotes propose their PTs.
-        self.validate_locked_mapping(first, local_is_controlling)?;
-
-        // The first negotiated m-line determines TWCC support for this PT.
-        if !self.locked {
-            self.fb_transport_cc &= first.fb_transport_cc();
+        // A locked PT's complete meaning is immutable, including fmtp and feedback.
+        if self.locked {
+            self.validate_locked_mapping(first, local_is_controlling)
+                .map_err(|reason| {
+                    format!(
+                        "Remote changed {reason} for locked payload type {}",
+                        self.pt
+                    )
+                })?;
+            if !local_is_controlling && self.red != first.red {
+                warn!(
+                    "Ignore remote PT RED change {:?} => {:?}",
+                    self.red, first.red
+                );
+            }
+            return Ok(());
         }
+
+        self.fb_transport_cc &= first.fb_transport_cc();
 
         if self.spec.codec.is_tele() {
             let local = self
@@ -695,20 +704,15 @@ impl PayloadParams {
 
         // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.
         if self.spec.codec == Codec::H265 && first.spec.codec == Codec::H265 {
-            levels.h265 = levels.h265.or(self
-                .spec
-                .format
-                .h265_profile_tier_level
-                .map(|ptl| ptl.level()));
             if let Some(remote_ptl) = first.spec.format.h265_profile_tier_level {
                 // Narrow level to min(local, remote) so the negotiated level
                 // never exceeds either side's capability.
-                let negotiated_ptl = if let Some(cap) = levels.h265 {
-                    remote_ptl.with_level(std::cmp::min(cap, remote_ptl.level()))
-                } else {
-                    remote_ptl
-                };
-                levels.h265 = Some(negotiated_ptl.level());
+                let negotiated_ptl =
+                    if let Some(local_ptl) = self.spec.format.h265_profile_tier_level {
+                        remote_ptl.with_level(std::cmp::min(local_ptl.level(), remote_ptl.level()))
+                    } else {
+                        remote_ptl
+                    };
                 self.spec.format.h265_profile_tier_level = Some(negotiated_ptl);
                 // Avoid also serializing `profile-id` via the VP9 `profile_id` field.
                 self.spec.format.profile_id = None;
@@ -732,20 +736,15 @@ impl PayloadParams {
 
         // Same negotiation for H.266 (RFC 9328 §7.2, offer/answer model §7.3.2).
         if self.spec.codec == Codec::H266 && first.spec.codec == Codec::H266 {
-            levels.h266 = levels.h266.or(self
-                .spec
-                .format
-                .h266_profile_tier_level
-                .map(|ptl| ptl.level()));
             if let Some(remote_ptl) = first.spec.format.h266_profile_tier_level {
                 // Narrow level to min(local, remote) so the negotiated level
                 // never exceeds either side's capability.
-                let negotiated_ptl = if let Some(cap) = levels.h266 {
-                    remote_ptl.with_level(std::cmp::min(cap, remote_ptl.level()))
-                } else {
-                    remote_ptl
-                };
-                levels.h266 = Some(negotiated_ptl.level());
+                let negotiated_ptl =
+                    if let Some(local_ptl) = self.spec.format.h266_profile_tier_level {
+                        remote_ptl.with_level(std::cmp::min(local_ptl.level(), remote_ptl.level()))
+                    } else {
+                        remote_ptl
+                    };
                 self.spec.format.h266_profile_tier_level = Some(negotiated_ptl);
                 // Avoid also serializing `profile-id` via the VP9 `profile_id` field.
                 self.spec.format.profile_id = None;
@@ -785,112 +784,97 @@ impl PayloadParams {
         let mut remote_pt = first.pt;
         let mut remote_rtx = first.resend;
 
-        if self.locked {
-            // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
-            // (receive-direction). We only want to warn if we get receive direction changes.
-            if local_is_controlling {
-                return Ok(());
-            }
+        // Before locking, check if the remote PT conflicts with an already locked PT.
+        // If we're receiving, we control what PTs to use,
+        // so we can remap the conflicting PT.
+        if local_is_controlling && claimed.is_claimed(remote_pt) {
+            // Prefer our configured PT, then fall back to any free PT.
+            let new_pt = (!claimed.is_claimed(self.pt))
+                .then_some(self.pt)
+                .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
 
-            if self.red != first.red {
-                warn!(
-                    "Ignore remote PT RED change {:?} => {:?}",
-                    self.red, first.red
+            if let Some(new_pt) = new_pt {
+                debug!(
+                    "Remapped conflicting PT {} => {} for codec {:?}",
+                    remote_pt, new_pt, self.spec.codec
                 );
+                remote_pt = new_pt;
+                unlocked.remove(&new_pt);
+            } else {
+                return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
             }
-        } else {
-            // Before locking, check if the remote PT conflicts with an already locked PT.
-            // If we're receiving, we control what PTs to use,
-            // so we can remap the conflicting PT.
-            if local_is_controlling && claimed.is_claimed(remote_pt) {
-                // Prefer our configured PT, then fall back to any free PT.
-                let new_pt = (!claimed.is_claimed(self.pt))
-                    .then_some(self.pt)
-                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+        }
 
-                if let Some(new_pt) = new_pt {
-                    debug!(
-                        "Remapped conflicting PT {} => {} for codec {:?}",
-                        remote_pt, new_pt, self.spec.codec
-                    );
-                    remote_pt = new_pt;
-                    unlocked.remove(&new_pt);
-                } else {
-                    return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
-                }
-            }
+        // Lock down the PT
+        claimed.assert_claim_once(remote_pt)?;
+        self.pt = remote_pt;
 
-            // Lock down the PT
-            claimed.assert_claim_once(remote_pt)?;
-            self.pt = remote_pt;
+        // Check if RTX PT also conflicts
+        if local_is_controlling {
+            if let Some(rtx) = remote_rtx {
+                if claimed.is_claimed(rtx) {
+                    let new_rtx = self
+                        .resend
+                        .filter(|pt| !claimed.is_claimed(*pt))
+                        .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
 
-            // Check if RTX PT also conflicts
-            if local_is_controlling {
-                if let Some(rtx) = remote_rtx {
-                    if claimed.is_claimed(rtx) {
-                        let new_rtx = self
-                            .resend
-                            .filter(|pt| !claimed.is_claimed(*pt))
-                            .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
-
-                        if let Some(new_rtx) = new_rtx {
-                            debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
-                            remote_rtx = Some(new_rtx);
-                            unlocked.remove(&new_rtx);
-                        } else {
-                            return Err(
-                                "Exhausted all PT ranges, inconsistent PayloadParam state".into()
-                            );
-                        }
+                    if let Some(new_rtx) = new_rtx {
+                        debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
+                        remote_rtx = Some(new_rtx);
+                        unlocked.remove(&new_rtx);
+                    } else {
+                        return Err(
+                            "Exhausted all PT ranges, inconsistent PayloadParam state".into()
+                        );
                     }
                 }
             }
+        }
 
-            // Lock down the RTX PT
-            if let Some(rtx) = remote_rtx {
-                claimed.assert_claim_once(rtx)?;
-            }
-            self.resend = remote_rtx;
+        // Lock down the RTX PT
+        if let Some(rtx) = remote_rtx {
+            claimed.assert_claim_once(rtx)?;
+        }
+        self.resend = remote_rtx;
 
-            // RED is opt-in on our side and audio-only: keep it only if the matched remote also
-            // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
-            // codecs mapped to the same PT), so resolve any collision before claiming it. The
-            // collision check runs regardless of who controls PT allocation: only the resolution
-            // differs, and claiming the same PT twice would panic.
-            let mut remote_red = self
-                .red
-                .and(first.red)
-                .filter(|_| self.spec.codec.is_audio());
-            if let Some(red) = remote_red {
-                if claimed.is_claimed(red) {
-                    if local_is_controlling {
-                        // We control PT allocation: remap the conflicting RED to a free PT.
-                        if let Some(new_red) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
-                            debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
-                            remote_red = Some(new_red);
-                            unlocked.remove(&new_red);
-                        } else {
-                            // RED is opt-in; drop it rather than panic if no PT is free.
-                            debug!("No free PT for RED; dropping it");
-                            remote_red = None;
-                        }
+        // RED is opt-in on our side and audio-only: keep it only if the matched remote also
+        // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
+        // codecs mapped to the same PT), so resolve any collision before claiming it. The
+        // collision check runs regardless of who controls PT allocation: only the resolution
+        // differs, and claiming the same PT twice would panic.
+        let mut remote_red = self
+            .red
+            .and(first.red)
+            .filter(|_| self.spec.codec.is_audio());
+        if let Some(red) = remote_red {
+            if claimed.is_claimed(red) {
+                if local_is_controlling {
+                    // We control PT allocation: remap the conflicting RED to a free PT.
+                    if let Some(new_red) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
+                        debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
+                        remote_red = Some(new_red);
+                        unlocked.remove(&new_red);
                     } else {
-                        // The remote dictated the PTs and mapped a RED PT that is already taken.
-                        // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
-                        // rather than claim the same PT twice (which would panic).
-                        debug!("Conflicting remote RED PT {:?}; dropping it", red);
+                        // RED is opt-in; drop it rather than panic if no PT is free.
+                        debug!("No free PT for RED; dropping it");
                         remote_red = None;
                     }
+                } else {
+                    // The remote dictated the PTs and mapped a RED PT that is already taken.
+                    // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
+                    // rather than claim the same PT twice (which would panic).
+                    debug!("Conflicting remote RED PT {:?}; dropping it", red);
+                    remote_red = None;
                 }
             }
-            self.red = remote_red;
-            if let Some(red) = remote_red {
-                claimed.assert_claim_once(red)?;
-            }
-
-            // This is now locked.
-            self.locked = true;
         }
+        self.red = remote_red;
+        if let Some(red) = remote_red {
+            claimed.assert_claim_once(red)?;
+        }
+
+        // This is now locked.
+        self.locked = true;
         Ok(())
     }
 
@@ -898,23 +882,17 @@ impl PayloadParams {
         &self,
         first: &PayloadParams,
         local_is_controlling: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), &'static str> {
         if !self.locked {
             return Ok(());
         }
 
         if !local_is_controlling && self.pt != first.pt {
-            return Err(format!(
-                "Remote changed locked payload type {} to {}",
-                self.pt, first.pt
-            ));
+            return Err("PT");
         }
 
         if !local_is_controlling && self.resend != first.resend {
-            return Err(format!(
-                "Remote changed RTX for locked payload type {}",
-                self.pt
-            ));
+            return Err("RTX");
         }
 
         // Cached packetizers and depacketizers cannot change their packet layout.
@@ -927,10 +905,7 @@ impl PayloadParams {
             .map(|diff| diff > 0)
             .unwrap_or(local_donl);
         if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
-            return Err(format!(
-                "Remote changed DONL for locked payload type {}",
-                self.pt
-            ));
+            return Err("DONL");
         }
 
         Ok(())
@@ -985,13 +960,7 @@ mod test {
 
         // local_is_controlling = true: we allocate PTs and may remap the conflict.
         local
-            .update_param(
-                &[remote],
-                &mut claimed,
-                true,
-                &mut unlocked,
-                &mut VideoLevelCaps::default(),
-            )
+            .update_param(&[remote], &mut claimed, true, &mut unlocked)
             .unwrap();
 
         let got = local.red.expect("RED is kept, remapped to a free PT");
@@ -1519,7 +1488,6 @@ mod test {
                     &mut claimed,
                     false, // remote is controlling (we're answering)
                     &mut unlocked,
-                    &mut VideoLevelCaps::default(),
                 )
                 .unwrap();
 
@@ -1600,13 +1568,7 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(
-                    &[remote_params],
-                    &mut claimed,
-                    false,
-                    &mut unlocked,
-                    &mut VideoLevelCaps::default(),
-                )
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
                 .unwrap();
 
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
@@ -1655,13 +1617,7 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(
-                    &[remote_params],
-                    &mut claimed,
-                    false,
-                    &mut unlocked,
-                    &mut VideoLevelCaps::default(),
-                )
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
                 .unwrap();
 
             // Local value should be preserved (remote didn't override)
@@ -1673,13 +1629,7 @@ mod test {
 
             // An identical receiving m-line must agree with the mapping just locked.
             local_params
-                .update_param(
-                    &[remote_params],
-                    &mut claimed,
-                    false,
-                    &mut unlocked,
-                    &mut VideoLevelCaps::default(),
-                )
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
                 .unwrap();
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(16));
         }
@@ -2020,7 +1970,6 @@ mod test {
                     &mut claimed,
                     false, // remote is controlling (we're answering)
                     &mut unlocked,
-                    &mut VideoLevelCaps::default(),
                 )
                 .unwrap();
 
@@ -2103,13 +2052,7 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(
-                    &[remote_params],
-                    &mut claimed,
-                    false,
-                    &mut unlocked,
-                    &mut VideoLevelCaps::default(),
-                )
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
                 .unwrap();
 
             // Local value should be preserved (remote didn't override)
@@ -2121,13 +2064,7 @@ mod test {
 
             // An identical receiving m-line must agree with the mapping just locked.
             local_params
-                .update_param(
-                    &[remote_params],
-                    &mut claimed,
-                    false,
-                    &mut unlocked,
-                    &mut VideoLevelCaps::default(),
-                )
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
                 .unwrap();
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(16));
         }
@@ -2154,13 +2091,7 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(
-                    &[remote_params],
-                    &mut claimed,
-                    false,
-                    &mut unlocked,
-                    &mut VideoLevelCaps::default(),
-                )
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
                 .unwrap();
 
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
@@ -2249,13 +2180,7 @@ mod test {
             let remote = amr_wb(None, remote_format);
 
             local
-                .update_param(
-                    &[remote],
-                    &mut [false; 128],
-                    false,
-                    &mut HashSet::new(),
-                    &mut VideoLevelCaps::default(),
-                )
+                .update_param(&[remote], &mut [false; 128], false, &mut HashSet::new())
                 .unwrap();
 
             assert_eq!(local.spec.channels, None);

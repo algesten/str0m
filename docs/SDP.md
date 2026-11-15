@@ -17,6 +17,11 @@ agreed set for the session. str0m uses a single BUNDLE/session codec configurati
 with the limitations described below. We do not model every distinction SDP can
 express between directions or individual m-lines.
 
+Once a payload type is locked, its meaning never changes: codec, fmtp, feedback,
+and RTX/RED associations stay fixed for the session. Narrowing codec parameters
+happens only before that payload is locked. Later offers and answers, including
+new m-lines, must respect the established mapping.
+
 Media intent belongs to the application: which sources exist, who should send or
 receive them, and when they should start or stop. Applications already need a
 signaling channel to exchange offers and answers. They can use that channel to
@@ -162,11 +167,10 @@ is locked, a new m-line cannot enable or disable DONL for it, including when the
 remote is send-only. Negotiation rejects that change because existing packetizers
 and depacketizers retain the established layout.
 
-Level capabilities can narrow as new m-lines are negotiated. The session retains
-that level cap even if a later m-line advertises only a profile or omits fmtp,
-so a subsequent full profile/tier/level cannot raise the negotiated cap. As with
-other codec parameters, this is one shared cap rather than a cap per direction
-or m-line.
+The level and fmtp representation are fixed when the payload is first locked.
+Later m-lines cannot lower or raise that level, replace full profile/tier/level
+with a profile-only form, or clear it by omitting fmtp. Compatible offers reuse
+the established format.
 
 ### TWCC feedback across m-lines
 
@@ -177,20 +181,24 @@ Later m-lines using that PT do not change the result, even if they advertise
 different `a=rtcp-fb:<pt> transport-cc` support. We do not model that distinction.
 The transport sequence number header extension must still be negotiated on
 the m-line carrying the RTP packets. As with other codec parameters, feedback
-capabilities are retained when an existing m-line is renegotiated.
+capabilities are retained during later SDP updates to an existing m-line.
 
 ### Telephone-event ranges across m-lines
 
 str0m keeps one negotiated telephone-event range per payload type in
-`Session::codec_config`. It takes the smaller local and remote maximum and uses
-that range in both directions and on every m-line sharing the PT. SDP can
+`Session::codec_config`. Before locking, it takes the smaller local and remote
+maximum. Once locked, later m-lines cannot change that range. It uses the range in both directions and on every m-line sharing the PT. SDP can
 express different receive capabilities in each direction and on different
 m-lines; str0m does not model those distinctions.
 
-### Renegotiation and narrowed PT lists
+### Later SDP updates and narrowed PT lists
 
-On renegotiation of an existing m-line, str0m keeps the remote payload type list
-from the first negotiation. Strictly following SDP offer/answer would mean an
+str0m does not renegotiate codecs for existing m-lines. Later SDP exchanges can
+update media direction, stopping, and RID/simulcast state, but cannot change the
+meaning of locked payloads. Adding a new m-line does not relax this rule.
+
+For an existing m-line, str0m keeps the remote payload type list from the first
+negotiation. Strictly following SDP offer/answer would mean an
 answer that narrows the `sendrecv`/`recvonly` PT list should also narrow what we
 consider valid to send on that m-line. In practice, browsers keep stable PT/codec
 sets for an existing m-line, and we have not seen a real interoperability problem
