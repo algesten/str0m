@@ -27,6 +27,7 @@ use crate::util::value_history::ValueHistory;
 use crate::util::{InstantExt, already_happened, not_happening};
 
 use super::RtpPacket;
+use super::register_nack::DEFAULT_RTT;
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
 use super::send_stats::StreamTxStats;
@@ -38,12 +39,6 @@ const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
 pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
-
-/// Round trip time assumed for resends before a reception report has measured one.
-const DEFAULT_RTT: Duration = Duration::from_millis(100);
-
-/// How many recent resends are remembered. Older ones may be resent again.
-const MAX_RECENT_RESENDS: usize = 4096;
 
 /// A recently sampled view of an outgoing stream's send queue.
 ///
@@ -140,9 +135,6 @@ pub struct StreamTx {
 
     /// Scheduled resends due to NACK or spurious padding.
     resends: VecDeque<Resend>,
-
-    /// Recently resent packets, to resend each at most once per round trip.
-    recent_resends: VecDeque<(SeqNo, Instant)>,
 
     /// Requested padding, that has not been turned into packets yet.
     padding: usize,
@@ -386,7 +378,6 @@ impl StreamTx {
             queue_info: None,
             unpaced: None,
             resends: VecDeque::new(),
-            recent_resends: VecDeque::new(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
@@ -899,20 +890,8 @@ impl StreamTx {
             break pkt.seq_no;
         };
 
-        // Remember the resend; what is older than a round trip may go again.
-        let window = self.resend_window();
-        self.recent_resends.push_back((seq_no, now));
-        while self
-            .recent_resends
-            .front()
-            .is_some_and(|(_, at)| now.saturating_duration_since(*at) > window)
-            || self.recent_resends.len() > MAX_RECENT_RESENDS
-        {
-            self.recent_resends.pop_front();
-        }
-
-        // Borrow checker gymnastics.
-        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
+        // Borrow checker gymnastics. Record the time only when the queued resend is polled.
+        let pkt = self.rtx_cache.get_cached_packet_for_resend(seq_no, now)?;
 
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, true);
@@ -1084,27 +1063,21 @@ impl StreamTx {
         let seq_no = self.rtx_cache.last_cached_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
-        let window = self.resend_window();
+        let window = self.stats.rtt().unwrap_or(DEFAULT_RTT);
 
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
-            let Some(packet) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
-                // Packet was not available in RTX cache, it has probably expired.
-                continue;
-            };
-
-            // A receiver repeats its NACK for a packet until the resend arrives. Behind a
-            // congested link that takes longer than its NACK interval, and queueing the packet
-            // again for every NACK multiplies the resends exactly where there is no room for
-            // them. Like libwebrtc, resend a packet at most once per round trip.
-            if self.resends.iter().any(|r| r.seq_no == seq_no)
-                || self
-                    .recent_resends
-                    .iter()
-                    .any(|(s, at)| *s == seq_no && now.saturating_duration_since(*at) < window)
-            {
+            // Keep a single queued resend even if pacing delays it beyond one RTT.
+            if self.resends.iter().any(|r| r.seq_no == seq_no) {
                 continue;
             }
+            let Some(packet) = self
+                .rtx_cache
+                .get_cached_packet_for_nack(seq_no, now, window)
+            else {
+                // The packet has expired or was already resent within one round trip.
+                continue;
+            };
 
             let resend = Resend {
                 seq_no,
@@ -1115,10 +1088,6 @@ impl StreamTx {
         }
 
         Some(())
-    }
-
-    fn resend_window(&self) -> Duration {
-        self.stats.rtt().unwrap_or(DEFAULT_RTT)
     }
 
     pub(crate) fn need_sr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
@@ -1366,7 +1335,6 @@ impl StreamTx {
         self.queue_info = None;
         self.rtx_cache.clear();
         self.resends.clear();
-        self.recent_resends.clear();
         self.padding = 0;
     }
 
@@ -1508,12 +1476,12 @@ mod test {
         };
 
         // A receiver repeats its NACK every few ms while the resend is under way.
-        for ms in [0, 5, 10] {
+        for ms in [0, 5, 10, 200] {
             nack(stream, start + Duration::from_millis(ms));
         }
         assert_eq!(stream.resends.len(), 1, "queued once, not once per NACK");
 
-        let sent = start + Duration::from_millis(10);
+        let sent = start + Duration::from_millis(200);
         assert!(stream.poll_packet_resend(sent).is_some());
         nack(stream, sent + Duration::from_millis(50));
         assert!(
@@ -1522,8 +1490,24 @@ mod test {
         );
 
         // After a round trip without the packet, the receiver may really need it again.
-        nack(stream, sent + DEFAULT_RTT + Duration::from_millis(1));
+        nack(stream, sent + DEFAULT_RTT - Duration::from_nanos(1));
+        assert!(stream.resends.is_empty());
+        nack(stream, sent + DEFAULT_RTT);
         assert_eq!(stream.resends.len(), 1, "resent again after a round trip");
+        assert!(stream.poll_packet_resend(sent + DEFAULT_RTT).is_some());
+        nack(stream, sent + DEFAULT_RTT + Duration::from_millis(1));
+        assert!(
+            stream.resends.is_empty(),
+            "each resend restarts the RTT wait"
+        );
+
+        // An overlapping entry must queue another packet once without requeueing 3.
+        stream.handle_nack(
+            [NackEntry { pid: 3, blp: 1 }, NackEntry { pid: 4, blp: 0 }].into_iter(),
+            sent + DEFAULT_RTT + Duration::from_millis(1),
+        );
+        assert_eq!(stream.resends.len(), 1);
+        assert_eq!(stream.resends[0].seq_no, 4.into());
     }
 
     #[test]

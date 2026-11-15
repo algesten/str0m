@@ -13,12 +13,18 @@ const RTX_CACHE_QUANTIZE_SLOTS: usize = DATAGRAM_MAX_PACKET_SIZE / RTX_CACHE_SIZ
 #[derive(Debug)]
 pub(crate) struct RtxCache {
     // Data, new additions here probably need to be cleared in [`clear`].
-    packet_by_seq_no: EvictingBuffer<RtpPacket>,
+    packet_by_seq_no: EvictingBuffer<CachedPacket>,
 
     // Technically we want [Option<SeqNo>; X] to indicate the absence of
     // a SeqNo. However We can half the storage space by using the sentinel
     // values SeqNo::MAX to indicate None
     seq_no_by_quantized_size: [SeqNo; RTX_CACHE_QUANTIZE_SLOTS],
+}
+
+#[derive(Debug)]
+struct CachedPacket {
+    packet: RtpPacket,
+    last_resend: Option<Instant>,
 }
 
 impl RtxCache {
@@ -33,7 +39,14 @@ impl RtxCache {
         assert!(packet.nackable);
         let seq_no = packet.seq_no;
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
-        self.packet_by_seq_no.push(*seq_no, now, packet);
+        self.packet_by_seq_no.push(
+            *seq_no,
+            now,
+            CachedPacket {
+                packet,
+                last_resend: None,
+            },
+        );
         self.seq_no_by_quantized_size[quantized_size] = seq_no;
         self.remove_old_packets(now);
     }
@@ -43,7 +56,33 @@ impl RtxCache {
     }
 
     pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut RtpPacket> {
-        self.packet_by_seq_no.get_mut(*seq_no)
+        Some(&mut self.packet_by_seq_no.get_mut(*seq_no)?.packet)
+    }
+
+    pub fn get_cached_packet_for_resend(
+        &mut self,
+        seq_no: SeqNo,
+        now: Instant,
+    ) -> Option<&mut RtpPacket> {
+        let cached = self.packet_by_seq_no.get_mut(*seq_no)?;
+        cached.last_resend = Some(now);
+        Some(&mut cached.packet)
+    }
+
+    pub fn get_cached_packet_for_nack(
+        &mut self,
+        seq_no: SeqNo,
+        now: Instant,
+        rtt: Duration,
+    ) -> Option<&mut RtpPacket> {
+        let cached = self.packet_by_seq_no.get_mut(*seq_no)?;
+        if cached
+            .last_resend
+            .is_some_and(|at| now.saturating_duration_since(at) < rtt)
+        {
+            return None;
+        }
+        Some(&mut cached.packet)
     }
 
     pub fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut RtpPacket> {
@@ -64,7 +103,7 @@ impl RtxCache {
 
     pub(crate) fn last_packet(&self) -> Option<&[u8]> {
         let packet = self.packet_by_seq_no.last()?;
-        Some(packet.payload.as_ref())
+        Some(packet.packet.payload.as_ref())
     }
 
     pub(crate) fn clear(&mut self) {
@@ -80,8 +119,45 @@ mod test {
 
     use super::*;
 
-    fn after(now: Instant, millis: u64) -> Instant {
-        now + Duration::from_millis(millis)
+    #[test]
+    fn nack_eligibility_tracks_resends_and_current_rtt() {
+        let now = Instant::now();
+        let mut cache = RtxCache::new(10, Duration::from_secs(3));
+        cache.cache_sent_packet(packet(now, 1, 0), now);
+        let rtt = Duration::from_millis(100);
+        assert!(
+            cache
+                .get_cached_packet_for_nack(1.into(), now, rtt)
+                .is_some()
+        );
+        cache.get_cached_packet_for_resend(1.into(), now).unwrap();
+        assert!(
+            cache
+                .get_cached_packet_for_nack(1.into(), after(now, 99), rtt)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_cached_packet_for_nack(1.into(), after(now, 100), rtt)
+                .is_some()
+        );
+
+        // A larger RTT must retain the resend history even past the previous RTT.
+        assert!(
+            cache
+                .get_cached_packet_for_nack(1.into(), after(now, 150), Duration::from_millis(200))
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_cached_packet_for_nack(1.into(), after(now, 50), Duration::from_millis(20))
+                .is_some()
+        );
+        assert!(
+            cache
+                .get_cached_packet_for_nack(1.into(), now, Duration::ZERO)
+                .is_some()
+        );
     }
 
     fn packet(now: Instant, seq_no: u64, millis: u64) -> RtpPacket {
@@ -95,6 +171,57 @@ mod test {
             last_sender_info: None,
             nackable: true,
         }
+    }
+
+    fn after(now: Instant, millis: u64) -> Instant {
+        now + Duration::from_millis(millis)
+    }
+
+    #[test]
+    fn resend_history_follows_cache_eviction_and_reset() {
+        let now = Instant::now();
+        let rtt = Duration::from_millis(100);
+        let mut cache = RtxCache::new(10, Duration::from_secs(3));
+        cache.cache_sent_packet(packet(now, 1, 0), now);
+        cache.get_cached_packet_for_resend(1.into(), now).unwrap();
+        // Overwrite the slot with another full sequence number, as after rollover.
+        cache.cache_sent_packet(packet(now, 65_541, 0), now);
+        assert!(
+            cache
+                .get_cached_packet_for_nack(1.into(), now, rtt)
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_cached_packet_for_nack(65_541.into(), now, rtt)
+                .is_some()
+        );
+        cache
+            .get_cached_packet_for_resend(65_541.into(), now)
+            .unwrap();
+        cache.clear();
+        cache.cache_sent_packet(packet(now, 65_541, 0), now);
+        assert!(
+            cache
+                .get_cached_packet_for_nack(65_541.into(), now, rtt)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn resend_history_is_retained_for_every_cached_packet() {
+        let now = Instant::now();
+        let mut cache = RtxCache::new(5000, Duration::from_secs(3));
+        for seq in 0..5000 {
+            cache.cache_sent_packet(packet(now, seq, 0), now);
+            cache.get_cached_packet_for_resend(seq.into(), now).unwrap();
+        }
+        // Unlike a separately bounded resend history, the cache remembers every live entry.
+        assert!(
+            cache
+                .get_cached_packet_for_nack(0.into(), now, Duration::from_millis(100))
+                .is_none()
+        );
     }
 
     #[test]
