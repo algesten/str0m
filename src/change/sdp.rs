@@ -8,6 +8,7 @@ use crate::Rtc;
 use crate::RtcError;
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
+use crate::format::Codec;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{Media, Rids, Simulcast};
@@ -18,7 +19,7 @@ use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sctp::RtcSctp;
-use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
+use crate::sdp::{self, FormatParam, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
 use crate::{Candidate, IceCreds};
@@ -1160,6 +1161,9 @@ fn add_new_lines(
                 continue;
             }
 
+            // Validate declarations before rtp_params drops unsupported codecs and their links.
+            validate_locked_declarations(m, &session.codec_config)?;
+
             // Match/remap remote params.
             session
                 .codec_config
@@ -1188,6 +1192,56 @@ fn add_new_lines(
         }
     }
 
+    Ok(())
+}
+
+fn validate_locked_declarations(m: &MediaLine, config: &CodecConfig) -> Result<(), String> {
+    if !m.direction().sdp_is_receiving() {
+        return Ok(());
+    }
+
+    for attr in &m.attrs {
+        let pt = match attr {
+            MediaAttribute::RtpMap { pt, .. } | MediaAttribute::Fmtp { pt, .. } => *pt,
+            _ => continue,
+        };
+        if !m.pts.contains(&pt) {
+            continue;
+        }
+        let Some(locked) = config
+            .iter()
+            .find(|p| p.locked && (p.pt == pt || p.resend == Some(pt) || p.red == Some(pt)))
+        else {
+            continue;
+        };
+        let expected_codec = if locked.pt == pt {
+            locked.spec.codec
+        } else if locked.resend == Some(pt) {
+            Codec::Rtx
+        } else {
+            Codec::Red
+        };
+        let conflict = match attr {
+            MediaAttribute::RtpMap { value, .. } => {
+                value.codec != expected_codec || value.clock_rate != locked.spec.rtp_clock_rate()
+            }
+            MediaAttribute::Fmtp { values, .. } => values.iter().any(|value| match value {
+                FormatParam::Apt(primary) if expected_codec == Codec::Rtx => *primary != locked.pt,
+                FormatParam::BarePtList(primary) | FormatParam::Red(primary)
+                    if expected_codec == Codec::Red =>
+                {
+                    *primary != locked.pt
+                }
+                _ => false,
+            }),
+            _ => unreachable!(),
+        };
+        if conflict {
+            return Err(format!(
+                "Remote changed declaration for locked payload type {pt}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -2770,46 +2824,62 @@ mod test {
     #[test]
     fn later_offer_cannot_reassign_locked_red_to_an_unsupported_codec() {
         crate::init_crypto_default();
-        let now = Instant::now();
-        let build = || {
-            Rtc::builder()
-                .clear_codecs()
-                .enable_opus(true, true)
-                .build(now)
-        };
-        let mut offerer = build();
-        let mut answerer = build();
-        let mut change = offerer.sdp_api();
-        change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
-        let (offer, pending) = change.apply().unwrap();
-        let answer = answerer.sdp_api().accept_offer(offer).unwrap();
-        offerer.sdp_api().accept_answer(pending, answer).unwrap();
+        for rate in [16000, 48000] {
+            for direction in [
+                Direction::RecvOnly,
+                Direction::SendRecv,
+                Direction::SendOnly,
+            ] {
+                let now = Instant::now();
+                let build = || {
+                    Rtc::builder()
+                        .clear_codecs()
+                        .enable_opus(true, true)
+                        .build(now)
+                };
+                let mut offerer = build();
+                let mut answerer = build();
+                let mut change = offerer.sdp_api();
+                change.add_media(MediaKind::Audio, direction, None, None, None);
+                let (offer, pending) = change.apply().unwrap();
+                let answer = answerer.sdp_api().accept_offer(offer).unwrap();
+                offerer.sdp_api().accept_answer(pending, answer).unwrap();
 
-        let mut change = offerer.sdp_api();
-        change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
-        let (offer, _) = change.apply().unwrap();
-        let valid = offer.to_sdp_string();
-        let (head, tail) = valid.rsplit_once("m=audio").unwrap();
-        assert!(tail.contains("a=fmtp:63 111/111\r\n"));
-        // ISAC is unsupported locally, but the offered RED 63 association is mandatory
-        // for this receiving m-line and cannot replace its locked Opus association.
-        let tail = tail
-            .replacen("\r\n", " 112\r\n", 1)
-            .replace("a=fmtp:63 111/111", "a=fmtp:63 112/112")
-            .replace("a=rtpmap:63 red/48000/2", "a=rtpmap:63 red/16000");
-        let offer =
-            SdpOffer::from_sdp_string(&format!("{head}m=audio{tail}a=rtpmap:112 ISAC/16000\r\n"))
+                let mut change = offerer.sdp_api();
+                change.add_media(MediaKind::Audio, direction, None, None, None);
+                let (offer, _) = change.apply().unwrap();
+                let valid = offer.to_sdp_string();
+                let (head, tail) = valid.rsplit_once("m=audio").unwrap();
+                assert!(tail.contains("a=fmtp:63 111/111\r\n"));
+                // ISAC is unsupported locally, but the offered RED 63 association is mandatory
+                // for this receiving m-line and cannot replace its locked Opus association.
+                let tail = tail
+                    .replacen("\r\n", " 112\r\n", 1)
+                    .replace("a=fmtp:63 111/111", "a=fmtp:63 112/112")
+                    .replace(
+                        "a=rtpmap:63 red/48000/2",
+                        &format!("a=rtpmap:63 red/{rate}"),
+                    );
+                let offer = SdpOffer::from_sdp_string(&format!(
+                    "{head}m=audio{tail}a=rtpmap:112 ISAC/{rate}\r\n"
+                ))
                 .unwrap();
-        let result = answerer.sdp_api().accept_offer(offer);
-        if let Ok(answer) = &result {
-            let answer = answer.to_sdp_string();
-            let (_, tail) = answer.rsplit_once("m=audio").unwrap();
-            assert!(tail.contains("a=fmtp:63 111/111\r\n"));
+                let result = answerer.sdp_api().accept_offer(offer);
+                if direction == Direction::SendOnly {
+                    assert!(result.is_ok());
+                    continue;
+                }
+                if let Ok(answer) = &result {
+                    let answer = answer.to_sdp_string();
+                    let (_, tail) = answer.rsplit_once("m=audio").unwrap();
+                    assert!(tail.contains("a=fmtp:63 111/111\r\n"));
+                }
+                assert!(
+                    result.is_err(),
+                    "accepted reassignment of locked RED to ISAC"
+                );
+            }
         }
-        assert!(
-            result.is_err(),
-            "accepted reassignment of locked RED to ISAC"
-        );
     }
 
     #[test]

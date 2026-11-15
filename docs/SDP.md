@@ -156,7 +156,9 @@ sending-only remote proposes payload types, which str0m can remap as described a
 If a receiving remote offers several compatible payloads, the one using the
 locked PT takes precedence over a closer fmtp match at a different PT. All
 mandatory mappings are checked first: a compatible alternative cannot hide
-another offered PT that conflicts with a locked codec or RTX/RED role.
+another offered PT that conflicts with a locked codec or RTX/RED role. Declared
+associations are checked before unsupported codecs are filtered out, so they
+cannot hide a conflicting use of an established PT either.
 
 Codec updates for a new m-line are committed together after all its payloads
 validate. A rejected payload must not leave earlier payloads from that m-line
