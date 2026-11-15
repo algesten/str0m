@@ -659,8 +659,10 @@ impl PayloadParams {
             return Ok(());
         };
 
-        if self.locked {
-            return self.lock_param(first, claimed, local_is_controlling, unlocked);
+        let was_locked = self.locked;
+        self.lock_param(first, claimed, local_is_controlling, unlocked)?;
+        if was_locked {
+            return Ok(());
         }
 
         // The first negotiated m-line determines TWCC support for this PT.
@@ -759,7 +761,7 @@ impl PayloadParams {
             self.spec.format.mode_set = self.spec.format.mode_set.or(remote.format.mode_set);
         }
 
-        self.lock_param(first, claimed, local_is_controlling, unlocked)
+        Ok(())
     }
 
     fn lock_param(
