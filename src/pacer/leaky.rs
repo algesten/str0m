@@ -163,10 +163,11 @@ impl Pacer for LeakyBucketPacer {
     }
 }
 
+/// Default for how long the average packet may wait in the queue.
+pub(crate) const DEFAULT_QUEUE_LIMIT: Duration = Duration::from_secs(2);
+
 impl LeakyBucketPacer {
     pub fn new(initial_pacing_bitrate: Bitrate) -> Self {
-        const DEFAULT_QUEUE_LIMIT: Duration = Duration::from_secs(2);
-
         Self {
             pacing_bitrate: initial_pacing_bitrate,
             adjusted_bitrate: Bitrate::ZERO,
@@ -183,6 +184,11 @@ impl LeakyBucketPacer {
             completed_probe: None,
             needs_timeout_before_next_poll: true,
         }
+    }
+
+    /// Set the longest the average packet can spend in the queue before we force it to be drained.
+    pub(crate) fn set_queue_limit(&mut self, queue_limit: Duration) {
+        self.queue_limit = queue_limit;
     }
 
     /// Start executing a probe cluster.
@@ -522,6 +528,49 @@ mod test {
                 .handle_timeout(deadline, std::iter::once(queue))
                 .is_some()
         );
+    }
+
+    #[test]
+    fn short_queue_limit_drains_queue_within_limit() {
+        // Time to send 20 x 1000 bytes with a pacing rate of 80 kbit/s and the given queue limit.
+        fn drain_time(queue_limit: Duration) -> Duration {
+            let base = Instant::now();
+            let mut queue = Queue::default();
+            let mut pacer = LeakyBucketPacer::new(Bitrate::kbps(80));
+            pacer.set_queue_limit(queue_limit);
+            handle_timeout_noisy(&mut pacer, &mut queue, base);
+
+            for seq_no in 0..20 {
+                let (header, payload_len, kind) = make_packet(seq_no, 1000, PacketKind::Video);
+                queue.enqueue_packet(QueuedPacket {
+                    queued_at: base,
+                    header,
+                    payload_len,
+                    kind,
+                });
+            }
+
+            let mut now = base;
+            while !queue.is_empty() {
+                handle_timeout_noisy(&mut pacer, &mut queue, now);
+                if let Some((midrid, _)) = pacer.poll_queue() {
+                    let packet = queue.next_packet().unwrap();
+                    queue.register_send(midrid, now);
+                    pacer.register_send(now, DataSize::bytes(packet.payload_len as i64), midrid);
+                    continue;
+                }
+                now = pacer.poll_timeout().0.unwrap().max(now);
+                assert!(now - base < Duration::from_secs(10), "queue never drained");
+            }
+            now - base
+        }
+
+        // 160 kbit at 80 kbit/s takes 2 s without help.
+        let default_limit = drain_time(DEFAULT_QUEUE_LIMIT);
+        let short_limit = drain_time(duration_ms(100));
+
+        assert!(default_limit > duration_ms(1500), "{default_limit:?}");
+        assert!(short_limit < duration_ms(300), "{short_limit:?}");
     }
 
     #[test]

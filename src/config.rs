@@ -45,6 +45,7 @@ pub struct RtcConfig {
     pub(crate) intervals: RtcpReportIntervals,
     pub(crate) bwe_config: Option<BweConfig>,
     pub(crate) bwe_smoothing: bool,
+    pub(crate) pacer_queue_limit: Duration,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
     pub(crate) reordering_timeout_audio: Option<Duration>,
@@ -529,6 +530,34 @@ impl RtcConfig {
         self.bwe_smoothing
     }
 
+    /// Sets how long the average packet may wait in the send pacer queue.
+    ///
+    /// When the queue holds more than this, the pacer sends faster than the bandwidth
+    /// estimate to drain it. A low-latency sender can set this to tens of milliseconds
+    /// and let its encoder follow the estimate instead of building up a queue.
+    ///
+    /// Only applies when BWE is enabled with [`Self::enable_bwe()`]. Defaults to 2 seconds.
+    pub fn set_pacer_queue_limit(mut self, limit: Duration) -> Self {
+        self.pacer_queue_limit = limit;
+        self
+    }
+
+    /// Returns the setting of [`Self::set_pacer_queue_limit()`].
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// # use std::time::Duration;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 2 seconds.
+    /// assert_eq!(config.pacer_queue_limit(), Duration::from_secs(2));
+    /// let config = config.set_pacer_queue_limit(Duration::from_millis(50));
+    /// assert_eq!(config.pacer_queue_limit(), Duration::from_millis(50));
+    /// ```
+    pub fn pacer_queue_limit(&self) -> Duration {
+        self.pacer_queue_limit
+    }
+
     /// Sets the number of packets held back for reordering audio packets.
     ///
     /// Str0m tries to deliver the frames in order. This number determines how many
@@ -926,6 +955,7 @@ impl Default for RtcConfig {
             },
             bwe_config: None,
             bwe_smoothing: true,
+            pacer_queue_limit: crate::pacer::DEFAULT_QUEUE_LIMIT,
             reordering_size_audio: 15,
             reordering_size_video: 30,
             reordering_timeout_audio: Some(Duration::from_secs(1)),

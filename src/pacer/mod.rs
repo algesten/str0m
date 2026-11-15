@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::Reason;
 use crate::bwe_::ProbeClusterConfig;
@@ -11,6 +11,7 @@ mod null;
 use null::NullPacer;
 
 mod leaky;
+pub(crate) use leaky::DEFAULT_QUEUE_LIMIT;
 use leaky::LeakyBucketPacer;
 
 mod queue;
@@ -23,8 +24,10 @@ pub(crate) enum PacerImpl {
 }
 
 impl PacerImpl {
-    pub fn leaky_bucket(rate: Bitrate) -> PacerImpl {
-        PacerImpl::LeakyBucket(LeakyBucketPacer::new(rate))
+    pub fn leaky_bucket(rate: Bitrate, queue_limit: Duration) -> PacerImpl {
+        let mut pacer = LeakyBucketPacer::new(rate);
+        pacer.set_queue_limit(queue_limit);
+        PacerImpl::LeakyBucket(pacer)
     }
 
     pub fn null() -> PacerImpl {
