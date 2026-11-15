@@ -34,7 +34,7 @@ use crate::rtp_::SeqNo;
 use crate::rtp_::SeqNoWindow;
 use crate::rtp_::{Bitrate, ExtensionMap, Goodbye, Mid, ReportList, Rtcp, RtcpFb};
 use crate::rtp_::{Dlrr, DlrrItem, ExtendedReport, ReportBlock};
-use crate::rtp_::{RtpHeader, SessionId, TwccPacketId, extend_u16};
+use crate::rtp_::{RtpHeader, SessionId, TwccPacketId};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
@@ -729,9 +729,9 @@ impl Session {
 
         // Mark as received for TWCC purposes
         if let Some(transport_cc) = header.ext_vals.transport_cc {
-            let prev = self.twcc_rx_register.max_seq();
-            let extended = extend_u16(prev.map(|s| *s), transport_cc);
-            self.twcc_rx_register.update_seq(extended.into(), now);
+            if let Some(seq) = self.twcc_rx_register.extend_seq(transport_cc) {
+                self.twcc_rx_register.update_seq(seq, now);
+            }
         }
 
         // Store largest seen seq_no for the SSRC. This is used in case we get SSRC changes
