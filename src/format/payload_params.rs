@@ -669,37 +669,7 @@ impl PayloadParams {
 
         // Validate the locked mapping before negotiating fmtp, so rejected updates
         // cannot change established parameters. Send-only remotes propose their PTs.
-        if self.locked {
-            if !local_is_controlling && self.pt != first.pt {
-                return Err(format!(
-                    "Remote changed locked payload type {} to {}",
-                    self.pt, first.pt
-                ));
-            }
-
-            if !local_is_controlling && self.resend != first.resend {
-                return Err(format!(
-                    "Remote changed RTX for locked payload type {}",
-                    self.pt
-                ));
-            }
-
-            // Cached packetizers and depacketizers cannot change their packet layout.
-            // This applies to send-only remotes too, even though their PTs are suggestions.
-            let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
-            let remote_donl = first
-                .spec
-                .format
-                .sprop_max_don_diff
-                .map(|diff| diff > 0)
-                .unwrap_or(local_donl);
-            if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
-                return Err(format!(
-                    "Remote changed DONL for locked payload type {}",
-                    self.pt
-                ));
-            }
-        }
+        self.validate_locked_mapping(first, local_is_controlling)?;
 
         // The first negotiated m-line determines TWCC support for this PT.
         if !self.locked {
@@ -918,6 +888,48 @@ impl PayloadParams {
             // This is now locked.
             self.locked = true;
         }
+        Ok(())
+    }
+
+    fn validate_locked_mapping(
+        &self,
+        first: &PayloadParams,
+        local_is_controlling: bool,
+    ) -> Result<(), String> {
+        if !self.locked {
+            return Ok(());
+        }
+
+        if !local_is_controlling && self.pt != first.pt {
+            return Err(format!(
+                "Remote changed locked payload type {} to {}",
+                self.pt, first.pt
+            ));
+        }
+
+        if !local_is_controlling && self.resend != first.resend {
+            return Err(format!(
+                "Remote changed RTX for locked payload type {}",
+                self.pt
+            ));
+        }
+
+        // Cached packetizers and depacketizers cannot change their packet layout.
+        // This applies to send-only remotes too, even though their PTs are suggestions.
+        let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+        let remote_donl = first
+            .spec
+            .format
+            .sprop_max_don_diff
+            .map(|diff| diff > 0)
+            .unwrap_or(local_donl);
+        if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
+            return Err(format!(
+                "Remote changed DONL for locked payload type {}",
+                self.pt
+            ));
+        }
+
         Ok(())
     }
 }
