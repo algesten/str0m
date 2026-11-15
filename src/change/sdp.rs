@@ -1153,10 +1153,12 @@ fn add_new_lines(
             let is_rejected = m.disabled && !is_in_bundle;
             media.need_open_event = is_offer && !is_rejected;
 
-            // Match/remap remote params.
-            session
-                .codec_config
-                .update_params(&m.rtp_params(), m.direction())?;
+            // Rejected sections do not participate in codec negotiation.
+            if !is_rejected {
+                session
+                    .codec_config
+                    .update_params(&m.rtp_params(), m.direction())?;
+            }
 
             // Remap the extension to that of the answer.
             session.exts.remap(&m.extmaps());
@@ -2698,5 +2700,75 @@ mod test {
         let invalid = valid.replacen("a=fmtp:100 profile-id=2\r\n", "", 1);
         let answer = SdpAnswer::from_sdp_string(&invalid).unwrap();
         assert!(offerer.sdp_api().accept_answer(pending, answer).is_err());
+    }
+    #[test]
+    fn rejected_section_does_not_negotiate_codecs() {
+        crate::init_crypto_default();
+        for bundled in [false, true] {
+            let now = Instant::now();
+            let mut offerer = Rtc::new(now);
+            let mut answerer = Rtc::new(now);
+            let mut change = offerer.sdp_api();
+            change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+            change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+            let (offer, _) = change.apply().unwrap();
+            let mut sdp = offer.into_inner();
+            let second = &mut sdp.media_lines[1];
+            second.disabled = true;
+            let rtx_pts: Vec<_> = second
+                .attrs
+                .iter()
+                .filter_map(|attr| match attr {
+                    MediaAttribute::RtpMap { pt, value }
+                        if value.codec == crate::format::Codec::Rtx =>
+                    {
+                        Some(*pt)
+                    }
+                    _ => None,
+                })
+                .collect();
+            second.pts.retain(|pt| !rtx_pts.contains(pt));
+            second.attrs.retain(|attr| {
+                !matches!(attr,
+                MediaAttribute::Fmtp { pt, .. } if rtx_pts.contains(pt))
+            });
+            second.attrs.retain(|attr| {
+                !matches!(attr,
+                MediaAttribute::RtpMap { value, .. } if value.codec == crate::format::Codec::Rtx)
+            });
+            let mid = second.mid();
+            if !bundled {
+                for attr in &mut sdp.session.attrs {
+                    if let SessionAttribute::Group { mids, .. } = attr {
+                        mids.retain(|m| *m != mid);
+                    }
+                }
+            }
+            let offer = SdpOffer::from_sdp_string(&sdp.to_string()).unwrap();
+            let result = answerer.sdp_api().accept_offer(offer);
+            assert_eq!(result.is_ok(), !bundled);
+        }
+    }
+    #[test]
+    fn redundant_rtx_associations_do_not_hide_mapping_changes() {
+        crate::init_crypto_default();
+        for conflicting in [false, true] {
+            let now = Instant::now();
+            let mut offerer = Rtc::new(now);
+            let mut answerer = Rtc::new(now);
+            let mut change = offerer.sdp_api();
+            change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+            change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+            let (offer, _) = change.apply().unwrap();
+            let mut sdp = offer
+                .to_sdp_string()
+                .replace("a=fmtp:99 apt=98", "a=fmtp:99 apt=96");
+            if conflicting {
+                let (head, tail) = sdp.rsplit_once("a=fmtp:97 apt=96").unwrap();
+                sdp = format!("{head}a=fmtp:97 apt=98{tail}");
+            }
+            let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+            assert_eq!(answerer.sdp_api().accept_offer(offer).is_err(), conflicting);
+        }
     }
 }

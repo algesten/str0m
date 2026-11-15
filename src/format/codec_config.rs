@@ -765,6 +765,74 @@ mod test {
     use crate::format::{CodecSpec, FormatParams};
 
     #[test]
+    fn rejected_locked_video_update_preserves_parameters() {
+        for codec in [Codec::H265, Codec::H266] {
+            let params = PayloadParams::new(
+                102.into(),
+                None,
+                CodecSpec {
+                    codec,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        profile_id: Some(1),
+                        ..Default::default()
+                    },
+                },
+            );
+            let mut config = CodecConfig::new_from_payload_params(vec![params]);
+            config
+                .update_params(&[params], Direction::RecvOnly)
+                .unwrap();
+            let before = config.params.clone();
+            let mut remote = params;
+            remote.pt = 103.into();
+            remote.spec.format.sprop_max_don_diff = Some(1);
+            assert!(
+                config
+                    .update_params(&[remote], Direction::RecvOnly)
+                    .is_err()
+            );
+            assert_eq!(config.params, before);
+        }
+    }
+
+    #[test]
+    fn locked_video_rejects_donl_change() {
+        for codec in [Codec::H265, Codec::H266] {
+            let params = PayloadParams::new(
+                102.into(),
+                None,
+                CodecSpec {
+                    codec,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        profile_id: Some(1),
+                        ..Default::default()
+                    },
+                },
+            );
+            let mut config = CodecConfig::new_from_payload_params(vec![params]);
+            config
+                .update_params(&[params], Direction::RecvOnly)
+                .unwrap();
+            let mut remote = params;
+            remote.spec.format.sprop_max_don_diff = Some(0);
+            config
+                .update_params(&[remote], Direction::RecvOnly)
+                .unwrap();
+            remote.spec.format.sprop_max_don_diff = Some(1);
+            assert!(
+                config
+                    .update_params(&[remote], Direction::RecvOnly)
+                    .is_err()
+            );
+            assert_eq!(config.params[0], params);
+        }
+    }
+
+    #[test]
     fn transport_cc_uses_first_section_and_preserves_local_capability() {
         for direction in [Direction::SendOnly, Direction::RecvOnly] {
             for local_enabled in [false, true] {
