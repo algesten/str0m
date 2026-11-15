@@ -643,6 +643,7 @@ impl PayloadParams {
         local_is_controlling: bool,
         unlocked: &mut HashSet<Pt>,
     ) -> Result<(), String> {
+        self.validate_locked_offers(remote_pts, local_is_controlling)?;
         let prefer_locked_pt = self.locked && !local_is_controlling;
         let Some((first, _)) = remote_pts
             .iter()
@@ -875,6 +876,35 @@ impl PayloadParams {
 
         // This is now locked.
         self.locked = true;
+        Ok(())
+    }
+
+    fn validate_locked_offers(
+        &self,
+        remote_pts: &[PayloadParams],
+        local_is_controlling: bool,
+    ) -> Result<(), String> {
+        if !self.locked || local_is_controlling {
+            return Ok(());
+        }
+
+        // Check every mandatory mapping before selecting a candidate. A compatible
+        // alternative must not hide reuse of a locked PT for another codec or role.
+        for remote in remote_pts {
+            let changes_codec = remote.pt == self.pt && self.match_score(remote).is_none();
+            let changes_role = Some(remote.pt) == self.resend
+                || Some(remote.pt) == self.red
+                || (remote.pt != self.pt
+                    && remote.resend.is_some_and(|rtx| {
+                        rtx == self.pt || Some(rtx) == self.resend || Some(rtx) == self.red
+                    }));
+            if changes_codec || changes_role {
+                return Err(format!(
+                    "Remote reused locked payload mapping {} for another codec or role",
+                    self.pt
+                ));
+            }
+        }
         Ok(())
     }
 

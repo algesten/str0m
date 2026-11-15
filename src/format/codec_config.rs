@@ -876,6 +876,32 @@ mod test {
     }
 
     #[test]
+    fn locked_payload_roles_cannot_be_hidden_by_an_alternative() {
+        let mut config = CodecConfig::empty();
+        config.enable_vp8(true);
+        let first = config.params[0];
+        config.update_params(&[first], Direction::RecvOnly).unwrap();
+        let before = config.params.clone();
+        for (pt, resend) in [
+            (97, None),      // A primary codec cannot use the locked RTX PT.
+            (100, Some(97)), // The locked RTX cannot repair another primary PT.
+            (100, Some(96)), // The locked primary cannot become RTX.
+        ] {
+            let mut alternative = first;
+            alternative.pt = pt.into();
+            alternative.resend = resend.map(Into::into);
+            for remote in [[first, alternative], [alternative, first]] {
+                for direction in [Direction::RecvOnly, Direction::SendRecv] {
+                    assert!(config.update_params(&remote, direction).is_err());
+                    assert_eq!(config.params, before);
+                }
+                config.update_params(&remote, Direction::SendOnly).unwrap();
+                assert_eq!(config.params, before);
+            }
+        }
+    }
+
+    #[test]
     fn locked_video_selects_compatible_send_only_layout() {
         let mut errors = Vec::new();
         for codec in [Codec::H265, Codec::H266] {
