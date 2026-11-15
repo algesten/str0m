@@ -1,6 +1,7 @@
 # Unreleased
 
   * Read TWCC deltas after a run of large deltas from the right offset #1144
+  * Skip zero-length TWCC run chunks instead of panicking #1143
   * Ignore remote ICE candidates and STUN messages with port 0 or an unspecified IP #1148
   * Write and read the `color-space` RTP header extension #1135
   * Exclude recovered RTX packets from primary stream jitter reports #1121
