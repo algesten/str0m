@@ -52,6 +52,13 @@ impl Sdp {
         })
     }
 
+    fn transport_media(&self) -> Option<&MediaLine> {
+        let Some(mid) = self.bundle_mids().and_then(|mids| mids.first()) else {
+            return self.media_lines.first();
+        };
+        self.media_lines.iter().find(|m| m.mid() == *mid)
+    }
+
     pub(crate) fn assert_consistency(&self) -> Result<(), SdpError> {
         match self.do_assert_consistency() {
             None => Ok(()),
@@ -60,15 +67,23 @@ impl Sdp {
     }
 
     pub(crate) fn fingerprint(&self) -> Option<Fingerprint> {
-        self.session
-            .fingerprint()
-            .or_else(|| self.media_lines.iter().find_map(|m| m.fingerprint()))
+        self.transport_media()
+            .and_then(MediaLine::fingerprint)
+            .or_else(|| self.session.fingerprint())
     }
 
     pub(crate) fn ice_creds(&self) -> Option<IceCreds> {
-        self.session
-            .ice_creds()
-            .or_else(|| self.media_lines.iter().find_map(|m| m.ice_creds()))
+        let media = self.transport_media();
+        let ufrag = media
+            .and_then(MediaLine::ice_ufrag)
+            .or_else(|| self.session.ice_ufrag())?;
+        let pass = media
+            .and_then(MediaLine::ice_pwd)
+            .or_else(|| self.session.ice_pwd())?;
+        Some(IceCreds {
+            ufrag: ufrag.to_string(),
+            pass: pass.to_string(),
+        })
     }
 
     pub(crate) fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
@@ -96,9 +111,9 @@ impl Sdp {
     }
 
     pub(crate) fn setup(&self) -> Option<Setup> {
-        self.session
-            .setup()
-            .or_else(|| self.media_lines.iter().find_map(|m| m.setup()))
+        self.transport_media()
+            .and_then(MediaLine::setup)
+            .or_else(|| self.session.setup())
     }
 
     fn do_assert_consistency(&self) -> Option<String> {
@@ -122,13 +137,7 @@ impl Sdp {
             }
         }
 
-        let group = self
-            .session
-            .attrs
-            .iter()
-            .find(|a| matches!(a, SessionAttribute::Group { .. }));
-
-        if let Some(SessionAttribute::Group { mids, .. }) = group {
+        if let Some(mids) = self.bundle_mids() {
             // For str0m's single BUNDLE transport, expect participating m-lines in
             // media-section order, as libwebrtc generates offers and answers in
             // pc/media_session.cc, omitting rejected sections from the group.
@@ -196,25 +205,29 @@ impl Session {
     }
 
     pub fn ice_creds(&self) -> Option<IceCreds> {
-        let ufrag = self.attrs.iter().find_map(|m| {
-            if let SessionAttribute::IceUfrag(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        let pass = self.attrs.iter().find_map(|m| {
-            if let SessionAttribute::IcePwd(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
         Some(IceCreds {
-            ufrag: ufrag.to_string(),
-            pass: pass.to_string(),
+            ufrag: self.ice_ufrag()?.to_string(),
+            pass: self.ice_pwd()?.to_string(),
+        })
+    }
+
+    fn ice_ufrag(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
+            if let SessionAttribute::IceUfrag(v) = m {
+                Some(v.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn ice_pwd(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
+            if let SessionAttribute::IcePwd(v) = m {
+                Some(v.as_str())
+            } else {
+                None
+            }
         })
     }
 
@@ -586,25 +599,29 @@ impl MediaLine {
     }
 
     pub fn ice_creds(&self) -> Option<IceCreds> {
-        let ufrag = self.attrs.iter().find_map(|m| {
-            if let MediaAttribute::IceUfrag(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        let pass = self.attrs.iter().find_map(|m| {
-            if let MediaAttribute::IcePwd(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
         Some(IceCreds {
-            ufrag: ufrag.to_string(),
-            pass: pass.to_string(),
+            ufrag: self.ice_ufrag()?.to_string(),
+            pass: self.ice_pwd()?.to_string(),
+        })
+    }
+
+    fn ice_ufrag(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
+            if let MediaAttribute::IceUfrag(v) = m {
+                Some(v.as_str())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn ice_pwd(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
+            if let MediaAttribute::IcePwd(v) = m {
+                Some(v.as_str())
+            } else {
+                None
+            }
         })
     }
     pub fn fingerprint(&self) -> Option<Fingerprint> {
@@ -1815,6 +1832,192 @@ mod test {
                 assert_eq!(parsed.fingerprint().unwrap().hash_func, expected);
             }
         }
+    }
+
+    fn sdp_with_transport_overrides(mask: u8) -> Sdp {
+        let header = concat!(
+            "v=0\r\n",
+            "o=- 1 1 IN IP4 127.0.0.1\r\n",
+            "s=-\r\n",
+            "t=0 0\r\n",
+            "a=group:BUNDLE 0\r\n",
+            "a=setup:passive\r\n",
+            "a=ice-ufrag:session\r\n",
+            "a=ice-pwd:session-password-12345678\r\n",
+        );
+        let session = format!("{header}a=fingerprint:sha-256 {}\r\n", ["11"; 32].join(":"));
+        let mut source =
+            format!("{session}m=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=mid:0\r\na=sendrecv\r\n");
+        if mask & 1 != 0 {
+            source.push_str(&format!(
+                "a=fingerprint:sha-256 {}\r\n",
+                ["22"; 32].join(":")
+            ));
+        }
+        if mask & 2 != 0 {
+            source.push_str("a=setup:active\r\n");
+        }
+        if mask & 4 != 0 {
+            source.push_str("a=ice-ufrag:media\r\n");
+        }
+        if mask & 8 != 0 {
+            source.push_str("a=ice-pwd:media-password-1234567890\r\n");
+        }
+        let sdp = Sdp::parse(&source).unwrap();
+        sdp.assert_consistency().unwrap();
+        sdp
+    }
+
+    #[test]
+    fn media_transport_fingerprint_overrides_session_default() {
+        for mask in 0..16 {
+            let sdp = sdp_with_transport_overrides(mask);
+            assert_eq!(
+                sdp.fingerprint().unwrap().bytes,
+                vec![if mask & 1 != 0 { 0x22 } else { 0x11 }; 32]
+            );
+        }
+    }
+
+    #[test]
+    fn media_transport_setup_overrides_session_default() {
+        for mask in 0..16 {
+            let sdp = sdp_with_transport_overrides(mask);
+            assert_eq!(
+                sdp.setup(),
+                Some(if mask & 2 != 0 {
+                    Setup::Active
+                } else {
+                    Setup::Passive
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn media_transport_ice_ufrag_overrides_session_default() {
+        for mask in 0..16 {
+            let creds = sdp_with_transport_overrides(mask).ice_creds().unwrap();
+            assert_eq!(creds.ufrag, if mask & 4 != 0 { "media" } else { "session" });
+        }
+    }
+
+    #[test]
+    fn media_transport_ice_password_overrides_session_default() {
+        for mask in 0..16 {
+            let creds = sdp_with_transport_overrides(mask).ice_creds().unwrap();
+            assert_eq!(
+                creds.pass,
+                if mask & 8 != 0 {
+                    "media-password-1234567890"
+                } else {
+                    "session-password-12345678"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn transport_ice_credentials_can_span_session_and_media() {
+        for (session, media, expected) in [
+            (
+                "a=ice-ufrag:session\r\n",
+                "a=ice-pwd:media-password-1234567890\r\n",
+                Some(("session", "media-password-1234567890")),
+            ),
+            (
+                "a=ice-pwd:session-password-12345678\r\n",
+                "a=ice-ufrag:media\r\n",
+                Some(("media", "session-password-12345678")),
+            ),
+            ("a=ice-ufrag:session\r\n", "", None),
+            ("", "a=ice-pwd:media-password-1234567890\r\n", None),
+        ] {
+            let source = format!(
+                "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n\
+                 a=group:BUNDLE 0\r\n{session}m=audio 9 UDP/TLS/RTP/SAVPF 0\r\n\
+                 a=mid:0\r\na=sendrecv\r\n{media}"
+            );
+            let sdp = Sdp::parse(&source).unwrap();
+            sdp.assert_consistency().unwrap();
+            let creds = sdp.ice_creds();
+            assert_eq!(
+                creds.as_ref().map(|c| (c.ufrag.as_str(), c.pass.as_str())),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn transport_details_survive_empty_bundle_group() {
+        let source = format!(
+            "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n\
+             a=group:BUNDLE\r\nm=audio 0 UDP/TLS/RTP/SAVPF 0\r\na=mid:0\r\na=inactive\r\n\
+             a=ice-ufrag:stopped\r\na=ice-pwd:stopped-password-12345678\r\na=setup:passive\r\n\
+             a=fingerprint:sha-256 {}\r\n",
+            ["11"; 32].join(":"),
+        );
+        let sdp = Sdp::parse(&source).unwrap();
+        sdp.assert_consistency().unwrap();
+        assert_eq!(sdp.bundle_mids(), Some([].as_slice()));
+        let creds = sdp.ice_creds().unwrap();
+        assert_eq!(creds.ufrag, "stopped");
+        assert_eq!(creds.pass, "stopped-password-12345678");
+        assert_eq!(sdp.setup(), Some(Setup::Passive));
+        assert_eq!(sdp.fingerprint().unwrap().bytes, vec![0x11; 32]);
+    }
+
+    #[test]
+    fn bundle_consistency_ignores_other_group_types() {
+        let source = concat!(
+            "v=0\r\n",
+            "o=- 1 1 IN IP4 127.0.0.1\r\n",
+            "s=-\r\n",
+            "c=IN IP4 127.0.0.1\r\n",
+            "t=0 0\r\n",
+            "a=group:LS 0\r\n",
+            "a=group:BUNDLE 0 1\r\n",
+            "m=audio 10000 UDP/TLS/RTP/SAVPF 0\r\n",
+            "a=mid:0\r\n",
+            "a=sendrecv\r\n",
+            "m=audio 10002 UDP/TLS/RTP/SAVPF 0\r\n",
+            "a=mid:1\r\n",
+            "a=sendrecv\r\n",
+        );
+        let sdp = Sdp::parse(source).unwrap();
+        sdp.assert_consistency().unwrap();
+    }
+
+    #[test]
+    fn bundle_transport_ignores_other_media_attributes() {
+        let header = concat!(
+            "v=0\r\n",
+            "o=- 1 1 IN IP4 127.0.0.1\r\n",
+            "s=-\r\n",
+            "t=0 0\r\n",
+            "a=group:BUNDLE 0 1\r\n",
+            "a=setup:active\r\n",
+            "a=ice-ufrag:session\r\n",
+            "a=ice-pwd:session-password-12345678\r\n",
+        );
+        let session = format!("{header}a=fingerprint:sha-256 {}\r\n", ["11"; 32].join(":"));
+        let other = format!(
+            "a=setup:passive\r\na=ice-ufrag:other\r\na=ice-pwd:other-password-1234567890\r\n\
+             a=fingerprint:sha-256 {}\r\n",
+            ["33"; 32].join(":"),
+        );
+        let source = format!(
+            "{session}m=audio 0 UDP/TLS/RTP/SAVPF 0\r\na=mid:rejected\r\na=inactive\r\n{other}\
+             m=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=mid:0\r\na=sendrecv\r\n\
+             m=audio 9 UDP/TLS/RTP/SAVPF 0\r\na=mid:1\r\na=sendrecv\r\n{other}"
+        );
+        let sdp = Sdp::parse(&source).unwrap();
+        sdp.assert_consistency().unwrap();
+        assert_eq!(sdp.fingerprint().unwrap().bytes, vec![0x11; 32]);
+        assert_eq!(sdp.setup(), Some(Setup::Active));
+        let creds = sdp.ice_creds().unwrap();
+        assert_eq!(creds.ufrag, "session");
+        assert_eq!(creds.pass, "session-password-12345678");
     }
 
     #[test]
