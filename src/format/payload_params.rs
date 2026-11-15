@@ -26,7 +26,7 @@ pub(crate) const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
 ];
 
 pub(crate) trait Claimed {
-    fn claim(&mut self, pt: Pt) -> Result<(), String>;
+    fn assert_claim_once(&mut self, pt: Pt) -> Result<(), String>;
     fn is_claimed(&self, pt: Pt) -> bool;
     fn find_unclaimed(
         &self,
@@ -36,7 +36,7 @@ pub(crate) trait Claimed {
 }
 
 impl Claimed for [bool; 128] {
-    fn claim(&mut self, pt: Pt) -> Result<(), String> {
+    fn assert_claim_once(&mut self, pt: Pt) -> Result<(), String> {
         let idx = *pt as usize;
         if self[idx] {
             return Err(format!("Payload type {pt} is already locked"));
@@ -810,7 +810,7 @@ impl PayloadParams {
             }
 
             // Lock down the PT
-            claimed.claim(remote_pt)?;
+            claimed.assert_claim_once(remote_pt)?;
             self.pt = remote_pt;
 
             // Check if RTX PT also conflicts
@@ -835,7 +835,7 @@ impl PayloadParams {
 
             // Lock down the RTX PT
             if let Some(rtx) = remote_rtx {
-                claimed.claim(rtx)?;
+                claimed.assert_claim_once(rtx)?;
             }
             self.resend = remote_rtx;
 
@@ -872,7 +872,7 @@ impl PayloadParams {
             }
             self.red = remote_red;
             if let Some(red) = remote_red {
-                claimed.claim(red)?;
+                claimed.assert_claim_once(red)?;
             }
 
             // This is now locked.
