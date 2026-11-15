@@ -1077,10 +1077,8 @@ impl StreamTx {
                 // Packet was not available in RTX cache, it has probably expired.
                 continue;
             };
-            if cached
-                .last_resend
-                .is_some_and(|at| now.saturating_duration_since(at) < window)
-            {
+            let resent_within_rtt = |at| now.saturating_duration_since(at) < window;
+            if cached.last_resend.is_some_and(resent_within_rtt) {
                 continue;
             }
 
