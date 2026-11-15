@@ -537,24 +537,16 @@ impl CodecConfig {
         remote_params: PayloadParams,
         remote_dir: Direction,
     ) -> Option<Pt> {
+        // If we have no matching parameters locally, we can't accept the remote in any way.
+        let our_params = self.match_params(remote_params)?;
+
         if remote_dir.sdp_is_receiving() {
-            // A compatible codec at a different PT cannot satisfy the remote's receive mapping.
-            let matches = self
-                .params
-                .iter()
-                .any(|p| p.pt() == remote_params.pt() && p.match_score(&remote_params).is_some());
-            if !matches {
-                debug!(
-                    "Ignoring remote receive PT {} without matching local parameters",
-                    remote_params.pt()
-                );
-                return None;
-            }
+            // The remote is talking about its own receive requirements. The PTs are not suggestions.
             Some(remote_params.pt())
         } else {
             // We can override the remote with our local config. We would have adjusted to
             // the remote earlier if we can.
-            self.match_params(remote_params).map(PayloadParams::pt)
+            Some(our_params.pt())
         }
     }
 
@@ -610,7 +602,11 @@ impl CodecConfig {
             })
     }
 
-    pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams], remote_dir: Direction) {
+    pub(crate) fn update_params(
+        &mut self,
+        remote_params: &[PayloadParams],
+        remote_dir: Direction,
+    ) -> Result<(), String> {
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
 
@@ -654,7 +650,7 @@ impl CodecConfig {
                 &mut claimed,
                 local_is_controlling,
                 &mut unlocked,
-            );
+            )?;
         }
 
         // Make a pass to reassign unconfirmed payloads that have PT which are now claimed.
@@ -666,7 +662,7 @@ impl CodecConfig {
             if claimed.is_claimed(p.pt) {
                 let Some(pt) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
                     // TODO: handle this gracefully.
-                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                    return Err("Exhausted payload types during SDP negotiation".into());
                 };
 
                 debug!("Reassigned PT {} => {}", p.pt, pt);
@@ -702,7 +698,7 @@ impl CodecConfig {
             if claimed.is_claimed(rtx) {
                 let Some(rtx) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
                     // TODO: handle this gracefully.
-                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                    return Err("Exhausted payload types during SDP negotiation".into());
                 };
 
                 debug!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
@@ -712,6 +708,7 @@ impl CodecConfig {
                 unlocked.remove(&rtx);
             }
         }
+        Ok(())
     }
 
     pub(crate) fn has_pt(&self, pt: Pt) -> bool {
@@ -781,7 +778,7 @@ mod test {
                     let expected = local_enabled && sections[0];
                     for enabled in sections {
                         remote.set_fb_transport_cc(enabled);
-                        config.update_params(&[remote], direction);
+                        config.update_params(&[remote], direction).unwrap();
                         assert_eq!(config.params()[0].fb_transport_cc(), expected);
                     }
                 }
@@ -857,7 +854,9 @@ mod test {
         );
 
         let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_cn]);
-        config.update_params(&[remote_cn], Direction::SendOnly);
+        config
+            .update_params(&[remote_cn], Direction::SendOnly)
+            .unwrap();
 
         let cn = config
             .iter()
@@ -894,90 +893,15 @@ mod test {
         let remote_vp8 = PayloadParams::new(96.into(), Some(97.into()), vp8);
 
         let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_vp8]);
-        config.update_params(&[remote_vp8], Direction::SendOnly);
+        config
+            .update_params(&[remote_vp8], Direction::SendOnly)
+            .unwrap();
 
         let vp8 = config
             .iter()
             .find(|p| p.spec().codec == Codec::Vp8)
             .expect("configured VP8 payload");
         assert_eq!((*vp8.pt(), vp8.resend().map(|pt| *pt)), (110, Some(111)));
-    }
-
-    #[test]
-    fn remote_dictated_pt_collision_leaves_payload_unlocked() {
-        // The remote receives, so it dictates PTs, and gives VP8 the PT H264 locked. Locking
-        // it twice used to panic.
-        let mut claimed = PayloadParams::new(
-            96.into(),
-            Some(97.into()),
-            CodecSpec {
-                codec: Codec::H264,
-                clock_rate: Frequency::NINETY_KHZ,
-                channels: None,
-                format: FormatParams::default(),
-            },
-        );
-        claimed.locked = true;
-
-        let vp8 = CodecSpec {
-            codec: Codec::Vp8,
-            clock_rate: Frequency::NINETY_KHZ,
-            channels: None,
-            format: FormatParams::default(),
-        };
-        let local_vp8 = PayloadParams::new(110.into(), Some(111.into()), vp8);
-        let remote_vp8 = PayloadParams::new(96.into(), Some(98.into()), vp8);
-
-        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_vp8]);
-        config.update_params(&[remote_vp8], Direction::RecvOnly);
-
-        let vp8 = config
-            .iter()
-            .find(|p| p.spec().codec == Codec::Vp8)
-            .expect("configured VP8 payload");
-        assert!(!vp8.locked);
-        assert_eq!((*vp8.pt(), vp8.resend().map(|pt| *pt)), (110, Some(111)));
-        assert_eq!(
-            config.sdp_match_remote(remote_vp8, Direction::RecvOnly),
-            None,
-            "the answer must not advertise H264 under the remote's VP8 PT"
-        );
-    }
-
-    #[test]
-    fn remote_dictated_rtx_collision_drops_rtx() {
-        // The remote receives, so it dictates PTs, and gives VP8 the RTX PT H264 locked.
-        // Locking it twice used to panic.
-        let mut claimed = PayloadParams::new(
-            96.into(),
-            Some(97.into()),
-            CodecSpec {
-                codec: Codec::H264,
-                clock_rate: Frequency::NINETY_KHZ,
-                channels: None,
-                format: FormatParams::default(),
-            },
-        );
-        claimed.locked = true;
-
-        let vp8 = CodecSpec {
-            codec: Codec::Vp8,
-            clock_rate: Frequency::NINETY_KHZ,
-            channels: None,
-            format: FormatParams::default(),
-        };
-        let local_vp8 = PayloadParams::new(110.into(), Some(111.into()), vp8);
-        let remote_vp8 = PayloadParams::new(98.into(), Some(97.into()), vp8);
-
-        let mut config = CodecConfig::new_from_payload_params(vec![claimed, local_vp8]);
-        config.update_params(&[remote_vp8], Direction::RecvOnly);
-
-        let vp8 = config
-            .iter()
-            .find(|p| p.spec().codec == Codec::Vp8)
-            .expect("configured VP8 payload");
-        assert!(vp8.locked);
-        assert_eq!((*vp8.pt(), vp8.resend()), (98, None));
     }
 
     #[test]
@@ -1123,7 +1047,9 @@ mod test {
         let mut remote = CodecConfig::empty();
         remote.enable_opus(true, true);
 
-        local.update_params(remote.params(), Direction::SendRecv);
+        local
+            .update_params(remote.params(), Direction::SendRecv)
+            .unwrap();
 
         let opus = local
             .params()
@@ -1141,7 +1067,9 @@ mod test {
         let mut remote = CodecConfig::empty();
         remote.enable_opus(true, false); // remote does not offer RED
 
-        local.update_params(remote.params(), Direction::SendRecv);
+        local
+            .update_params(remote.params(), Direction::SendRecv)
+            .unwrap();
 
         let opus = local
             .params()
@@ -1171,7 +1099,9 @@ mod test {
         }
 
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            local.update_params(remote.params(), Direction::SendRecv);
+            local
+                .update_params(remote.params(), Direction::SendRecv)
+                .unwrap();
         }));
 
         assert!(
@@ -1229,7 +1159,9 @@ mod test {
             },
         )];
 
-        config.update_params(&remote_h264_params, Direction::RecvOnly);
+        config
+            .update_params(&remote_h264_params, Direction::RecvOnly)
+            .unwrap();
 
         // Verify PT 109 is now locked as RTX for H264
         assert!(
@@ -1252,7 +1184,9 @@ mod test {
             },
         )];
 
-        config.update_params(&remote_opus_params, Direction::SendOnly);
+        config
+            .update_params(&remote_opus_params, Direction::SendOnly)
+            .unwrap();
 
         // Verify the fix: Opus should be remapped to PT_OPUS (its default)
         let opus_param = config
@@ -1382,7 +1316,9 @@ mod test {
 
         // Process Chrome's offer - this locks the H264 PTs that Chrome offered
         // Chrome is SendOnly, so from our perspective we're receiving (recvonly)
-        config.update_params(&chrome_h264_params, Direction::SendOnly);
+        config
+            .update_params(&chrome_h264_params, Direction::SendOnly)
+            .unwrap();
 
         // Verify: Chrome's H264 profiles are locked at their specific PTs
         assert!(
@@ -1562,7 +1498,7 @@ mod test {
         let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
 
         // Direction::SendOnly = remote is sending (we receive)
-        config.update_params(&remote, Direction::SendOnly);
+        config.update_params(&remote, Direction::SendOnly).unwrap();
 
         let ptl = get_h265(&config)
             .spec()
@@ -1585,7 +1521,7 @@ mod test {
         let mut config = h265_config(1, 0, 156); // Level 5.2
         let remote = h265_remote_ptl(1, 0, 180); // Level 6.0
 
-        config.update_params(&remote, Direction::SendOnly);
+        config.update_params(&remote, Direction::SendOnly).unwrap();
 
         let ptl = get_h265(&config)
             .spec()
@@ -1608,7 +1544,7 @@ mod test {
         let mut config = h265_config(1, 0, 180); // Level 6.0
         let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let ptl = get_h265(&config)
             .spec()
@@ -1625,7 +1561,7 @@ mod test {
         let mut config = h265_config(1, 0, 156); // Level 5.2
         let remote = h265_remote_ptl(1, 0, 180); // Level 6.0
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let ptl = get_h265(&config)
             .spec()
@@ -1641,7 +1577,7 @@ mod test {
         let mut config = h265_config(1, 0, 156); // Level 5.2
         let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let ptl = get_h265(&config)
             .spec()
@@ -1661,7 +1597,7 @@ mod test {
         let remote = h265_remote_ptl(1, 0, 156); // Level 5.2
 
         // Direction::RecvOnly = remote is receiving (we send)
-        config.update_params(&remote, Direction::RecvOnly);
+        config.update_params(&remote, Direction::RecvOnly).unwrap();
 
         let ptl = get_h265(&config)
             .spec()
@@ -1682,7 +1618,7 @@ mod test {
         let mut config = h265_config(1, 0, 180); // Full PTL
         let remote = h265_remote_profile_only(1); // profile-id only
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let h265 = get_h265(&config);
         assert!(
@@ -1704,7 +1640,7 @@ mod test {
         let mut config = h265_config(1, 0, 180); // Full PTL
         let remote = h265_remote_no_fmtp();
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let h265 = get_h265(&config);
         assert!(
@@ -1742,7 +1678,7 @@ mod test {
         );
         let remote = h265_remote_ptl(1, 0, 156);
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let h265 = get_h265(&config);
         assert!(
@@ -1856,7 +1792,7 @@ mod test {
         let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
 
         // Direction::SendOnly = remote is sending (we receive)
-        config.update_params(&remote, Direction::SendOnly);
+        config.update_params(&remote, Direction::SendOnly).unwrap();
 
         let ptl = get_h266(&config)
             .spec()
@@ -1879,7 +1815,7 @@ mod test {
         let mut config = h266_config(1, 0, 64); // Level 4.0
         let remote = h266_remote_ptl(1, 0, 96); // Level 6.0
 
-        config.update_params(&remote, Direction::SendOnly);
+        config.update_params(&remote, Direction::SendOnly).unwrap();
 
         let ptl = get_h266(&config)
             .spec()
@@ -1902,7 +1838,7 @@ mod test {
         let mut config = h266_config(1, 0, 96); // Level 6.0
         let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let ptl = get_h266(&config)
             .spec()
@@ -1919,7 +1855,7 @@ mod test {
         let mut config = h266_config(1, 0, 64); // Level 4.0
         let remote = h266_remote_ptl(1, 0, 96); // Level 6.0
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let ptl = get_h266(&config)
             .spec()
@@ -1935,7 +1871,7 @@ mod test {
         let mut config = h266_config(1, 0, 64); // Level 4.0
         let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let ptl = get_h266(&config)
             .spec()
@@ -1955,7 +1891,7 @@ mod test {
         let remote = h266_remote_ptl(1, 0, 64); // Level 4.0
 
         // Direction::RecvOnly = remote is receiving (we send)
-        config.update_params(&remote, Direction::RecvOnly);
+        config.update_params(&remote, Direction::RecvOnly).unwrap();
 
         let ptl = get_h266(&config)
             .spec()
@@ -1976,7 +1912,7 @@ mod test {
         let mut config = h266_config(1, 0, 96); // Full PTL
         let remote = h266_remote_profile_only(1); // profile-id only
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let h266 = get_h266(&config);
         assert!(
@@ -1998,7 +1934,7 @@ mod test {
         let mut config = h266_config(1, 0, 96); // Full PTL
         let remote = h266_remote_no_fmtp();
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let h266 = get_h266(&config);
         assert!(
@@ -2034,7 +1970,7 @@ mod test {
         );
         let remote = h266_remote_ptl(1, 0, 64);
 
-        config.update_params(&remote, Direction::SendRecv);
+        config.update_params(&remote, Direction::SendRecv).unwrap();
 
         let h266 = get_h266(&config);
         assert!(

@@ -86,6 +86,8 @@ impl<'a> SdpApi<'a> {
     pub fn accept_offer(mut self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
         debug!("Accept offer");
 
+        validate_payload_mapping(&self.rtc.session, &offer)?;
+
         // Invalidate any outstanding PendingOffer.
         self.rtc.next_change_id();
 
@@ -186,6 +188,8 @@ impl<'a> SdpApi<'a> {
         if !self.rtc.is_correct_change_id(pending.change_id) {
             return Err(RtcError::ChangesOutOfOrder);
         }
+
+        validate_payload_mapping(&self.rtc.session, &answer)?;
 
         if self.rtc.ice.ice_lite() && answer.session.ice_lite() {
             return Err(RtcError::RemoteSdp(
@@ -910,6 +914,91 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     }
 }
 
+// Check the configuration before changing ICE, DTLS or session state. The codec
+// configuration is shared by all m-lines, so a PT cannot describe two formats.
+fn validate_payload_mapping(session: &Session, sdp: &Sdp) -> Result<(), RtcError> {
+    sdp.assert_consistency()?;
+    let mut seen = Vec::new();
+    let mut config = session.codec_config.clone();
+    for m in &sdp.media_lines {
+        if !m.typ.is_media() {
+            continue;
+        }
+        let params = m.rtp_params();
+        let active = !m.disabled || sdp.bundle_mids().is_some_and(|v| v.contains(&m.mid()));
+        for p in params.iter().filter(|_| active) {
+            if p.resend() == Some(p.pt())
+                || p.red() == Some(p.pt())
+                || (p.red().is_some() && p.red() == p.resend())
+            {
+                return Err(RtcError::RemoteSdp(format!(
+                    "Conflicting payload type {}",
+                    p.pt()
+                )));
+            }
+            for previous in &seen {
+                let previous: &crate::format::PayloadParams = previous;
+                if p.pt() == previous.pt() && p.match_score(previous).is_none() {
+                    return Err(RtcError::RemoteSdp(format!(
+                        "Conflicting codec for payload type {}",
+                        p.pt()
+                    )));
+                }
+                if p.resend().is_some()
+                    && p.resend() == previous.resend()
+                    && p.pt() != previous.pt()
+                {
+                    return Err(RtcError::RemoteSdp(format!(
+                        "Conflicting RTX payload type {}",
+                        p.resend().unwrap()
+                    )));
+                }
+                if (p.red().is_some() && p.red() == previous.red() && p.pt() != previous.pt())
+                    || p.red() == previous.resend() && p.red().is_some()
+                    || p.resend() == previous.red() && p.resend().is_some()
+                    || p.red() == Some(previous.pt())
+                    || previous.red() == Some(p.pt())
+                    || p.resend() == Some(previous.pt())
+                    || previous.resend() == Some(p.pt())
+                {
+                    return Err(RtcError::RemoteSdp(format!(
+                        "Conflicting payload type {}",
+                        p.pt()
+                    )));
+                }
+            }
+            seen.push(*p);
+        }
+        if !session.medias.iter().any(|media| media.mid() == m.mid()) {
+            if m.direction().sdp_is_receiving() {
+                for remote in &params {
+                    for local in config.iter().filter(|p| p.locked) {
+                        if remote.pt() == local.pt() && remote.match_score(local).is_none() {
+                            return Err(RtcError::RemoteSdp(format!(
+                                "Conflicting codec for payload type {}",
+                                remote.pt()
+                            )));
+                        }
+                        if remote.resend().is_some()
+                            && remote.resend() == local.resend()
+                            && remote.pt() != local.pt()
+                        {
+                            return Err(RtcError::RemoteSdp(format!(
+                                "Conflicting RTX payload type {}",
+                                remote.resend().unwrap()
+                            )));
+                        }
+                    }
+                }
+            }
+            config
+                .update_params(&params, m.direction())
+                .map_err(RtcError::RemoteSdp)?;
+        }
+    }
+    Ok(())
+}
+
 fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
     offer.assert_consistency()?;
 
@@ -1156,7 +1245,7 @@ fn add_new_lines(
             // Match/remap remote params.
             session
                 .codec_config
-                .update_params(&m.rtp_params(), m.direction());
+                .update_params(&m.rtp_params(), m.direction())?;
 
             // Remap the extension to that of the answer.
             session.exts.remap(&m.extmaps());
@@ -2658,23 +2747,49 @@ mod test {
 
         // Without its fmtp, PT 100 in the first m-line is VP9 profile 0 like PT 98, while it
         // stays profile 2 in the second. Accepting this used to panic.
-        let sdp = offer
-            .to_sdp_string()
-            .replacen("a=fmtp:100 profile-id=2\r\n", "", 1);
+        let valid_sdp = offer.to_sdp_string();
+        let sdp = valid_sdp.replacen("a=fmtp:100 profile-id=2\r\n", "", 1);
         let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
-        let offered: Vec<_> = offer.media_lines.iter().map(|m| m.rtp_params()).collect();
+        assert!(rtc2.sdp_api().accept_offer(offer).is_err());
+        let valid = SdpOffer::from_sdp_string(&valid_sdp).unwrap();
+        assert!(rtc2.sdp_api().accept_offer(valid).is_ok());
+    }
 
-        let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
-        for (media, offered) in answer.media_lines.iter().zip(offered) {
-            for answered in media.rtp_params() {
-                let remote = offered.iter().find(|p| p.pt() == answered.pt()).unwrap();
-                assert!(
-                    answered.match_score(remote).is_some(),
-                    "answer changed the codec configuration for PT {} in mid {}",
-                    answered.pt(),
-                    media.mid()
-                );
-            }
-        }
+    #[test]
+    fn offer_reusing_rtx_pt_for_another_codec_is_rejected() {
+        crate::init_crypto_default();
+        let now = Instant::now();
+        let mut offerer = Rtc::new(now);
+        let mut answerer = Rtc::new(now);
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+        let (offer, _) = change.apply().unwrap();
+        let valid = offer.to_sdp_string();
+        assert!(valid.contains("a=fmtp:97 apt=96\r\n"));
+        let invalid = valid
+            .replacen("a=fmtp:97 apt=96\r\n", "a=fmtp:97 apt=98\r\n", 1)
+            .replacen("a=fmtp:99 apt=98\r\n", "", 1);
+        let offer = SdpOffer::from_sdp_string(&invalid).unwrap();
+        assert!(answerer.sdp_api().accept_offer(offer).is_err());
+        let offer = SdpOffer::from_sdp_string(&valid).unwrap();
+        assert!(answerer.sdp_api().accept_offer(offer).is_ok());
+    }
+    #[test]
+    fn answer_reusing_pt_for_another_codec_config_is_rejected() {
+        crate::init_crypto_default();
+        let now = Instant::now();
+        let mut offerer = Rtc::new(now);
+        let mut answerer = Rtc::new(now);
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        let (offer, pending) = change.apply().unwrap();
+        let answer = answerer.sdp_api().accept_offer(offer).unwrap();
+        let valid = answer.to_sdp_string();
+        assert!(valid.contains("a=fmtp:100 profile-id=2\r\n"));
+        let invalid = valid.replacen("a=fmtp:100 profile-id=2\r\n", "", 1);
+        let answer = SdpAnswer::from_sdp_string(&invalid).unwrap();
+        assert!(offerer.sdp_api().accept_answer(pending, answer).is_err());
     }
 }

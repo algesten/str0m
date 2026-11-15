@@ -141,6 +141,12 @@ anything else. It's as if we collectively pretend that SHOULD is a MUST, and imp
 
 str0m does this too. Sauce for the goose…
 
+### Conflicting payload mappings
+
+str0m requires a payload type to describe a compatible codec configuration
+throughout the bundle. An offer or answer that reuses a payload type for
+incompatible codecs or RTX associations is rejected with an SDP error.
+
 ### TWCC feedback across m-lines
 
 str0m assumes `fb_transport_cc` is a per-PT capability shared across the

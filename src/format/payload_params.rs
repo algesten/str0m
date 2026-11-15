@@ -639,18 +639,21 @@ impl PayloadParams {
         claimed: &mut [bool; 128],
         local_is_controlling: bool,
         unlocked: &mut HashSet<Pt>,
-    ) {
+    ) -> Result<(), String> {
         let Some((first, _)) = remote_pts
             .iter()
-            // When the remote dictates the PTs, one that another local payload already locked
-            // can't be ours as well. One remote payload can match several local ones, like an
-            // unrestricted AMR-WB payload against several mode sets, and a remote can reuse a
-            // PT for another codec configuration in a later m-line. Leave those unlocked.
-            .filter(|p| self.locked || local_is_controlling || !claimed.is_claimed(p.pt))
+            // One unrestricted AMR-WB payload can match several local mode sets.
+            // Leave the other alternatives unlocked once its PT has been claimed.
+            .filter(|p| {
+                self.spec.codec != Codec::AmrWb
+                    || self.locked
+                    || local_is_controlling
+                    || !claimed.is_claimed(p.pt)
+            })
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
             .max_by_key(|(_, s)| *s)
         else {
-            return;
+            return Ok(());
         };
 
         // The first negotiated m-line determines TWCC support for this PT.
@@ -758,7 +761,7 @@ impl PayloadParams {
             // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
             // (receive-direction). We only want to warn if we get receive direction changes.
             if local_is_controlling {
-                return;
+                return Ok(());
             }
             // Just verify it's still the same. We should validate this in apply_offer/answer instead
             // of ever seeing this error message.
@@ -797,40 +800,43 @@ impl PayloadParams {
                     remote_pt = new_pt;
                     unlocked.remove(&new_pt);
                 } else {
-                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                    return Err("Exhausted payload types during SDP negotiation".into());
                 }
             }
 
             // Lock down the PT
+            if claimed.is_claimed(remote_pt) {
+                return Err(format!("Conflicting remote payload type {remote_pt}"));
+            }
             self.pt = remote_pt;
             claimed.assert_claim_once(remote_pt);
 
             // Check if RTX PT also conflicts
-            if let Some(rtx) = remote_rtx.filter(|rtx| claimed.is_claimed(*rtx)) {
-                if local_is_controlling {
-                    let new_rtx = self
-                        .resend
-                        .filter(|pt| !claimed.is_claimed(*pt))
-                        .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+            if local_is_controlling {
+                if let Some(rtx) = remote_rtx {
+                    if claimed.is_claimed(rtx) {
+                        let new_rtx = self
+                            .resend
+                            .filter(|pt| !claimed.is_claimed(*pt))
+                            .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
 
-                    if let Some(new_rtx) = new_rtx {
-                        debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
-                        remote_rtx = Some(new_rtx);
-                        unlocked.remove(&new_rtx);
-                    } else {
-                        panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                        if let Some(new_rtx) = new_rtx {
+                            debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
+                            remote_rtx = Some(new_rtx);
+                            unlocked.remove(&new_rtx);
+                        } else {
+                            return Err("Exhausted payload types during SDP negotiation".into());
+                        }
                     }
-                } else {
-                    // The remote dictated an RTX PT that is already taken. We can't reassign PTs
-                    // the remote controls, so go without RTX rather than claim it twice.
-                    debug!("Conflicting remote RTX PT {}; dropping it", rtx);
-                    remote_rtx = None;
                 }
             }
 
             // Lock down the RTX PT
             self.resend = remote_rtx;
             if let Some(rtx) = remote_rtx {
+                if claimed.is_claimed(rtx) {
+                    return Err(format!("Conflicting remote RTX payload type {rtx}"));
+                }
                 claimed.assert_claim_once(rtx);
             }
 
@@ -873,6 +879,7 @@ impl PayloadParams {
             // This is now locked.
             self.locked = true;
         }
+        Ok(())
     }
 }
 
@@ -923,7 +930,9 @@ mod test {
         let mut unlocked = HashSet::new();
 
         // local_is_controlling = true: we allocate PTs and may remap the conflict.
-        local.update_param(&[remote], &mut claimed, true, &mut unlocked);
+        local
+            .update_param(&[remote], &mut claimed, true, &mut unlocked)
+            .unwrap();
 
         let got = local.red.expect("RED is kept, remapped to a free PT");
         assert_ne!(
@@ -1444,12 +1453,14 @@ mod test {
             // Simulate SDP negotiation (update_param merges remote into local)
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
-            local_params.update_param(
-                &[remote_params],
-                &mut claimed,
-                false, // remote is controlling (we're answering)
-                &mut unlocked,
-            );
+            local_params
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false, // remote is controlling (we're answering)
+                    &mut unlocked,
+                )
+                .unwrap();
 
             // Verify sprop-max-don-diff was adopted from remote
             assert_eq!(
@@ -1527,7 +1538,9 @@ mod test {
 
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
-            local_params.update_param(&[remote_params], &mut claimed, false, &mut unlocked);
+            local_params
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .unwrap();
 
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
             let donl_enabled = local_params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
@@ -1574,7 +1587,9 @@ mod test {
 
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
-            local_params.update_param(&[remote_params], &mut claimed, false, &mut unlocked);
+            local_params
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .unwrap();
 
             // Local value should be preserved (remote didn't override)
             assert_eq!(
@@ -1914,12 +1929,14 @@ mod test {
             // Simulate SDP negotiation (update_param merges remote into local)
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
-            local_params.update_param(
-                &[remote_params],
-                &mut claimed,
-                false, // remote is controlling (we're answering)
-                &mut unlocked,
-            );
+            local_params
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false, // remote is controlling (we're answering)
+                    &mut unlocked,
+                )
+                .unwrap();
 
             // Verify sprop-max-don-diff was adopted from remote
             assert_eq!(
@@ -1999,7 +2016,9 @@ mod test {
 
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
-            local_params.update_param(&[remote_params], &mut claimed, false, &mut unlocked);
+            local_params
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .unwrap();
 
             // Local value should be preserved (remote didn't override)
             assert_eq!(
@@ -2030,7 +2049,9 @@ mod test {
 
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
-            local_params.update_param(&[remote_params], &mut claimed, false, &mut unlocked);
+            local_params
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .unwrap();
 
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
             let donl_enabled = local_params.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
@@ -2117,7 +2138,9 @@ mod test {
             };
             let remote = amr_wb(None, remote_format);
 
-            local.update_param(&[remote], &mut [false; 128], false, &mut HashSet::new());
+            local
+                .update_param(&[remote], &mut [false; 128], false, &mut HashSet::new())
+                .unwrap();
 
             assert_eq!(local.spec.channels, None);
             assert_eq!(local.spec.format, remote_format);
