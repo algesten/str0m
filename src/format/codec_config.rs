@@ -868,6 +868,46 @@ mod test {
     }
 
     #[test]
+    fn locked_video_selects_compatible_send_only_layout() {
+        let mut errors = Vec::new();
+        for codec in [Codec::H265, Codec::H266] {
+            let mut config = CodecConfig::empty();
+            let mut remote = CodecConfig::empty();
+            if codec == Codec::H265 {
+                config.add_h265(102.into(), Some(103.into()), 1, 0, 93);
+                remote.add_h265(104.into(), Some(105.into()), 1, 0, 180);
+            } else {
+                config.add_h266(102.into(), Some(103.into()), 1, 0, 51);
+                remote.add_h266(104.into(), Some(105.into()), 1, 0, 96);
+            }
+            let initial = config.params[0];
+            config
+                .update_params(&[initial], Direction::RecvOnly)
+                .unwrap();
+            let before = config.params.clone();
+            let compatible = remote.params[0];
+            // Send-only PTs are suggestions: this compatible layout can use our locked PT.
+            config
+                .update_params(&[compatible], Direction::SendOnly)
+                .unwrap();
+            assert_eq!(config.params, before);
+
+            let mut incompatible = initial;
+            incompatible.pt = 106.into();
+            incompatible.resend = Some(107.into());
+            incompatible.spec.format.sprop_max_don_diff = Some(1);
+            // The closer level must not make the incompatible layout displace the valid one.
+            for offered in [[compatible, incompatible], [incompatible, compatible]] {
+                if let Err(error) = config.update_params(&offered, Direction::SendOnly) {
+                    errors.push(format!("{codec:?}: {error}"));
+                }
+                assert_eq!(config.params, before);
+            }
+        }
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
     fn locked_video_rejects_send_only_donl_change() {
         for codec in [Codec::H265, Codec::H266] {
             let mut config = CodecConfig::empty();
