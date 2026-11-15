@@ -1160,6 +1160,7 @@ fn add_new_lines(
                 continue;
             }
 
+            // Match/remap remote params.
             session
                 .codec_config
                 .update_params(&m.rtp_params(), m.direction())?;
