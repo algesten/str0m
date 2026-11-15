@@ -1,6 +1,7 @@
 # Unreleased
 
   * Saturate VLA resolutions of 65536 instead of overflowing #1153
+  * Cap TWCC feedback runs at 8191 packets, longer runs were sent as zero-length runs #1150
   * Ignore TWCC sequence numbers that wrap back before 0 instead of overflowing #1152
   * Read TWCC deltas after a run of large deltas from the right offset #1144
   * Skip zero-length TWCC run chunks instead of panicking #1143
