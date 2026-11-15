@@ -27,6 +27,7 @@ use crate::util::value_history::ValueHistory;
 use crate::util::{InstantExt, already_happened, not_happening};
 
 use super::RtpPacket;
+use super::register_nack::DEFAULT_RTT;
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
 use super::send_stats::StreamTxStats;
@@ -884,13 +885,15 @@ impl StreamTx {
 
             // Cached packets must be nackable. This is ensured before adding the
             // entry to the self.rtx_cache.
-            assert!(pkt.nackable);
+            assert!(pkt.packet.nackable);
 
-            break pkt.seq_no;
+            break pkt.packet.seq_no;
         };
 
-        // Borrow checker gymnastics.
-        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
+        // Borrow checker gymnastics. Record the time only when the queued resend is polled.
+        let cached = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
+        cached.last_resend = Some(now);
+        let pkt = &mut cached.packet;
 
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, true);
@@ -1062,17 +1065,27 @@ impl StreamTx {
         let seq_no = self.rtx_cache.last_cached_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
+        let window = self.stats.rtt().unwrap_or(DEFAULT_RTT);
+
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
-            let Some(packet) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
+            // Keep a single queued resend even if pacing delays it beyond one RTT.
+            if self.resends.iter().any(|r| r.seq_no == seq_no) {
+                continue;
+            }
+            let Some(cached) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
                 // Packet was not available in RTX cache, it has probably expired.
                 continue;
             };
+            let resent_within_rtt = |at| now.saturating_duration_since(at) < window;
+            if cached.last_resend.is_some_and(resent_within_rtt) {
+                continue;
+            }
 
             let resend = Resend {
                 seq_no,
                 queued_at: now,
-                payload_size: packet.payload.len(),
+                payload_size: cached.packet.payload.len(),
             };
             self.resends.push_back(resend);
         }
@@ -1389,6 +1402,8 @@ struct Resend {
 
 #[cfg(test)]
 mod test {
+    use crate::util::SystemTimeExt;
+
     use super::*;
 
     #[test]
@@ -1434,6 +1449,96 @@ mod test {
             assert_eq!(header.ext_vals.transport_cc, Some(42));
             assert!(header.ssrc.is_probe());
             assert!(header.has_padding);
+        }
+    }
+
+    #[test]
+    fn repeated_nacks_resend_a_packet_once_per_round_trip() {
+        for measured_rtt in [
+            None,
+            Some(Duration::from_millis(20)),
+            Some(Duration::from_millis(250)),
+        ] {
+            let start = Instant::now();
+            let codecs = CodecConfig::new_with_defaults();
+            let pt = codecs
+                .params()
+                .iter()
+                .find(|p| p.resend().is_some())
+                .expect("a default codec with RTX")
+                .pt();
+            let exts = ExtensionMap::standard();
+            let mut streams =
+                crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+            let stream =
+                streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
+            stream.set_rtx_cache(100, Duration::from_secs(3), None);
+            if let Some(measured) = measured_rtt {
+                stream.stats.update_with_rr(
+                    start,
+                    9.into(),
+                    crate::rtp_::ReceptionReport {
+                        ssrc: 42.into(),
+                        fraction_lost: 0,
+                        packets_lost: 0,
+                        max_seq: 9,
+                        jitter: 0,
+                        last_sr_time: ((start - measured - Duration::from_secs(1))
+                            .to_system_time()
+                            .as_ntp_64()
+                            >> 16) as u32,
+                        last_sr_delay: 65_536,
+                    },
+                );
+                assert!(stream.stats.rtt().is_some());
+            }
+            let rtt = stream.stats.rtt().unwrap_or(DEFAULT_RTT);
+            let mut buf = vec![];
+            for i in 0..10_u64 {
+                let write = RtpWrite::new(pt, i.into(), 0, start, vec![0_u8; 1000]).nackable(true);
+                stream.write_rtp(write);
+                stream.send_queue.handle_timeout(start);
+                stream
+                    .poll_packet(start, &exts, None, codecs.params(), &mut buf)
+                    .expect("a queued packet to send");
+            }
+            let nack = |stream: &mut StreamTx, at: Instant| {
+                stream.handle_nack([NackEntry { pid: 3, blp: 0 }].into_iter(), at);
+            };
+
+            // A receiver repeats its NACK every few ms while the resend is under way.
+            for ms in [0, 5, 10, 500] {
+                nack(stream, start + Duration::from_millis(ms));
+            }
+            assert_eq!(stream.resends.len(), 1, "queued once, not once per NACK");
+
+            let sent = start + Duration::from_millis(500);
+            assert!(stream.poll_packet_resend(sent).is_some());
+            nack(stream, sent + rtt / 2);
+            assert!(
+                stream.resends.is_empty(),
+                "already resent within a round trip"
+            );
+
+            // After a round trip without the packet, the receiver may really need it again.
+            nack(stream, sent + rtt - Duration::from_nanos(1));
+            assert!(stream.resends.is_empty());
+            nack(stream, sent + rtt);
+            assert_eq!(stream.resends.len(), 1, "resent again after a round trip");
+            assert!(stream.poll_packet_resend(sent + rtt).is_some());
+            nack(stream, sent + rtt + Duration::from_millis(1));
+            assert!(
+                stream.resends.is_empty(),
+                "each resend restarts the RTT wait"
+            );
+
+            // An overlapping entry must queue another packet once without requeueing 3.
+            stream.handle_nack(
+                [NackEntry { pid: 3, blp: 1 }, NackEntry { pid: 4, blp: 0 }].into_iter(),
+                sent + rtt + Duration::from_millis(1),
+            );
+            assert_eq!(stream.resends.len(), 1);
+            assert_eq!(stream.resends[0].seq_no, 4.into());
         }
     }
 
@@ -1593,6 +1698,61 @@ mod test {
                 video: Duration::from_millis(500),
             }),
             now + Duration::from_millis(750)
+        );
+    }
+
+    #[test]
+    fn resend_history_is_retired_with_reset_buffers_and_ssrc() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        let pt = codecs
+            .params()
+            .iter()
+            .find(|p| p.resend().is_some())
+            .unwrap()
+            .pt();
+        let exts = ExtensionMap::standard();
+        let mut results = Vec::new();
+        for change_ssrc in [false, true] {
+            let mut streams =
+                crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+            let stream =
+                streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
+            stream.set_rtx_cache(100, Duration::from_secs(3), None);
+            let mut buf = Vec::new();
+            stream
+                .write_rtp(RtpWrite::new(pt, 3.into(), 0, start, vec![1_u8; 1000]).nackable(true));
+            stream.send_queue.handle_timeout(start);
+            stream
+                .poll_packet(start, &exts, None, codecs.params(), &mut buf)
+                .unwrap();
+            let resent_at = start + Duration::from_millis(10);
+            stream.handle_nack([NackEntry { pid: 3, blp: 0 }].into_iter(), resent_at);
+            let old_repair = stream
+                .poll_packet(resent_at, &exts, None, codecs.params(), &mut buf)
+                .unwrap();
+            assert_eq!(old_repair.header.ssrc, 44.into());
+            if change_ssrc {
+                stream.reset_ssrc(46.into(), Some(48.into()));
+            } else {
+                stream.reset_buffers();
+            }
+            let now = resent_at + Duration::from_millis(10);
+            stream.write_rtp(RtpWrite::new(pt, 3.into(), 0, now, vec![2_u8; 1000]).nackable(true));
+            stream.send_queue.handle_timeout(now);
+            let original = stream
+                .poll_packet(now, &exts, None, codecs.params(), &mut buf)
+                .unwrap();
+            let (ssrc, rtx) = if change_ssrc { (46, 48) } else { (42, 44) };
+            assert_eq!(original.header.ssrc, ssrc.into());
+            stream.handle_nack([NackEntry { pid: 3, blp: 0 }].into_iter(), now);
+            let repair = stream.poll_packet(now, &exts, None, codecs.params(), &mut buf);
+            results.push(repair.is_some_and(|packet| packet.header.ssrc == rtx.into()));
+        }
+        assert_eq!(
+            results,
+            [true, true],
+            "reset must retire the previous packet's resend history"
         );
     }
 }

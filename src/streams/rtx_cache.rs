@@ -13,12 +13,18 @@ const RTX_CACHE_QUANTIZE_SLOTS: usize = DATAGRAM_MAX_PACKET_SIZE / RTX_CACHE_SIZ
 #[derive(Debug)]
 pub(crate) struct RtxCache {
     // Data, new additions here probably need to be cleared in [`clear`].
-    packet_by_seq_no: EvictingBuffer<RtpPacket>,
+    packet_by_seq_no: EvictingBuffer<CachedPacket>,
 
     // Technically we want [Option<SeqNo>; X] to indicate the absence of
     // a SeqNo. However We can half the storage space by using the sentinel
     // values SeqNo::MAX to indicate None
     seq_no_by_quantized_size: [SeqNo; RTX_CACHE_QUANTIZE_SLOTS],
+}
+
+#[derive(Debug)]
+pub(crate) struct CachedPacket {
+    pub packet: RtpPacket,
+    pub last_resend: Option<Instant>,
 }
 
 impl RtxCache {
@@ -33,7 +39,8 @@ impl RtxCache {
         assert!(packet.nackable);
         let seq_no = packet.seq_no;
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
-        self.packet_by_seq_no.push(*seq_no, now, packet);
+        self.packet_by_seq_no
+            .push(*seq_no, now, CachedPacket::new(packet));
         self.seq_no_by_quantized_size[quantized_size] = seq_no;
         self.remove_old_packets(now);
     }
@@ -42,7 +49,7 @@ impl RtxCache {
         Some(self.packet_by_seq_no.last_position()?.into())
     }
 
-    pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut RtpPacket> {
+    pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut CachedPacket> {
         self.packet_by_seq_no.get_mut(*seq_no)
     }
 
@@ -55,7 +62,7 @@ impl RtxCache {
             .filter(|seq_no| !seq_no.is_max())
             .find(|seq_no| self.packet_by_seq_no.contains(***seq_no))?;
 
-        self.get_cached_packet_by_seq_no(*seq_no)
+        Some(&mut self.get_cached_packet_by_seq_no(*seq_no)?.packet)
     }
 
     fn remove_old_packets(&mut self, now: Instant) {
@@ -64,12 +71,21 @@ impl RtxCache {
 
     pub(crate) fn last_packet(&self) -> Option<&[u8]> {
         let packet = self.packet_by_seq_no.last()?;
-        Some(packet.payload.as_ref())
+        Some(packet.packet.payload.as_ref())
     }
 
     pub(crate) fn clear(&mut self) {
         self.packet_by_seq_no.clear();
         self.seq_no_by_quantized_size = [SeqNo::MAX; RTX_CACHE_QUANTIZE_SLOTS];
+    }
+}
+
+impl CachedPacket {
+    fn new(packet: RtpPacket) -> Self {
+        Self {
+            packet,
+            last_resend: None,
+        }
     }
 }
 
@@ -79,10 +95,6 @@ mod test {
     use crate::rtp_::RtpHeader;
 
     use super::*;
-
-    fn after(now: Instant, millis: u64) -> Instant {
-        now + Duration::from_millis(millis)
-    }
 
     fn packet(now: Instant, seq_no: u64, millis: u64) -> RtpPacket {
         RtpPacket {
@@ -97,6 +109,56 @@ mod test {
         }
     }
 
+    fn after(now: Instant, millis: u64) -> Instant {
+        now + Duration::from_millis(millis)
+    }
+
+    #[test]
+    fn resend_history_follows_cache_eviction_and_reset() {
+        let now = Instant::now();
+        let mut cache = RtxCache::new(10, Duration::from_secs(3));
+        cache.cache_sent_packet(packet(now, 1, 0), now);
+        cache
+            .get_cached_packet_by_seq_no(1.into())
+            .unwrap()
+            .last_resend = Some(now);
+        // Overwrite the slot with another full sequence number, as after rollover.
+        cache.cache_sent_packet(packet(now, 65_541, 0), now);
+        assert!(cache.get_cached_packet_by_seq_no(1.into()).is_none());
+        let cached = cache.get_cached_packet_by_seq_no(65_541.into()).unwrap();
+        assert_eq!(cached.last_resend, None);
+        cached.last_resend = Some(now);
+        cache.clear();
+        cache.cache_sent_packet(packet(now, 65_541, 0), now);
+        assert_eq!(
+            cache
+                .get_cached_packet_by_seq_no(65_541.into())
+                .unwrap()
+                .last_resend,
+            None
+        );
+    }
+
+    #[test]
+    fn resend_history_is_retained_for_every_cached_packet() {
+        let now = Instant::now();
+        let mut cache = RtxCache::new(5000, Duration::from_secs(3));
+        for seq in 0..5000 {
+            cache.cache_sent_packet(packet(now, seq, 0), now);
+            cache
+                .get_cached_packet_by_seq_no(seq.into())
+                .unwrap()
+                .last_resend = Some(now);
+        }
+        assert_eq!(
+            cache
+                .get_cached_packet_by_seq_no(0.into())
+                .unwrap()
+                .last_resend,
+            Some(now)
+        );
+    }
+
     #[test]
     fn rtx_cache_0_sized() {
         let now = Instant::now();
@@ -104,7 +166,9 @@ mod test {
         rtx_cache.cache_sent_packet(packet(now, 1, 10), after(now, 10));
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
-            rtx_cache.get_cached_packet_by_seq_no(1.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(1.into())
+                .map(|cached| &mut cached.packet)
         );
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
@@ -117,7 +181,12 @@ mod test {
         let now = Instant::now();
         let mut rtx_cache = RtxCache::new(10, Duration::from_secs(0));
         rtx_cache.cache_sent_packet(packet(now, 1, 10), after(now, 10));
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(1.into())
+                .map(|cached| &mut cached.packet)
+        );
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(1000));
     }
 
@@ -128,7 +197,9 @@ mod test {
         rtx_cache.cache_sent_packet(packet(now, 1, 10), after(now, 10));
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
-            rtx_cache.get_cached_packet_by_seq_no(1.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(1.into())
+                .map(|cached| &mut cached.packet)
         );
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
@@ -142,7 +213,9 @@ mod test {
         rtx_cache.cache_sent_packet(packet(now, 2, 20), after(now, 20));
         assert_eq!(
             Some(&mut packet(now, 2, 20)),
-            rtx_cache.get_cached_packet_by_seq_no(2.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(2.into())
+                .map(|cached| &mut cached.packet)
         );
     }
 
@@ -160,10 +233,22 @@ mod test {
 
         assert_eq!(
             Some(&mut packet(now, 200, 2000)),
-            rtx_cache.get_cached_packet_by_seq_no(200.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(200.into())
+                .map(|cached| &mut cached.packet)
         );
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(100.into()));
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(101.into()));
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(100.into())
+                .map(|cached| &mut cached.packet)
+        );
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(101.into())
+                .map(|cached| &mut cached.packet)
+        );
     }
 
     #[test]
@@ -178,15 +263,24 @@ mod test {
             rtx_cache.cache_sent_packet(pkt, now);
         }
 
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(99.into()));
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(99.into())
+                .map(|cached| &mut cached.packet)
+        );
 
         assert_eq!(
             Some(&mut packet(now, 100, 1000)),
-            rtx_cache.get_cached_packet_by_seq_no(100.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(100.into())
+                .map(|cached| &mut cached.packet)
         );
         assert_eq!(
             Some(&mut packet(now, 200, 2000)),
-            rtx_cache.get_cached_packet_by_seq_no(200.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(200.into())
+                .map(|cached| &mut cached.packet)
         );
     }
 }
