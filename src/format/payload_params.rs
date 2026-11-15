@@ -659,10 +659,132 @@ impl PayloadParams {
             return Ok(());
         };
 
-        let was_locked = self.locked;
-        self.lock_param(first, claimed, local_is_controlling, unlocked)?;
-        if was_locked {
+        let mut remote_pt = first.pt;
+        let mut remote_rtx = first.resend;
+
+        if self.locked {
+            // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
+            // (receive-direction). We only want to reject if we get receive direction changes.
+            if local_is_controlling {
+                return Ok(());
+            }
+            // Just verify it's still the same. We should validate this in apply_offer/answer instead
+            // of ever seeing this error message.
+            if self.pt != remote_pt {
+                return Err(format!(
+                    "Remote changed locked payload type {} to {}",
+                    self.pt, remote_pt
+                ));
+            }
+
+            if self.resend != remote_rtx {
+                return Err(format!(
+                    "Remote changed RTX for locked payload type {}",
+                    self.pt
+                ));
+            }
+
+            let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            let remote_donl = first.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
+                return Err(format!(
+                    "Remote changed DONL for locked payload type {}",
+                    self.pt
+                ));
+            }
+
+            if self.red != first.red {
+                warn!(
+                    "Ignore remote PT RED change {:?} => {:?}",
+                    self.red, first.red
+                );
+            }
             return Ok(());
+        } else {
+            // Before locking, check if the remote PT conflicts with an already locked PT.
+            // If we're receiving, we control what PTs to use,
+            // so we can remap the conflicting PT.
+            if local_is_controlling && claimed.is_claimed(remote_pt) {
+                // Prefer our configured PT, then fall back to any free PT.
+                let new_pt = (!claimed.is_claimed(self.pt))
+                    .then_some(self.pt)
+                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+
+                if let Some(new_pt) = new_pt {
+                    debug!(
+                        "Remapped conflicting PT {} => {} for codec {:?}",
+                        remote_pt, new_pt, self.spec.codec
+                    );
+                    remote_pt = new_pt;
+                    unlocked.remove(&new_pt);
+                } else {
+                    return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
+                }
+            }
+
+            // Lock down the PT
+            claimed.assert_claim_once(remote_pt)?;
+            self.pt = remote_pt;
+
+            // Check if RTX PT also conflicts
+            let conflicting_rtx =
+                remote_rtx.filter(|pt| local_is_controlling && claimed.is_claimed(*pt));
+            if let Some(rtx) = conflicting_rtx {
+                let new_rtx = self
+                    .resend
+                    .filter(|pt| !claimed.is_claimed(*pt))
+                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+                let Some(new_rtx) = new_rtx else {
+                    return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
+                };
+                debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
+                remote_rtx = Some(new_rtx);
+                unlocked.remove(&new_rtx);
+            }
+
+            // Lock down the RTX PT
+            if let Some(rtx) = remote_rtx {
+                claimed.assert_claim_once(rtx)?;
+            }
+            self.resend = remote_rtx;
+
+            // RED is opt-in on our side and audio-only: keep it only if the matched remote also
+            // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
+            // codecs mapped to the same PT), so resolve any collision before claiming it. The
+            // collision check runs regardless of who controls PT allocation: only the resolution
+            // differs, and claiming the same PT twice would panic.
+            let mut remote_red = self
+                .red
+                .and(first.red)
+                .filter(|_| self.spec.codec.is_audio());
+            let conflicting_red = remote_red.filter(|pt| claimed.is_claimed(*pt));
+            if let Some(red) = conflicting_red {
+                let new_red = if local_is_controlling {
+                    // We control PT allocation: remap the conflicting RED to a free PT.
+                    claimed.find_unclaimed(PREFERED_RANGES, unlocked)
+                } else {
+                    // The remote dictated the PTs and mapped a RED PT that is already taken.
+                    // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
+                    // rather than claim the same PT twice (which would panic).
+                    debug!("Conflicting remote RED PT {:?}; dropping it", red);
+                    None
+                };
+                if let Some(new_red) = new_red {
+                    debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
+                    unlocked.remove(&new_red);
+                } else {
+                    // RED is opt-in; drop it rather than panic if no PT is free.
+                    debug!("No compatible PT for RED; dropping it");
+                }
+                remote_red = new_red;
+            }
+            self.red = remote_red;
+            if let Some(red) = remote_red {
+                claimed.assert_claim_once(red)?;
+            }
+
+            // This is now locked.
+            self.locked = true;
         }
 
         // The first negotiated m-line determines TWCC support for this PT.
@@ -761,142 +883,6 @@ impl PayloadParams {
             self.spec.format.mode_set = self.spec.format.mode_set.or(remote.format.mode_set);
         }
 
-        Ok(())
-    }
-
-    fn lock_param(
-        &mut self,
-        first: &Self,
-        claimed: &mut [bool; 128],
-        local_is_controlling: bool,
-        unlocked: &mut HashSet<Pt>,
-    ) -> Result<(), String> {
-        let mut remote_pt = first.pt;
-        let mut remote_rtx = first.resend;
-
-        if self.locked {
-            // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
-            // (receive-direction). We only want to reject if we get receive direction changes.
-            if local_is_controlling {
-                return Ok(());
-            }
-            // Just verify it's still the same. We should validate this in apply_offer/answer instead
-            // of ever seeing this error message.
-            if self.pt != remote_pt {
-                return Err(format!(
-                    "Remote changed locked payload type {} to {}",
-                    self.pt, remote_pt
-                ));
-            }
-
-            if self.resend != remote_rtx {
-                return Err(format!(
-                    "Remote changed RTX for locked payload type {}",
-                    self.pt
-                ));
-            }
-
-            let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
-            let remote_donl = first.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
-            if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
-                return Err(format!(
-                    "Remote changed DONL for locked payload type {}",
-                    self.pt
-                ));
-            }
-
-            if self.red != first.red {
-                warn!(
-                    "Ignore remote PT RED change {:?} => {:?}",
-                    self.red, first.red
-                );
-            }
-        } else {
-            // Before locking, check if the remote PT conflicts with an already locked PT.
-            // If we're receiving, we control what PTs to use,
-            // so we can remap the conflicting PT.
-            if local_is_controlling && claimed.is_claimed(remote_pt) {
-                // Prefer our configured PT, then fall back to any free PT.
-                let new_pt = (!claimed.is_claimed(self.pt))
-                    .then_some(self.pt)
-                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
-
-                if let Some(new_pt) = new_pt {
-                    debug!(
-                        "Remapped conflicting PT {} => {} for codec {:?}",
-                        remote_pt, new_pt, self.spec.codec
-                    );
-                    remote_pt = new_pt;
-                    unlocked.remove(&new_pt);
-                } else {
-                    return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
-                }
-            }
-
-            // Lock down the PT
-            claimed.assert_claim_once(remote_pt)?;
-            self.pt = remote_pt;
-
-            // Check if RTX PT also conflicts
-            let conflicting_rtx =
-                remote_rtx.filter(|pt| local_is_controlling && claimed.is_claimed(*pt));
-            if let Some(rtx) = conflicting_rtx {
-                let new_rtx = self
-                    .resend
-                    .filter(|pt| !claimed.is_claimed(*pt))
-                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
-                let Some(new_rtx) = new_rtx else {
-                    return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
-                };
-                debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
-                remote_rtx = Some(new_rtx);
-                unlocked.remove(&new_rtx);
-            }
-
-            // Lock down the RTX PT
-            if let Some(rtx) = remote_rtx {
-                claimed.assert_claim_once(rtx)?;
-            }
-            self.resend = remote_rtx;
-
-            // RED is opt-in on our side and audio-only: keep it only if the matched remote also
-            // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
-            // codecs mapped to the same PT), so resolve any collision before claiming it. The
-            // collision check runs regardless of who controls PT allocation: only the resolution
-            // differs, and claiming the same PT twice would panic.
-            let mut remote_red = self
-                .red
-                .and(first.red)
-                .filter(|_| self.spec.codec.is_audio());
-            let conflicting_red = remote_red.filter(|pt| claimed.is_claimed(*pt));
-            if let Some(red) = conflicting_red {
-                let new_red = if local_is_controlling {
-                    // We control PT allocation: remap the conflicting RED to a free PT.
-                    claimed.find_unclaimed(PREFERED_RANGES, unlocked)
-                } else {
-                    // The remote dictated the PTs and mapped a RED PT that is already taken.
-                    // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
-                    // rather than claim the same PT twice (which would panic).
-                    debug!("Conflicting remote RED PT {:?}; dropping it", red);
-                    None
-                };
-                if let Some(new_red) = new_red {
-                    debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
-                    unlocked.remove(&new_red);
-                } else {
-                    // RED is opt-in; drop it rather than panic if no PT is free.
-                    debug!("No compatible PT for RED; dropping it");
-                }
-                remote_red = new_red;
-            }
-            self.red = remote_red;
-            if let Some(red) = remote_red {
-                claimed.assert_claim_once(red)?;
-            }
-
-            // This is now locked.
-            self.locked = true;
-        }
         Ok(())
     }
 }
