@@ -1612,6 +1612,12 @@ mod test {
                 Some(16),
                 "Local sprop-max-don-diff should be preserved when remote doesn't specify it"
             );
+
+            // An identical receiving m-line must agree with the mapping just locked.
+            local_params
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .unwrap();
+            assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(16));
         }
     }
 
@@ -2041,6 +2047,12 @@ mod test {
                 Some(16),
                 "Local sprop-max-don-diff should be preserved when remote doesn't specify it"
             );
+
+            // An identical receiving m-line must agree with the mapping just locked.
+            local_params
+                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .unwrap();
+            assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(16));
         }
 
         /// Test that sprop-max-don-diff=0 from remote does NOT enable DONL.
