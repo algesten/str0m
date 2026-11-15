@@ -241,6 +241,7 @@ pub fn twcc(data: &[u8]) -> Option<()> {
 
     let mut send = TwccSendRegister::new(rng.usize(2000)? + 1);
     let mut bwe = Bwe::new(Bitrate::kbps(rng.u64(10_000)? + 30));
+    bwe.set_bitrate(Bitrate::ZERO, Bitrate::kbps(rng.u64(10_000)? + 30));
     let mut probe: Option<ProbeClusterConfig> = None;
     // Sending can start anywhere, including right before a 16-bit wrap.
     let mut next_seq = rng.u64(u16::MAX as u64 * 2)?;
