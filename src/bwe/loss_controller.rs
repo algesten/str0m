@@ -67,6 +67,8 @@ pub struct LossController {
 
     /// The current estimate
     current_estimate: ChannelParameters,
+    /// The bounded estimate reported to the rest of the BWE system.
+    bandwidth_estimate: Bitrate,
 
     /// The min bitrate we will emit as an estimate.
     min_bitrate: Bitrate,
@@ -133,6 +135,7 @@ impl LossController {
             bandwidth_limit_in_current_window: Bitrate::MAX,
 
             current_estimate: ChannelParameters::new(config.initial_inherent_loss_estimate),
+            bandwidth_estimate: Bitrate::NEG_INFINITY,
 
             min_bitrate: Bitrate::kbps(1),
             max_bitrate: Bitrate::INFINITY,
@@ -170,6 +173,7 @@ impl LossController {
     /// Override the current bandwidth estimate.
     pub fn set_bandwidth_estimate(&mut self, bandwidth_estimate: Bitrate) {
         self.current_estimate.loss_limited_bandwidth = bandwidth_estimate;
+        self.bandwidth_estimate = bandwidth_estimate;
     }
 
     /// Update the acknowledged bitrate based on TWCC feedback.
@@ -288,8 +292,10 @@ impl LossController {
                 best_candidate.loss_limited_bandwidth = self.bandwidth_limit_in_current_window;
             }
 
-            let increase_when_loss_limited =
-                self.is_estimate_increasing_when_loss_limited(best_candidate);
+            let increase_when_loss_limited = self.is_estimate_increasing_when_loss_limited(
+                self.current_estimate.loss_limited_bandwidth,
+                best_candidate.loss_limited_bandwidth,
+            );
 
             if increase_when_loss_limited && self.acknowledged_bitrate.is_valid() {
                 // Choose rampup factor based on whether we're in HOLD region (WebRTC lines 270-281)
@@ -320,7 +326,24 @@ impl LossController {
             }
         }
 
-        let loss_limited_bandwidth = best_candidate.loss_limited_bandwidth;
+        let instant_lower_bound = self.get_instant_lower_bound();
+        let loss_limited_bandwidth = best_candidate
+            .loss_limited_bandwidth
+            .min(self.delay_based_estimate)
+            .min(self.get_instant_upper_bound())
+            .max(instant_lower_bound);
+
+        // Match WebRTC's BoundBestCandidate default: retain the bounded estimate and
+        // reset inherent loss when an upper bound reduces the best candidate.
+        if loss_limited_bandwidth < best_candidate.loss_limited_bandwidth {
+            self.current_estimate.loss_limited_bandwidth = loss_limited_bandwidth;
+            self.current_estimate.inherent_loss = 0.0;
+        } else {
+            self.current_estimate = best_candidate;
+            self.current_estimate.loss_limited_bandwidth = best_candidate
+                .loss_limited_bandwidth
+                .max(instant_lower_bound);
+        }
 
         // HOLD check (WebRTC lines 321-334): If in Decreasing state and HOLD timer active, cap at HOLD rate
         if self.state == LossControllerState::Decreasing
@@ -328,17 +351,18 @@ impl LossController {
             && loss_limited_bandwidth < self.delay_based_estimate
         {
             // During HOLD period, cap estimate at HOLD rate
-            self.current_estimate = best_candidate;
-            self.current_estimate.loss_limited_bandwidth =
-                loss_limited_bandwidth.min(self.last_hold_info.rate);
+            self.last_hold_info.rate = self.last_hold_info.rate.max(instant_lower_bound);
+            self.bandwidth_estimate = loss_limited_bandwidth.min(self.last_hold_info.rate);
             log_inherent_loss!(self.current_estimate.inherent_loss);
             log_loss_based_bitrate_estimate!(self.current_estimate.loss_limited_bandwidth.as_f64());
             return;
         }
 
         // State transitions with HOLD mechanism (WebRTC lines 336-378)
-        let new_state = if self.is_estimate_increasing_when_loss_limited(best_candidate)
-            && loss_limited_bandwidth < delay_based_estimated
+        let new_state = if self.is_estimate_increasing_when_loss_limited(
+            self.bandwidth_estimate,
+            loss_limited_bandwidth,
+        ) && loss_limited_bandwidth < delay_based_estimated
             && loss_limited_bandwidth < self.max_bitrate
         {
             LossControllerState::Increasing
@@ -372,7 +396,7 @@ impl LossController {
         };
         self.set_state(new_state);
 
-        self.current_estimate = best_candidate;
+        self.bandwidth_estimate = loss_limited_bandwidth;
         log_inherent_loss!(self.current_estimate.inherent_loss);
         log_loss_based_bitrate_estimate!(self.current_estimate.loss_limited_bandwidth.as_f64());
 
@@ -385,10 +409,19 @@ impl LossController {
                     < self.last_send_time_most_recent_observation)
         {
             self.bandwidth_limit_in_current_window = CONGESTION_CONTROLLER_MIN_BITRATE
-                .max(loss_limited_bandwidth * CONF_MAX_INCREASE_FACTOR);
+                .max(self.current_estimate.loss_limited_bandwidth * CONF_MAX_INCREASE_FACTOR);
 
             self.recovering_after_loss_timestamp = self.last_send_time_most_recent_observation;
             log_loss_bw_limit_in_window!(self.bandwidth_limit_in_current_window.as_f64());
+        }
+    }
+
+    fn get_instant_lower_bound(&self) -> Bitrate {
+        // WebRTC's LowerBoundByAckedRateFactor defaults to 1.0.
+        if self.acknowledged_bitrate.is_valid() {
+            self.min_bitrate.max(self.acknowledged_bitrate)
+        } else {
+            self.min_bitrate
         }
     }
 
@@ -404,32 +437,10 @@ impl LossController {
     }
 
     pub fn loss_based_result(&self) -> LossBasedBweResult {
-        let mut result = LossBasedBweResult {
-            bandwidth_estimate: self.current_estimate.loss_limited_bandwidth.as_valid(),
+        LossBasedBweResult {
+            bandwidth_estimate: self.bandwidth_estimate.as_valid(),
             state: self.state,
-        };
-
-        if self.num_observations == 0 {
-            return result;
         }
-
-        let Some(loss_limited_bandwidth) = self.current_estimate.loss_limited_bandwidth.as_valid()
-        else {
-            return result;
-        };
-        let instant_upper_bound = self.get_instant_upper_bound();
-
-        if self.delay_based_estimate.is_valid() {
-            result.bandwidth_estimate = Some(
-                loss_limited_bandwidth
-                    .min(self.delay_based_estimate)
-                    .min(instant_upper_bound),
-            )
-        } else {
-            result.bandwidth_estimate = Some(loss_limited_bandwidth.min(instant_upper_bound))
-        }
-
-        result
     }
 
     fn maybe_add_observation(&mut self, packet_results: &[impl PacketResult]) -> bool {
@@ -671,13 +682,14 @@ impl LossController {
         objective
     }
 
-    fn is_estimate_increasing_when_loss_limited(&self, candidate: ChannelParameters) -> bool {
+    fn is_estimate_increasing_when_loss_limited(
+        &self,
+        current: Bitrate,
+        candidate: Bitrate,
+    ) -> bool {
         if !self.is_bandwidth_limited_due_to_loss() {
             return false;
         }
-
-        let current = self.current_estimate.loss_limited_bandwidth;
-        let candidate = candidate.loss_limited_bandwidth;
 
         if current < candidate {
             return true;
@@ -1128,6 +1140,207 @@ mod test {
     }
 
     #[test]
+    fn delay_cap_preserves_internal_acked_rate_lower_bound() {
+        use super::super::SendSideBandwidthEstimator;
+        use crate::rtp_::{TwccPacketId, TwccSendRecord};
+
+        let start = Instant::now();
+        let mut bwe = SendSideBandwidthEstimator::new(Bitrate::kbps(100));
+
+        // Half the packets arrive at a steady 480 kbps while the delay estimate
+        // is still below that throughput. Apply real feedback through the BWE
+        // integration so its final delay cap cannot erase the loss lower bound.
+        for batch in 0..4u64 {
+            let now = start + Duration::from_millis((batch + 1) * 260 + 20);
+            let records: Vec<_> = (0..26u64)
+                .map(|packet| {
+                    let sequence = batch * 26 + packet;
+                    let sent = start + Duration::from_millis(sequence * 10);
+                    TwccSendRecord::test_new(
+                        TwccPacketId::new(sequence),
+                        sent,
+                        1200,
+                        now,
+                        (packet % 2 == 0).then_some(sent + Duration::from_millis(10)),
+                    )
+                })
+                .collect();
+            bwe.update(records.iter(), now);
+        }
+
+        let acked = bwe.acked_bitrate_estimator.current_estimate().unwrap();
+        let delay = bwe.delay_controller.last_estimate().unwrap();
+        assert!(bwe.loss_controller.num_observations > 0);
+        assert!(delay < acked, "delay {delay}, acknowledged {acked}");
+        assert_eq!(bwe.last_estimate(), Some(delay));
+        assert!(
+            bwe.loss_controller.current_estimate.loss_limited_bandwidth >= acked,
+            "final delay cap erased the internal loss lower bound: {} < {acked}",
+            bwe.loss_controller.current_estimate.loss_limited_bandwidth
+        );
+        let loss_result = bwe.loss_controller.loss_based_result();
+        assert!(loss_result.bandwidth_estimate.unwrap() >= acked);
+    }
+
+    #[test]
+    fn sustained_loss_does_not_drive_estimate_below_lower_bound() {
+        // Without a lower bound, each update under heavy loss can pick the 0.95x candidate and
+        // the estimate decays geometrically: ~0.07 bps after 500 observations, ~1e-15 bps
+        // after 1500.
+        for acknowledged_bitrate in [None, Some(Bitrate::kbps(10)), Some(Bitrate::kbps(400))] {
+            let mut lbc = LossController::new();
+            lbc.set_min_bitrate(Bitrate::kbps(50));
+
+            if let Some(bitrate) = acknowledged_bitrate {
+                lbc.set_acknowledged_bitrate(bitrate);
+            }
+            lbc.set_bandwidth_estimate(Bitrate::mbps(2));
+            let lower_bound = acknowledged_bitrate
+                .unwrap_or(Bitrate::ZERO)
+                .max(Bitrate::kbps(50));
+
+            let mut pkt_builder = PacketBuilder::new(Instant::now())
+                .with_loss(0.6)
+                .num_packets(26);
+
+            // 2000 observations (~8 minutes) at 60% loss
+            for _ in 0..2000 {
+                let result = pkt_builder.build_packets();
+                lbc.update_bandwidth_estimate(&result, Bitrate::mbps(2));
+                assert!(lbc.current_estimate.loss_limited_bandwidth >= lower_bound);
+                assert!(lbc.loss_based_result().bandwidth_estimate.unwrap() >= lower_bound);
+                pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
+            }
+
+            assert_eq!(
+                lbc.loss_based_result().bandwidth_estimate,
+                Some(lower_bound)
+            );
+        }
+    }
+
+    #[test]
+    fn bound_estimate_by_acked_rate() {
+        // WebRTC's BoundEstimateByAckedRate: the lower bound overrides the loss upper bound.
+        let mut lbc = LossController::new();
+        lbc.set_min_bitrate(Bitrate::kbps(10));
+        lbc.set_bandwidth_estimate(Bitrate::kbps(600));
+        lbc.set_acknowledged_bitrate(Bitrate::kbps(500));
+        let mut pkt_builder = PacketBuilder::new(Instant::now())
+            .with_loss(1.0)
+            .num_packets(26);
+
+        for _ in 0..2 {
+            let result = pkt_builder.build_packets();
+            lbc.update_bandwidth_estimate(&result, Bitrate::INFINITY);
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
+        }
+
+        assert_eq!(
+            lbc.loss_based_result().bandwidth_estimate,
+            Some(Bitrate::kbps(500))
+        );
+        assert_eq!(
+            lbc.current_estimate.loss_limited_bandwidth,
+            Bitrate::kbps(500)
+        );
+    }
+
+    #[test]
+    fn hold_rate_not_lower_than_acked_rate() {
+        // WebRTC's HoldRateNotLowerThanAckedRate: increased throughput lifts an active HOLD.
+        let mut lbc = LossController::new();
+        lbc.set_bandwidth_estimate(Bitrate::kbps(2500));
+        let mut pkt_builder = PacketBuilder::new(Instant::now())
+            .with_loss(0.5)
+            .num_packets(26);
+
+        for _ in 0..2 {
+            let result = pkt_builder.build_packets();
+            lbc.update_bandwidth_estimate(&result, Bitrate::INFINITY);
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
+        }
+        assert_eq!(lbc.state, LossControllerState::Decreasing);
+        assert!(lbc.last_hold_info.rate < Bitrate::mbps(1));
+
+        lbc.set_acknowledged_bitrate(Bitrate::mbps(1));
+        let result = pkt_builder.build_packets();
+        lbc.update_bandwidth_estimate(&result, Bitrate::INFINITY);
+
+        assert!(lbc.last_hold_info.timestamp > lbc.last_send_time_most_recent_observation);
+        assert_eq!(lbc.state, LossControllerState::Decreasing);
+        assert_eq!(lbc.last_hold_info.rate, Bitrate::mbps(1));
+        assert_eq!(
+            lbc.loss_based_result().bandwidth_estimate,
+            Some(Bitrate::mbps(1))
+        );
+    }
+
+    #[test]
+    fn hold_caps_reported_estimate_without_capping_internal_recovery() {
+        let mut lbc = LossController::new();
+        lbc.set_bandwidth_estimate(Bitrate::mbps(2));
+        let mut pkt_builder = PacketBuilder::new(Instant::now())
+            .with_loss(0.5)
+            .num_packets(26);
+
+        for _ in 0..2 {
+            let result = pkt_builder.build_packets();
+            lbc.update_bandwidth_estimate(&result, Bitrate::INFINITY);
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
+        }
+        assert_eq!(lbc.state, LossControllerState::Decreasing);
+        let hold_rate = lbc.last_hold_info.rate;
+
+        // Isolate a recovering candidate while the HOLD timer is still active.
+        lbc.config.candidate_factor = [1.02; 3];
+        lbc.config.append_acknowledged_rate_candidate = false;
+        lbc.config.append_delay_based_estimate_candidate = false;
+        lbc.config
+            .not_increase_if_inherent_loss_less_than_average_loss = false;
+        pkt_builder = pkt_builder.with_loss(0.0);
+        let result = pkt_builder.build_packets();
+        lbc.update_bandwidth_estimate(&result, Bitrate::INFINITY);
+
+        assert!(lbc.last_hold_info.timestamp > lbc.last_send_time_most_recent_observation);
+        assert!(lbc.current_estimate.loss_limited_bandwidth > hold_rate);
+        assert_eq!(lbc.loss_based_result().bandwidth_estimate, Some(hold_rate));
+        assert_eq!(lbc.state, LossControllerState::Decreasing);
+    }
+
+    #[test]
+    fn lower_bound_can_start_increasing_state() {
+        // WebRTC's HasIncreaseStateBecauseOfLowerBound, using the default factor of 1.0.
+        let mut lbc = LossController::new();
+        lbc.config.candidate_factor = [1.0; 3];
+        lbc.config.append_acknowledged_rate_candidate = false;
+        lbc.config.append_delay_based_estimate_candidate = false;
+        lbc.set_bandwidth_estimate(Bitrate::kbps(500));
+        let mut pkt_builder = PacketBuilder::new(Instant::now())
+            .with_loss(0.5)
+            .num_packets(26);
+
+        for _ in 0..2 {
+            let result = pkt_builder.build_packets();
+            lbc.update_bandwidth_estimate(&result, Bitrate::INFINITY);
+            pkt_builder = pkt_builder.forward_time(Duration::from_secs(1));
+        }
+        assert_eq!(lbc.state, LossControllerState::Decreasing);
+        assert!(lbc.loss_based_result().bandwidth_estimate.unwrap() < Bitrate::kbps(500));
+        assert_eq!(lbc.current_estimate.inherent_loss, 0.0);
+
+        lbc.set_acknowledged_bitrate(Bitrate::mbps(1));
+        let result = pkt_builder.build_packets();
+        lbc.update_bandwidth_estimate(&result, Bitrate::INFINITY);
+
+        assert_eq!(lbc.state, LossControllerState::Increasing);
+        assert_eq!(
+            lbc.loss_based_result().bandwidth_estimate,
+            Some(Bitrate::mbps(1))
+        );
+    }
+
+    #[test]
     fn no_loss() {
         // Test no loss, estimate should be bounded by delay based estimate
         let mut lbc = LossController::new();
@@ -1250,8 +1463,8 @@ mod test {
 
         let estimate = bandwidth_estimate.expect("Should have an estimate");
         assert!(
-            estimate < Bitrate::bps(500_000),
-            "A loss spike should result in a reduced estimate, estimate was {estimate}"
+            estimate == acknowledged_bitrate,
+            "A loss spike should reduce the estimate to acknowledged throughput, estimate was {estimate}"
         );
         assert_eq!(state, LossControllerState::Decreasing);
     }
@@ -1357,8 +1570,8 @@ mod test {
 
         let estimate = bandwidth_estimate.expect("Should have an estimate");
         assert!(
-            estimate < Bitrate::bps(1_000_000),
-            "A gradual overuse should result in a lowered estimate"
+            estimate == acknowledged_bitrate,
+            "A gradual overuse should reduce the estimate to acknowledged throughput"
         );
         assert_eq!(state, LossControllerState::Decreasing);
     }
@@ -1384,6 +1597,7 @@ mod test {
 
         let loss_limited = {
             // loss spike observation at 50%
+            lbc.set_acknowledged_bitrate(Bitrate::kbps(400));
             pkt_builder = pkt_builder.with_loss(0.5);
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
@@ -1421,9 +1635,9 @@ mod test {
 
             let estimate = bandwidth_estimate.expect("Should have an estimate");
             assert!(
-                estimate > loss_limited && estimate <= Bitrate::mbps(1),
-                "During the recovery window after a loss spike the estimate should increase, \
-                    but be bounded. loss_limited={}, estimate={}, expected <= 1 Mbps",
+                estimate >= loss_limited && estimate <= lbc.last_hold_info.rate,
+                "During the recovery window after a loss spike the estimate should recover, \
+                    but respect HOLD. loss_limited={}, estimate={}",
                 loss_limited,
                 estimate
             );
@@ -1448,7 +1662,7 @@ mod test {
                 "Eventually the estimate should recover but still remain bounded until the \
                     average loss caused by spike ages out"
             );
-            assert_eq!(state, LossControllerState::Decreasing);
+            assert_eq!(state, LossControllerState::Increasing);
         }
     }
 

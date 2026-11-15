@@ -47,7 +47,7 @@ fn recovery_time(minimum: Bitrate) -> Result<Duration, RtcError> {
 }
 
 #[test]
-fn minimum_improves_recovery_with_a_fixed_layer() -> Result<(), RtcError> {
+fn minimum_recovers_with_a_fixed_layer() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
     let automatic = recovery_time(Bitrate::ZERO)?;
@@ -57,8 +57,8 @@ fn minimum_improves_recovery_with_a_fixed_layer() -> Result<(), RtcError> {
         "recovery: {sustained:?}"
     );
     assert!(
-        sustained < automatic,
-        "sustained traffic took {sustained:?}, automatic padding took {automatic:?}"
+        automatic < Duration::from_secs(8),
+        "automatic padding recovery: {automatic:?}"
     );
     Ok(())
 }

@@ -294,6 +294,11 @@ prevents the loss controller from causing premature rate reductions based
 on transient loss while still catching cases where delay signals miss
 congestion.
 
+Like libwebrtc, the controller uses acknowledged throughput as a lower
+bound, with a minimum of 1 kbps. This prevents sustained loss from driving
+the estimate toward zero despite evidence that packets are still being
+delivered.
+
 The controller integrates with ALR detection and link capacity tracking.
 When in ALR, it uses proven link capacity from successful ALR probes as an
 upper bound on estimates, preventing overestimation in application-limited
