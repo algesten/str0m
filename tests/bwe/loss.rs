@@ -6,9 +6,8 @@ use netem::{DataSize, NetemConfig, Probability, RandomLoss};
 use str0m::bwe::Bitrate;
 use str0m::{Event, RtcError};
 
-use crate::common::{
-    BweTestContext, Step, TestRtc, connect_with_bwe, init_crypto_default, init_log,
-};
+use crate::common::TestRtc;
+use crate::common::{BweTestContext, Step, connect_with_bwe, init_crypto_default, init_log};
 
 #[test]
 fn loss_caps_estimate_below_delay_based() -> Result<(), RtcError> {
