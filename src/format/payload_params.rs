@@ -659,7 +659,37 @@ impl PayloadParams {
             return Ok(());
         };
 
-        let before_update = *self;
+        // Validate the locked mapping before negotiating fmtp, so rejected updates
+        // cannot change established parameters. Send-only remotes propose their PTs.
+        if self.locked && !local_is_controlling {
+            if self.pt != first.pt {
+                return Err(format!(
+                    "Remote changed locked payload type {} to {}",
+                    self.pt, first.pt
+                ));
+            }
+
+            if self.resend != first.resend {
+                return Err(format!(
+                    "Remote changed RTX for locked payload type {}",
+                    self.pt
+                ));
+            }
+
+            let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            let remote_donl = first
+                .spec
+                .format
+                .sprop_max_don_diff
+                .map(|diff| diff > 0)
+                .unwrap_or(local_donl);
+            if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
+                return Err(format!(
+                    "Remote changed DONL for locked payload type {}",
+                    self.pt
+                ));
+            }
+        }
 
         // The first negotiated m-line determines TWCC support for this PT.
         if !self.locked {
@@ -763,41 +793,10 @@ impl PayloadParams {
         let mut remote_rtx = first.resend;
 
         if self.locked {
-            // Established payload parameters are retained, even if this update is rejected.
-            *self = before_update;
             // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
             // (receive-direction). We only want to warn if we get receive direction changes.
             if local_is_controlling {
                 return Ok(());
-            }
-            // Just verify it's still the same. We should validate this in apply_offer/answer instead
-            // of ever seeing this error message.
-            if self.pt != remote_pt {
-                return Err(format!(
-                    "Remote changed locked payload type {} to {}",
-                    self.pt, remote_pt
-                ));
-            }
-
-            if self.resend != remote_rtx {
-                return Err(format!(
-                    "Remote changed RTX for locked payload type {}",
-                    self.pt
-                ));
-            }
-
-            let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
-            let remote_donl = first
-                .spec
-                .format
-                .sprop_max_don_diff
-                .map(|diff| diff > 0)
-                .unwrap_or(local_donl);
-            if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
-                return Err(format!(
-                    "Remote changed DONL for locked payload type {}",
-                    self.pt
-                ));
             }
 
             if self.red != first.red {

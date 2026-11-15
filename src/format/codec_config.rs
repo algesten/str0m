@@ -765,6 +765,98 @@ mod test {
     use crate::format::{CodecSpec, FormatParams};
 
     #[test]
+    fn locked_video_narrows_level() {
+        for direction in [Direction::SendOnly, Direction::RecvOnly] {
+            for codec in [Codec::H265, Codec::H266] {
+                let mut config = CodecConfig::empty();
+                let mut remote = CodecConfig::empty();
+                if codec == Codec::H265 {
+                    config.add_h265(102.into(), Some(103.into()), 1, 0, 180);
+                    remote.add_h265(102.into(), Some(103.into()), 1, 0, 93);
+                } else {
+                    config.add_h266(102.into(), Some(103.into()), 1, 0, 96);
+                    remote.add_h266(102.into(), Some(103.into()), 1, 0, 48);
+                }
+                let initial = config.params[0];
+                config.update_params(&[initial], direction).unwrap();
+                config.update_params(remote.params(), direction).unwrap();
+                assert_eq!(config.params[0].spec, remote.params[0].spec);
+
+                // A later section with a higher capability must not widen the level again.
+                config.update_params(&[initial], direction).unwrap();
+                assert_eq!(config.params[0].spec, remote.params[0].spec);
+            }
+        }
+    }
+
+    #[test]
+    fn locked_video_adopts_send_only_donl() {
+        for codec in [Codec::H265, Codec::H266] {
+            let mut config = CodecConfig::empty();
+            config.add_config(
+                102.into(),
+                None,
+                codec,
+                Frequency::NINETY_KHZ,
+                None,
+                FormatParams {
+                    profile_id: Some(1),
+                    ..Default::default()
+                },
+            );
+            let mut remote = config.params[0];
+            config
+                .update_params(&[remote], Direction::SendOnly)
+                .unwrap();
+            remote.spec.format.sprop_max_don_diff = Some(1);
+            config
+                .update_params(&[remote], Direction::SendOnly)
+                .unwrap();
+            assert_eq!(config.params[0].spec, remote.spec);
+        }
+    }
+
+    #[test]
+    fn locked_telephone_event_narrows_range() {
+        for direction in [Direction::SendOnly, Direction::RecvOnly] {
+            let mut config = CodecConfig::empty();
+            config.add_config(
+                101.into(),
+                None,
+                Codec::Tele,
+                Frequency::FORTY_EIGHT_KHZ,
+                None,
+                FormatParams {
+                    telephone_event_max: Some(16),
+                    ..Default::default()
+                },
+            );
+            let initial = config.params[0];
+            config.update_params(&[initial], direction).unwrap();
+            let mut remote = initial;
+            remote.spec.format.telephone_event_max = Some(10);
+            config.update_params(&[remote], direction).unwrap();
+            assert_eq!(config.tele_event_max(initial.pt), Some(10));
+
+            config.update_params(&[initial], direction).unwrap();
+            assert_eq!(config.tele_event_max(initial.pt), Some(10));
+        }
+    }
+
+    #[test]
+    fn locked_amr_wb_adopts_mode_set() {
+        for direction in [Direction::SendOnly, Direction::RecvOnly] {
+            let mut config = CodecConfig::empty();
+            config.enable_amr_wb(true);
+            let mut remote = config.params[0];
+            config.update_params(&[remote], direction).unwrap();
+            remote.spec.format.mode_set = Some(0b111);
+            config.update_params(&[remote], direction).unwrap();
+            assert_eq!(config.params[0].spec, remote.spec);
+        }
+    }
+
+    #[test]
     fn rejected_locked_video_update_preserves_parameters() {
         for codec in [Codec::H265, Codec::H266] {
             let params = PayloadParams::new(
@@ -822,13 +914,15 @@ mod test {
             config
                 .update_params(&[remote], Direction::RecvOnly)
                 .unwrap();
+            assert_eq!(config.params[0].spec.format.sprop_max_don_diff, Some(0));
+            let before = config.params.clone();
             remote.spec.format.sprop_max_don_diff = Some(1);
             assert!(
                 config
                     .update_params(&[remote], Direction::RecvOnly)
                     .is_err()
             );
-            assert_eq!(config.params[0], params);
+            assert_eq!(config.params, before);
         }
     }
 
