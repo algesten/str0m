@@ -86,10 +86,10 @@ impl<'a> SdpApi<'a> {
     pub fn accept_offer(mut self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
         debug!("Accept offer");
 
-        validate_payload_mapping(&self.rtc.session, &offer)?;
-
         // Invalidate any outstanding PendingOffer.
         self.rtc.next_change_id();
+
+        validate_payload_mapping(&self.rtc.session, &offer)?;
 
         if offer.media_lines.is_empty() {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
@@ -914,94 +914,103 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     }
 }
 
-// Check the configuration before changing ICE, DTLS or session state. The codec
-// configuration is shared by all m-lines, so a PT cannot describe two formats.
+// Payload types are seven bits, so validation needs no dynamic storage.
+struct PayloadMappings([Option<PayloadMapping>; 128]);
+
+#[derive(Clone, Copy)]
+enum PayloadMapping {
+    Codec(PayloadParams),
+    Rtx(Pt),
+    Red(Pt),
+}
+
 fn validate_payload_mapping(session: &Session, sdp: &Sdp) -> Result<(), RtcError> {
     sdp.assert_consistency()?;
-    let mut seen = Vec::new();
-    let mut config = session.codec_config.clone();
-    for m in &sdp.media_lines {
-        if !m.typ.is_media() {
+    let mut remote = PayloadMappings::new();
+    let mut locked = PayloadMappings::new();
+    for p in session.codec_config.iter().filter(|p| p.locked) {
+        locked.record(*p)?;
+    }
+    for m in sdp.media_lines.iter().filter(|m| m.typ.is_media()) {
+        validate_media_payloads(session, sdp, m, &mut remote, &locked)?;
+    }
+    Ok(())
+}
+
+impl PayloadMappings {
+    fn new() -> Self {
+        Self([None; 128])
+    }
+
+    fn record(&mut self, params: PayloadParams) -> Result<(), RtcError> {
+        for (pt, mapping) in PayloadMapping::entries(params) {
+            self.check(pt, mapping)?;
+            self.0[*pt as usize] = Some(mapping);
+        }
+        Ok(())
+    }
+
+    fn check(&self, pt: Pt, mapping: PayloadMapping) -> Result<(), RtcError> {
+        let Some(previous) = self.0[*pt as usize] else {
+            return Ok(());
+        };
+        if previous.compatible(mapping) {
+            return Ok(());
+        }
+        Err(RtcError::RemoteSdp(format!(
+            "Conflicting payload type {pt}"
+        )))
+    }
+}
+
+impl PayloadMapping {
+    fn entries(params: PayloadParams) -> impl Iterator<Item = (Pt, Self)> {
+        [
+            Some((params.pt(), Self::Codec(params))),
+            params.resend().map(|pt| (pt, Self::Rtx(params.pt()))),
+            params.red().map(|pt| (pt, Self::Red(params.pt()))),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    fn compatible(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Codec(a), Self::Codec(b)) => a.match_score(&b).is_some(),
+            (Self::Rtx(a), Self::Rtx(b)) | (Self::Red(a), Self::Red(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+fn validate_media_payloads(
+    session: &Session,
+    sdp: &Sdp,
+    m: &MediaLine,
+    remote: &mut PayloadMappings,
+    locked: &PayloadMappings,
+) -> Result<(), RtcError> {
+    if m.disabled
+        && !sdp
+            .bundle_mids()
+            .is_some_and(|mids| mids.contains(&m.mid()))
+    {
+        return Ok(());
+    }
+    let is_new = !session.medias.iter().any(|media| media.mid() == m.mid());
+    for params in m.rtp_params_iter() {
+        remote.record(params)?;
+        if !is_new || !m.direction().sdp_is_receiving() {
             continue;
         }
-        let params = m.rtp_params();
-        let active = !m.disabled || sdp.bundle_mids().is_some_and(|v| v.contains(&m.mid()));
-        for p in params.iter().filter(|_| active) {
-            if p.resend() == Some(p.pt())
-                || p.red() == Some(p.pt())
-                || (p.red().is_some() && p.red() == p.resend())
-            {
-                return Err(RtcError::RemoteSdp(format!(
-                    "Conflicting payload type {}",
-                    p.pt()
-                )));
-            }
-            for previous in &seen {
-                let previous: &crate::format::PayloadParams = previous;
-                if p.pt() == previous.pt() && p.match_score(previous).is_none() {
-                    return Err(RtcError::RemoteSdp(format!(
-                        "Conflicting codec for payload type {}",
-                        p.pt()
-                    )));
-                }
-                if p.resend().is_some()
-                    && p.resend() == previous.resend()
-                    && p.pt() != previous.pt()
-                {
-                    return Err(RtcError::RemoteSdp(format!(
-                        "Conflicting RTX payload type {}",
-                        p.resend().unwrap()
-                    )));
-                }
-                if (p.red().is_some() && p.red() == previous.red() && p.pt() != previous.pt())
-                    || p.red() == previous.resend() && p.red().is_some()
-                    || p.resend() == previous.red() && p.resend().is_some()
-                    || p.red() == Some(previous.pt())
-                    || previous.red() == Some(p.pt())
-                    || p.resend() == Some(previous.pt())
-                    || previous.resend() == Some(p.pt())
-                {
-                    return Err(RtcError::RemoteSdp(format!(
-                        "Conflicting payload type {}",
-                        p.pt()
-                    )));
-                }
-            }
-            seen.push(*p);
-        }
-        if !session.medias.iter().any(|media| media.mid() == m.mid()) {
-            if m.direction().sdp_is_receiving() {
-                for remote in &params {
-                    for local in config.iter().filter(|p| p.locked) {
-                        if remote.pt() == local.pt() && remote.match_score(local).is_none() {
-                            return Err(RtcError::RemoteSdp(format!(
-                                "Conflicting codec for payload type {}",
-                                remote.pt()
-                            )));
-                        }
-                        if remote.resend().is_some()
-                            && remote.resend() == local.resend()
-                            && remote.pt() != local.pt()
-                        {
-                            return Err(RtcError::RemoteSdp(format!(
-                                "Conflicting RTX payload type {}",
-                                remote.resend().unwrap()
-                            )));
-                        }
-                    }
-                }
-            }
-            config
-                .update_params(&params, m.direction())
-                .map_err(RtcError::RemoteSdp)?;
+        for (pt, mapping) in PayloadMapping::entries(params) {
+            locked.check(pt, mapping)?;
         }
     }
     Ok(())
 }
 
 fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
-    offer.assert_consistency()?;
-
     update_session(session, &offer);
 
     let bundle_mids = offer.bundle_mids();
@@ -1019,8 +1028,6 @@ fn apply_answer(
     pending: Changes,
     answer: SdpAnswer,
 ) -> Result<(), RtcError> {
-    answer.assert_consistency()?;
-
     update_session(session, &answer);
 
     let bundle_mids = answer.bundle_mids();
