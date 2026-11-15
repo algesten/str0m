@@ -187,9 +187,9 @@ capabilities are retained during later SDP updates to an existing m-line.
 
 str0m keeps one negotiated telephone-event range per payload type in
 `Session::codec_config`. Before locking, it takes the smaller local and remote
-maximum. Once locked, later m-lines cannot change that range. It uses the range in both directions and on every m-line sharing the PT. SDP can
-express different receive capabilities in each direction and on different
-m-lines; str0m does not model those distinctions.
+maximum. Once locked, later m-lines cannot change that range. It uses the range
+in both directions and on every m-line sharing the PT. SDP can express different
+receive capabilities in each direction and on different m-lines; str0m does not model those distinctions.
 
 ### Later SDP updates and narrowed PT lists
 
