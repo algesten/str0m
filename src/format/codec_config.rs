@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 
 use crate::packet::H266ProfileTierLevel;
@@ -9,7 +9,7 @@ use crate::rtp_::{Direction, Frequency};
 
 use super::codec::{Codec, CodecSpec};
 use super::format_params::FormatParams;
-use super::payload_params::{Claimed, PREFERED_RANGES, PayloadParams};
+use super::payload_params::{Claimed, PREFERED_RANGES, PayloadParams, VideoLevelCaps};
 
 /// Default payload type for PCMU (G.711 μ-law).
 pub(crate) const PT_PCMU: Pt = Pt::new_with_value(0);
@@ -73,6 +73,7 @@ pub(crate) const PT_AMR_WB: Pt = Pt::new_with_value(122);
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
     params: Vec<PayloadParams>,
+    video_level_caps: HashMap<Pt, VideoLevelCaps>,
     /// RFC 2198 RED send-side redundancy pattern: how many packets back each redundant level
     /// carries. Empty means the default single level `[1]` (see [`Self::red_distances`]).
     red_distances: Box<[u32]>,
@@ -116,6 +117,7 @@ impl CodecConfig {
     /// Clear all configured configs.
     pub fn clear(&mut self) {
         self.params.clear();
+        self.video_level_caps.clear();
     }
 
     /// Manually configure a payload type. For telephone events, configure one
@@ -607,11 +609,14 @@ impl CodecConfig {
         remote_params: &[PayloadParams],
         remote_dir: Direction,
     ) -> Result<(), String> {
+        // A later payload can fail after an earlier one negotiated new format values.
+        // Commit the complete set only when every payload and allocation succeeds.
+        let mut params = self.params.clone();
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
 
         // Make a pass with all that are definitely confirmed by the remote, since these can't change.
-        for p in self.params.iter() {
+        for p in params.iter() {
             if !p.locked {
                 continue;
             }
@@ -628,8 +633,7 @@ impl CodecConfig {
         }
 
         // Collect all currently unlocked PTs since we will need to avoid them when reassigning.
-        let mut unlocked = self
-            .params
+        let mut unlocked = params
             .iter()
             .filter(|p| !p.locked)
             .flat_map(|p| [Some(p.pt()), p.resend(), p.red()])
@@ -644,17 +648,30 @@ impl CodecConfig {
         // and we are not allowed to change it in the ANSWER.
         let local_is_controlling = !remote_dir.sdp_is_receiving();
 
-        for p in self.params.iter_mut() {
+        let mut video_level_caps = HashMap::new();
+        for p in params.iter_mut() {
+            let mut levels = if p.locked {
+                self.video_level_caps
+                    .get(&p.pt)
+                    .copied()
+                    .unwrap_or_default()
+            } else {
+                VideoLevelCaps::default()
+            };
             p.update_param(
                 remote_params,
                 &mut claimed,
                 local_is_controlling,
                 &mut unlocked,
+                &mut levels,
             )?;
+            if p.locked && matches!(p.spec.codec, Codec::H265 | Codec::H266) {
+                video_level_caps.insert(p.pt, levels);
+            }
         }
 
         // Make a pass to reassign unconfirmed payloads that have PT which are now claimed.
-        for p in self.params.iter_mut() {
+        for p in params.iter_mut() {
             if p.locked {
                 continue;
             }
@@ -706,6 +723,8 @@ impl CodecConfig {
                 unlocked.remove(&rtx);
             }
         }
+        self.params = params;
+        self.video_level_caps = video_level_caps;
         Ok(())
     }
 
@@ -785,12 +804,24 @@ mod test {
                 // A later section with a higher capability must not widen the level again.
                 config.update_params(&[initial], direction).unwrap();
                 assert_eq!(config.params[0].spec, remote.params[0].spec);
+
+                // Abbreviated fmtp must not erase the level cap for a later full update.
+                for profile_id in [Some(1), None] {
+                    let mut abbreviated = remote.params[0];
+                    abbreviated.spec.format.h265_profile_tier_level = None;
+                    abbreviated.spec.format.h266_profile_tier_level = None;
+                    abbreviated.spec.format.profile_id = profile_id;
+                    config.update_params(&[abbreviated], direction).unwrap();
+                    assert_eq!(config.params[0].spec, abbreviated.spec);
+                    config.update_params(&[initial], direction).unwrap();
+                    assert_eq!(config.params[0].spec, remote.params[0].spec);
+                }
             }
         }
     }
 
     #[test]
-    fn locked_video_adopts_send_only_donl() {
+    fn locked_video_rejects_send_only_donl_change() {
         for codec in [Codec::H265, Codec::H266] {
             let mut config = CodecConfig::empty();
             config.add_config(
@@ -808,11 +839,14 @@ mod test {
             config
                 .update_params(&[remote], Direction::SendOnly)
                 .unwrap();
+            let before = config.params.clone();
             remote.spec.format.sprop_max_don_diff = Some(1);
-            config
-                .update_params(&[remote], Direction::SendOnly)
-                .unwrap();
-            assert_eq!(config.params[0].spec, remote.spec);
+            assert!(
+                config
+                    .update_params(&[remote], Direction::SendOnly)
+                    .is_err()
+            );
+            assert_eq!(config.params, before);
         }
     }
 
@@ -854,6 +888,36 @@ mod test {
             config.update_params(&[remote], direction).unwrap();
             assert_eq!(config.params[0].spec, remote.spec);
         }
+    }
+
+    #[test]
+    fn rejected_later_payload_preserves_all_parameters() {
+        let mut config = CodecConfig::empty();
+        for (pt, frequency) in [
+            (100, Frequency::EIGHT_KHZ),
+            (101, Frequency::FORTY_EIGHT_KHZ),
+        ] {
+            config.add_config(
+                pt.into(),
+                None,
+                Codec::Tele,
+                frequency,
+                None,
+                FormatParams {
+                    telephone_event_max: Some(16),
+                    ..Default::default()
+                },
+            );
+        }
+        let initial = config.params.clone();
+        config.update_params(&initial, Direction::RecvOnly).unwrap();
+        let before = config.params.clone();
+        let mut remote = initial;
+        remote[0].spec.format.telephone_event_max = Some(10);
+        remote[1].pt = 102.into();
+        assert!(config.update_params(&remote, Direction::RecvOnly).is_err());
+        assert_eq!(config.params, before);
+        assert_eq!(config.tele_event_max(100.into()), Some(16));
     }
 
     #[test]

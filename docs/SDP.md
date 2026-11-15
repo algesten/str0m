@@ -148,6 +148,23 @@ requires a payload type already locked to another codec configuration, or change
 a locked payload's PT or RTX association, negotiation returns an error. A
 sending-only remote proposes payload types, which str0m can remap as described above.
 
+Codec updates for a new m-line are committed together after all its payloads
+validate. A rejected payload must not leave earlier payloads from that m-line
+with changed format parameters.
+
+### H.265/H.266 formats across m-lines
+
+H.265/H.266 payloads share one packet layout across the session. Once a payload
+is locked, a new m-line cannot enable or disable DONL for it, including when the
+remote is send-only. Negotiation rejects that change because existing packetizers
+and depacketizers retain the established layout.
+
+Level capabilities can narrow as new m-lines are negotiated. The session retains
+that level cap even if a later m-line advertises only a profile or omits fmtp,
+so a subsequent full profile/tier/level cannot raise the negotiated cap. As with
+other codec parameters, this is one shared cap rather than a cap per direction
+or m-line.
+
 ### TWCC feedback across m-lines
 
 str0m assumes `fb_transport_cc` is a per-PT capability shared across the

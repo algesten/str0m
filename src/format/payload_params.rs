@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::packet::H264ProfileLevel;
-use crate::packet::H265ProfileTierLevel;
-use crate::packet::H266ProfileTierLevel;
+use crate::packet::{H265Level, H265ProfileTierLevel};
+use crate::packet::{H266Level, H266ProfileTierLevel};
 use crate::rtp_::Pt;
 
 use super::codec::{Codec, CodecSpec};
@@ -135,6 +135,13 @@ impl PartialEq for PayloadParams {
 }
 
 impl Eq for PayloadParams {}
+
+/// Session negotiation history, independent of the fmtp fields currently advertised.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct VideoLevelCaps {
+    h265: Option<H265Level>,
+    h266: Option<H266Level>,
+}
 
 impl PayloadParams {
     /// Maximum match score.
@@ -642,6 +649,7 @@ impl PayloadParams {
         claimed: &mut [bool; 128],
         local_is_controlling: bool,
         unlocked: &mut HashSet<Pt>,
+        levels: &mut VideoLevelCaps,
     ) -> Result<(), String> {
         let Some((first, _)) = remote_pts
             .iter()
@@ -661,21 +669,23 @@ impl PayloadParams {
 
         // Validate the locked mapping before negotiating fmtp, so rejected updates
         // cannot change established parameters. Send-only remotes propose their PTs.
-        if self.locked && !local_is_controlling {
-            if self.pt != first.pt {
+        if self.locked {
+            if !local_is_controlling && self.pt != first.pt {
                 return Err(format!(
                     "Remote changed locked payload type {} to {}",
                     self.pt, first.pt
                 ));
             }
 
-            if self.resend != first.resend {
+            if !local_is_controlling && self.resend != first.resend {
                 return Err(format!(
                     "Remote changed RTX for locked payload type {}",
                     self.pt
                 ));
             }
 
+            // Cached packetizers and depacketizers cannot change their packet layout.
+            // This applies to send-only remotes too, even though their PTs are suggestions.
             let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
             let remote_donl = first
                 .spec
@@ -712,15 +722,20 @@ impl PayloadParams {
 
         // Mirror the remote's H.265 fmtp shape: echo back only the params they offered.
         if self.spec.codec == Codec::H265 && first.spec.codec == Codec::H265 {
+            levels.h265 = levels.h265.or(self
+                .spec
+                .format
+                .h265_profile_tier_level
+                .map(|ptl| ptl.level()));
             if let Some(remote_ptl) = first.spec.format.h265_profile_tier_level {
                 // Narrow level to min(local, remote) so the negotiated level
                 // never exceeds either side's capability.
-                let negotiated_ptl =
-                    if let Some(local_ptl) = self.spec.format.h265_profile_tier_level {
-                        remote_ptl.with_level(std::cmp::min(local_ptl.level(), remote_ptl.level()))
-                    } else {
-                        remote_ptl
-                    };
+                let negotiated_ptl = if let Some(cap) = levels.h265 {
+                    remote_ptl.with_level(std::cmp::min(cap, remote_ptl.level()))
+                } else {
+                    remote_ptl
+                };
+                levels.h265 = Some(negotiated_ptl.level());
                 self.spec.format.h265_profile_tier_level = Some(negotiated_ptl);
                 // Avoid also serializing `profile-id` via the VP9 `profile_id` field.
                 self.spec.format.profile_id = None;
@@ -744,15 +759,20 @@ impl PayloadParams {
 
         // Same negotiation for H.266 (RFC 9328 §7.2, offer/answer model §7.3.2).
         if self.spec.codec == Codec::H266 && first.spec.codec == Codec::H266 {
+            levels.h266 = levels.h266.or(self
+                .spec
+                .format
+                .h266_profile_tier_level
+                .map(|ptl| ptl.level()));
             if let Some(remote_ptl) = first.spec.format.h266_profile_tier_level {
                 // Narrow level to min(local, remote) so the negotiated level
                 // never exceeds either side's capability.
-                let negotiated_ptl =
-                    if let Some(local_ptl) = self.spec.format.h266_profile_tier_level {
-                        remote_ptl.with_level(std::cmp::min(local_ptl.level(), remote_ptl.level()))
-                    } else {
-                        remote_ptl
-                    };
+                let negotiated_ptl = if let Some(cap) = levels.h266 {
+                    remote_ptl.with_level(std::cmp::min(cap, remote_ptl.level()))
+                } else {
+                    remote_ptl
+                };
+                levels.h266 = Some(negotiated_ptl.level());
                 self.spec.format.h266_profile_tier_level = Some(negotiated_ptl);
                 // Avoid also serializing `profile-id` via the VP9 `profile_id` field.
                 self.spec.format.profile_id = None;
@@ -950,7 +970,13 @@ mod test {
 
         // local_is_controlling = true: we allocate PTs and may remap the conflict.
         local
-            .update_param(&[remote], &mut claimed, true, &mut unlocked)
+            .update_param(
+                &[remote],
+                &mut claimed,
+                true,
+                &mut unlocked,
+                &mut VideoLevelCaps::default(),
+            )
             .unwrap();
 
         let got = local.red.expect("RED is kept, remapped to a free PT");
@@ -1478,6 +1504,7 @@ mod test {
                     &mut claimed,
                     false, // remote is controlling (we're answering)
                     &mut unlocked,
+                    &mut VideoLevelCaps::default(),
                 )
                 .unwrap();
 
@@ -1558,7 +1585,13 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false,
+                    &mut unlocked,
+                    &mut VideoLevelCaps::default(),
+                )
                 .unwrap();
 
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
@@ -1607,7 +1640,13 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false,
+                    &mut unlocked,
+                    &mut VideoLevelCaps::default(),
+                )
                 .unwrap();
 
             // Local value should be preserved (remote didn't override)
@@ -1619,7 +1658,13 @@ mod test {
 
             // An identical receiving m-line must agree with the mapping just locked.
             local_params
-                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false,
+                    &mut unlocked,
+                    &mut VideoLevelCaps::default(),
+                )
                 .unwrap();
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(16));
         }
@@ -1960,6 +2005,7 @@ mod test {
                     &mut claimed,
                     false, // remote is controlling (we're answering)
                     &mut unlocked,
+                    &mut VideoLevelCaps::default(),
                 )
                 .unwrap();
 
@@ -2042,7 +2088,13 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false,
+                    &mut unlocked,
+                    &mut VideoLevelCaps::default(),
+                )
                 .unwrap();
 
             // Local value should be preserved (remote didn't override)
@@ -2054,7 +2106,13 @@ mod test {
 
             // An identical receiving m-line must agree with the mapping just locked.
             local_params
-                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false,
+                    &mut unlocked,
+                    &mut VideoLevelCaps::default(),
+                )
                 .unwrap();
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(16));
         }
@@ -2081,7 +2139,13 @@ mod test {
             let mut claimed = [false; 128];
             let mut unlocked = std::collections::HashSet::new();
             local_params
-                .update_param(&[remote_params], &mut claimed, false, &mut unlocked)
+                .update_param(
+                    &[remote_params],
+                    &mut claimed,
+                    false,
+                    &mut unlocked,
+                    &mut VideoLevelCaps::default(),
+                )
                 .unwrap();
 
             assert_eq!(local_params.spec.format.sprop_max_don_diff, Some(0));
@@ -2170,7 +2234,13 @@ mod test {
             let remote = amr_wb(None, remote_format);
 
             local
-                .update_param(&[remote], &mut [false; 128], false, &mut HashSet::new())
+                .update_param(
+                    &[remote],
+                    &mut [false; 128],
+                    false,
+                    &mut HashSet::new(),
+                    &mut VideoLevelCaps::default(),
+                )
                 .unwrap();
 
             assert_eq!(local.spec.channels, None);

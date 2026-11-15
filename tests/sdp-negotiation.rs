@@ -25,6 +25,107 @@ use tracing::Span;
 use tracing::info_span;
 
 #[test]
+fn locked_donl_change_after_media_is_rejected() -> Result<(), RtcError> {
+    use common::Peer;
+
+    init_crypto_default();
+    for codec in [Codec::H265, Codec::H266] {
+        let config = |c: str0m::RtcConfig| {
+            c.clear_codecs()
+                .enable_h265(codec == Codec::H265)
+                .enable_h266(codec == Codec::H266)
+                .set_reordering_size_video(0)
+        };
+        let mut l = TestRtc::new_with_config(Peer::Left, config);
+        let mut r = TestRtc::new_with_config(Peer::Right, config);
+        l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+        r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+        let mut change = l.sdp_api();
+        let mid = change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        let (offer, pending) = change.apply().unwrap();
+        let answer = r.sdp_api().accept_offer(offer)?;
+        l.sdp_api().accept_answer(pending, answer)?;
+        for _ in 0..100 {
+            if l.is_connected() && r.is_connected() {
+                break;
+            }
+            progress(&mut l, &mut r)?;
+        }
+        assert!(l.is_connected() && r.is_connected());
+        let params = *r
+            .codec_config()
+            .iter()
+            .find(|p| p.spec().codec == codec)
+            .unwrap();
+        let pt = params.pt();
+        let nalu = if codec == Codec::H265 {
+            [38, 1]
+        } else {
+            [0, 57]
+        };
+        // Frames in both directions populate both packetizer and depacketizer caches.
+        exchange_cached_video(&mut l, &mut r, mid, pt, nalu, 1)?;
+
+        let mut change = l.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+        let (offer, _) = change.apply().unwrap();
+        let sdp = offer.to_sdp_string();
+        let (head, tail) = sdp.rsplit_once("m=video").unwrap();
+        let fmtp = format!("a=fmtp:{pt} ");
+        let tail = tail
+            .split("\r\n")
+            .map(|line| {
+                if line.starts_with(&fmtp) {
+                    format!("{line};sprop-max-don-diff=1")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\r\n");
+        let offer = SdpOffer::from_sdp_string(&format!("{head}m=video{tail}")).unwrap();
+        let error = r.sdp_api().accept_offer(offer).unwrap_err();
+        assert!(matches!(error, RtcError::RemoteSdp(ref message) if message.contains("DONL")));
+        assert_eq!(
+            r.codec_config().iter().find(|p| p.pt() == pt),
+            Some(&params)
+        );
+        exchange_cached_video(&mut l, &mut r, mid, pt, nalu, 2)?;
+    }
+    Ok(())
+}
+
+fn exchange_cached_video(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    mid: str0m::media::Mid,
+    pt: Pt,
+    nalu: [u8; 2],
+    frame_number: u8,
+) -> Result<(), RtcError> {
+    let frame = vec![0, 0, 0, 1, nalu[0], nalu[1], frame_number];
+    let now = l.last.max(r.last);
+    let time = str0m::media::MediaTime::from_90khz(u64::from(frame_number) * 3000);
+    for peer in [&mut *l, &mut *r] {
+        peer.events.clear();
+        peer.writer(mid)
+            .unwrap()
+            .write(pt, now, time, frame.clone())?;
+    }
+    for _ in 0..100 {
+        progress(l, r)?;
+        if [&*l, &*r].iter().all(|peer| {
+            peer.events.iter().any(|(_, event)| {
+                matches!(event, Event::MediaData(data) if data.mid == mid && data.data.as_ref() == frame)
+            })
+        }) {
+            return Ok(());
+        }
+    }
+    panic!("cached video processors failed to deliver frame {frame_number}");
+}
+
+#[test]
 pub fn change_default_pt() {
     init_log();
     init_crypto_default();
