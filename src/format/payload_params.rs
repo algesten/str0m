@@ -775,30 +775,36 @@ impl PayloadParams {
         let mut remote_rtx = first.resend;
 
         if self.locked {
+            // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
+            // (receive-direction). We only want to reject if we get receive direction changes.
             if local_is_controlling {
                 return Ok(());
             }
-            if self.pt != first.pt {
+            // Just verify it's still the same. We should validate this in apply_offer/answer instead
+            // of ever seeing this error message.
+            if self.pt != remote_pt {
                 return Err(format!(
                     "Remote changed locked payload type {} to {}",
-                    self.pt, first.pt
+                    self.pt, remote_pt
                 ));
             }
-            if self.resend != first.resend {
+
+            if self.resend != remote_rtx {
                 return Err(format!(
                     "Remote changed RTX for locked payload type {}",
                     self.pt
                 ));
             }
-            if matches!(self.spec.codec, Codec::H265 | Codec::H266)
-                && (self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0)
-                    != (first.spec.format.sprop_max_don_diff.unwrap_or(0) > 0)
-            {
+
+            let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            let remote_donl = first.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
                 return Err(format!(
                     "Remote changed DONL for locked payload type {}",
                     self.pt
                 ));
             }
+
             if self.red != first.red {
                 warn!(
                     "Ignore remote PT RED change {:?} => {:?}",
@@ -823,7 +829,7 @@ impl PayloadParams {
                     remote_pt = new_pt;
                     unlocked.remove(&new_pt);
                 } else {
-                    return Err("Exhausted payload types during SDP negotiation".into());
+                    return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
                 }
             }
 
@@ -832,23 +838,19 @@ impl PayloadParams {
             self.pt = remote_pt;
 
             // Check if RTX PT also conflicts
-            if local_is_controlling {
-                if let Some(rtx) = remote_rtx {
-                    if claimed.is_claimed(rtx) {
-                        let new_rtx = self
-                            .resend
-                            .filter(|pt| !claimed.is_claimed(*pt))
-                            .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
-
-                        if let Some(new_rtx) = new_rtx {
-                            debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
-                            remote_rtx = Some(new_rtx);
-                            unlocked.remove(&new_rtx);
-                        } else {
-                            return Err("Exhausted payload types during SDP negotiation".into());
-                        }
-                    }
-                }
+            let conflicting_rtx =
+                remote_rtx.filter(|pt| local_is_controlling && claimed.is_claimed(*pt));
+            if let Some(rtx) = conflicting_rtx {
+                let new_rtx = self
+                    .resend
+                    .filter(|pt| !claimed.is_claimed(*pt))
+                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
+                let Some(new_rtx) = new_rtx else {
+                    return Err("Exhausted all PT ranges, inconsistent PayloadParam state".into());
+                };
+                debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
+                remote_rtx = Some(new_rtx);
+                unlocked.remove(&new_rtx);
             }
 
             // Lock down the RTX PT
@@ -866,27 +868,26 @@ impl PayloadParams {
                 .red
                 .and(first.red)
                 .filter(|_| self.spec.codec.is_audio());
-            if let Some(red) = remote_red {
-                if claimed.is_claimed(red) {
-                    if local_is_controlling {
-                        // We control PT allocation: remap the conflicting RED to a free PT.
-                        if let Some(new_red) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
-                            debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
-                            remote_red = Some(new_red);
-                            unlocked.remove(&new_red);
-                        } else {
-                            // RED is opt-in; drop it rather than panic if no PT is free.
-                            debug!("No free PT for RED; dropping it");
-                            remote_red = None;
-                        }
-                    } else {
-                        // The remote dictated the PTs and mapped a RED PT that is already taken.
-                        // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
-                        // rather than claim the same PT twice (which would panic).
-                        debug!("Conflicting remote RED PT {:?}; dropping it", red);
-                        remote_red = None;
-                    }
+            let conflicting_red = remote_red.filter(|pt| claimed.is_claimed(*pt));
+            if let Some(red) = conflicting_red {
+                let new_red = if local_is_controlling {
+                    // We control PT allocation: remap the conflicting RED to a free PT.
+                    claimed.find_unclaimed(PREFERED_RANGES, unlocked)
+                } else {
+                    // The remote dictated the PTs and mapped a RED PT that is already taken.
+                    // We can't reassign PTs the remote controls, and RED is opt-in, so drop it
+                    // rather than claim the same PT twice (which would panic).
+                    debug!("Conflicting remote RED PT {:?}; dropping it", red);
+                    None
+                };
+                if let Some(new_red) = new_red {
+                    debug!("Remapped conflicting RED PT {:?} => {}", red, new_red);
+                    unlocked.remove(&new_red);
+                } else {
+                    // RED is opt-in; drop it rather than panic if no PT is free.
+                    debug!("No compatible PT for RED; dropping it");
                 }
+                remote_red = new_red;
             }
             self.red = remote_red;
             if let Some(red) = remote_red {
