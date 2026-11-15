@@ -277,9 +277,9 @@ pub fn twcc(data: &[u8]) -> Option<()> {
             }
             2 => {
                 // The TWCC sequence number extension of an incoming RTP packet.
-                let prev = recv.max_seq().map(|s| *s);
-                let seq = extend_u16(prev, rng.u16(u16::MAX)?);
-                recv.update_seq(seq.into(), now);
+                if let Some(seq) = recv.extend_seq(rng.u16(u16::MAX)?) {
+                    recv.update_seq(seq, now);
+                }
             }
             3 => {
                 // Our own feedback must be readable by the remote (and by us).
