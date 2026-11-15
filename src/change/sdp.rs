@@ -2768,6 +2768,51 @@ mod test {
     }
 
     #[test]
+    fn later_offer_cannot_reassign_locked_red_to_an_unsupported_codec() {
+        crate::init_crypto_default();
+        let now = Instant::now();
+        let build = || {
+            Rtc::builder()
+                .clear_codecs()
+                .enable_opus(true, true)
+                .build(now)
+        };
+        let mut offerer = build();
+        let mut answerer = build();
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+        let (offer, pending) = change.apply().unwrap();
+        let answer = answerer.sdp_api().accept_offer(offer).unwrap();
+        offerer.sdp_api().accept_answer(pending, answer).unwrap();
+
+        let mut change = offerer.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+        let (offer, _) = change.apply().unwrap();
+        let valid = offer.to_sdp_string();
+        let (head, tail) = valid.rsplit_once("m=audio").unwrap();
+        assert!(tail.contains("a=fmtp:63 111/111\r\n"));
+        // ISAC is unsupported locally, but the offered RED 63 association is mandatory
+        // for this receiving m-line and cannot replace its locked Opus association.
+        let tail = tail
+            .replacen("\r\n", " 112\r\n", 1)
+            .replace("a=fmtp:63 111/111", "a=fmtp:63 112/112")
+            .replace("a=rtpmap:63 red/48000/2", "a=rtpmap:63 red/16000");
+        let offer =
+            SdpOffer::from_sdp_string(&format!("{head}m=audio{tail}a=rtpmap:112 ISAC/16000\r\n"))
+                .unwrap();
+        let result = answerer.sdp_api().accept_offer(offer);
+        if let Ok(answer) = &result {
+            let answer = answer.to_sdp_string();
+            let (_, tail) = answer.rsplit_once("m=audio").unwrap();
+            assert!(tail.contains("a=fmtp:63 111/111\r\n"));
+        }
+        assert!(
+            result.is_err(),
+            "accepted reassignment of locked RED to ISAC"
+        );
+    }
+
+    #[test]
     fn offer_reusing_rtx_pt_for_another_codec_is_rejected() {
         crate::init_crypto_default();
         let now = Instant::now();
