@@ -3,10 +3,12 @@
 use std::time::Duration;
 
 use netem::{DataSize, NetemConfig, Probability, RandomLoss};
-use str0m::RtcError;
 use str0m::bwe::Bitrate;
+use str0m::{Event, RtcError};
 
-use crate::common::{BweTestContext, Step, connect_with_bwe, init_crypto_default, init_log};
+use crate::common::{
+    BweTestContext, Step, TestRtc, connect_with_bwe, init_crypto_default, init_log,
+};
 
 #[test]
 fn loss_caps_estimate_below_delay_based() -> Result<(), RtcError> {
@@ -166,5 +168,96 @@ fn sustained_heavy_loss_keeps_estimate_above_minimum() -> Result<(), RtcError> {
     let mut ctx = BweTestContext::new(&mut l, &mut r);
     ctx.run_plan(&mut l, &mut r, &plan)?;
 
+    Ok(())
+}
+
+#[test]
+fn sustained_loss_keeps_estimate_near_delivered_throughput() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(5));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    r.set_netem(
+        NetemConfig::new()
+            .latency(Duration::from_millis(20))
+            .loss(RandomLoss::new(Probability::new(0.60)))
+            .link(Bitrate::mbps(5), DataSize::kbytes(100))
+            .seed(42),
+    );
+    ctx.run_for_duration(&mut l, &mut r, Duration::from_secs(10))?;
+
+    // Real RTP delivery and TWCC feedback must keep the estimate well above the 1 kbps floor.
+    for _ in 0..3 {
+        let offset = r.events.len();
+        let duration = Duration::from_secs(1);
+        let estimate = ctx.run_for_duration(&mut l, &mut r, duration)?.unwrap();
+        let delivered = received_media_bitrate(&r, offset, duration);
+        assert!(
+            delivered >= Bitrate::kbps(300),
+            "delivered throughput: {delivered}"
+        );
+        // Allow for feedback timing and smoothing rather than requiring an exact bitrate match.
+        assert!(
+            estimate >= delivered * 0.5,
+            "estimate {estimate} collapsed despite delivered throughput {delivered}"
+        );
+    }
+    Ok(())
+}
+
+fn received_media_bitrate(rtc: &TestRtc, event_offset: usize, duration: Duration) -> Bitrate {
+    let bytes: usize = rtc.events[event_offset..]
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::RtpPacket(packet) => Some(packet.payload.len()),
+            _ => None,
+        })
+        .sum();
+    DataSize::bytes(bytes as i64) / duration
+}
+
+#[test]
+fn increased_delivery_raises_estimate_while_loss_continues() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(5));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    ctx.set_media_send_rate(Bitrate::kbps(500));
+    r.set_netem(
+        NetemConfig::new()
+            .latency(Duration::from_millis(20))
+            .loss(RandomLoss::new(Probability::new(0.60)))
+            .link(Bitrate::mbps(5), DataSize::kbytes(100))
+            .seed(42),
+    );
+    let before = ctx
+        .run_for_duration(&mut l, &mut r, Duration::from_secs(10))?
+        .unwrap();
+    assert!(
+        before < Bitrate::kbps(500),
+        "loss should limit the estimate: {before}"
+    );
+
+    // Keep loss and desired bandwidth unchanged; only delivered throughput increases.
+    ctx.set_media_send_rate(Bitrate::mbps(2));
+    ctx.run_for_duration(&mut l, &mut r, Duration::from_secs(3))?;
+    let offset = r.events.len();
+    let duration = Duration::from_secs(1);
+    let after = ctx.run_for_duration(&mut l, &mut r, duration)?.unwrap();
+    let delivered = received_media_bitrate(&r, offset, duration);
+    assert!(
+        delivered >= Bitrate::kbps(500),
+        "delivered throughput: {delivered}"
+    );
+    assert!(
+        after >= before * 1.5,
+        "estimate did not recover: {before} -> {after}"
+    );
+    assert!(
+        after >= delivered * 0.5,
+        "estimate {after} trails delivery {delivered}"
+    );
     Ok(())
 }
