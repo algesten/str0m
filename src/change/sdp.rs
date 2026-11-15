@@ -2703,7 +2703,7 @@ mod test {
             if direction == Direction::SendOnly {
                 // Send-only PTs are suggestions: both profile-0 alternatives map to 98.
                 let answer = result.unwrap();
-                assert!(!answer.0.media_lines[1].pts.contains(&100.into()));
+                assert!(!answer.media_lines[1].pts.contains(&100.into()));
             } else if result.is_ok() {
                 accepted_conflicts.push(direction);
             }
