@@ -153,29 +153,6 @@ requires a payload type already locked to another codec configuration, or change
 a locked payload's PT or RTX association, negotiation returns an error. A
 sending-only remote proposes payload types, which str0m can remap as described above.
 
-If a receiving remote offers several compatible payloads, the one using the
-locked PT takes precedence over a closer fmtp match at a different PT. All
-mandatory mappings are checked first: a compatible alternative cannot hide
-another offered PT that conflicts with a locked codec or RTX/RED role. Declared
-associations are checked before unsupported codecs are filtered out, so they
-cannot hide a conflicting use of an established PT either.
-
-Codec updates for a new m-line are committed together after all its payloads
-validate. A rejected payload must not leave earlier payloads from that m-line
-with changed format parameters.
-
-### H.265/H.266 formats across m-lines
-
-H.265/H.266 payloads share one packet layout across the session. Once a payload
-is locked, a new m-line cannot enable or disable DONL for it, including when the
-remote is send-only. Negotiation rejects that change because existing packetizers
-and depacketizers retain the established layout.
-
-The level and fmtp representation are fixed when the payload is first locked.
-Later m-lines cannot lower or raise that level, replace full profile/tier/level
-with a profile-only form, or clear it by omitting fmtp. Compatible offers reuse
-the established format.
-
 ### TWCC feedback across m-lines
 
 str0m assumes `fb_transport_cc` is a per-PT capability shared across the
@@ -185,24 +162,20 @@ Later m-lines using that PT do not change the result, even if they advertise
 different `a=rtcp-fb:<pt> transport-cc` support. We do not model that distinction.
 The transport sequence number header extension must still be negotiated on
 the m-line carrying the RTP packets. As with other codec parameters, feedback
-capabilities are retained during later SDP updates to an existing m-line.
+capabilities are retained when an existing m-line is renegotiated.
 
 ### Telephone-event ranges across m-lines
 
 str0m keeps one negotiated telephone-event range per payload type in
-`Session::codec_config`. Before locking, it takes the smaller local and remote
-maximum. Once locked, later m-lines cannot change that range. It uses the range
-in both directions and on every m-line sharing the PT. SDP can express different
-receive capabilities in each direction and on different m-lines; str0m does not model those distinctions.
+`Session::codec_config`. It takes the smaller local and remote maximum before
+locking and uses that range in both directions and on every m-line sharing the PT. SDP can
+express different receive capabilities in each direction and on different
+m-lines; str0m does not model those distinctions.
 
-### Later SDP updates and narrowed PT lists
+### Renegotiation and narrowed PT lists
 
-str0m does not renegotiate codecs for existing m-lines. Later SDP exchanges can
-update media direction, stopping, and RID/simulcast state, but cannot change the
-meaning of locked payloads. Adding a new m-line does not relax this rule.
-
-For an existing m-line, str0m keeps the remote payload type list from the first
-negotiation. Strictly following SDP offer/answer would mean an
+On renegotiation of an existing m-line, str0m keeps the remote payload type list
+from the first negotiation. Strictly following SDP offer/answer would mean an
 answer that narrows the `sendrecv`/`recvonly` PT list should also narrow what we
 consider valid to send on that m-line. In practice, browsers keep stable PT/codec
 sets for an existing m-line, and we have not seen a real interoperability problem
