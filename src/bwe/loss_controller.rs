@@ -1140,6 +1140,49 @@ mod test {
     }
 
     #[test]
+    fn delay_cap_preserves_internal_acked_rate_lower_bound() {
+        use super::super::SendSideBandwidthEstimator;
+        use crate::rtp_::{TwccPacketId, TwccSendRecord};
+
+        let start = Instant::now();
+        let mut bwe = SendSideBandwidthEstimator::new(Bitrate::kbps(100));
+
+        // Half the packets arrive at a steady 480 kbps while the delay estimate
+        // is still below that throughput. Apply real feedback through the BWE
+        // integration so its final delay cap cannot erase the loss lower bound.
+        for batch in 0..4u64 {
+            let now = start + Duration::from_millis((batch + 1) * 260 + 20);
+            let records: Vec<_> = (0..26u64)
+                .map(|packet| {
+                    let sequence = batch * 26 + packet;
+                    let sent = start + Duration::from_millis(sequence * 10);
+                    TwccSendRecord::test_new(
+                        TwccPacketId::new(sequence),
+                        sent,
+                        1200,
+                        now,
+                        (packet % 2 == 0).then_some(sent + Duration::from_millis(10)),
+                    )
+                })
+                .collect();
+            bwe.update(records.iter(), now);
+        }
+
+        let acked = bwe.acked_bitrate_estimator.current_estimate().unwrap();
+        let delay = bwe.delay_controller.last_estimate().unwrap();
+        assert!(bwe.loss_controller.num_observations > 0);
+        assert!(delay < acked, "delay {delay}, acknowledged {acked}");
+        assert_eq!(bwe.last_estimate(), Some(delay));
+        assert!(
+            bwe.loss_controller.current_estimate.loss_limited_bandwidth >= acked,
+            "final delay cap erased the internal loss lower bound: {} < {acked}",
+            bwe.loss_controller.current_estimate.loss_limited_bandwidth
+        );
+        let loss_result = bwe.loss_controller.loss_based_result();
+        assert!(loss_result.bandwidth_estimate.unwrap() >= acked);
+    }
+
+    #[test]
     fn sustained_loss_does_not_drive_estimate_below_lower_bound() {
         // Without a lower bound, each update under heavy loss can pick the 0.95x candidate and
         // the estimate decays geometrically: ~0.07 bps after 500 observations, ~1e-15 bps
