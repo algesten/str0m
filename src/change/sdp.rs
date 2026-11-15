@@ -2715,6 +2715,59 @@ mod test {
     }
 
     #[test]
+    fn later_offer_cannot_reassign_locked_red_to_another_primary() {
+        crate::init_crypto_default();
+        let mut accepted_conflicts = Vec::new();
+        for direction in [
+            Direction::SendOnly,
+            Direction::RecvOnly,
+            Direction::SendRecv,
+        ] {
+            let now = Instant::now();
+            let build = || {
+                Rtc::builder()
+                    .clear_codecs()
+                    .enable_opus(true, true)
+                    .enable_pcmu(true, false)
+                    .build(now)
+            };
+            let mut offerer = build();
+            let mut answerer = build();
+            let mut change = offerer.sdp_api();
+            change.add_media(MediaKind::Audio, direction, None, None, None);
+            let (offer, pending) = change.apply().unwrap();
+            let answer = answerer.sdp_api().accept_offer(offer).unwrap();
+            offerer.sdp_api().accept_answer(pending, answer).unwrap();
+
+            let mut change = offerer.sdp_api();
+            change.add_media(MediaKind::Audio, direction, None, None, None);
+            let (offer, _) = change.apply().unwrap();
+            let valid = offer.to_sdp_string();
+            let (head, tail) = valid.rsplit_once("m=audio").unwrap();
+            assert!(tail.contains("a=fmtp:63 111/111\r\n"));
+            assert!(tail.contains("a=rtpmap:63 red/48000/2\r\n"));
+            // RED 63 was locked to Opus 111. The new m-line assigns it to PCMU 0.
+            let tail = tail
+                .replace("a=fmtp:63 111/111", "a=fmtp:63 0/0")
+                .replace("a=rtpmap:63 red/48000/2", "a=rtpmap:63 red/8000");
+            let offer = SdpOffer::from_sdp_string(&format!("{head}m=audio{tail}")).unwrap();
+            let result = answerer.sdp_api().accept_offer(offer);
+            if direction == Direction::SendOnly {
+                result.unwrap();
+            } else if let Ok(answer) = result {
+                let answer = answer.to_sdp_string();
+                let (_, tail) = answer.rsplit_once("m=audio").unwrap();
+                assert!(tail.contains("a=fmtp:63 111/111\r\n"));
+                accepted_conflicts.push(direction);
+            }
+        }
+        assert!(
+            accepted_conflicts.is_empty(),
+            "accepted conflicting locked RED associations: {accepted_conflicts:?}"
+        );
+    }
+
+    #[test]
     fn offer_reusing_rtx_pt_for_another_codec_is_rejected() {
         crate::init_crypto_default();
         let now = Instant::now();
