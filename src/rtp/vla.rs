@@ -56,6 +56,8 @@ pub struct TemporalLayerAllocation {
 
 /// A resolution and a frame rate, tied together because that's how it's formed in
 /// the header extension. Either they are both there or neither are there.
+///
+/// Wire dimensions of 65536 pixels saturate to [`u16::MAX`] when parsed.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ResolutionAndFramerate {
     /// Width in number of pixels
@@ -161,11 +163,11 @@ impl VideoLayersAllocation {
                 let (resolution_and_framerate, after_resolution_and_framerate) =
                     split_at(next_resolution_and_framerate, 5)?;
                 next_resolution_and_framerate = after_resolution_and_framerate;
+                // These are sent minus 1, so 0xffff means 65536, which saturates.
+                let dimension = |b: &[u8]| u16::from_be_bytes([b[0], b[1]]).saturating_add(1);
                 Some(ResolutionAndFramerate {
-                    width: u16::from_be_bytes(resolution_and_framerate[0..2].try_into().unwrap())
-                        + 1,
-                    height: u16::from_be_bytes(resolution_and_framerate[2..4].try_into().unwrap())
-                        + 1,
+                    width: dimension(&resolution_and_framerate[0..2]),
+                    height: dimension(&resolution_and_framerate[2..4]),
                     framerate: resolution_and_framerate[4],
                 })
             });
@@ -788,6 +790,34 @@ mod test {
                 ],
             }),
         );
+    }
+
+    #[test]
+    fn test_parse_vla_largest_resolution() {
+        // Width and height are sent minus 1, so 0xffff is 65536. That used to overflow.
+        let vla = VideoLayersAllocation::parse(&[
+            // 1 simulcast stream, shared bitmask with the base spatial layer active
+            0b0000_0001,
+            // 1 temporal layer
+            0b0000_0000,
+            // temporal layer bitrate
+            100,
+            // 65536x65536x30
+            0xff,
+            0xff,
+            0xff,
+            0xff,
+            30,
+        ])
+        .unwrap();
+
+        let layer = &vla.simulcast_streams[0].spatial_layers[0];
+        let resolution = layer.resolution_and_framerate.as_ref().unwrap();
+        assert_eq!(resolution.width, u16::MAX);
+        assert_eq!(resolution.height, u16::MAX);
+        assert_eq!(resolution.framerate, 30);
+        let encoded = serialize(Some(&vla));
+        assert_eq!(VideoLayersAllocation::parse(&encoded), Some(vla));
     }
 
     #[test]
