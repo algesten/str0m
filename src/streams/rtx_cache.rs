@@ -22,9 +22,9 @@ pub(crate) struct RtxCache {
 }
 
 #[derive(Debug)]
-struct CachedPacket {
-    packet: RtpPacket,
-    last_resend: Option<Instant>,
+pub(crate) struct CachedPacket {
+    pub packet: RtpPacket,
+    pub last_resend: Option<Instant>,
 }
 
 impl RtxCache {
@@ -39,14 +39,8 @@ impl RtxCache {
         assert!(packet.nackable);
         let seq_no = packet.seq_no;
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
-        self.packet_by_seq_no.push(
-            *seq_no,
-            now,
-            CachedPacket {
-                packet,
-                last_resend: None,
-            },
-        );
+        self.packet_by_seq_no
+            .push(*seq_no, now, CachedPacket::new(packet));
         self.seq_no_by_quantized_size[quantized_size] = seq_no;
         self.remove_old_packets(now);
     }
@@ -55,34 +49,8 @@ impl RtxCache {
         Some(self.packet_by_seq_no.last_position()?.into())
     }
 
-    pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut RtpPacket> {
-        Some(&mut self.packet_by_seq_no.get_mut(*seq_no)?.packet)
-    }
-
-    pub fn get_cached_packet_for_resend(
-        &mut self,
-        seq_no: SeqNo,
-        now: Instant,
-    ) -> Option<&mut RtpPacket> {
-        let cached = self.packet_by_seq_no.get_mut(*seq_no)?;
-        cached.last_resend = Some(now);
-        Some(&mut cached.packet)
-    }
-
-    pub fn get_cached_packet_for_nack(
-        &mut self,
-        seq_no: SeqNo,
-        now: Instant,
-        rtt: Duration,
-    ) -> Option<&mut RtpPacket> {
-        let cached = self.packet_by_seq_no.get_mut(*seq_no)?;
-        if cached
-            .last_resend
-            .is_some_and(|at| now.saturating_duration_since(at) < rtt)
-        {
-            return None;
-        }
-        Some(&mut cached.packet)
+    pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut CachedPacket> {
+        self.packet_by_seq_no.get_mut(*seq_no)
     }
 
     pub fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut RtpPacket> {
@@ -94,7 +62,7 @@ impl RtxCache {
             .filter(|seq_no| !seq_no.is_max())
             .find(|seq_no| self.packet_by_seq_no.contains(***seq_no))?;
 
-        self.get_cached_packet_by_seq_no(*seq_no)
+        Some(&mut self.get_cached_packet_by_seq_no(*seq_no)?.packet)
     }
 
     fn remove_old_packets(&mut self, now: Instant) {
@@ -112,53 +80,21 @@ impl RtxCache {
     }
 }
 
+impl CachedPacket {
+    fn new(packet: RtpPacket) -> Self {
+        Self {
+            packet,
+            last_resend: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::rtp_::MediaTime;
     use crate::rtp_::RtpHeader;
 
     use super::*;
-
-    #[test]
-    fn nack_eligibility_tracks_resends_and_current_rtt() {
-        let now = Instant::now();
-        let mut cache = RtxCache::new(10, Duration::from_secs(3));
-        cache.cache_sent_packet(packet(now, 1, 0), now);
-        let rtt = Duration::from_millis(100);
-        assert!(
-            cache
-                .get_cached_packet_for_nack(1.into(), now, rtt)
-                .is_some()
-        );
-        cache.get_cached_packet_for_resend(1.into(), now).unwrap();
-        assert!(
-            cache
-                .get_cached_packet_for_nack(1.into(), after(now, 99), rtt)
-                .is_none()
-        );
-        assert!(
-            cache
-                .get_cached_packet_for_nack(1.into(), after(now, 100), rtt)
-                .is_some()
-        );
-
-        // A larger RTT must retain the resend history even past the previous RTT.
-        assert!(
-            cache
-                .get_cached_packet_for_nack(1.into(), after(now, 150), Duration::from_millis(200))
-                .is_none()
-        );
-        assert!(
-            cache
-                .get_cached_packet_for_nack(1.into(), after(now, 50), Duration::from_millis(20))
-                .is_some()
-        );
-        assert!(
-            cache
-                .get_cached_packet_for_nack(1.into(), now, Duration::ZERO)
-                .is_some()
-        );
-    }
 
     fn packet(now: Instant, seq_no: u64, millis: u64) -> RtpPacket {
         RtpPacket {
@@ -180,31 +116,26 @@ mod test {
     #[test]
     fn resend_history_follows_cache_eviction_and_reset() {
         let now = Instant::now();
-        let rtt = Duration::from_millis(100);
         let mut cache = RtxCache::new(10, Duration::from_secs(3));
         cache.cache_sent_packet(packet(now, 1, 0), now);
-        cache.get_cached_packet_for_resend(1.into(), now).unwrap();
+        cache
+            .get_cached_packet_by_seq_no(1.into())
+            .unwrap()
+            .last_resend = Some(now);
         // Overwrite the slot with another full sequence number, as after rollover.
         cache.cache_sent_packet(packet(now, 65_541, 0), now);
-        assert!(
-            cache
-                .get_cached_packet_for_nack(1.into(), now, rtt)
-                .is_none()
-        );
-        assert!(
-            cache
-                .get_cached_packet_for_nack(65_541.into(), now, rtt)
-                .is_some()
-        );
-        cache
-            .get_cached_packet_for_resend(65_541.into(), now)
-            .unwrap();
+        assert!(cache.get_cached_packet_by_seq_no(1.into()).is_none());
+        let cached = cache.get_cached_packet_by_seq_no(65_541.into()).unwrap();
+        assert_eq!(cached.last_resend, None);
+        cached.last_resend = Some(now);
         cache.clear();
         cache.cache_sent_packet(packet(now, 65_541, 0), now);
-        assert!(
+        assert_eq!(
             cache
-                .get_cached_packet_for_nack(65_541.into(), now, rtt)
-                .is_some()
+                .get_cached_packet_by_seq_no(65_541.into())
+                .unwrap()
+                .last_resend,
+            None
         );
     }
 
@@ -214,13 +145,17 @@ mod test {
         let mut cache = RtxCache::new(5000, Duration::from_secs(3));
         for seq in 0..5000 {
             cache.cache_sent_packet(packet(now, seq, 0), now);
-            cache.get_cached_packet_for_resend(seq.into(), now).unwrap();
-        }
-        // Unlike a separately bounded resend history, the cache remembers every live entry.
-        assert!(
             cache
-                .get_cached_packet_for_nack(0.into(), now, Duration::from_millis(100))
-                .is_none()
+                .get_cached_packet_by_seq_no(seq.into())
+                .unwrap()
+                .last_resend = Some(now);
+        }
+        assert_eq!(
+            cache
+                .get_cached_packet_by_seq_no(0.into())
+                .unwrap()
+                .last_resend,
+            Some(now)
         );
     }
 
@@ -231,7 +166,9 @@ mod test {
         rtx_cache.cache_sent_packet(packet(now, 1, 10), after(now, 10));
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
-            rtx_cache.get_cached_packet_by_seq_no(1.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(1.into())
+                .map(|cached| &mut cached.packet)
         );
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
@@ -244,7 +181,12 @@ mod test {
         let now = Instant::now();
         let mut rtx_cache = RtxCache::new(10, Duration::from_secs(0));
         rtx_cache.cache_sent_packet(packet(now, 1, 10), after(now, 10));
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(1.into())
+                .map(|cached| &mut cached.packet)
+        );
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(1000));
     }
 
@@ -255,7 +197,9 @@ mod test {
         rtx_cache.cache_sent_packet(packet(now, 1, 10), after(now, 10));
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
-            rtx_cache.get_cached_packet_by_seq_no(1.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(1.into())
+                .map(|cached| &mut cached.packet)
         );
         assert_eq!(
             Some(&mut packet(now, 1, 10)),
@@ -269,7 +213,9 @@ mod test {
         rtx_cache.cache_sent_packet(packet(now, 2, 20), after(now, 20));
         assert_eq!(
             Some(&mut packet(now, 2, 20)),
-            rtx_cache.get_cached_packet_by_seq_no(2.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(2.into())
+                .map(|cached| &mut cached.packet)
         );
     }
 
@@ -287,10 +233,22 @@ mod test {
 
         assert_eq!(
             Some(&mut packet(now, 200, 2000)),
-            rtx_cache.get_cached_packet_by_seq_no(200.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(200.into())
+                .map(|cached| &mut cached.packet)
         );
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(100.into()));
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(101.into()));
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(100.into())
+                .map(|cached| &mut cached.packet)
+        );
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(101.into())
+                .map(|cached| &mut cached.packet)
+        );
     }
 
     #[test]
@@ -305,15 +263,24 @@ mod test {
             rtx_cache.cache_sent_packet(pkt, now);
         }
 
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(99.into()));
+        assert_eq!(
+            None,
+            rtx_cache
+                .get_cached_packet_by_seq_no(99.into())
+                .map(|cached| &mut cached.packet)
+        );
 
         assert_eq!(
             Some(&mut packet(now, 100, 1000)),
-            rtx_cache.get_cached_packet_by_seq_no(100.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(100.into())
+                .map(|cached| &mut cached.packet)
         );
         assert_eq!(
             Some(&mut packet(now, 200, 2000)),
-            rtx_cache.get_cached_packet_by_seq_no(200.into())
+            rtx_cache
+                .get_cached_packet_by_seq_no(200.into())
+                .map(|cached| &mut cached.packet)
         );
     }
 }
