@@ -897,7 +897,12 @@ impl PayloadParams {
                 || (remote.pt != self.pt
                     && remote.resend.is_some_and(|rtx| {
                         rtx == self.pt || Some(rtx) == self.resend || Some(rtx) == self.red
-                    }));
+                    }))
+                || remote.red.is_some_and(|red| {
+                    red == self.pt
+                        || Some(red) == self.resend
+                        || (remote.pt != self.pt && Some(red) == self.red)
+                });
             if changes_codec || changes_role {
                 return Err(format!(
                     "Remote reused locked payload mapping {} for another codec or role",
