@@ -2672,6 +2672,49 @@ mod test {
     }
 
     #[test]
+    fn later_offer_cannot_hide_locked_profile_conflict_behind_an_alternative() {
+        crate::init_crypto_default();
+        let mut accepted_conflicts = Vec::new();
+        for direction in [
+            Direction::SendOnly,
+            Direction::RecvOnly,
+            Direction::SendRecv,
+        ] {
+            let now = Instant::now();
+            let mut offerer = Rtc::builder().clear_codecs().enable_vp9(true).build(now);
+            let mut answerer = Rtc::builder().clear_codecs().enable_vp9(true).build(now);
+            let mut change = offerer.sdp_api();
+            change.add_media(MediaKind::Video, direction, None, None, None);
+            let (offer, pending) = change.apply().unwrap();
+            let answer = answerer.sdp_api().accept_offer(offer).unwrap();
+            offerer.sdp_api().accept_answer(pending, answer).unwrap();
+
+            let mut change = offerer.sdp_api();
+            change.add_media(MediaKind::Video, direction, None, None, None);
+            let (offer, _) = change.apply().unwrap();
+            let valid = offer.to_sdp_string();
+            let (head, tail) = valid.rsplit_once("m=video").unwrap();
+            // PT 98 remains a valid profile-0 alternative. PT 100 is already locked
+            // to profile 2, but the new m-line reuses it for profile 0.
+            assert!(tail.contains("a=fmtp:100 profile-id=2\r\n"));
+            let tail = tail.replace("a=fmtp:100 profile-id=2\r\n", "");
+            let offer = SdpOffer::from_sdp_string(&format!("{head}m=video{tail}")).unwrap();
+            let result = answerer.sdp_api().accept_offer(offer);
+            if direction == Direction::SendOnly {
+                // Send-only PTs are suggestions: both profile-0 alternatives map to 98.
+                let answer = result.unwrap();
+                assert!(!answer.0.media_lines[1].pts.contains(&100.into()));
+            } else if result.is_ok() {
+                accepted_conflicts.push(direction);
+            }
+        }
+        assert!(
+            accepted_conflicts.is_empty(),
+            "accepted locked PT conflicts: {accepted_conflicts:?}"
+        );
+    }
+
+    #[test]
     fn offer_reusing_rtx_pt_for_another_codec_is_rejected() {
         crate::init_crypto_default();
         let now = Instant::now();
