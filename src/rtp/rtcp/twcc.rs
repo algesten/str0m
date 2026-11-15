@@ -544,6 +544,12 @@ fn build_interims(
     let mut prev = (base_seq, base_time);
 
     for r in report_from {
+        // The report counts its statuses in 16 bits. End it before a packet it can't
+        // reach, the next report starts there.
+        if *r.seq - *base_seq >= u16::MAX as u64 {
+            break;
+        }
+
         let diff_seq = *r.seq - *prev.0;
 
         if diff_seq > 1 {
@@ -1712,6 +1718,46 @@ mod test {
         // 140 * 64 = 8960
         // So the first offset must be 40ms, i.e. 40_000us / 250us = 160
         assert_eq!(report2.delta[0], Small(160));
+    }
+
+    #[test]
+    fn too_many_statuses_require_two_reports() {
+        // The status count has 16 bits. A report spanning more packets used to overflow it.
+        let mut reg = TwccRecvRegister::new(100);
+
+        let now = Instant::now();
+
+        for (i, seq) in [0_u64, 65_534, 65_535].into_iter().enumerate() {
+            reg.update_seq(seq.into(), now + Duration::from_millis(i as u64));
+        }
+
+        let report1 = reg.build_report(1000).unwrap();
+        assert_eq!(report1.status_count, u16::MAX);
+
+        let report2 = reg.build_report(1000).unwrap();
+        assert_eq!(report2.base_seq, 65_535);
+        assert_eq!(report2.status_count, 1);
+        assert!(reg.build_report(1000).is_none());
+    }
+
+    #[test]
+    fn huge_sequence_gap_requires_two_reports() {
+        // A TWCC sequence number from before the first one extends to near u64::MAX. The
+        // report used to fill that gap with missing chunks until it ran out of memory.
+        let mut reg = TwccRecvRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(0.into(), now);
+        let before_first = extend_u16(Some(0), 65_535);
+        reg.update_seq(before_first.into(), now + Duration::from_millis(1));
+
+        let report1 = reg.build_report(1000).unwrap();
+        assert_eq!(report1.status_count, 1);
+
+        let report2 = reg.build_report(1000).unwrap();
+        assert_eq!(report2.base_seq, 65_535);
+        assert_eq!(report2.status_count, 1);
     }
 
     /// Reconstructs every receive time of a report the way its receiver does.
