@@ -787,7 +787,12 @@ impl PayloadParams {
             }
 
             let local_donl = self.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
-            let remote_donl = first.spec.format.sprop_max_don_diff.unwrap_or(0) > 0;
+            let remote_donl = first
+                .spec
+                .format
+                .sprop_max_don_diff
+                .map(|diff| diff > 0)
+                .unwrap_or(local_donl);
             if matches!(self.spec.codec, Codec::H265 | Codec::H266) && local_donl != remote_donl {
                 return Err(format!(
                     "Remote changed DONL for locked payload type {}",
@@ -824,8 +829,8 @@ impl PayloadParams {
             }
 
             // Lock down the PT
-            self.pt = remote_pt;
             claimed.assert_claim_once(remote_pt)?;
+            self.pt = remote_pt;
 
             // Check if RTX PT also conflicts
             if local_is_controlling {
@@ -850,10 +855,10 @@ impl PayloadParams {
             }
 
             // Lock down the RTX PT
-            self.resend = remote_rtx;
             if let Some(rtx) = remote_rtx {
                 claimed.assert_claim_once(rtx)?;
             }
+            self.resend = remote_rtx;
 
             // RED is opt-in on our side and audio-only: keep it only if the matched remote also
             // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
