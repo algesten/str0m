@@ -821,6 +821,53 @@ mod test {
     }
 
     #[test]
+    fn locked_video_prefers_existing_pt_after_level_narrowing() {
+        for direction in [Direction::RecvOnly, Direction::SendRecv] {
+            for codec in [Codec::H265, Codec::H266] {
+                let mut config = CodecConfig::empty();
+                let mut lower = CodecConfig::empty();
+                if codec == Codec::H265 {
+                    config.add_h265(102.into(), Some(103.into()), 1, 0, 180);
+                    lower.add_h265(102.into(), Some(103.into()), 1, 0, 93);
+                } else {
+                    config.add_h266(102.into(), Some(103.into()), 1, 0, 96);
+                    lower.add_h266(102.into(), Some(103.into()), 1, 0, 51);
+                }
+                let original = config.params[0];
+                config.update_params(&[original], direction).unwrap();
+                config.update_params(lower.params(), direction).unwrap();
+                let narrowed = config.params.clone();
+
+                let mut alternative = lower.params[0];
+                alternative.pt = 104.into();
+                alternative.resend = Some(105.into());
+                // The other PT is an exact fmtp match, but the locked PT is compatible.
+                for remote in [[original, alternative], [alternative, original]] {
+                    config.update_params(&remote, direction).unwrap();
+                    assert_eq!(config.params, narrowed);
+                }
+
+                // Preferring the locked PT must still validate its RTX and DONL mappings.
+                let mut conflicting = original;
+                conflicting.resend = Some(106.into());
+                let error = config
+                    .update_params(&[conflicting, alternative], direction)
+                    .unwrap_err();
+                assert!(error.contains("RTX"));
+                assert_eq!(config.params, narrowed);
+
+                conflicting = original;
+                conflicting.spec.format.sprop_max_don_diff = Some(1);
+                let error = config
+                    .update_params(&[conflicting, alternative], direction)
+                    .unwrap_err();
+                assert!(error.contains("DONL"));
+                assert_eq!(config.params, narrowed);
+            }
+        }
+    }
+
+    #[test]
     fn locked_video_rejects_send_only_donl_change() {
         for codec in [Codec::H265, Codec::H266] {
             let mut config = CodecConfig::empty();

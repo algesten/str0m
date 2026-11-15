@@ -651,6 +651,7 @@ impl PayloadParams {
         unlocked: &mut HashSet<Pt>,
         levels: &mut VideoLevelCaps,
     ) -> Result<(), String> {
+        let prefer_locked_pt = self.locked && !local_is_controlling;
         let Some((first, _)) = remote_pts
             .iter()
             // One unrestricted AMR-WB payload can match several local mode sets.
@@ -662,7 +663,9 @@ impl PayloadParams {
                     || !claimed.is_claimed(p.pt)
             })
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
-            .max_by_key(|(_, s)| *s)
+            // A compatible locked PT takes precedence over a closer fmtp match at
+            // another PT when the remote dictates the receiving mapping.
+            .max_by_key(|(p, s)| (prefer_locked_pt && p.pt == self.pt, *s))
         else {
             return Ok(());
         };

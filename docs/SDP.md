@@ -148,6 +148,9 @@ requires a payload type already locked to another codec configuration, or change
 a locked payload's PT or RTX association, negotiation returns an error. A
 sending-only remote proposes payload types, which str0m can remap as described above.
 
+If a receiving remote offers several compatible payloads, the one using the
+locked PT takes precedence over a closer fmtp match at a different PT.
+
 Codec updates for a new m-line are committed together after all its payloads
 validate. A rejected payload must not leave earlier payloads from that m-line
 with changed format parameters.
