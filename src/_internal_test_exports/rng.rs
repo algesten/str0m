@@ -9,7 +9,7 @@ macro_rules! rng_primary {
             Some(if max == $unit::MAX {
                 u
             } else {
-                ((u as $above * max as $above) / $unit::MAX as $above) as $unit
+                ((u as $above * (max as $above + 1)) / ($unit::MAX as $above + 1)) as $unit
             })
         }
     };
@@ -20,7 +20,7 @@ impl<'a> Rng<'a> {
         Self(data, 0)
     }
 
-    pub fn slice(&mut self, n: usize) -> Option<&[u8]> {
+    pub fn slice(&mut self, n: usize) -> Option<&'a [u8]> {
         let start = self.1;
         let end = self.1 + n;
 
@@ -44,12 +44,38 @@ impl<'a> Rng<'a> {
         Some(arr)
     }
 
+    /// All remaining data.
+    pub fn rest(&mut self) -> &'a [u8] {
+        let rest = &self.0[self.1..];
+        self.1 = self.0.len();
+        rest
+    }
+
     pub fn bool(&mut self) -> Option<bool> {
         Some(self.array::<1>()?[0] < 128)
     }
 
     rng_primary!(u8, u16);
+    rng_primary!(u16, u32);
     rng_primary!(u32, u64);
     rng_primary!(u64, u128);
     rng_primary!(usize, u128);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Rng;
+
+    #[test]
+    fn inclusive_choices_cover_the_input_range() {
+        let mut counts = [0; 4];
+        for byte in 0..=u8::MAX {
+            counts[Rng::new(&[byte]).u8(3).unwrap() as usize] += 1;
+        }
+        assert_eq!(counts, [64; 4]);
+
+        let upper_half = (1_usize << (usize::BITS - 1)).to_be_bytes();
+        assert_eq!(Rng::new(&upper_half).usize(1), Some(1));
+        assert_eq!(Rng::new(&[u8::MAX; 8]).u64(u64::MAX), Some(u64::MAX));
+    }
 }

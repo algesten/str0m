@@ -2,16 +2,31 @@ use std::time::Duration;
 
 use crate::Bitrate;
 use crate::RtcConfig;
+use crate::format::Codec;
+use crate::packet::CodecDepacketizer;
+use crate::rtp::vla;
 use crate::rtp::{Extension, ExtensionMap};
 
 use super::Rng;
+
+pub fn random_depacketizer(rng: &mut Rng, codec: Codec) -> Option<CodecDepacketizer> {
+    let mut depack: CodecDepacketizer = codec.into();
+    match &mut depack {
+        CodecDepacketizer::AmrWb(amr) => amr.octet_align = rng.bool()?,
+        CodecDepacketizer::H265(h265) => h265.with_donl(rng.bool()?),
+        CodecDepacketizer::H266(h266) => h266.with_donl(rng.bool()?),
+        _ => {}
+    }
+    Some(depack)
+}
 
 pub fn random_extmap(rng: &mut Rng, to_set: usize) -> Option<ExtensionMap> {
     use Extension::*;
     let mut e = ExtensionMap::empty();
     for _ in 0..to_set {
-        let id = rng.u8(13)? + 1;
-        let ext = match rng.u8(12)? {
+        // ExtensionMap takes ids 1..=16. Above 14 needs the two-byte header form.
+        let id = rng.u8(15)? + 1;
+        let ext = match rng.u8(14)? {
             0 => AbsoluteSendTime,
             1 => AudioLevel,
             2 => TransmissionTimeOffset,
@@ -25,6 +40,8 @@ pub fn random_extmap(rng: &mut Rng, to_set: usize) -> Option<ExtensionMap> {
             10 => RtpMid,
             11 => FrameMarking,
             12 => ColorSpace,
+            13 => AbsoluteCaptureTime,
+            14 => Extension::with_serializer(vla::URI, vla::Serializer),
             _ => unreachable!(),
         };
         e.set(id, ext);

@@ -92,3 +92,57 @@ name = "red_decode"
 path = "fuzz_targets/red_decode.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "twcc"
+path = "fuzz_targets/twcc.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "srtp"
+path = "fuzz_targets/srtp.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rtcp_feedback"
+path = "fuzz_targets/rtcp_feedback.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "rtp_receive"
+path = "fuzz_targets/rtp_receive.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "ice_agent"
+path = "fuzz_targets/ice_agent.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "candidate"
+path = "fuzz_targets/candidate.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "dcep"
+path = "fuzz_targets/dcep.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sdp_accept_offer"
+path = "fuzz_targets/sdp_accept_offer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sdp_accept_answer"
+path = "fuzz_targets/sdp_accept_answer.rs"
+test = false
+doc = false
