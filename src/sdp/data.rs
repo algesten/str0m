@@ -75,22 +75,24 @@ impl Sdp {
     }
 
     pub(crate) fn ice_creds(&self) -> Option<IceCreds> {
-        let (session_ufrag, session_pass) = self.session.ice_creds();
         self.transport_media()
-            .map(MediaLine::ice_creds)
-            .chain(std::iter::once((session_ufrag, session_pass)))
-            .find_map(|(ufrag, pass)| {
-                // Inherit within one section, keeping credentials from
-                // different stopped sections separate.
-                let (Some(ufrag), Some(pass)) = (ufrag.or(session_ufrag), pass.or(session_pass))
-                else {
-                    return None;
-                };
-                Some(IceCreds {
-                    ufrag: ufrag.to_string(),
-                    pass: pass.to_string(),
-                })
-            })
+            .find_map(|m| m.ice_creds().or_else(|| self.inherit_ice_creds(m)))
+            .or_else(|| self.session.ice_creds())
+    }
+
+    fn inherit_ice_creds(&self, media: &MediaLine) -> Option<IceCreds> {
+        // Inherit within one section, keeping credentials from
+        // different stopped sections separate.
+        let (Some(ufrag), Some(pass)) = (
+            media.ice_ufrag().or_else(|| self.session.ice_ufrag()),
+            media.ice_pwd().or_else(|| self.session.ice_pwd()),
+        ) else {
+            return None;
+        };
+        Some(IceCreds {
+            ufrag: ufrag.to_string(),
+            pass: pass.to_string(),
+        })
     }
 
     pub(crate) fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
@@ -211,23 +213,32 @@ impl Session {
         Some(*setup)
     }
 
-    /// Session-level ICE username fragment and password, each optional.
-    pub fn ice_creds(&self) -> (Option<&str>, Option<&str>) {
-        let ufrag = self.attrs.iter().find_map(|m| {
+    pub fn ice_creds(&self) -> Option<IceCreds> {
+        let (Some(ufrag), Some(pass)) = (self.ice_ufrag(), self.ice_pwd()) else {
+            return None;
+        };
+        Some(IceCreds {
+            ufrag: ufrag.to_string(),
+            pass: pass.to_string(),
+        })
+    }
+
+    fn ice_ufrag(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
             let SessionAttribute::IceUfrag(v) = m else {
                 return None;
             };
             Some(v.as_str())
-        });
+        })
+    }
 
-        let pass = self.attrs.iter().find_map(|m| {
+    fn ice_pwd(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
             let SessionAttribute::IcePwd(v) = m else {
                 return None;
             };
             Some(v.as_str())
-        });
-
-        (ufrag, pass)
+        })
     }
 
     pub fn fingerprint(&self) -> Option<Fingerprint> {
@@ -597,23 +608,32 @@ impl MediaLine {
         Some(*setup)
     }
 
-    /// Media-level ICE username fragment and password, each optional.
-    pub fn ice_creds(&self) -> (Option<&str>, Option<&str>) {
-        let ufrag = self.attrs.iter().find_map(|m| {
+    pub fn ice_creds(&self) -> Option<IceCreds> {
+        let (Some(ufrag), Some(pass)) = (self.ice_ufrag(), self.ice_pwd()) else {
+            return None;
+        };
+        Some(IceCreds {
+            ufrag: ufrag.to_string(),
+            pass: pass.to_string(),
+        })
+    }
+
+    fn ice_ufrag(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
             let MediaAttribute::IceUfrag(v) = m else {
                 return None;
             };
             Some(v.as_str())
-        });
+        })
+    }
 
-        let pass = self.attrs.iter().find_map(|m| {
+    fn ice_pwd(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|m| {
             let MediaAttribute::IcePwd(v) = m else {
                 return None;
             };
             Some(v.as_str())
-        });
-
-        (ufrag, pass)
+        })
     }
 
     pub fn fingerprint(&self) -> Option<Fingerprint> {
