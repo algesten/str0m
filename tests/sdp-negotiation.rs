@@ -386,6 +386,7 @@ pub fn stop_media() {
 
 #[test]
 fn stop_last_media_after_first_section_loses_transport_attributes() {
+    init_log();
     init_crypto_default();
     let now = Instant::now();
     let mut l = Rtc::new(now);
@@ -429,6 +430,7 @@ fn stop_last_media_after_first_section_loses_transport_attributes() {
 
 #[test]
 fn stopped_media_ice_credentials_are_not_combined_across_sections() {
+    init_log();
     init_crypto_default();
     let now = Instant::now();
     let mut l = Rtc::new(now);

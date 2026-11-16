@@ -76,16 +76,7 @@ impl Sdp {
 
     pub(crate) fn ice_creds(&self) -> Option<IceCreds> {
         self.transport_media()
-            .find_map(|media| {
-                // Inherit each field within one section; credentials from
-                // different stopped sections need not belong to the same ICE session.
-                let ufrag = media.ice_ufrag().or_else(|| self.session.ice_ufrag())?;
-                let pass = media.ice_pwd().or_else(|| self.session.ice_pwd())?;
-                Some(IceCreds {
-                    ufrag: ufrag.to_string(),
-                    pass: pass.to_string(),
-                })
-            })
+            .find_map(|m| m.ice_creds(&self.session))
             .or_else(|| self.session.ice_creds())
     }
 
@@ -601,10 +592,14 @@ impl MediaLine {
         Some(*setup)
     }
 
-    pub fn ice_creds(&self) -> Option<IceCreds> {
+    pub fn ice_creds(&self, session: &Session) -> Option<IceCreds> {
+        // Inherit each field within this section; credentials from different
+        // stopped sections need not belong to the same ICE session.
+        let ufrag = self.ice_ufrag().or_else(|| session.ice_ufrag())?;
+        let pass = self.ice_pwd().or_else(|| session.ice_pwd())?;
         Some(IceCreds {
-            ufrag: self.ice_ufrag()?.to_string(),
-            pass: self.ice_pwd()?.to_string(),
+            ufrag: ufrag.to_string(),
+            pass: pass.to_string(),
         })
     }
 
@@ -627,6 +622,7 @@ impl MediaLine {
             }
         })
     }
+
     pub fn fingerprint(&self) -> Option<Fingerprint> {
         self.attrs
             .iter()
