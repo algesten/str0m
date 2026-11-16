@@ -114,6 +114,10 @@ pub struct Media {
     /// (the SDP grammar requires at least one fmt on a port=0 m-line).
     stopped: bool,
 
+    /// Set once the remote SDP has this m-line at port 0. Only then can a new
+    /// m-line take its slot.
+    recyclable: bool,
+
     /// Remote extmaps negotiated for this media.
     ///
     /// The corresponding entries must exist in Session::codec_config.
@@ -338,6 +342,14 @@ impl Media {
 
     pub(crate) fn mark_stopped(&mut self) {
         self.stopped = true;
+    }
+
+    pub(crate) fn recyclable(&self) -> bool {
+        self.recyclable
+    }
+
+    pub(crate) fn mark_recyclable(&mut self) {
+        self.recyclable = true;
     }
 
     pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
@@ -727,6 +739,7 @@ impl Default for Media {
             kind: MediaKind::Video,
             remote_pts: vec![],
             stopped: false,
+            recyclable: false,
             remote_exts: ExtensionMap::empty(),
             remote_created: false,
             dir: Direction::SendRecv,
