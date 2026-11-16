@@ -26,7 +26,7 @@ pub(crate) const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
 ];
 
 pub(crate) trait Claimed {
-    fn claim(&mut self, pt: Pt) -> bool;
+    fn assert_claim_once(&mut self, pt: Pt) -> bool;
     fn is_claimed(&self, pt: Pt) -> bool;
     fn find_unclaimed(
         &self,
@@ -36,7 +36,7 @@ pub(crate) trait Claimed {
 }
 
 impl Claimed for [bool; 128] {
-    fn claim(&mut self, pt: Pt) -> bool {
+    fn assert_claim_once(&mut self, pt: Pt) -> bool {
         let idx = *pt as usize;
         if self[idx] {
             warn!("Ignore already claimed PT {}", pt);
@@ -811,7 +811,7 @@ impl PayloadParams {
         }
 
         // Lock down the PT
-        if !claimed.claim(remote_pt) {
+        if !claimed.assert_claim_once(remote_pt) {
             return;
         }
         self.pt = remote_pt;
@@ -838,7 +838,7 @@ impl PayloadParams {
         }
 
         // Lock down the RTX PT
-        self.resend = remote_rtx.filter(|rtx| claimed.claim(*rtx));
+        self.resend = remote_rtx.filter(|rtx| claimed.assert_claim_once(*rtx));
 
         // RED is opt-in on our side and audio-only: keep it only if the matched remote also
         // offers RED (`and`) and our codec is an audio codec. A RED PT can still collide (two
@@ -873,7 +873,7 @@ impl PayloadParams {
         }
         self.red = remote_red;
         if let Some(red) = remote_red {
-            claimed.claim(red);
+            claimed.assert_claim_once(red);
         }
 
         // This is now locked.

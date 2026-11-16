@@ -612,14 +612,14 @@ impl CodecConfig {
                 continue;
             }
 
-            claimed.claim(p.pt);
+            claimed.assert_claim_once(p.pt);
 
             if let Some(rtx) = p.resend {
-                claimed.claim(rtx);
+                claimed.assert_claim_once(rtx);
             }
 
             if let Some(red) = p.red {
-                claimed.claim(red);
+                claimed.assert_claim_once(red);
             }
         }
 
@@ -664,7 +664,7 @@ impl CodecConfig {
                 debug!("Reassigned PT {} => {}", p.pt, pt);
                 p.pt = pt;
 
-                claimed.claim(pt);
+                claimed.assert_claim_once(pt);
                 unlocked.remove(&pt);
             }
 
@@ -675,7 +675,7 @@ impl CodecConfig {
                         Some(new_red) => {
                             debug!("Reassigned RED PT {:?} => {:?}", p.red, new_red);
                             p.red = Some(new_red);
-                            claimed.claim(new_red);
+                            claimed.assert_claim_once(new_red);
                             unlocked.remove(&new_red);
                         }
                         // RED is opt-in; drop it rather than panic if no PT is free.
@@ -700,7 +700,7 @@ impl CodecConfig {
                 debug!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
                 p.resend = Some(rtx);
 
-                claimed.claim(rtx);
+                claimed.assert_claim_once(rtx);
                 unlocked.remove(&rtx);
             }
         }
