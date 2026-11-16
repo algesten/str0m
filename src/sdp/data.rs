@@ -80,9 +80,14 @@ impl Sdp {
             .or_else(|| self.session.ice_creds())
     }
 
+    /// Resolve each missing media-level ICE field from the session defaults.
+    ///
+    /// The local `ice_creds()` accessors return `None` unless both fields exist at
+    /// their own level. Valid SDP can put `ice-ufrag` at session level and `ice-pwd`
+    /// at media level (or vice versa), so falling back between those accessors
+    /// would lose a usable pair. Resolve fields within one media section to avoid
+    /// combining credentials from different stopped sections.
     fn inherit_ice_creds(&self, media: &MediaLine) -> Option<IceCreds> {
-        // Inherit within one section, keeping credentials from
-        // different stopped sections separate.
         let (Some(ufrag), Some(pass)) = (
             media.ice_ufrag().or_else(|| self.session.ice_ufrag()),
             media.ice_pwd().or_else(|| self.session.ice_pwd()),
