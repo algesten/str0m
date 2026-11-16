@@ -385,6 +385,49 @@ pub fn stop_media() {
 }
 
 #[test]
+fn stop_last_media_after_first_section_loses_transport_attributes() {
+    init_crypto_default();
+    let now = Instant::now();
+    let mut l = Rtc::new(now);
+    let mut r = Rtc::new(now);
+    let mut change = l.sdp_api();
+    let first = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let last = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.sdp_api().accept_offer(offer).unwrap();
+    l.sdp_api().accept_answer(pending, answer).unwrap();
+
+    for mid in [first, last] {
+        let mut change = l.sdp_api();
+        change.stop_media(mid);
+        let (offer, pending) = change.apply().unwrap();
+        let source = offer.to_sdp_string();
+        // RFC 3264 section 8.2 permits a stopped section to omit its old
+        // attributes. Keep transport details only on the most recent tag.
+        let mut section = 0;
+        let mut rewritten = String::new();
+        for line in source.lines() {
+            if line.starts_with("m=") {
+                section += 1;
+            }
+            if section == 1
+                && (line.starts_with("a=ice-")
+                    || line.starts_with("a=fingerprint:")
+                    || line.starts_with("a=setup:"))
+            {
+                continue;
+            }
+            rewritten.push_str(line);
+            rewritten.push_str("\r\n");
+        }
+        let offer = SdpOffer::from_sdp_string(&rewritten).unwrap();
+        let answer = r.sdp_api().accept_offer(offer).unwrap();
+        l.sdp_api().accept_answer(pending, answer).unwrap();
+        assert!(r.media(mid).unwrap().stopped());
+    }
+}
+
+#[test]
 pub fn answer_different_pt_to_offer() {
     init_log();
     init_crypto_default();
