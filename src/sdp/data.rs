@@ -82,9 +82,13 @@ impl Sdp {
             .find_map(|(ufrag, pass)| {
                 // Inherit within one section, keeping credentials from
                 // different stopped sections separate.
+                let (Some(ufrag), Some(pass)) = (ufrag.or(session_ufrag), pass.or(session_pass))
+                else {
+                    return None;
+                };
                 Some(IceCreds {
-                    ufrag: ufrag.or(session_ufrag)?.to_string(),
-                    pass: pass.or(session_pass)?.to_string(),
+                    ufrag: ufrag.to_string(),
+                    pass: pass.to_string(),
                 })
             })
     }
