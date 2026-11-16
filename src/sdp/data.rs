@@ -52,13 +52,6 @@ impl Sdp {
         })
     }
 
-    fn transport_media(&self) -> Option<&MediaLine> {
-        let Some(mid) = self.bundle_mids().and_then(|mids| mids.first()) else {
-            return self.media_lines.first();
-        };
-        self.media_lines.iter().find(|m| m.mid() == *mid)
-    }
-
     pub(crate) fn assert_consistency(&self) -> Result<(), SdpError> {
         match self.do_assert_consistency() {
             None => Ok(()),
@@ -68,17 +61,27 @@ impl Sdp {
 
     pub(crate) fn fingerprint(&self) -> Option<Fingerprint> {
         self.transport_media()
-            .and_then(MediaLine::fingerprint)
+            .find_map(MediaLine::fingerprint)
             .or_else(|| self.session.fingerprint())
     }
 
+    fn transport_media(&self) -> impl Iterator<Item = &MediaLine> {
+        let mid = self.bundle_mids().and_then(|mids| mids.first());
+        // With no BUNDLE tag left, stopped sections can still carry transport
+        // details. Earlier stopped sections may have omitted those attributes.
+        self.media_lines
+            .iter()
+            .filter(move |m| mid.is_none_or(|mid| m.mid() == *mid))
+    }
+
     pub(crate) fn ice_creds(&self) -> Option<IceCreds> {
-        let media = self.transport_media();
-        let ufrag = media
-            .and_then(MediaLine::ice_ufrag)
+        let ufrag = self
+            .transport_media()
+            .find_map(MediaLine::ice_ufrag)
             .or_else(|| self.session.ice_ufrag())?;
-        let pass = media
-            .and_then(MediaLine::ice_pwd)
+        let pass = self
+            .transport_media()
+            .find_map(MediaLine::ice_pwd)
             .or_else(|| self.session.ice_pwd())?;
         Some(IceCreds {
             ufrag: ufrag.to_string(),
@@ -112,7 +115,7 @@ impl Sdp {
 
     pub(crate) fn setup(&self) -> Option<Setup> {
         self.transport_media()
-            .and_then(MediaLine::setup)
+            .find_map(MediaLine::setup)
             .or_else(|| self.session.setup())
     }
 
@@ -1834,6 +1837,17 @@ mod test {
         }
     }
 
+    #[test]
+    fn media_transport_fingerprint_overrides_session_default() {
+        for mask in 0..16 {
+            let sdp = sdp_with_transport_overrides(mask);
+            assert_eq!(
+                sdp.fingerprint().unwrap().bytes,
+                vec![if mask & 1 != 0 { 0x22 } else { 0x11 }; 32]
+            );
+        }
+    }
+
     fn sdp_with_transport_overrides(mask: u8) -> Sdp {
         let header = concat!(
             "v=0\r\n",
@@ -1866,17 +1880,6 @@ mod test {
         let sdp = Sdp::parse(&source).unwrap();
         sdp.assert_consistency().unwrap();
         sdp
-    }
-
-    #[test]
-    fn media_transport_fingerprint_overrides_session_default() {
-        for mask in 0..16 {
-            let sdp = sdp_with_transport_overrides(mask);
-            assert_eq!(
-                sdp.fingerprint().unwrap().bytes,
-                vec![if mask & 1 != 0 { 0x22 } else { 0x11 }; 32]
-            );
-        }
     }
 
     #[test]
@@ -1957,14 +1960,20 @@ mod test {
              a=fingerprint:sha-256 {}\r\n",
             ["11"; 32].join(":"),
         );
-        let sdp = Sdp::parse(&source).unwrap();
-        sdp.assert_consistency().unwrap();
-        assert_eq!(sdp.bundle_mids(), Some([].as_slice()));
-        let creds = sdp.ice_creds().unwrap();
-        assert_eq!(creds.ufrag, "stopped");
-        assert_eq!(creds.pass, "stopped-password-12345678");
-        assert_eq!(sdp.setup(), Some(Setup::Passive));
-        assert_eq!(sdp.fingerprint().unwrap().bytes, vec![0x11; 32]);
+        for previous in [
+            "",
+            "m=audio 0 UDP/TLS/RTP/SAVPF 0\r\na=mid:previous\r\na=inactive\r\n",
+        ] {
+            let source = source.replacen("m=audio", &format!("{previous}m=audio"), 1);
+            let sdp = Sdp::parse(&source).unwrap();
+            sdp.assert_consistency().unwrap();
+            assert_eq!(sdp.bundle_mids(), Some([].as_slice()));
+            let creds = sdp.ice_creds().unwrap();
+            assert_eq!(creds.ufrag, "stopped");
+            assert_eq!(creds.pass, "stopped-password-12345678");
+            assert_eq!(sdp.setup(), Some(Setup::Passive));
+            assert_eq!(sdp.fingerprint().unwrap().bytes, vec![0x11; 32]);
+        }
     }
 
     #[test]
