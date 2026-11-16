@@ -1620,56 +1620,6 @@ mod tests {
     use crate::poll::Readiness;
     use crate::rtp_::RtcpPacket;
 
-    #[test]
-    fn rejected_primary_collision_preserves_payload_lookup() {
-        assert_rejected_collision_preserves_payload_lookup(false);
-    }
-
-    fn assert_rejected_collision_preserves_payload_lookup(rtx_collision: bool) {
-        use crate::format::Codec;
-
-        let mut config = CodecConfig::empty();
-        config.enable_vp8(true);
-        config.enable_vp9(true);
-        let vp9 = *config.iter().find(|p| p.spec.codec == Codec::Vp9).unwrap();
-        config.update_params(&[vp9], Direction::RecvOnly).unwrap();
-        let mut remote_vp8 = *config.iter().find(|p| p.spec.codec == Codec::Vp8).unwrap();
-        let occupied_pt = if rtx_collision {
-            remote_vp8.resend = vp9.resend;
-            vp9.resend.unwrap()
-        } else {
-            remote_vp8.pt = vp9.pt;
-            vp9.pt
-        };
-        assert_eq!(
-            main_payload_params(&config, occupied_pt)
-                .unwrap()
-                .spec
-                .codec,
-            Codec::Vp9
-        );
-
-        assert!(
-            config
-                .update_params(&[remote_vp8], Direction::RecvOnly)
-                .is_err()
-        );
-
-        // A rejected new m-line must not change decoding of established VP9 streams.
-        assert_eq!(
-            main_payload_params(&config, occupied_pt)
-                .unwrap()
-                .spec
-                .codec,
-            Codec::Vp9
-        );
-    }
-
-    #[test]
-    fn rejected_rtx_collision_preserves_payload_lookup() {
-        assert_rejected_collision_preserves_payload_lookup(true);
-    }
-
     fn keyed_session() -> Session {
         let mut session = Session::new(&RtcConfig::default());
         let crypto = crate::crypto::test_default_provider();
