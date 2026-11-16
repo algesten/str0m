@@ -214,19 +214,17 @@ impl Session {
     /// Session-level ICE username fragment and password, each optional.
     pub fn ice_creds(&self) -> (Option<&str>, Option<&str>) {
         let ufrag = self.attrs.iter().find_map(|m| {
-            if let SessionAttribute::IceUfrag(v) = m {
-                Some(v.as_str())
-            } else {
-                None
-            }
+            let SessionAttribute::IceUfrag(v) = m else {
+                return None;
+            };
+            Some(v.as_str())
         });
 
         let pass = self.attrs.iter().find_map(|m| {
-            if let SessionAttribute::IcePwd(v) = m {
-                Some(v.as_str())
-            } else {
-                None
-            }
+            let SessionAttribute::IcePwd(v) = m else {
+                return None;
+            };
+            Some(v.as_str())
         });
 
         (ufrag, pass)
@@ -602,19 +600,17 @@ impl MediaLine {
     /// Media-level ICE username fragment and password, each optional.
     pub fn ice_creds(&self) -> (Option<&str>, Option<&str>) {
         let ufrag = self.attrs.iter().find_map(|m| {
-            if let MediaAttribute::IceUfrag(v) = m {
-                Some(v.as_str())
-            } else {
-                None
-            }
+            let MediaAttribute::IceUfrag(v) = m else {
+                return None;
+            };
+            Some(v.as_str())
         });
 
         let pass = self.attrs.iter().find_map(|m| {
-            if let MediaAttribute::IcePwd(v) = m {
-                Some(v.as_str())
-            } else {
-                None
-            }
+            let MediaAttribute::IcePwd(v) = m else {
+                return None;
+            };
+            Some(v.as_str())
         });
 
         (ufrag, pass)
