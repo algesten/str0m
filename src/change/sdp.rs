@@ -1299,6 +1299,7 @@ fn update_media(
         .into_iter()
         .filter_map(|p| config.sdp_match_remote(p, m.direction()))
         .collect();
+    let already_negotiated = !media.remote_pts().is_empty();
     media.set_remote_pts(pts);
 
     let mut remote_extmap = ExtensionMap::empty();
@@ -1321,7 +1322,11 @@ fn update_media(
         // serializer for cases like VLA.
         remote_extmap.set(id, in_session.clone());
     }
-    media.set_remote_extmap(remote_extmap);
+    if !already_negotiated {
+        media.set_remote_extmap(remote_extmap);
+    } else if media.remote_extmap() != &remote_extmap {
+        warn!("Ignore remote extmap change for mid {}", media.mid());
+    }
 
     // Simulcast configuration. This applies to both directions: every later SDP for the
     // m-line is generated from the Media, and must repeat the negotiated a=rid and
@@ -1833,6 +1838,37 @@ mod test {
     use crate::sdp::RtpMap;
 
     use super::*;
+
+    #[test]
+    fn reoffer_preserves_media_extensions() {
+        crate::init_crypto_default();
+        let now = Instant::now();
+        let mut offerer = Rtc::new(now);
+        let mut change = offerer.sdp_api();
+        let mid = change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        let (offer, _) = change.apply().unwrap();
+        let full = offer.to_sdp_string();
+        let empty = full
+            .lines()
+            .filter(|line| !line.starts_with("a=extmap:"))
+            .collect::<Vec<_>>()
+            .join("\r\n")
+            + "\r\n";
+        let remapped = full.replace("a=extmap:3 ", "a=extmap:12 ");
+        for (initial, later) in [(&full, &empty), (&empty, &full), (&full, &remapped)] {
+            let mut answerer = Rtc::new(now);
+            answerer
+                .sdp_api()
+                .accept_offer(SdpOffer::from_sdp_string(initial).unwrap())
+                .unwrap();
+            let established = answerer.media(mid).unwrap().remote_extmap().clone();
+            answerer
+                .sdp_api()
+                .accept_offer(SdpOffer::from_sdp_string(later).unwrap())
+                .unwrap();
+            assert_eq!(answerer.media(mid).unwrap().remote_extmap(), &established);
+        }
+    }
 
     #[test]
     fn conflicting_remote_payloads_do_not_panic() {

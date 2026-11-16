@@ -18,7 +18,8 @@ with the limitations described below. We do not model every distinction SDP can
 express between directions or individual m-lines.
 
 Once locked, a payload's PT, fmtp, feedback and RTX/RED associations stay fixed.
-Conflicting payload updates and exhausted PT allocations produce warnings and
+Negotiated RTP extension IDs and each media's extension set also stay fixed.
+Conflicting mapping updates and exhausted PT allocations produce warnings and
 are ignored. Payload negotiation is best effort; earlier updates are retained.
 
 Media intent belongs to the application: which sources exist, who should send or

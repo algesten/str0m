@@ -598,13 +598,15 @@ impl ExtensionMap {
             return;
         };
 
+        let target_locked = self.0[new_index].as_ref().is_some_and(|m| m.locked);
+
         // Unwrap OK because index is checking just above.
         let old = self.0[old_index].as_mut().unwrap();
 
         let is_change = new_index != old_index;
 
         // If either audio or video is locked, we got a previous extmap negotiation.
-        if is_change && old.locked {
+        if is_change && (old.locked || target_locked) {
             warn!(
                 "Extmap locked by previous negotiation. Ignore change: {} -> {}",
                 old_index, new_index
@@ -1786,6 +1788,17 @@ mod test {
             e1.iter_video().collect::<Vec<_>>(),
             vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
+    }
+
+    #[test]
+    fn remap_exts_preserves_locked_destination() {
+        let mut map = ExtensionMap::empty();
+        map.set(12, Extension::TransportSequenceNumber);
+        map.set(14, Extension::VideoOrientation);
+        map.remap(&[(12, &Extension::TransportSequenceNumber)]);
+        map.remap(&[(12, &Extension::VideoOrientation)]);
+        assert_eq!(map.lookup(12), Some(&Extension::TransportSequenceNumber));
+        assert_eq!(map.lookup(14), Some(&Extension::VideoOrientation));
     }
 
     #[test]
