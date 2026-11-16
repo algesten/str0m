@@ -17,6 +17,10 @@ agreed set for the session. str0m uses a single BUNDLE/session codec configurati
 with the limitations described below. We do not model every distinction SDP can
 express between directions or individual m-lines.
 
+Once locked, a payload's PT, fmtp, feedback and RTX/RED associations stay fixed.
+Conflicting payload updates and exhausted PT allocations produce warnings and
+are ignored. Payload negotiation is best effort; earlier updates are retained.
+
 Media intent belongs to the application: which sources exist, who should send or
 receive them, and when they should start or stop. Applications already need a
 signaling channel to exchange offers and answers. They can use that channel to

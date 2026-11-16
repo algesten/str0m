@@ -1834,6 +1834,32 @@ mod test {
 
     use super::*;
 
+    #[test]
+    fn conflicting_remote_payloads_do_not_panic() {
+        crate::init_crypto_default();
+        let now = Instant::now();
+        for direction in [Direction::RecvOnly, Direction::SendOnly] {
+            let mut offerer = Rtc::new(now);
+            let mut change = offerer.sdp_api();
+            change.add_media(MediaKind::Video, direction, None, None, None);
+            change.add_media(MediaKind::Video, direction, None, None, None);
+            let (offer, _) = change.apply().unwrap();
+            let valid = offer.to_sdp_string();
+            for sdp in [
+                // Two VP9 profiles now compete for the same PT across m-lines.
+                valid.replacen("a=fmtp:100 profile-id=2\r\n", "", 1),
+                // RTX 97 is claimed by both VP8 and VP9 across m-lines.
+                valid
+                    .replacen("a=fmtp:97 apt=96", "a=fmtp:97 apt=98", 1)
+                    .replacen("a=fmtp:99 apt=98\r\n", "", 1),
+            ] {
+                let mut answerer = Rtc::new(now);
+                let offer = SdpOffer::from_sdp_string(&sdp).unwrap();
+                answerer.sdp_api().accept_offer(offer).unwrap();
+            }
+        }
+    }
+
     fn resolve_pt(m_line: &MediaLine, needle: Pt) -> RtpMap {
         m_line
             .attrs
