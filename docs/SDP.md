@@ -17,11 +17,6 @@ agreed set for the session. str0m uses a single BUNDLE/session codec configurati
 with the limitations described below. We do not model every distinction SDP can
 express between directions or individual m-lines.
 
-Once locked, a payload's PT, fmtp, feedback and RTX/RED associations stay fixed.
-Negotiated RTP extension IDs and each media's extension set also stay fixed.
-Conflicting mapping updates and exhausted PT allocations produce warnings and
-are ignored. Payload negotiation is best effort; earlier updates are retained.
-
 Media intent belongs to the application: which sources exist, who should send or
 receive them, and when they should start or stop. Applications already need a
 signaling channel to exchange offers and answers. They can use that channel to
@@ -173,6 +168,7 @@ answer that narrows the `sendrecv`/`recvonly` PT list should also narrow what we
 consider valid to send on that m-line. In practice, browsers keep stable PT/codec
 sets for an existing m-line, and we have not seen a real interoperability problem
 from keeping the initial list.
+The negotiated codec parameters and RTP extension mappings are retained too.
 
 ### Side note about asymmetry
 
