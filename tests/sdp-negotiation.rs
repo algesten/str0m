@@ -428,6 +428,49 @@ fn stop_last_media_after_first_section_loses_transport_attributes() {
 }
 
 #[test]
+fn stopped_media_ice_credentials_are_not_combined_across_sections() {
+    init_crypto_default();
+    let now = Instant::now();
+    let mut l = Rtc::new(now);
+    let mut r = Rtc::new(now);
+    let mut change = l.sdp_api();
+    let first = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let last = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+    let (offer, pending) = change.apply().unwrap();
+    let answer = r.sdp_api().accept_offer(offer).unwrap();
+    l.sdp_api().accept_answer(pending, answer).unwrap();
+
+    for mid in [first, last] {
+        let mut change = l.sdp_api();
+        change.stop_media(mid);
+        let (offer, pending) = change.apply().unwrap();
+        let mut section = 0;
+        let mut rewritten = String::new();
+        for line in offer.to_sdp_string().lines() {
+            if line.starts_with("m=") {
+                section += 1;
+            }
+            // An earlier stopped section retains only an obsolete ufrag.
+            // The later section still supplies the complete current pair.
+            if section == 1 && line.starts_with("a=ice-pwd:") {
+                continue;
+            }
+            let line = if section == 1 && line.starts_with("a=ice-ufrag:") {
+                "a=ice-ufrag:obsolete"
+            } else {
+                line
+            };
+            rewritten.push_str(line);
+            rewritten.push_str("\r\n");
+        }
+        let offer = SdpOffer::from_sdp_string(&rewritten).unwrap();
+        let answer = r.sdp_api().accept_offer(offer).unwrap();
+        l.sdp_api().accept_answer(pending, answer).unwrap();
+        assert!(r.media(mid).unwrap().stopped());
+    }
+}
+
+#[test]
 pub fn answer_different_pt_to_offer() {
     init_log();
     init_crypto_default();
