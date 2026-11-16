@@ -75,18 +75,18 @@ impl Sdp {
     }
 
     pub(crate) fn ice_creds(&self) -> Option<IceCreds> {
-        let ufrag = self
-            .transport_media()
-            .find_map(MediaLine::ice_ufrag)
-            .or_else(|| self.session.ice_ufrag())?;
-        let pass = self
-            .transport_media()
-            .find_map(MediaLine::ice_pwd)
-            .or_else(|| self.session.ice_pwd())?;
-        Some(IceCreds {
-            ufrag: ufrag.to_string(),
-            pass: pass.to_string(),
-        })
+        self.transport_media()
+            .find_map(|media| {
+                // Inherit each field within one section; credentials from
+                // different stopped sections need not belong to the same ICE session.
+                let ufrag = media.ice_ufrag().or_else(|| self.session.ice_ufrag())?;
+                let pass = media.ice_pwd().or_else(|| self.session.ice_pwd())?;
+                Some(IceCreds {
+                    ufrag: ufrag.to_string(),
+                    pass: pass.to_string(),
+                })
+            })
+            .or_else(|| self.session.ice_creds())
     }
 
     pub(crate) fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
