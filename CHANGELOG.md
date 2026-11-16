@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Warn and ignore conflicting SDP payload updates instead of panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137
   * Keep `~` in sanitised msid ids #1142
   * Saturate VLA resolutions of 65536 instead of overflowing #1153
