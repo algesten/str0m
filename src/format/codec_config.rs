@@ -657,8 +657,8 @@ impl CodecConfig {
 
             if claimed.is_claimed(p.pt) {
                 let Some(pt) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
-                    // TODO: handle this gracefully.
-                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                    warn!("Exhausted PT ranges; ignoring remaining payload updates");
+                    return;
                 };
 
                 debug!("Reassigned PT {} => {}", p.pt, pt);
@@ -693,8 +693,8 @@ impl CodecConfig {
 
             if claimed.is_claimed(rtx) {
                 let Some(rtx) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
-                    // TODO: handle this gracefully.
-                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                    warn!("Exhausted PT ranges; ignoring remaining payload updates");
+                    return;
                 };
 
                 debug!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
@@ -760,6 +760,66 @@ mod test {
 
     use super::*;
     use crate::format::{CodecSpec, FormatParams};
+
+    #[test]
+    fn locked_payload_parameters_are_unchanged() {
+        for codec in [Codec::H265, Codec::H266, Codec::Tele, Codec::AmrWb] {
+            for direction in [Direction::SendOnly, Direction::RecvOnly] {
+                let mut config = CodecConfig::empty();
+                config.add_config(
+                    102.into(),
+                    Some(103.into()),
+                    codec,
+                    Frequency::NINETY_KHZ,
+                    None,
+                    FormatParams::default(),
+                );
+                let mut remote = config.params[0];
+                config.update_params(&[remote], direction);
+                assert!(config.params[0].locked);
+                let established = config.params.clone();
+                remote.pt = 104.into();
+                remote.resend = Some(105.into());
+                remote.spec.format.sprop_max_don_diff = Some(1);
+                remote.spec.format.telephone_event_max = Some(10);
+                remote.spec.format.mode_set = Some(0b111);
+                remote.fb_transport_cc = !remote.fb_transport_cc;
+                config.update_params(&[remote], direction);
+                assert_eq!(config.params, established);
+            }
+        }
+    }
+
+    #[test]
+    fn exhausted_payload_allocations_do_not_panic() {
+        let mut config = CodecConfig::empty();
+        config.enable_vp8(true);
+        let payload = config.params[0];
+        for primary in [96, 0] {
+            let mut config = config.clone();
+            config.params[0].pt = primary.into();
+            for pt in PREFERED_RANGES.iter().flat_map(|range| range.clone()) {
+                let mut locked = payload;
+                locked.pt = (pt as u8).into();
+                locked.resend = None;
+                locked.locked = true;
+                config.params.push(locked);
+            }
+            let locked = config.params[1..].to_vec();
+            config.update_params(&[], Direction::RecvOnly);
+            assert_eq!(config.params[1..], locked);
+        }
+        for free_primary in [false, true] {
+            let mut local = payload;
+            let mut claimed = [true; 128];
+            claimed[*local.pt as usize] = !free_primary;
+            local.update_param(&[payload], &mut claimed, true, &mut HashSet::new());
+            assert_eq!(local.locked, free_primary);
+            if free_primary {
+                assert_eq!(local.resend, None);
+            }
+        }
+    }
 
     #[test]
     fn transport_cc_uses_first_section_and_preserves_local_capability() {

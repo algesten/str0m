@@ -26,7 +26,7 @@ pub(crate) const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
 ];
 
 pub(crate) trait Claimed {
-    fn assert_claim_once(&mut self, pt: Pt);
+    fn assert_claim_once(&mut self, pt: Pt) -> bool;
     fn is_claimed(&self, pt: Pt) -> bool;
     fn find_unclaimed(
         &self,
@@ -36,10 +36,14 @@ pub(crate) trait Claimed {
 }
 
 impl Claimed for [bool; 128] {
-    fn assert_claim_once(&mut self, pt: Pt) {
+    fn assert_claim_once(&mut self, pt: Pt) -> bool {
         let idx = *pt as usize;
-        assert!(!self[idx], "Pt locked multiple times: {}", pt);
+        if self[idx] {
+            warn!("Ignore already claimed PT {}", pt);
+            return false;
+        }
         self[idx] = true;
+        true
     }
     fn is_claimed(&self, pt: Pt) -> bool {
         let idx = *pt as usize;
@@ -656,6 +660,8 @@ impl PayloadParams {
             return;
         };
 
+        let original_spec = self.spec;
+
         // The first negotiated m-line determines TWCC support for this PT.
         if !self.locked {
             self.fb_transport_cc &= first.fb_transport_cc();
@@ -758,6 +764,10 @@ impl PayloadParams {
         let mut remote_rtx = first.resend;
 
         if self.locked {
+            if self.spec != original_spec {
+                warn!("Ignore remote codec parameters for locked PT {}", self.pt);
+                self.spec = original_spec;
+            }
             // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
             // (receive-direction). We only want to warn if we get receive direction changes.
             if local_is_controlling {
@@ -800,13 +810,16 @@ impl PayloadParams {
                     remote_pt = new_pt;
                     unlocked.remove(&new_pt);
                 } else {
-                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                    warn!("Exhausted PT ranges; ignoring remote payload");
+                    return;
                 }
             }
 
             // Lock down the PT
+            if !claimed.assert_claim_once(remote_pt) {
+                return;
+            }
             self.pt = remote_pt;
-            claimed.assert_claim_once(remote_pt);
 
             // Check if RTX PT also conflicts
             if local_is_controlling {
@@ -822,7 +835,8 @@ impl PayloadParams {
                             remote_rtx = Some(new_rtx);
                             unlocked.remove(&new_rtx);
                         } else {
-                            panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                            warn!("Exhausted PT ranges; ignoring remote RTX");
+                            remote_rtx = None;
                         }
                     }
                 }
@@ -831,7 +845,9 @@ impl PayloadParams {
             // Lock down the RTX PT
             self.resend = remote_rtx;
             if let Some(rtx) = remote_rtx {
-                claimed.assert_claim_once(rtx);
+                if !claimed.assert_claim_once(rtx) {
+                    self.resend = None;
+                }
             }
 
             // RED is opt-in on our side and audio-only: keep it only if the matched remote also

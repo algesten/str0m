@@ -168,6 +168,7 @@ answer that narrows the `sendrecv`/`recvonly` PT list should also narrow what we
 consider valid to send on that m-line. In practice, browsers keep stable PT/codec
 sets for an existing m-line, and we have not seen a real interoperability problem
 from keeping the initial list.
+The negotiated codec parameters and RTP extension mappings are retained too.
 
 ### Side note about asymmetry
 
