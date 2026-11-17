@@ -85,9 +85,13 @@
 //! descriptor stay within the size the MTU allows packets without one. Where the m-line did not
 //! negotiate DD, the descriptor is dropped instead, unchecked and without reserving room.
 //!
-//! A received [`MediaData`] holds one temporal unit. If its first packet starts a DD frame, and
-//! every packet carries a descriptor of that frame, it carries the first packet's descriptor,
-//! including its original packet boundary flags.
+//! A received [`MediaData`] carries the first packet's descriptor, including its original packet
+//! boundary flags, if it holds one whole DD frame: its first packet starts the frame, its last
+//! packet ends it, and every packet carries a descriptor of the frame. For H.265 and H.266, a
+//! [`MediaData`] also ends after a fragmented NAL unit, so one that ends before its frame does
+//! carries no descriptor. The descriptors of the other packets are not kept, so an active decode
+//! targets bitmask that only a later packet of the frame carries is lost. libwebrtc sends it on
+//! the first packet, and RTP mode keeps the descriptor of every packet.
 //!
 //! # Multiple spatial layers
 //!
@@ -96,7 +100,12 @@
 //! express: a received [`MediaData`] that spans several DD frames carries no descriptor, and a
 //! write is sent as one DD frame that ends its temporal unit. Use RTP mode for such streams. Each
 //! packet then keeps its own descriptor, and the application sizes packets, including the
-//! descriptor. A single spatial layer with temporal layers, such as L1T3, works in either mode.
+//! descriptor. With a single spatial layer, such as L1T3, each temporal unit is one DD frame,
+//! which frame mode carries. VP8 and VP9 have other limits with temporal layers in frame mode:
+//! str0m's packetizers do not signal the temporal layer in the payload descriptor, and a received
+//! frame above temporal layer 0 is dropped unless its picture ID directly follows the previous
+//! frame's, which it does not after a forwarder drops a layer without renumbering pictures. Use
+//! RTP mode for VP8 and VP9 with temporal layers.
 //!
 //! [`Writer::write`]: crate::media::Writer::write
 //! [`MediaData`]: crate::media::MediaData
