@@ -1884,7 +1884,16 @@ pub(crate) fn fuzz(mut data: &[u8]) -> usize {
         let Ok(descriptor) = DependencyDescriptor::from_bytes(raw) else {
             continue;
         };
-        receiver.receive(&descriptor);
+        // An accepted structure applies to the frames that follow.
+        if let ReceivedDependencyDescriptor::Parsed {
+            descriptor: received,
+            ..
+        } = receiver.receive(&descriptor)
+        {
+            if let Some(attached_structure) = &received.attached_structure {
+                assert_eq!(receiver.latest_shared_structure(), Some(attached_structure));
+            }
+        }
         let mut values = ExtensionValues::default();
         values.user_values.set(descriptor.clone());
         let frame = FrameDescriptor::take(&mut values, &exts);
