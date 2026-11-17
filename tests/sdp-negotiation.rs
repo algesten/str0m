@@ -340,6 +340,10 @@ pub fn stop_media() {
         !offer_sdp.contains(" msid:"),
         "Stopped m-line should not advertise an SSRC-level MSID:\n{offer_sdp}"
     );
+    assert!(
+        !offer_sdp.contains("a=rtcp-fb:") && !offer_sdp.contains("a=extmap:"),
+        "Stopped m-line should not carry codec parameters or extmaps:\n{offer_sdp}"
+    );
 
     // Test left side. Stopped, direction Inactive, PTs preserved.
     assert!(l.media(mid).unwrap().stopped());

@@ -1503,6 +1503,31 @@ impl AsSdpMediaLine for Media {
 
         attrs.push(MediaAttribute::Mid(self.mid()));
 
+        if self.disabled() {
+            // a port=0 m-line carry no media, it keeps the one format the SDP
+            // requires (RFC 4566 §5.14) and leaves out the extmaps and
+            // codec parameters, witch would makbe most of its size
+            attrs.push(self.direction().into());
+            attrs.push(MediaAttribute::RtcpMux);
+
+            let first = params.iter().find(|p| self.remote_pts().contains(&p.pt()));
+            if let Some(p) = first {
+                attrs.push(MediaAttribute::RtpMap {
+                    pt: p.pt(),
+                    value: p.spec().into(),
+                });
+            }
+
+            return MediaLine {
+                typ: self.kind().into(),
+                disabled: true,
+                proto: Proto::Srtp,
+                pts: first.map(|p| p.pt()).into_iter().collect(),
+                bw: None,
+                attrs,
+            };
+        }
+
         let audio = self.kind() == MediaKind::Audio;
         for (id, ext) in self.remote_extmap().iter_by_media_type(audio) {
             attrs.push(MediaAttribute::ExtMap {
@@ -1512,9 +1537,7 @@ impl AsSdpMediaLine for Media {
         }
 
         attrs.push(self.direction().into());
-        if !self.disabled() {
-            attrs.push(MediaAttribute::Msid(self.msid().clone()));
-        }
+        attrs.push(MediaAttribute::Msid(self.msid().clone()));
         attrs.push(MediaAttribute::RtcpMux);
 
         // The effective params start from the Session::codec_config to retain the
@@ -1558,7 +1581,6 @@ impl AsSdpMediaLine for Media {
         }
 
         // Outgoing SSRCs
-        let ssrcs_tx: &[(Ssrc, Option<Ssrc>)] = if self.disabled() { &[] } else { ssrcs_tx };
         let msid = format!("{} {}", self.msid().stream_id, self.msid().track_id);
         for (ssrc, ssrc_rtx) in ssrcs_tx {
             attrs.push(MediaAttribute::Ssrc {
@@ -1596,7 +1618,7 @@ impl AsSdpMediaLine for Media {
 
         MediaLine {
             typ: self.kind().into(),
-            disabled: self.disabled(),
+            disabled: false,
             proto: Proto::Srtp,
             pts,
             bw: None,
