@@ -85,8 +85,9 @@
 //! descriptor stay within the size the MTU allows packets without one. Where the m-line did not
 //! negotiate DD, the descriptor is dropped instead, unchecked and without reserving room.
 //!
-//! A received [`MediaData`] holds one temporal unit. If all of its packets belong to one DD
-//! frame, it carries the first packet's descriptor, including its original packet boundary flags.
+//! A received [`MediaData`] holds one temporal unit. If its first packet starts a DD frame, and
+//! every packet carries a descriptor of that frame, it carries the first packet's descriptor,
+//! including its original packet boundary flags.
 //!
 //! # Multiple spatial layers
 //!
@@ -124,6 +125,8 @@ const MAX_DESCRIPTOR_SIZE: usize = 255;
 const START_OF_FRAME_BIT: u8 = 0x80;
 const END_OF_FRAME_BIT: u8 = 0x40;
 const TEMPLATE_ID_MASK: u8 = 0x3f;
+// The extended fields start with template_dependency_structure_present_flag.
+const STRUCTURE_PRESENT_BIT: u8 = 0x80;
 
 // frame_dependency_template_id is f(6).
 const MAX_TEMPLATES: usize = 64;
@@ -230,6 +233,13 @@ impl DependencyDescriptor {
         let mut descriptor = self.clone();
         descriptor.set_packet_flags(first, last);
         descriptor
+    }
+
+    // Whether the descriptor attaches a structure, which can be read without parsing it.
+    fn attaches_structure(&self) -> bool {
+        self.0
+            .get(MANDATORY_SIZE)
+            .is_some_and(|byte| byte & STRUCTURE_PRESENT_BIT != 0)
     }
 
     /// Parse the serialized Dependency Descriptor.
@@ -1680,8 +1690,8 @@ fn max_header_growth(len: usize) -> usize {
 // libwebrtc does this in RtpVideoStreamReceiver2::ParseGenericDependenciesExtension().
 #[derive(Debug, Clone, Default)]
 pub struct DependencyDescriptorReceiver {
-    // The latest truncated frame number, and its extension.
-    latest_frame_number: Option<(u16, i64)>,
+    // The highest frame number so far, truncated and extended.
+    highest_frame_number: Option<(u16, i64)>,
     // The latest shared structure, and the extended number of the frame that attached it.
     latest_shared_structure: Option<(i64, SharedStructure)>,
 }
@@ -1698,9 +1708,9 @@ pub enum ReceivedDependencyDescriptor {
         /// receive the pending descriptors again.
         descriptor: ParsedDependencyDescriptor,
     },
-    /// The current frame is newer than the latest shared structure, so the structure that it
-    /// uses may not have arrived yet. Keep the packet, and receive its descriptor again after a
-    /// descriptor attaches a structure.
+    /// The descriptor does not attach a structure, and the current frame is newer than the
+    /// latest shared structure, so the structure that it uses may not have arrived yet. Keep the
+    /// packet, and receive its descriptor again after a descriptor attaches a structure.
     Pending(DependencyDescriptorError),
     /// The packet cannot be used, so drop it.
     /// Without a latest shared structure, request a key frame.
@@ -1711,7 +1721,8 @@ impl DependencyDescriptorReceiver {
     /// Parse a received descriptor with the latest shared structure.
     /// Like libwebrtc, this rejects a structure attached to a packet that does not start a
     /// frame, and a structure older than the latest one, so that late packets cannot roll the
-    /// state back.
+    /// state back. A descriptor that attaches a structure does not depend on the latest one, so
+    /// if it fails to parse, it is rejected rather than pending.
     pub fn receive(&mut self, descriptor: &DependencyDescriptor) -> ReceivedDependencyDescriptor {
         let frame_number = self.extend(descriptor.truncated_frame_number());
         let latest = self.latest_shared_structure.as_ref();
@@ -1719,7 +1730,10 @@ impl DependencyDescriptorReceiver {
             Ok(parsed) => parsed,
             Err(error) => {
                 return match latest {
-                    Some((key_frame_number, _)) if frame_number >= *key_frame_number => {
+                    Some((key_frame_number, _))
+                        if !descriptor.attaches_structure()
+                            && frame_number >= *key_frame_number =>
+                    {
                         ReceivedDependencyDescriptor::Pending(error)
                     }
                     _ => ReceivedDependencyDescriptor::Rejected(error),
@@ -1754,23 +1768,31 @@ impl DependencyDescriptorReceiver {
             .map(|(_, shared_structure)| shared_structure)
     }
 
-    // Extends a frame number by its shortest distance from the latest one, forward or backward.
+    // Extends a frame number by its shortest distance from the highest one so far, forward or
+    // backward. libwebrtc extends from the latest one instead, so a late frame there moves the
+    // reference back, and frames far enough ahead of the highest one then extend backward.
     fn extend(&mut self, truncated_frame_number: u16) -> i64 {
-        let frame_number = match self.latest_frame_number {
+        let frame_number = match self.highest_frame_number {
             None => i64::from(truncated_frame_number),
-            Some((latest_truncated_frame_number, latest_frame_number)) => {
-                let forward = truncated_frame_number.wrapping_sub(latest_truncated_frame_number);
+            Some((highest_truncated_frame_number, highest_frame_number)) => {
+                let forward = truncated_frame_number.wrapping_sub(highest_truncated_frame_number);
                 // Exactly half way round, the larger number is ahead, as in libwebrtc.
                 if forward < 0x8000
-                    || (forward == 0x8000 && truncated_frame_number > latest_truncated_frame_number)
+                    || (forward == 0x8000
+                        && truncated_frame_number > highest_truncated_frame_number)
                 {
-                    latest_frame_number + i64::from(forward)
+                    highest_frame_number + i64::from(forward)
                 } else {
-                    latest_frame_number + i64::from(forward) - 0x1_0000
+                    highest_frame_number + i64::from(forward) - 0x1_0000
                 }
             }
         };
-        self.latest_frame_number = Some((truncated_frame_number, frame_number));
+        if self
+            .highest_frame_number
+            .is_none_or(|(_, highest_frame_number)| frame_number > highest_frame_number)
+        {
+            self.highest_frame_number = Some((truncated_frame_number, frame_number));
+        }
         frame_number
     }
 }
@@ -3352,6 +3374,27 @@ mod test {
     }
 
     #[test]
+    fn receiver_extends_from_the_highest_frame_number() {
+        // A late frame, even one whose structure is rejected, does not make newer frames look
+        // older.
+        let first = stream_structure(13);
+        let second = stream_structure(first.next_template_id_offset());
+        let third = stream_structure(second.next_template_id_offset());
+        let mut receiver = DependencyDescriptorReceiver::default();
+        let key = receiver.receive(&stream_frame(&first, 0, 100, true));
+        assert_eq!(frame_number(key), 100);
+        let key = receiver.receive(&stream_frame(&second, 0, 30100, true));
+        assert_eq!(frame_number(key), 30100);
+        assert_eq!(
+            receiver.receive(&stream_frame(&first, 0, 100, true)),
+            ReceivedDependencyDescriptor::Rejected(DependencyDescriptorError::OutdatedStructure)
+        );
+        let key = receiver.receive(&stream_frame(&third, 0, 40100, true));
+        assert_eq!(frame_number(key), 40100);
+        assert_eq!(receiver.latest_shared_structure(), Some(&third));
+    }
+
+    #[test]
     fn receiver_drops_late_delta_frame_of_previous_structure() {
         // Template IDs of the two structures do not collide.
         let first = stream_structure(13);
@@ -3437,5 +3480,39 @@ mod test {
             ))
         );
         assert_eq!(receiver.latest_shared_structure(), None);
+    }
+
+    #[test]
+    fn receiver_rejects_malformed_attached_structure() {
+        let structure = stream_structure(0);
+        let next = stream_structure(structure.next_template_id_offset());
+        let mut receiver = DependencyDescriptorReceiver::default();
+        let key = receiver.receive(&stream_frame(&structure, 0, 1, true));
+        assert_eq!(frame_number(key), 1);
+        // A frame that uses a structure that has not arrived yet waits for it.
+        assert_eq!(
+            receiver.receive(&stream_frame(&next, 1, 3, false)),
+            ReceivedDependencyDescriptor::Pending(DependencyDescriptorError::InvalidTemplateId)
+        );
+        // No later structure repairs a structure that the descriptor attaches.
+        let truncated = DependencyDescriptor::from_bytes([0xc0, 0, 2, 0x80]).unwrap();
+        let five_spatial_layers = DependencyDescriptor::from_bytes(bits(&format!(
+            "11 000000 0000000000000010 10000 000000 00000 {} 11 {} {} 0 0",
+            "10".repeat(4),
+            "10".repeat(5),
+            "0".repeat(5),
+        )))
+        .unwrap();
+        let invalid = DependencyDescriptorError::InvalidStructure("more than 4 spatial layers");
+        for (descriptor, error) in [
+            (truncated, DependencyDescriptorError::NotEnoughBits),
+            (five_spatial_layers, invalid),
+        ] {
+            assert_eq!(
+                receiver.receive(&descriptor),
+                ReceivedDependencyDescriptor::Rejected(error)
+            );
+        }
+        assert_eq!(receiver.latest_shared_structure(), Some(&structure));
     }
 }
