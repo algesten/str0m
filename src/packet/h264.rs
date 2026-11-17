@@ -131,7 +131,6 @@ impl H264Packetizer {
         }
 
         let nalu_type = nalu[0] & NALU_TYPE_BITMASK;
-        let nalu_ref_idc = nalu[0] & NALU_REF_IDC_BITMASK;
 
         if nalu_type == AUD_NALU_TYPE {
             return;
@@ -154,6 +153,10 @@ impl H264Packetizer {
             stap_a_nalu.extend_from_slice(pps_nalu);
             if stap_a_nalu.len() <= mtu {
                 payloads.push(stap_a_nalu);
+            } else {
+                // Without them, the frame cannot be decoded, so send them one by one.
+                Self::emit_single_or_fragmented(sps_nalu, mtu, payloads);
+                Self::emit_single_or_fragmented(pps_nalu, mtu, payloads);
             }
         }
 
@@ -161,6 +164,14 @@ impl H264Packetizer {
             self.sps_nalu = None;
             self.pps_nalu = None;
         }
+
+        Self::emit_single_or_fragmented(nalu, mtu, payloads);
+    }
+
+    // Sends a NALU as a Single NAL Unit packet, or as FU-A packets if it does not fit in one.
+    fn emit_single_or_fragmented(nalu: &[u8], mtu: usize, payloads: &mut Vec<Vec<u8>>) {
+        let nalu_type = nalu[0] & NALU_TYPE_BITMASK;
+        let nalu_ref_idc = nalu[0] & NALU_REF_IDC_BITMASK;
 
         // Single NALU
         if nalu.len() <= mtu {
@@ -773,6 +784,39 @@ mod test {
 
         let actual = pck.packetize(1500, &[0x05, 0x04, 0x05])?;
         assert_eq!(actual, expected, "SPS and PPS aren't packed together");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h264_packetizer_sends_parameter_sets_apart_if_stap_a_exceeds_mtu()
+    -> Result<(), PacketError> {
+        let mut sps = vec![0x11; 200];
+        sps[0] = 0x67;
+        let mut pps = vec![0x22; 100];
+        pps[0] = 0x68;
+        let idr = vec![0x65, 0x33, 0x44];
+        let mut frame = Vec::new();
+        for nalu in [&sps, &pps, &idr] {
+            frame.extend_from_slice(&[0, 0, 0, 1]);
+            frame.extend_from_slice(nalu);
+        }
+
+        // The STAP-A would take 305 bytes, so SPS and PPS go out one by one.
+        let packets = H264Packetizer::default().packetize(300, &frame)?;
+        assert_eq!(packets, [sps.clone(), pps.clone(), idr.clone()]);
+
+        // An SPS that does not fit in a packet goes out as FU-A packets.
+        let packets = H264Packetizer::default().packetize(150, &frame)?;
+        assert!(packets.iter().all(|packet| packet.len() <= 150));
+        let (fragments, rest) = packets.split_at(2);
+        let headers: Vec<_> = fragments.iter().map(|p| (p[0], p[1])).collect();
+        assert_eq!(headers, [(0x7c, 0x87), (0x7c, 0x47)]);
+        let reassembled: Vec<u8> = std::iter::once(sps[0])
+            .chain(fragments.iter().flat_map(|p| p[2..].iter().copied()))
+            .collect();
+        assert_eq!(reassembled, sps);
+        assert_eq!(rest, [pps, idr]);
 
         Ok(())
     }
