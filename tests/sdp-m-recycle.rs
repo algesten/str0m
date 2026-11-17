@@ -1,11 +1,18 @@
+use std::net::Ipv4Addr;
 use std::time::Instant;
 
 mod common;
+use common::Peer;
 use common::TestRtc;
 use common::init_crypto_default;
 use common::init_log;
 use common::negotiate;
+use common::progress;
+use str0m::Event;
 use str0m::Rtc;
+use str0m::RtcError;
+use str0m::change::SdpAnswer;
+use str0m::change::SdpApi;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::format::CodecSpec;
@@ -24,8 +31,7 @@ pub fn stop_media_then_remote_recycles_slot() {
     init_log();
     init_crypto_default();
 
-    // L stops its video m-line, then receives an offer that recycles the
-    // resulting port=0 slot with a new mid (RFC 8829 §5.2.2).
+    // L stops its video m-line. R's next media takes that slot.
     let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
 
     let old_mid = l._mids()[0];
@@ -37,45 +43,44 @@ pub fn stop_media_then_remote_recycles_slot() {
     assert!(l.media(old_mid).unwrap().stopped());
     assert!(r.media(old_mid).unwrap().stopped());
 
-    // str0m's own SdpApi doesn't produce recycling offers, so take an
-    // offer from R (which appends a new m-line) and rewrite it so the
-    // new m-line lives at the index of the stopped one - what a browser
-    // would emit per RFC 8829 §5.2.2.
-    let offer_from_r = r
-        .span
-        .in_scope(|| {
-            let mut change = r.rtc.sdp_api();
-            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-            change.apply()
-        })
-        .expect("R has a change to apply");
-
-    let offer_sdp = offer_from_r.0.to_sdp_string();
-    let recycled_offer_sdp = rewrite_offer_to_recycle_stopped_slot(&offer_sdp, old_mid);
-
-    let recycled_offer =
-        SdpOffer::from_sdp_string(&recycled_offer_sdp).expect("recycled offer parses");
-
-    let answer = l.span.in_scope(|| {
-        l.rtc
-            .sdp_api()
-            .accept_offer(recycled_offer)
-            .expect("accept")
+    let (new_mid, offer_mids) = negotiate_mids(&mut r, &mut l, |change| {
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
     });
 
-    let answer_sdp = answer.to_sdp_string();
-
-    // RFC 3264 §6: the answer must have the same m-line count as the
-    // offer. Without recycling, str0m appends a second m-line and the
-    // answer is invalid.
-    let count_m_lines = |s: &str| s.lines().filter(|l| l.starts_with("m=")).count();
-    let offer_m_lines = count_m_lines(&recycled_offer_sdp);
-    let answer_m_lines = count_m_lines(&answer_sdp);
     assert_eq!(
-        answer_m_lines, offer_m_lines,
-        "answer m-line count ({answer_m_lines}) differs from offer m-line count ({offer_m_lines})\n\n\
-         rewritten offer:\n{recycled_offer_sdp}\n\nanswer:\n{answer_sdp}",
+        offer_mids,
+        [new_mid],
+        "the offer must hold the new mid in the slot of {old_mid}"
     );
+
+    // Both sides: old mid is gone, new mid is live and not stopped.
+    for (rtc, direction) in [(&l, Direction::RecvOnly), (&r, Direction::SendOnly)] {
+        assert_eq!(rtc._mids(), [new_mid], "only the recycled mid must remain");
+        assert!(rtc.media(old_mid).is_none(), "old Media must be gone");
+
+        let new_media = rtc.media(new_mid).expect("new Media");
+        assert!(!new_media.stopped(), "recycled Media must not be stopped");
+        assert!(!new_media.disabled(), "recycled Media must not be disabled");
+        assert_eq!(
+            new_media.kind(),
+            MediaKind::Video,
+            "recycled Media kind must match the offer"
+        );
+        // R offered sendonly, so L's inverted direction is recvonly.
+        assert_eq!(new_media.direction(), direction);
+        assert_eq!(
+            new_media.remote_pts(),
+            &[Pt::new_with_value(100)],
+            "recycled Media must have remote_pts populated"
+        );
+    }
+
+    // L can offer in turn. With no slot left, its m-line is appended.
+    let (follow_up_mid, offer_mids) = negotiate_mids(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
+    });
+
+    assert_eq!(offer_mids, [new_mid, follow_up_mid]);
 }
 
 #[test]
@@ -94,19 +99,24 @@ pub fn recycling_rejected_for_non_stopped_slot() {
     assert!(!l.media(active_mid).unwrap().stopped());
     assert!(!l.media(active_mid).unwrap().disabled());
 
-    // Take an ordinary offer from R adding a new m-line, then rewrite it
-    // so the new m-line squats the slot of L's active mid.
+    // Rename the mid of a direction change offer so it squats the active slot.
     let offer_from_r = r
         .span
         .in_scope(|| {
             let mut change = r.rtc.sdp_api();
-            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            change.set_direction(active_mid, Direction::SendOnly);
             change.apply()
         })
         .expect("R has a change to apply");
 
-    let offer_sdp = offer_from_r.0.to_sdp_string();
-    let bad_offer_sdp = rewrite_offer_to_recycle_stopped_slot(&offer_sdp, active_mid);
+    let bad_offer_sdp = offer_from_r
+        .0
+        .to_sdp_string()
+        .replace(&format!("a=mid:{active_mid}\r\n"), "a=mid:squat\r\n")
+        .replace(
+            &format!("a=group:BUNDLE {active_mid}\r\n"),
+            "a=group:BUNDLE squat\r\n",
+        );
     let bad_offer = SdpOffer::from_sdp_string(&bad_offer_sdp).expect("offer parses");
 
     let result = l.span.in_scope(|| l.rtc.sdp_api().accept_offer(bad_offer));
@@ -119,185 +129,14 @@ pub fn recycling_rejected_for_non_stopped_slot() {
 }
 
 #[test]
-pub fn stop_media_recycled_slot_state() {
-    init_log();
-    init_crypto_default();
-
-    // After a recycled offer is accepted, verify the post-recycle state
-    // of the surviving Media objects. The happy-path test only asserts
-    // answer m-line count; this pins down the full state.
-    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
-
-    let old_mid = l._mids()[0];
-
-    negotiate(&mut l, &mut r, |change| {
-        change.stop_media(old_mid);
-    });
-
-    let offer_from_r = r
-        .span
-        .in_scope(|| {
-            let mut change = r.rtc.sdp_api();
-            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-            change.apply()
-        })
-        .expect("R has a change to apply");
-
-    let recycled_offer_sdp =
-        rewrite_offer_to_recycle_stopped_slot(&offer_from_r.0.to_sdp_string(), old_mid);
-    let recycled_offer = SdpOffer::from_sdp_string(&recycled_offer_sdp).expect("parses");
-
-    // The new mid is whichever mid in the recycled SDP isn't old_mid.
-    let new_mid = new_mid_in_sdp(&recycled_offer_sdp, old_mid);
-
-    l.span.in_scope(|| {
-        l.rtc
-            .sdp_api()
-            .accept_offer(recycled_offer)
-            .expect("accept");
-    });
-
-    // L side: old mid is retired, new mid is live and not stopped.
-    assert!(
-        !l._mids().contains(&old_mid),
-        "retired mid {old_mid} must not appear in L's medias after recycle, got {:?}",
-        l._mids()
-    );
-    assert!(
-        l._mids().contains(&new_mid),
-        "recycled mid {new_mid} must appear in L's medias, got {:?}",
-        l._mids()
-    );
-    assert!(l.media(old_mid).is_none(), "old Media must be gone on L");
-
-    let new_media_l = l.media(new_mid).expect("new Media on L");
-    assert!(!new_media_l.stopped(), "recycled Media must not be stopped");
-    assert!(
-        !new_media_l.disabled(),
-        "recycled Media must not be disabled"
-    );
-    assert_eq!(
-        new_media_l.kind(),
-        MediaKind::Video,
-        "recycled Media kind must match the offer"
-    );
-    // R offered sendonly, so L's inverted direction is recvonly.
-    assert_eq!(new_media_l.direction(), Direction::RecvOnly);
-    assert_eq!(
-        new_media_l.remote_pts(),
-        &[Pt::new_with_value(100)],
-        "recycled Media must have remote_pts populated"
-    );
-}
-
-#[test]
-pub fn stop_media_and_recycle_then_negotiate_again() {
-    init_log();
-    init_crypto_default();
-
-    // After accepting a recycled offer, L must still be able to generate
-    // a valid subsequent offer of its own. This exercises that session
-    // state (medias, streams, index bookkeeping) is consistent for the
-    // side that processed the recycling.
-    //
-    // We don't round-trip R here: R sent a non-recycled offer that was
-    // rewritten out-of-band, so from R's own perspective the resulting
-    // answer is malformed. That's a synthetic-test artifact, not a
-    // real-world scenario (browsers always answer in-shape).
-    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
-
-    let old_mid = l._mids()[0];
-
-    negotiate(&mut l, &mut r, |change| {
-        change.stop_media(old_mid);
-    });
-
-    let offer_from_r = r
-        .span
-        .in_scope(|| {
-            let mut change = r.rtc.sdp_api();
-            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-            change.apply()
-        })
-        .expect("R has a change to apply");
-
-    let recycled_offer_sdp =
-        rewrite_offer_to_recycle_stopped_slot(&offer_from_r.0.to_sdp_string(), old_mid);
-    let recycled_offer = SdpOffer::from_sdp_string(&recycled_offer_sdp).expect("parses");
-
-    l.span.in_scope(|| {
-        l.rtc
-            .sdp_api()
-            .accept_offer(recycled_offer)
-            .expect("accept")
-    });
-
-    // L must be able to create another offer cleanly. This would fail if
-    // `as_media_lines` disagrees with the post-recycle `medias` list.
-    let follow_up = l
-        .span
-        .in_scope(|| {
-            let mut change = l.rtc.sdp_api();
-            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-            change.apply()
-        })
-        .expect("L can produce a follow-up offer");
-
-    let follow_up_sdp = follow_up.0.to_sdp_string();
-
-    // Retired mid must not reappear in L's offer.
-    let old_mid_str = old_mid.to_string();
-    assert!(
-        !follow_up_sdp
-            .lines()
-            .any(|l| l.strip_prefix("a=mid:").map(str::trim) == Some(old_mid_str.as_str())),
-        "retired mid resurfaced in L's follow-up offer:\n{}",
-        follow_up_sdp
-    );
-    // The follow-up SDP must have exactly 2 m-lines (recycled + new).
-    let m_line_count = follow_up_sdp
-        .lines()
-        .filter(|l| l.starts_with("m="))
-        .count();
-    assert_eq!(
-        m_line_count, 2,
-        "expected 2 m-lines in follow-up offer, got:\n{}",
-        follow_up_sdp
-    );
-    assert!(!l._mids().contains(&old_mid));
-}
-
-#[test]
 pub fn recycling_with_media_type_change() {
     init_log();
     init_crypto_default();
 
     // JSEP §5.2.2 allows a recycled slot to change media type. Stop an
-    // audio m-line and have the remote reoffer with a video m-line at
-    // the same slot. Both peers need audio *and* video codecs, so we
-    // construct them manually rather than via with_params.
-    let build = |span: Span| {
-        let mut b = Rtc::builder().clear_codecs();
-        b.codec_config().add_config(
-            Pt::new_with_value(111),
-            None,
-            Codec::Opus,
-            Frequency::FORTY_EIGHT_KHZ,
-            Some(2),
-            FormatParams::default(),
-        );
-        b.codec_config().add_config(
-            Pt::new_with_value(100),
-            None,
-            Codec::Vp8,
-            Frequency::NINETY_KHZ,
-            None,
-            FormatParams::default(),
-        );
-        TestRtc::new_with_rtc(span, b.build(Instant::now()))
-    };
-    let mut l = build(info_span!("L"));
-    let mut r = build(info_span!("R"));
+    // audio m-line and add a video m-line, which takes the same slot.
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     negotiate(&mut l, &mut r, |change| {
         change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
@@ -310,36 +149,21 @@ pub fn recycling_with_media_type_change() {
         change.stop_media(old_mid);
     });
 
-    let offer_from_r = r
-        .span
-        .in_scope(|| {
-            let mut change = r.rtc.sdp_api();
-            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-            change.apply()
-        })
-        .expect("R has a change to apply");
+    let (new_mid, offer_mids) = negotiate_mids(&mut r, &mut l, |change| {
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
+    });
 
-    let recycled_sdp =
-        rewrite_offer_to_recycle_stopped_slot(&offer_from_r.0.to_sdp_string(), old_mid);
-    let recycled_offer = SdpOffer::from_sdp_string(&recycled_sdp).expect("parses");
-    let new_mid = new_mid_in_sdp(&recycled_sdp, old_mid);
+    assert_eq!(offer_mids, [new_mid]);
 
-    let result = l
-        .span
-        .in_scope(|| l.rtc.sdp_api().accept_offer(recycled_offer));
-    assert!(
-        result.is_ok(),
-        "accepting a recycle that changes media type (audio->video) should succeed per JSEP §5.2.2: {:?}",
-        result.err()
-    );
-
-    let recycled = l.media(new_mid).expect("new Media present");
-    assert_eq!(
-        recycled.kind(),
-        MediaKind::Video,
-        "recycled Media kind must reflect the new m-line type"
-    );
-    assert!(!recycled.stopped());
+    for rtc in [&l, &r] {
+        let recycled = rtc.media(new_mid).expect("new Media present");
+        assert_eq!(
+            recycled.kind(),
+            MediaKind::Video,
+            "recycled Media kind must reflect the new m-line type"
+        );
+        assert!(!recycled.stopped());
+    }
 }
 
 #[test]
@@ -347,19 +171,22 @@ pub fn recycling_in_answer_produces_error() {
     init_log();
     init_crypto_default();
 
-    // JSEP §5.2.2 only permits recycling in offers. An answer that
-    // introduces a new mid at the index of a stopped slot is malformed.
-    // str0m's `ensure_correct_answer` should reject it rather than
-    // silently retiring our Media.
+    // An answer that puts an unknown mid at a stopped slot its offer did
+    // not recycle is malformed.
     let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
 
-    let old_mid = l._mids()[0];
-
-    negotiate(&mut l, &mut r, |change| {
-        change.stop_media(old_mid);
+    let first_mid = l._mids()[0];
+    let second_mid = negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None)
     });
 
-    // L initiates a fresh offer adding a new video m-line; R will answer.
+    negotiate(&mut l, &mut r, |change| {
+        change.stop_media(first_mid);
+        change.stop_media(second_mid);
+    });
+
+    // L adds one video m-line, which recycles the first of the two
+    // stopped slots, and R answers.
     let (offer_from_l, pending_l) = l
         .span
         .in_scope(|| {
@@ -373,12 +200,12 @@ pub fn recycling_in_answer_produces_error() {
         .span
         .in_scope(|| r.rtc.sdp_api().accept_offer(offer_from_l).expect("accept"));
 
-    // Rewrite R's answer so the new mid's m-line squats the old stopped
+    // Rewrite R's answer so an unknown mid squats the second stopped
     // slot. This is the malformed shape we want L to reject.
-    let malformed_answer_sdp =
-        rewrite_offer_to_recycle_stopped_slot(&answer_from_r.to_sdp_string(), old_mid);
-    let malformed_answer =
-        str0m::change::SdpAnswer::from_sdp_string(&malformed_answer_sdp).expect("parses");
+    let malformed_answer_sdp = answer_from_r
+        .to_sdp_string()
+        .replace(&format!("a=mid:{second_mid}\r\n"), "a=mid:squat\r\n");
+    let malformed_answer = SdpAnswer::from_sdp_string(&malformed_answer_sdp).expect("parses");
 
     let result = l
         .span
@@ -389,98 +216,347 @@ pub fn recycling_in_answer_produces_error() {
         "accept_answer must reject a recycled answer, got Ok:\n{}",
         malformed_answer_sdp
     );
+
+    // The refused answer leaves both stopped m-lines in place, so the next
+    // offer recycles the first slot again.
+    assert!(l.media(first_mid).unwrap().stopped());
+
+    let (next_offer, _) = l
+        .span
+        .in_scope(|| {
+            let mut change = l.rtc.sdp_api();
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            change.apply()
+        })
+        .expect("L has a change to apply");
+
+    let next_mids = mids(&next_offer.to_sdp_string());
+    assert_eq!(next_mids.len(), 2);
+    assert_eq!(next_mids[1], second_mid);
+}
+
+#[test]
+pub fn answer_must_keep_recycled_slot() {
+    init_log();
+    init_crypto_default();
+
+    // An answer that keeps the stopped m-line and appends the recycled mid
+    // after it does not match its offer.
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let old_mid = l._mids()[0];
+
+    let (stop_offer, stop_pending) = l
+        .span
+        .in_scope(|| {
+            let mut change = l.rtc.sdp_api();
+            change.stop_media(old_mid);
+            change.apply()
+        })
+        .expect("L has a change to apply");
+
+    let stop_answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(stop_offer).expect("accept"));
+
+    // The only m-line of this answer is the stopped one.
+    let stop_answer_sdp = stop_answer.to_sdp_string();
+    let stopped_section = &stop_answer_sdp[stop_answer_sdp.find("m=video").unwrap()..];
+
+    l.span.in_scope(|| {
+        l.rtc
+            .sdp_api()
+            .accept_answer(stop_pending, stop_answer)
+            .expect("accept")
+    });
+
+    let (offer_from_l, pending_l) = l
+        .span
+        .in_scope(|| {
+            let mut change = l.rtc.sdp_api();
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            change.apply()
+        })
+        .expect("L has a change to apply");
+
+    let answer_from_r = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer_from_l).expect("accept"));
+
+    // Rewrite R's answer so the stopped m-line is back in its slot, with
+    // the new m-line after it.
+    let malformed_answer_sdp =
+        answer_from_r
+            .to_sdp_string()
+            .replacen("m=video", &format!("{stopped_section}m=video"), 1);
+    let malformed_answer = SdpAnswer::from_sdp_string(&malformed_answer_sdp).expect("parses");
+
+    let result = l
+        .span
+        .in_scope(|| l.rtc.sdp_api().accept_answer(pending_l, malformed_answer));
+
+    assert!(
+        result.is_err(),
+        "accept_answer must reject an answer that moves a recycled m-line, got Ok:\n{}",
+        malformed_answer_sdp
+    );
+    assert_eq!(l._mids(), [old_mid]);
+}
+
+#[test]
+pub fn stop_and_add_in_one_offer_appends() {
+    init_log();
+    init_crypto_default();
+
+    // The remote peer has not seen the m-line at port 0 before the offer
+    // that stops it, so that offer cannot give the slot to a new m-line.
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let old_mid = l._mids()[0];
+
+    let (new_mid, offer_mids) = negotiate_mids(&mut l, &mut r, |change| {
+        change.stop_media(old_mid);
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
+    });
+
+    assert_eq!(offer_mids, [old_mid, new_mid]);
+    assert!(l.media(old_mid).unwrap().stopped());
+}
+
+#[test]
+pub fn unanswered_recycling_offer_keeps_slot() {
+    init_log();
+    init_crypto_default();
+
+    // A recycling offer that is never answered keeps the stopped Media, so
+    // the next offer recycles its slot.
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let old_mid = l._mids()[0];
+
+    negotiate(&mut l, &mut r, |change| {
+        change.stop_media(old_mid);
+    });
+
+    let (dropped_offer, _) = l
+        .span
+        .in_scope(|| {
+            let mut change = l.rtc.sdp_api();
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
+            change.apply()
+        })
+        .expect("L has a change to apply");
+
+    assert!(!mids(&dropped_offer.to_sdp_string()).contains(&old_mid));
+    assert!(l.media(old_mid).unwrap().stopped());
+
+    let (new_mid, offer_mids) = negotiate_mids(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
+    });
+
+    assert_eq!(offer_mids, [new_mid]);
+    assert!(l.media(old_mid).is_none());
+}
+
+#[test]
+pub fn added_media_fills_stopped_slots_in_index_order() {
+    init_log();
+    init_crypto_default();
+
+    // With m-lines 0 and 2 stopped, three added m-lines take slot 0,
+    // slot 2 and a new slot 3, in the order they were added.
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let add = |change: &mut SdpApi| {
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None)
+    };
+
+    let first_mid = l._mids()[0];
+    let (kept_mid, last_mid) = negotiate(&mut l, &mut r, |change| (add(change), add(change)));
+
+    negotiate(&mut l, &mut r, |change| {
+        change.stop_media(last_mid);
+        change.stop_media(first_mid);
+    });
+
+    let (new_mids, offer_mids) = negotiate_mids(&mut l, &mut r, |change| {
+        [add(change), add(change), add(change)]
+    });
+
+    assert_eq!(
+        offer_mids,
+        [new_mids[0], kept_mid, new_mids[1], new_mids[2]]
+    );
+}
+
+#[test]
+pub fn data_channel_m_line_does_not_recycle() {
+    init_log();
+    init_crypto_default();
+
+    // The data channel m-line is appended, even next to media that recycles.
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let old_mid = l._mids()[0];
+
+    negotiate(&mut l, &mut r, |change| {
+        change.stop_media(old_mid);
+    });
+
+    let (new_mid, offer_mids) = negotiate_mids(&mut l, &mut r, |change| {
+        change.add_channel("data".into());
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
+    });
+
+    assert_eq!(offer_mids.len(), 2);
+    assert_eq!(offer_mids[0], new_mid);
+}
+
+#[test]
+pub fn repeated_stop_and_add_keeps_m_line_count() {
+    init_log();
+    init_crypto_default();
+
+    // A session that keeps replacing its media must not grow its SDP.
+    let (mut l, mut r) = with_params(info_span!("L"), &[vp8(100)], info_span!("R"), &[vp8(100)]);
+
+    let mut mid = l._mids()[0];
+
+    for _ in 0..10 {
+        negotiate(&mut l, &mut r, |change| {
+            change.stop_media(mid);
+        });
+
+        let (new_mid, offer_mids) = negotiate_mids(&mut l, &mut r, |change| {
+            change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None)
+        });
+
+        assert_eq!(offer_mids, [new_mid]);
+        mid = new_mid;
+    }
+
+    assert_eq!(l._mids(), [mid]);
+    assert_eq!(r._mids(), [mid]);
+}
+
+#[test]
+pub fn recycled_slot_sends_media() -> Result<(), RtcError> {
+    media_flows_on_recycled_slot(Direction::SendOnly)
+}
+
+#[test]
+pub fn recycled_slot_receives_media() -> Result<(), RtcError> {
+    media_flows_on_recycled_slot(Direction::RecvOnly)
+}
+
+/// L recycles the slot of a stopped m-line with media of direction `dir`.
+/// The sending side then writes on it and the other side must receive.
+fn media_flows_on_recycled_slot(dir: Direction) -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
+
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+    let old_mid = negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
+    });
+
+    while !l.is_connected() || !r.is_connected() {
+        progress(&mut l, &mut r)?;
+    }
+
+    negotiate(&mut l, &mut r, |change| {
+        change.stop_media(old_mid);
+    });
+
+    let (mid, offer_mids) = negotiate_mids(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Audio, dir, None, None, None)
+    });
+
+    assert_eq!(offer_mids, [mid]);
+
+    let pt = l.params_opus().pt();
+
+    for _ in 0..100 {
+        let tx = if dir.is_sending() { &mut l } else { &mut r };
+        let wallclock = tx.start + tx.duration();
+        let time = tx.duration().into();
+        tx.writer(mid).expect("writer for the recycled mid").write(
+            pt,
+            wallclock,
+            time,
+            vec![1_u8; 80],
+        )?;
+
+        progress(&mut l, &mut r)?;
+    }
+
+    assert!(
+        r.events
+            .iter()
+            .any(|(_, e)| matches!(e, Event::MediaAdded(m) if m.mid == mid)),
+        "R must report MediaAdded for the recycled mid"
+    );
+
+    let rx = if dir.is_sending() { &r } else { &l };
+    let media_count = rx
+        .events
+        .iter()
+        .filter(|(_, e)| matches!(e, Event::MediaData(d) if d.mid == mid))
+        .count();
+
+    assert!(media_count > 50, "Not enough MediaData: {}", media_count);
+
+    Ok(())
 }
 
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
 
-/// Moves the trailing (newly added) m-line into the slot occupied by the
-/// m-line for `old_mid`, and updates the BUNDLE group accordingly. When
-/// `old_mid` belongs to a stopped m-line (port=0) this produces the offer
-/// shape a browser emits when recycling the slot per RFC 8829 §5.2.2.
-fn rewrite_offer_to_recycle_stopped_slot(sdp: &str, old_mid: Mid) -> String {
-    // Split into sections, each starting with "m=". The first section is
-    // the session-level block before any m-line.
-    let mut sections: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for line in sdp.split_inclusive("\r\n") {
-        if line.starts_with("m=") && !current.is_empty() {
-            sections.push(std::mem::take(&mut current));
-        }
-        current.push_str(line);
-    }
-    if !current.is_empty() {
-        sections.push(current);
-    }
+/// Like [`negotiate`], and also returns the mids of the offer in m-line order.
+fn negotiate_mids<R>(
+    offerer: &mut TestRtc,
+    answerer: &mut TestRtc,
+    do_change: impl FnOnce(&mut SdpApi) -> R,
+) -> (R, Vec<Mid>) {
+    let (result, offer, pending) = offerer.span.in_scope(|| {
+        let mut change = offerer.rtc.sdp_api();
+        let result = do_change(&mut change);
+        let (offer, pending) = change.apply().unwrap();
+        (result, offer, pending)
+    });
 
-    let session_block = sections.remove(0);
+    let offer_mids = mids(&offer.to_sdp_string());
 
-    // Find the stopped section and the trailing new section.
-    let old_mid_attr = format!("a=mid:{old_mid}\r\n");
-    let stopped_idx = sections
-        .iter()
-        .position(|s| s.contains(&old_mid_attr))
-        .expect("stopped section present");
-    let new_section = sections.pop().expect("new section present");
+    let answer = answerer
+        .span
+        .in_scope(|| answerer.rtc.sdp_api().accept_offer(offer).unwrap());
 
-    sections[stopped_idx] = new_section;
+    // RFC 3264 §6: the answer has the m-lines of the offer, in its order.
+    assert_eq!(mids(&answer.to_sdp_string()), offer_mids);
 
-    // Parse the new mid so we can rewrite the BUNDLE group.
-    let new_mid = sections[stopped_idx]
-        .lines()
-        .find_map(|l| l.strip_prefix("a=mid:"))
-        .expect("new section has a=mid:")
-        .trim()
-        .to_string();
+    offerer.span.in_scope(|| {
+        offerer
+            .rtc
+            .sdp_api()
+            .accept_answer(pending, answer)
+            .unwrap();
+    });
 
-    let old_mid_str = old_mid.to_string();
-    let session_block = session_block
-        .lines()
-        .map(|l| {
-            if let Some(rest) = l.strip_prefix("a=group:BUNDLE ") {
-                let mut mids: Vec<&str> = rest
-                    .split_whitespace()
-                    .filter(|m| *m != old_mid_str)
-                    .collect();
-                if !mids.contains(&new_mid.as_str()) {
-                    mids.push(new_mid.as_str());
-                }
-                format!("a=group:BUNDLE {}", mids.join(" "))
-            } else {
-                l.to_string()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\r\n")
-        + "\r\n";
-
-    let mut out = session_block;
-    for s in sections {
-        out.push_str(&s);
-    }
-    out
+    (result, offer_mids)
 }
 
-/// Find the mid in `sdp` that isn't `old_mid`. Panics if zero or more than one match.
-fn new_mid_in_sdp(sdp: &str, old_mid: Mid) -> Mid {
-    let old_str = old_mid.to_string();
-    let mut found: Option<Mid> = None;
-    for line in sdp.lines() {
-        if let Some(rest) = line.strip_prefix("a=mid:") {
-            let m = rest.trim();
-            if m == old_str {
-                continue;
-            }
-            assert!(
-                found.is_none(),
-                "more than one non-old mid in sdp:\n{}",
-                sdp
-            );
-            found = Some(m.into());
-        }
-    }
-    found.expect("a new mid must be present in the recycled sdp")
+/// The mid of each m-line in `sdp`, in m-line order.
+fn mids(sdp: &str) -> Vec<Mid> {
+    sdp.lines()
+        .filter_map(|l| l.strip_prefix("a=mid:"))
+        .map(|mid| mid.trim().into())
+        .collect()
 }
 
 fn with_params(
