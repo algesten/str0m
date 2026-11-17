@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
 use base64ct::{Base64, Encoding};
@@ -13,17 +14,22 @@ use crate::change::{SdpAnswer, SdpApi, SdpOffer};
 use crate::crypto::Sha1HmacProvider;
 use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
 use crate::format::Codec;
-use crate::io::MultiplexKind;
+use crate::io::{DATAGRAM_MTU_TARGET_MAX, DATAGRAM_MTU_TARGET_MIN, MultiplexKind};
 use crate::media::{Direction, MediaKind, Mid, Pt, Simulcast, SimulcastLayer};
 use crate::net::{Protocol, Receive};
 use crate::packet::{CodecExtra, Depacketizer, DepacketizingBuffer, RtpMeta};
-use crate::rtp::{Extension, ExtensionValues, RtpWrite, Ssrc, Vp8Descriptor};
+use crate::rtp::dependency_descriptor::{self, DecodeTargetIndication, DependencyDescriptor};
+use crate::rtp::dependency_descriptor::{DependencyDescriptorError, DependencyDescriptorReceiver};
+use crate::rtp::dependency_descriptor::{FrameDescriptor, ParsedDependencyDescriptor};
+use crate::rtp::dependency_descriptor::{Resolution, SharedStructure, SharedStructureTemplate};
+use crate::rtp::{Extension, ExtensionMap, ExtensionSerializer, ExtensionValues};
+use crate::rtp::{RtpWrite, Ssrc, Vp8Descriptor};
 use crate::rtp_::{Frequency, MediaTime, Rtcp, RtcpFb, RtcpPacket, RtpHeader, SrtpContext};
 use crate::rtp_::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRegister, extend_u16};
 use crate::sctp::{ChannelConfig, DcepAck, DcepOpen, SctpInitData};
 use crate::streams::register::ReceiverRegister;
 use crate::streams::rtx_cache_buf::EvictingBuffer;
-use crate::{Bitrate, Input, Output, Rtc, RtcConfig, SendAddr};
+use crate::{Bitrate, Event, Input, Output, Rtc, RtcConfig, SendAddr};
 
 use super::Rng;
 #[allow(unused)]
@@ -132,8 +138,10 @@ pub fn depack(data: &[u8]) -> Option<()> {
             let len = rng.usize(1200)?;
             let data = rng.slice(len)?.to_vec();
             depack.push(meta, data);
-        } else {
-            depack.pop(start, None);
+        } else if let Some(Ok(sample)) = depack.pop(start, None) {
+            // A sample takes some extension values from particular packets, such as the
+            // Dependency Descriptor of the packet that starts its frame.
+            sample.ext_vals();
         }
     }
 }
@@ -932,6 +940,12 @@ struct MediaPeer {
     rx_seq: HashMap<u32, (u64, u32)>,
     /// TWCC sequence number the remote last used.
     rx_twcc: u16,
+    /// Media is written as frames unless in RTP mode.
+    rtp_mode: bool,
+    /// Whether the Dependency Descriptor is negotiated.
+    dependency_descriptor: bool,
+    /// The per-stream state an application keeps to read received descriptors.
+    dependency_descriptors: DependencyDescriptorReceiver,
 }
 
 impl MediaPeer {
@@ -940,9 +954,11 @@ impl MediaPeer {
         fastrand::seed(0);
         let now = Instant::now();
 
+        let red = rng.bool()?;
+        let rtp_mode = rng.bool()?;
         let mut config = RtcConfig::new()
-            .enable_opus(true, rng.bool()?)
-            .set_rtp_mode(rng.bool()?)
+            .enable_opus(true, red)
+            .set_rtp_mode(rtp_mode)
             .enable_raw_packets(rng.bool()?)
             .set_reordering_size_audio(rng.usize(30)?)
             .set_reordering_size_video(rng.usize(100)?)
@@ -950,6 +966,14 @@ impl MediaPeer {
         if rng.bool()? {
             config = config.enable_bwe(Some(Bitrate::kbps(rng.u64(5_000)? + 30)));
         }
+        let dependency_descriptor = rng.bool()?;
+        if dependency_descriptor {
+            config = config.set_extension(14, dd_extension());
+        }
+        // Frames are packetized within the MTU, and descriptors take room from the payload.
+        let mtu_range = DATAGRAM_MTU_TARGET_MAX - DATAGRAM_MTU_TARGET_MIN;
+        let mtu = DATAGRAM_MTU_TARGET_MIN + rng.usize(mtu_range)?;
+        config = config.set_mtu(mtu..=usize::MAX);
         let mut rtc = config.build(now);
 
         let profile = random_srtp_profile(rng)?;
@@ -995,6 +1019,9 @@ impl MediaPeer {
             sent: VecDeque::new(),
             rx_seq: HashMap::new(),
             rx_twcc: rng.u16(u16::MAX)?,
+            rtp_mode,
+            dependency_descriptor,
+            dependency_descriptors: DependencyDescriptorReceiver::default(),
         };
         peer.drain();
         Some(peer)
@@ -1019,7 +1046,16 @@ impl MediaPeer {
                         }
                     }
                 }
-                Ok(Output::Event(_)) => {}
+                Ok(Output::Event(event)) => {
+                    let ext_vals = match &event {
+                        Event::MediaData(data) => &data.ext_vals,
+                        Event::RtpPacket(packet) => &packet.header.ext_vals,
+                        _ => continue,
+                    };
+                    if let Some(descriptor) = ext_vals.user_values.get::<DependencyDescriptor>() {
+                        self.dependency_descriptors.receive(descriptor);
+                    }
+                }
                 Ok(Output::Timeout(_)) | Err(_) => return,
             }
         }
@@ -1048,7 +1084,7 @@ impl MediaPeer {
             .collect()
     }
 
-    /// Our media, written through the direct API.
+    /// Our media, written through the direct API as RTP or, unless in RTP mode, as frames.
     fn send_media(&mut self, rng: &mut Rng) -> Option<()> {
         let i = rng.usize(1)?;
         let kind = if i == 0 {
@@ -1070,13 +1106,60 @@ impl MediaPeer {
         let payload = rng.slice(len)?;
 
         let now = self.now;
-        let mut api = self.rtc.direct_api();
-        let stream = api.stream_tx(&MEDIA_TX[i].0.into())?;
-        let rtp = RtpWrite::new(pt, seq.into(), (seq * 960) as u32, now, payload);
-        stream.write_rtp(rtp.marker(marker).nackable(true));
+        if !self.rtp_mode && rng.bool()? {
+            self.write_frame(rng, i, pt, seq, payload)?;
+        } else {
+            let mut rtp = RtpWrite::new(pt, seq.into(), (seq * 960) as u32, now, payload)
+                .marker(marker)
+                .nackable(true);
+            // An SFU in RTP mode forwards descriptors as they are.
+            if self.dependency_descriptor && rng.bool()? {
+                let mut ext_vals = ExtensionValues::default();
+                ext_vals.user_values.set(random_dependency_descriptor(rng)?);
+                rtp = rtp.ext_vals(ext_vals);
+            }
+            let mut api = self.rtc.direct_api();
+            let stream = api.stream_tx(&MEDIA_TX[i].0.into())?;
+            stream.write_rtp(rtp);
+        }
 
         let _ = self.rtc.handle_input(Input::Timeout(now));
         self.drain();
+        Some(())
+    }
+
+    /// A frame, which str0m packetizes within the MTU, giving each packet its own descriptor.
+    fn write_frame(
+        &mut self,
+        rng: &mut Rng,
+        i: usize,
+        pt: Pt,
+        seq: u64,
+        payload: &[u8],
+    ) -> Option<()> {
+        // Larger frames need more packets.
+        let data = payload.repeat(rng.usize(4)? + 1);
+        let descriptor = if rng.bool()? {
+            Some(random_dependency_descriptor(rng)?)
+        } else {
+            None
+        };
+        let params = self.rtc.codec_config().params().iter();
+        let clock_rate = params
+            .clone()
+            .find(|p| p.pt() == pt)?
+            .spec()
+            .rtp_clock_rate();
+        let rtp_time = MediaTime::new(seq * 3000, clock_rate);
+
+        let Some(mut writer) = self.rtc.writer(self.mids[i]) else {
+            return Some(());
+        };
+        if let Some(descriptor) = descriptor {
+            writer = writer.user_extension_value(descriptor);
+        }
+        // A descriptor that attaches a malformed structure is rejected.
+        let _ = writer.write(pt, self.now, rtp_time, data);
         Some(())
     }
 
@@ -1246,6 +1329,9 @@ impl MediaPeer {
             ext_vals.audio_level = Some(-(rng.u8(127)? as i8));
             ext_vals.voice_activity = Some(rng.bool()?);
         }
+        if self.dependency_descriptor && rng.bool()? {
+            ext_vals.user_values.set(random_dependency_descriptor(rng)?);
+        }
 
         let mut header = RtpHeader {
             has_padding: rng.u8(7)? == 0,
@@ -1348,6 +1434,9 @@ fn sdp_rtc(rng: &mut Rng, now: Instant) -> Option<Rtc> {
     }
     if rng.bool()? {
         config = config.set_extension(rng.u8(15)? + 1, Extension::ColorSpace);
+    }
+    if rng.bool()? {
+        config = config.set_extension(rng.u8(15)? + 1, dd_extension());
     }
     let mut rtc = config.build(now);
     rtc.add_local_candidate(Candidate::host(MEDIA_LOCAL, Protocol::Udp).ok()?);
@@ -1614,6 +1703,369 @@ fn run_negotiated(rtc: &mut Rtc, mut now: Instant) {
 /// Fuzz Dependency Descriptor parsing, encoding, frame-mode sending, and per-stream receiving.
 pub fn dependency_descriptor(data: &[u8]) {
     let _ = crate::rtp::dependency_descriptor::fuzz(data);
+}
+
+/// Fuzz the Dependency Descriptor API with values that an encoder or an SFU chooses.
+///
+/// The `dependency_descriptor` target only gets values from parsing, which are valid by
+/// construction. Here structures, frames and descriptors are arbitrary. Whatever the API accepts
+/// must serialize and parse back to the same values.
+pub fn dependency_descriptor_api(data: &[u8]) -> Option<()> {
+    let mut rng = Rng::new(data);
+    let structure = match random_dd_structure(&mut rng)? {
+        Ok(structure) => structure,
+        Err(error) => {
+            // Applications log why a structure is rejected.
+            let _ = error.to_string();
+            return Some(());
+        }
+    };
+    dd_attach(&mut rng, &structure)?;
+    loop {
+        match rng.u8(2)? {
+            0 => dd_for_frame(&mut rng, &structure)?,
+            1 => dd_serialize(&mut rng, &structure)?,
+            2 => dd_bytes(&mut rng, &structure)?,
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn dd_extension() -> Extension {
+    Extension::with_serializer(
+        dependency_descriptor::URI,
+        dependency_descriptor::Serializer,
+    )
+}
+
+/// A descriptor as an application or a remote peer may send it.
+///
+/// Arbitrary bytes rarely parse, so other descriptors use a structure with one decode target
+/// and one template, and some of them attach it.
+fn random_dependency_descriptor(rng: &mut Rng) -> Option<DependencyDescriptor> {
+    let bytes = if rng.bool()? {
+        let len = rng.usize(252)? + 3;
+        rng.slice(len)?.to_vec()
+    } else {
+        let flags = u8::from(rng.bool()?) << 7 | u8::from(rng.bool()?) << 6;
+        let [high, low] = rng.u16(u16::MAX)?.to_be_bytes();
+        let mut bytes = vec![flags, high, low];
+        if rng.bool()? {
+            bytes.extend_from_slice(&[0x80, 0, 0xe0]);
+        }
+        bytes
+    };
+    DependencyDescriptor::from_bytes(bytes).ok()
+}
+
+/// A structure from arbitrary templates. Most follow the layer transitions that a structure can
+/// describe, and most values are in range, so that many structures are accepted.
+fn random_dd_structure(
+    rng: &mut Rng,
+) -> Option<Result<SharedStructure, DependencyDescriptorError>> {
+    let template_id_offset = rng.u8(64)?;
+    let decode_target_count = rng.usize(33)?;
+    let chain_count = if rng.u8(31)? == 0 {
+        rng.usize(33)?
+    } else {
+        rng.usize(decode_target_count)?
+    };
+    let template_count = rng.usize(65)?;
+    // The wire format always starts at layer (0, 0), but values passed to the API need not.
+    let (mut spatial_layer_id, mut temporal_layer_id) = if rng.u8(31)? == 0 {
+        (rng.u8(u8::MAX)?, rng.u8(u8::MAX)?)
+    } else {
+        (0, 0)
+    };
+    let mut templates = Vec::with_capacity(template_count);
+    for index in 0..template_count {
+        if index > 0 {
+            match rng.u8(15)? {
+                0..=5 => {}
+                6..=10 => temporal_layer_id = temporal_layer_id.saturating_add(1),
+                11..=13 => {
+                    spatial_layer_id = spatial_layer_id.saturating_add(1);
+                    temporal_layer_id = 0;
+                }
+                14 => spatial_layer_id = rng.u8(u8::MAX)?,
+                _ => temporal_layer_id = rng.u8(u8::MAX)?,
+            }
+        }
+        let dti_count = random_count(rng, decode_target_count)?;
+        let frame_diff_count = rng.usize(3)?;
+        let chain_diff_count = random_count(rng, chain_count)?;
+        templates.push(SharedStructureTemplate {
+            spatial_layer_id,
+            temporal_layer_id,
+            decode_target_indications: random_dtis(rng, dti_count)?,
+            frame_diffs: random_diffs(rng, frame_diff_count, 1..=16)?,
+            chain_diffs: random_diffs(rng, chain_diff_count, 0..=15)?,
+        });
+    }
+    let mut protecting_chains = Vec::new();
+    if chain_count > 0 {
+        for _ in 0..random_count(rng, decode_target_count)? {
+            protecting_chains.push(if rng.u8(31)? == 0 {
+                rng.u8(u8::MAX)?
+            } else {
+                rng.u8(chain_count as u8 - 1)?
+            });
+        }
+    }
+    let resolutions = if rng.bool()? {
+        let spatial_layers = templates
+            .last()
+            .map_or(0, |template| usize::from(template.spatial_layer_id) + 1);
+        let mut resolutions = Vec::new();
+        for _ in 0..random_count(rng, spatial_layers)? {
+            let width = random_dimension(rng)?;
+            let height = random_dimension(rng)?;
+            resolutions.push(Resolution { width, height });
+        }
+        Some(resolutions)
+    } else {
+        None
+    };
+    Some(SharedStructure::new(
+        template_id_offset,
+        templates,
+        &protecting_chains,
+        resolutions,
+    ))
+}
+
+/// Usually `count`, sometimes another count.
+fn random_count(rng: &mut Rng, count: usize) -> Option<usize> {
+    if rng.u8(31)? == 0 {
+        rng.usize(33)
+    } else {
+        Some(count)
+    }
+}
+
+fn random_dtis(rng: &mut Rng, count: usize) -> Option<Vec<DecodeTargetIndication>> {
+    let mut dtis = Vec::with_capacity(count);
+    for _ in 0..count {
+        dtis.push(match rng.u8(3)? {
+            0 => DecodeTargetIndication::NotPresent,
+            1 => DecodeTargetIndication::Discardable,
+            2 => DecodeTargetIndication::Switch,
+            _ => DecodeTargetIndication::Required,
+        });
+    }
+    Some(dtis)
+}
+
+/// Differences, mostly in `range`, sometimes anything.
+fn random_diffs(rng: &mut Rng, count: usize, range: RangeInclusive<u16>) -> Option<Vec<u16>> {
+    let mut diffs = Vec::with_capacity(count);
+    for _ in 0..count {
+        diffs.push(if rng.u8(31)? == 0 {
+            rng.u16(u16::MAX)?
+        } else {
+            range.start() + rng.u16(range.end() - range.start())?
+        });
+    }
+    Some(diffs)
+}
+
+/// Mostly a render dimension in range, sometimes anything.
+fn random_dimension(rng: &mut Rng) -> Option<u32> {
+    if rng.u8(31)? == 0 {
+        rng.u32(u32::MAX)
+    } else {
+        Some(rng.u32(65535)? + 1)
+    }
+}
+
+/// A bitmask of active decode targets, mostly within the structure.
+fn random_active_mask(rng: &mut Rng, structure: &SharedStructure) -> Option<u32> {
+    let all = u32::MAX >> (u32::BITS - u32::from(structure.decode_target_count()));
+    let mask = rng.u32(u32::MAX)?;
+    Some(if rng.u8(31)? == 0 { mask } else { mask & all })
+}
+
+/// Every template of an accepted structure describes a frame, and a descriptor that attaches
+/// the structure parses back to the same values. In frame mode, only the first packet of the
+/// frame attaches the structure.
+fn dd_attach(rng: &mut Rng, structure: &SharedStructure) -> Option<()> {
+    let templates = structure.templates();
+    let chain_count = structure.chain_count();
+    for decode_target in structure.decode_targets() {
+        let chain_index = decode_target.protecting_chain_index;
+        assert_eq!(chain_index.is_some(), chain_count > 0);
+        assert!(chain_index.is_none_or(|chain_index| chain_index < chain_count));
+    }
+    if let Some(resolutions) = structure.resolutions() {
+        let last = templates.last().expect("a structure has templates");
+        assert_eq!(resolutions.len(), usize::from(last.spatial_layer_id) + 1);
+    }
+    // The next structure's first template ID is one of this structure's only if it has all 64.
+    let next = structure.next_template_id_offset();
+    assert_eq!(structure.template(next).is_some(), templates.len() == 64);
+
+    let template = &templates[rng.usize(templates.len() - 1)?];
+    let frame_number = rng.u16(u16::MAX)?;
+    let active = rng.u32(u32::MAX)?;
+    let mut frame =
+        ParsedDependencyDescriptor::for_frame(structure, template, frame_number, active)
+            .expect("templates of the structure describe frames");
+    frame.attached_structure = Some(structure.clone());
+    if rng.bool()? {
+        frame.active_decode_targets_bitmask = Some(random_active_mask(rng, structure)?);
+    }
+    // Large structures do not fit in a descriptor.
+    let Ok(descriptor) = frame.serialize(None) else {
+        return Some(());
+    };
+    assert_eq!(descriptor.parse(None), Ok(frame.clone()));
+
+    let mut exts = ExtensionMap::empty();
+    exts.set(14, dd_extension());
+    let mut ext_vals = ExtensionValues::default();
+    ext_vals.user_values.set(descriptor);
+    let frame_descriptor = FrameDescriptor::take(&mut ext_vals, &exts)
+        .expect("descriptors that parse are sent")
+        .expect("the descriptor is negotiated");
+    let count = rng.usize(4)?;
+    let packets: Vec<_> = frame_descriptor.packet_descriptors(count).collect();
+    assert_eq!(packets.len(), count);
+    for (index, packet) in packets.iter().enumerate() {
+        let mut expected = frame.clone();
+        expected.is_first_packet = index == 0;
+        expected.is_last_packet = index + 1 == count;
+        if index > 0 {
+            expected.attached_structure = None;
+        }
+        assert_eq!(packet.parse(Some(structure)), Ok(expected));
+    }
+    Some(())
+}
+
+/// A frame as an encoder describes it, for `for_frame` to check and choose a template for.
+fn dd_for_frame(rng: &mut Rng, structure: &SharedStructure) -> Option<()> {
+    let templates = structure.templates();
+    let mut frame = templates[rng.usize(templates.len() - 1)?].clone();
+    if rng.u8(7)? == 0 {
+        frame.spatial_layer_id = rng.u8(u8::MAX)?;
+        frame.temporal_layer_id = rng.u8(u8::MAX)?;
+    }
+    let dti_count = random_count(rng, usize::from(structure.decode_target_count()))?;
+    frame.decode_target_indications = random_dtis(rng, dti_count)?;
+    let frame_diff_count = rng.usize(7)?;
+    frame.frame_diffs = random_diffs(rng, frame_diff_count, 1..=4096)?;
+    let chain_diff_count = random_count(rng, usize::from(structure.chain_count()))?;
+    frame.chain_diffs = random_diffs(rng, chain_diff_count, 0..=255)?;
+    let frame_number = rng.u16(u16::MAX)?;
+    let active = rng.u32(u32::MAX)?;
+    let Ok(descriptor) =
+        ParsedDependencyDescriptor::for_frame(structure, &frame, frame_number, active)
+    else {
+        return Some(());
+    };
+    let template = structure
+        .template(descriptor.template_id)
+        .expect("a template of the structure");
+    assert_eq!(
+        (template.spatial_layer_id, template.temporal_layer_id),
+        (frame.spatial_layer_id, frame.temporal_layer_id)
+    );
+    // Only too many frame differences make a described frame fail to serialize.
+    match descriptor.serialize(Some(structure)) {
+        Ok(serialized) => assert_eq!(serialized.parse(Some(structure)), Ok(descriptor)),
+        Err(error) => assert_eq!(error, DependencyDescriptorError::DescriptorTooLong),
+    }
+    Some(())
+}
+
+/// A descriptor with arbitrary values, as an SFU may change them before forwarding.
+fn dd_serialize(rng: &mut Rng, structure: &SharedStructure) -> Option<()> {
+    let template_count = structure.templates().len() as u8;
+    let template_id = if rng.u8(31)? == 0 {
+        rng.u8(u8::MAX)?
+    } else {
+        (structure.template_id_offset() + rng.u8(template_count - 1)?) % 64
+    };
+    let dti_count = random_count(rng, usize::from(structure.decode_target_count()))?;
+    let frame_diff_count = if rng.u8(31)? == 0 {
+        rng.usize(300)?
+    } else {
+        rng.usize(3)?
+    };
+    let chain_diff_count = random_count(rng, usize::from(structure.chain_count()))?;
+    let descriptor = ParsedDependencyDescriptor {
+        is_first_packet: rng.bool()?,
+        is_last_packet: rng.bool()?,
+        template_id,
+        truncated_frame_number: rng.u16(u16::MAX)?,
+        decode_target_indications: random_dtis(rng, dti_count)?,
+        frame_diffs: random_diffs(rng, frame_diff_count, 1..=4096)?,
+        chain_diffs: random_diffs(rng, chain_diff_count, 0..=255)?,
+        attached_structure: if rng.u8(3)? == 0 {
+            Some(structure.clone())
+        } else {
+            None
+        },
+        active_decode_targets_bitmask: if rng.bool()? {
+            Some(random_active_mask(rng, structure)?)
+        } else {
+            None
+        },
+    };
+    let latest = if rng.bool()? { Some(structure) } else { None };
+    if let Ok(serialized) = descriptor.serialize(latest) {
+        assert_eq!(serialized.parse(latest), Ok(descriptor));
+    }
+    Some(())
+}
+
+/// Arbitrary bytes, through the packet flags, the extension serializer, and parsing.
+fn dd_bytes(rng: &mut Rng, structure: &SharedStructure) -> Option<()> {
+    let len = rng.usize(256)?;
+    let Ok(descriptor) = DependencyDescriptor::from_bytes(rng.slice(len)?) else {
+        return Some(());
+    };
+    let (first, last) = (rng.bool()?, rng.bool()?);
+    let mut flagged = descriptor.clone();
+    flagged.set_packet_flags(first, last);
+    assert_eq!(
+        (flagged.is_first_packet(), flagged.is_last_packet()),
+        (first, last)
+    );
+    assert_eq!(flagged.template_id(), descriptor.template_id());
+    assert_eq!(flagged.as_bytes()[1..], descriptor.as_bytes()[1..]);
+    // Without other clones, the flags change in place, with the same result.
+    let mut unique = DependencyDescriptor::from_bytes(descriptor.as_bytes()).expect("valid");
+    unique.set_packet_flags(first, last);
+    assert_eq!(unique, flagged);
+
+    // The extension serializer writes the bytes as they are, if they fit.
+    let mut ext_vals = ExtensionValues::default();
+    ext_vals.user_values.set(flagged.clone());
+    let mut buf = vec![0; rng.usize(300)?];
+    let written = dependency_descriptor::Serializer.write_to(&mut buf, &ext_vals);
+    let fits = buf.len() >= flagged.as_bytes().len();
+    assert_eq!(written, if fits { flagged.as_bytes().len() } else { 0 });
+    if fits {
+        let mut parsed = ExtensionValues::default();
+        assert!(dependency_descriptor::Serializer.parse_value(&buf[..written], &mut parsed));
+        assert_eq!(
+            parsed.user_values.get::<DependencyDescriptor>(),
+            Some(&flagged)
+        );
+    }
+
+    let latest = if rng.bool()? { Some(structure) } else { None };
+    match flagged.parse(latest) {
+        Ok(parsed) => {
+            let serialized = parsed.serialize(latest).expect("parsed values serialize");
+            assert_eq!(serialized.parse(latest), Ok(parsed));
+        }
+        Err(error) => {
+            let _ = error.to_string();
+        }
+    }
+    Some(())
 }
 
 /// Fuzz each codec depacketizer directly (bypassing the buffer's gating),

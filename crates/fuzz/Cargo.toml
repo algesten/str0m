@@ -152,3 +152,9 @@ name = "dependency_descriptor"
 path = "fuzz_targets/dependency_descriptor.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "dependency_descriptor_api"
+path = "fuzz_targets/dependency_descriptor_api.rs"
+test = false
+doc = false

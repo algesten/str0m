@@ -4,8 +4,8 @@ use crate::Bitrate;
 use crate::RtcConfig;
 use crate::format::Codec;
 use crate::packet::CodecDepacketizer;
-use crate::rtp::vla;
 use crate::rtp::{Extension, ExtensionMap};
+use crate::rtp::{dependency_descriptor, vla};
 
 use super::Rng;
 
@@ -26,7 +26,7 @@ pub fn random_extmap(rng: &mut Rng, to_set: usize) -> Option<ExtensionMap> {
     for _ in 0..to_set {
         // ExtensionMap takes ids 1..=16. Above 14 needs the two-byte header form.
         let id = rng.u8(15)? + 1;
-        let ext = match rng.u8(14)? {
+        let ext = match rng.u8(15)? {
             0 => AbsoluteSendTime,
             1 => AudioLevel,
             2 => TransmissionTimeOffset,
@@ -42,6 +42,10 @@ pub fn random_extmap(rng: &mut Rng, to_set: usize) -> Option<ExtensionMap> {
             12 => ColorSpace,
             13 => AbsoluteCaptureTime,
             14 => Extension::with_serializer(vla::URI, vla::Serializer),
+            15 => Extension::with_serializer(
+                dependency_descriptor::URI,
+                dependency_descriptor::Serializer,
+            ),
             _ => unreachable!(),
         };
         e.set(id, ext);
