@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix media time jumping ahead for delayed or reordered packets after an arrival gap, or back after long pauses #1164
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137

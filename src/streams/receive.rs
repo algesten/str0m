@@ -85,8 +85,8 @@ pub struct StreamRx {
     /// sequence number. Bounded by `RED_RECENT_PACKETS`.
     red_recent: VecDeque<(SeqNo, u64)>,
 
-    /// Last observed media time in an RTP packet.
-    last_time: Option<MediaTime>,
+    /// Last observed media time in an RTP packet, and when that packet arrived.
+    last_time: Option<(MediaTime, Instant)>,
 
     /// If we have a pending keyframe request to send.
     pending_request_keyframe: Option<KeyframeRequestKind>,
@@ -231,7 +231,7 @@ impl StreamRx {
     ///
     /// Resets if the SSRC changes.
     pub fn last_time(&self) -> Option<MediaTime> {
-        self.last_time
+        self.last_time.map(|(time, _)| time)
     }
 
     /// Request a keyframe for an incoming encoded stream.
@@ -519,8 +519,7 @@ impl StreamRx {
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
-        let was_paused = self.paused;
-        if was_paused {
+        if self.paused {
             self.paused = false;
             self.need_paused_event = true;
         }
@@ -544,33 +543,28 @@ impl StreamRx {
         };
 
         // Get the previous time for comparison
-        let previous_time = self.last_time.map(|t| t.numer());
+        let previous = self.last_time.map(|(time, at)| (time.numer(), at));
 
         // Calculate the extended timestamp
-        let mut time_u32 = extend_u32(previous_time, header.timestamp);
+        let mut time_u32 = extend_u32(previous.map(|(time, _)| time), header.timestamp);
 
-        if was_paused && Some(time_u32) < previous_time {
-            // In 32-bit RTP timestamps, adding 2^31 (MAX/2) flips to the other half of timestamp space
-            // This forces extend_u32 to produce a value in the next cycle
-            const HALF_CYCLE: u32 = 1u32 << 31;
-            let adjusted_ts = header.timestamp.wrapping_add(HALF_CYCLE);
+        if let Some((previous, at)) = previous {
+            let went_backwards = (time_u32.wrapping_sub(previous) as i64) < 0;
 
-            // Recalculate extended timestamp with adjusted value
-            let adjusted_time_u32 = extend_u32(previous_time, adjusted_ts);
-
-            // If this adjusted timestamp moves time forward, use it
-            if adjusted_time_u32 > previous_time.unwrap() {
-                time_u32 = adjusted_time_u32;
-            } else {
-                // Fallback
-                time_u32 = header.timestamp as u64;
+            // A step backwards may be the sender's clock passing half the timestamp range while
+            // nothing arrived, so use the cycle the elapsed time points to. A step forward is
+            // kept, since that clock may have stopped instead.
+            if went_backwards {
+                let elapsed = MediaTime::from(now.saturating_duration_since(at)).rebase(clock_rate);
+                let expected = previous.saturating_add(elapsed.numer());
+                time_u32 = extend_u32(Some(expected), header.timestamp);
             }
         }
 
         let time = MediaTime::new(time_u32, clock_rate);
 
         if !is_repair {
-            self.last_time = Some(time);
+            self.last_time = Some((time, now));
             if is_new_packet {
                 self.remember_recent(seq_no, time.numer());
             }
@@ -1060,35 +1054,62 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paused_timestamp_repair_moves_time_forward() {
-        let now = already_happened();
-        let mut stream = StreamRx::new(
-            7.into(),
-            MidRid("mid".into(), None),
-            false,
-            Duration::from_millis(1500),
-        );
-        let previous_time = 1;
-        stream.last_time = Some(MediaTime::new(previous_time, Frequency::NINETY_KHZ));
-        stream.paused = true;
+    fn long_pause_moves_media_time_forward() {
+        // 13 hours at 48 kHz: the sender's clock passed half the timestamp range.
+        let pause = Duration::from_secs(13 * 3600);
+        let advance = 13 * 3600 * 48_000;
 
-        let header = RtpHeader {
-            payload_type: Pt::new_with_value(96),
-            sequence_number: 42,
-            timestamp: 0,
-            ssrc: 7.into(),
-            ..Default::default()
-        };
+        for start in [1_000_000, 3_000_000_000] {
+            let mut stream = stream_with(&[(10, start)]);
+            stream.handle_timeout(stream.paused_at().unwrap());
+            assert!(stream.paused);
 
-        let seq_no = stream.extend_seq(&header, false, |_| None);
-        let receipt =
-            stream.update_register(now, &header, Frequency::NINETY_KHZ, false, seq_no, false);
+            let now = already_happened() + pause;
+            let resumed = start as u64 + advance;
+            let first = receive_main_stream_packet(&mut stream, now, 11, resumed as u32);
+            assert_eq!(first.numer(), resumed);
+            assert!(!stream.paused);
+            let second = receive_main_stream_packet(&mut stream, now, 12, (resumed + 960) as u32);
+            assert_eq!(second.numer(), resumed + 960);
+        }
+    }
 
-        assert!(
-            receipt.time.numer() > previous_time,
-            "expected repaired media time to move forward"
-        );
-        assert!(!stream.paused);
+    #[test]
+    fn long_pause_with_stopped_sender_clock_keeps_media_time() {
+        for (start, hours) in [(1_000_000, 13), (3_000_000_000, 30)] {
+            let mut stream = stream_with(&[(10, start)]);
+            stream.handle_timeout(stream.paused_at().unwrap());
+            assert!(stream.paused);
+
+            // The sender's clock did not advance during the pause.
+            let now = already_happened() + Duration::from_secs(hours * 3600);
+            let resumed = start as u64 + 960;
+            let first = receive_main_stream_packet(&mut stream, now, 11, resumed as u32);
+            assert_eq!(first.numer(), resumed);
+            let second = receive_main_stream_packet(&mut stream, now, 12, (resumed + 960) as u32);
+            assert_eq!(second.numer(), resumed + 960);
+        }
+    }
+
+    #[test]
+    fn pause_longer_than_timestamp_range_moves_media_time_forward() {
+        // 30 hours at 48 kHz is 1.2 times the timestamp range.
+        let pause = Duration::from_secs(30 * 3600);
+        let advance = 30 * 3600 * 48_000;
+
+        for start in [1_000_000, 3_000_000_000] {
+            let mut stream = stream_with(&[(10, start)]);
+            stream.handle_timeout(stream.paused_at().unwrap());
+            assert!(stream.paused);
+
+            let now = already_happened() + pause;
+            let resumed = start as u64 + advance;
+            // The number of cycles is not recovered, but time moves on.
+            let first = receive_main_stream_packet(&mut stream, now, 11, resumed as u32);
+            assert!(first.numer() > start as u64);
+            let second = receive_main_stream_packet(&mut stream, now, 12, (resumed + 960) as u32);
+            assert_eq!(second.numer(), first.numer() + 960);
+        }
     }
 
     /// Feed packets `(seq, rtp_time)` into a fresh stream, as received on the wire.
@@ -1415,6 +1436,32 @@ mod tests {
         assert!(!stream.is_new_packet(true, 65535.into()));
         assert!(stream.is_new_packet(true, seq));
         record_rtx(&mut stream, 65536);
+    }
+
+    /// Receive a packet on the main stream at `now` and return its extended media time.
+    fn receive_main_stream_packet(
+        stream: &mut StreamRx,
+        now: Instant,
+        seq: u16,
+        timestamp: u32,
+    ) -> MediaTime {
+        let header = RtpHeader {
+            payload_type: Pt::new_with_value(111),
+            sequence_number: seq,
+            timestamp,
+            ssrc: 7.into(),
+            ..Default::default()
+        };
+        let seq_no = stream.extend_seq(&header, false, |_| None);
+        let receipt = stream.update_register(
+            now,
+            &header,
+            Frequency::FORTY_EIGHT_KHZ,
+            false,
+            seq_no,
+            false,
+        );
+        receipt.time
     }
 
     fn rtx_stream() -> StreamRx {
