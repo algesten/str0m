@@ -111,18 +111,21 @@ impl Depacketized {
         }
 
         // Each packet of a frame has its own descriptor, and the sample has the first packet's.
-        // With one frame per spatial layer, no single descriptor describes the sample.
+        // That requires the sample to start the frame, since only the first packet attaches the
+        // structure, and every packet to carry a descriptor of that frame. With one frame per
+        // spatial layer, no single descriptor describes the sample.
         merged.user_values.remove::<DependencyDescriptor>();
         if let Some(first_val) = first.user_values.get_arc::<DependencyDescriptor>() {
             let frame_number = first_val.truncated_frame_number();
-            let one_frame = self.meta.iter().all(|meta| {
-                meta.header
-                    .ext_vals
-                    .user_values
-                    .get::<DependencyDescriptor>()
-                    .is_none_or(|v| v.truncated_frame_number() == frame_number)
-            });
-            if one_frame {
+            let describes_sample = first_val.is_first_packet()
+                && self.meta.iter().all(|meta| {
+                    meta.header
+                        .ext_vals
+                        .user_values
+                        .get::<DependencyDescriptor>()
+                        .is_some_and(|v| v.truncated_frame_number() == frame_number)
+                });
+            if describes_sample {
                 merged.user_values.set_arc(first_val);
             }
         }
@@ -1043,6 +1046,35 @@ mod test {
         // No single descriptor describes a sample with one frame per spatial layer.
         let last_user_values = &mut dep.meta[1].header.ext_vals.user_values;
         last_user_values.set(DependencyDescriptor::from_bytes([0xc0, 0, 2]).unwrap());
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+
+        // A packet without a descriptor may belong to the frame of another spatial layer.
+        dep.meta[1]
+            .header
+            .ext_vals
+            .user_values
+            .remove::<DependencyDescriptor>();
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+
+        // A sample that does not start its frame, as after losing the first packet, lacks the
+        // structure that the first packet attaches.
+        let middle = DependencyDescriptor::from_bytes([0, 0, 1]).unwrap();
+        dep.meta[0].header.ext_vals.user_values.set(middle);
+        dep.meta[1]
+            .header
+            .ext_vals
+            .user_values
+            .set(continuation.clone());
         assert!(
             dep.ext_vals()
                 .user_values
