@@ -248,6 +248,22 @@ impl VideoTest {
             })
             .collect()
     }
+
+    fn received_frames_with_media_time(&self) -> Vec<(u64, u64, bool, u64)> {
+        self.receiver
+            .events
+            .iter()
+            .filter_map(|(_, event)| match event {
+                Event::MediaData(data) => Some((
+                    **data.seq_range.start(),
+                    **data.seq_range.end(),
+                    data.contiguous,
+                    data.time.numer(),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 #[test]
@@ -985,6 +1001,105 @@ fn video_same_ssrc_restart_after_pause_accepts_new_keyframe() -> Result<(), RtcE
             "keyframe after PictureID {previous_picture_id} was not emitted"
         );
     }
+    Ok(())
+}
+
+/// A network stall is not a sender pause: a reordered frame arriving first
+/// after it must keep its own media time.
+#[test]
+fn video_reordered_frame_after_network_stall_keeps_media_time() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(Rtc::builder(), false)?;
+    t.write(1337.into(), 47_000, 3000, &[0x10, 0, 0], true)?;
+    // Frame 47_001 is held up; the head of the next frame overtakes it.
+    t.write(1337.into(), 47_002, 9000, &[0x10, 0, 0], false)?;
+    // Nothing arrives for long enough that the receiver reports a pause.
+    t.advance_to(t.now + Duration::from_millis(1500))?;
+    assert!(
+        t.receiver
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::StreamPaused(p) if p.paused))
+    );
+
+    t.write(1337.into(), 47_001, 6000, &[0x10, 0, 0], true)?;
+    t.write(1337.into(), 47_003, 9000, &[0x00, 0], true)?;
+    t.write(1337.into(), 47_004, 12000, &[0x10, 0, 0], true)?;
+    assert_eq!(
+        t.received_frames_with_media_time(),
+        [
+            (47_000, 47_000, true, 3000),
+            (47_001, 47_001, true, 6000),
+            (47_002, 47_003, true, 9000),
+            (47_004, 47_004, true, 12000)
+        ]
+    );
+    Ok(())
+}
+
+/// Late frames that are dropped after a network stall must not shift the
+/// media time of the frames that follow.
+#[test]
+fn video_dropped_late_frames_after_network_stall_keep_media_time() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(Rtc::builder(), false)?;
+    t.write(1337.into(), 47_000, 3000, &[0x10, 0, 0], true)?;
+    // Frames 47_001 and 47_002 are held up; the next frame overtakes them.
+    t.write(1337.into(), 47_003, 12000, &[0x10, 0, 0], true)?;
+    // Nothing arrives for long enough that the receiver gives up on the
+    // missing frames and reports a pause.
+    t.advance_to(t.now + Duration::from_millis(1500))?;
+    assert!(
+        t.receiver
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::StreamPaused(p) if p.paused))
+    );
+
+    // The held-up frames arrive newest first and are dropped as too old.
+    t.write(1337.into(), 47_002, 9000, &[0x10, 0, 0], true)?;
+    t.write(1337.into(), 47_001, 6000, &[0x10, 0, 0], true)?;
+    t.write(1337.into(), 47_004, 15000, &[0x10, 0, 0], true)?;
+    t.write(1337.into(), 47_005, 18000, &[0x10, 0, 0], true)?;
+    assert_eq!(
+        t.received_frames_with_media_time(),
+        [
+            (47_000, 47_000, true, 3000),
+            (47_003, 47_003, false, 12000),
+            (47_004, 47_004, true, 15000),
+            (47_005, 47_005, true, 18000)
+        ]
+    );
+    Ok(())
+}
+
+/// A late packet arriving first after a network stall must still complete its frame.
+#[test]
+fn video_late_packet_after_network_stall_completes_frame() -> Result<(), RtcError> {
+    let mut t = VideoTest::new(Rtc::builder(), false)?;
+    t.write(1337.into(), 47_000, 3000, &[0x10, 0, 0], true)?;
+    // The middle packet 47_002 of the next frame is held up.
+    t.write(1337.into(), 47_001, 6000, &[0x10, 0, 0], false)?;
+    t.write(1337.into(), 47_003, 6000, &[0x00, 0], true)?;
+    // The head of the frame after it overtakes the held-up packet.
+    t.write(1337.into(), 47_004, 9000, &[0x10, 0, 0], false)?;
+    // Nothing arrives for long enough that the receiver reports a pause.
+    t.advance_to(t.now + Duration::from_millis(1500))?;
+    assert!(
+        t.receiver
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::StreamPaused(p) if p.paused))
+    );
+
+    t.write(1337.into(), 47_002, 6000, &[0x00, 0], false)?;
+    t.write(1337.into(), 47_005, 9000, &[0x00, 0], true)?;
+    assert_eq!(
+        t.received_frames(),
+        [
+            (47_000, 47_000, true),
+            (47_001, 47_003, true),
+            (47_004, 47_005, true)
+        ]
+    );
     Ok(())
 }
 
