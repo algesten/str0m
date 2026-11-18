@@ -140,7 +140,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
 
 pub fn receive_register(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
-    let mut rr = ReceiverRegister::new(None);
+    let mut rr = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
     let start = Instant::now();
     loop {
         match rng.u8(2)? {
