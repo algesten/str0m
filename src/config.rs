@@ -49,6 +49,7 @@ pub struct RtcConfig {
     pub(crate) reordering_size_video: usize,
     pub(crate) reordering_timeout_audio: Option<Duration>,
     pub(crate) pause_threshold: Duration,
+    pub(crate) nack_window: usize,
     pub(crate) send_buffer_audio: usize,
     pub(crate) send_buffer_video: usize,
     pub(crate) sctp_max_buffered_amount: usize,
@@ -629,6 +630,37 @@ impl RtcConfig {
         self.pause_threshold
     }
 
+    /// Sets how many packets behind the newest received packet a missing packet
+    /// is still tracked on incoming streams: NACKed, and accepted if it arrives.
+    ///
+    /// Packets that arrive further behind are dropped as too old, even when they
+    /// are the retransmission that was asked for. At high bitrates the default
+    /// covers little time: at 15 Mbit/s with 1200-byte packets, 100 packets is
+    /// about 64 ms, less than many round trips. Raise it if retransmissions are
+    /// lost this way.
+    ///
+    /// Defaults to 100 and is clamped to 1..=16384. Each incoming stream keeps
+    /// a small record per packet in the window. Applies to incoming streams
+    /// created by this `Rtc`.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder().set_nack_window(1000);
+    /// assert_eq!(config.nack_window(), 1000);
+    ///
+    /// // Defaults to 100.
+    /// assert_eq!(Rtc::builder().nack_window(), 100);
+    /// ```
+    pub fn set_nack_window(mut self, packets: usize) -> Self {
+        self.nack_window = packets.clamp(1, crate::streams::register_nack::MAX_NACK_WINDOW);
+        self
+    }
+
+    /// Returns the NACK window of incoming streams, in packets.
+    pub fn nack_window(&self) -> usize {
+        self.nack_window
+    }
+
     /// Sets the buffer size for outgoing audio packets.
     ///
     /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
@@ -930,6 +962,7 @@ impl Default for RtcConfig {
             reordering_size_video: 30,
             reordering_timeout_audio: Some(Duration::from_secs(1)),
             pause_threshold: Duration::from_millis(1500),
+            nack_window: crate::streams::register_nack::MAX_MISORDER as usize,
             send_buffer_audio: 50,
             send_buffer_video: 1000,
             sctp_max_buffered_amount: crate::sctp::DEFAULT_MAX_BUFFERED_AMOUNT,
