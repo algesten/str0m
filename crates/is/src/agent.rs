@@ -3163,6 +3163,225 @@ mod test {
         assert_eq!(nominated_sends(&mut agent), vec![ipv4_4()]);
     }
 
+    #[test]
+    fn ice_lite_controlled_follows_nomination_to_a_rebound_nat_port() {
+        // The controlling peer sits behind a NAT that re-maps its UDP port
+        // mid-session. The peer's own candidate is unchanged, so its checks
+        // arrive from the new port with the same PRIORITY and USE-CANDIDATE,
+        // and our replies follow them there. The NAT drops anything sent to
+        // the old port, so every packet sent there after the peer has
+        // nominated the new port is lost.
+        let mut agent = new_test_agent();
+        agent.set_ice_lite(true);
+        agent.set_controlling(false);
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+
+        let remote_creds = IceCreds::new();
+        agent.set_remote_credentials(remote_creds.clone());
+
+        let old_port: SocketAddr = "3.4.5.6:40000".parse().unwrap();
+        let new_port: SocketAddr = "3.4.5.6:40001".parse().unwrap();
+        let prio = 1_862_270_975;
+        // libWebRTC's `kStrongAndStableWritableConnectionPingInterval`.
+        let check_interval = Duration::from_millis(2500);
+        let rebind_at = Duration::from_secs(30);
+
+        let check = |agent: &mut IceAgent, now: Instant, source: SocketAddr| {
+            let username = format!("{}:{}", agent.local_credentials.ufrag, remote_creds.ufrag);
+            let req = StunMessage::binding_request(&username, TransId::new(), true, 0, prio, true);
+            let req = serialize_stun_msg(req, &agent.local_credentials.pass);
+            assert!(agent.handle_packet(
+                now,
+                StunPacket {
+                    message: StunMessage::parse(&req).unwrap(),
+                    source,
+                    destination: ipv4_1(),
+                    proto: Protocol::Udp,
+                },
+            ));
+            let reply = agent.poll_transmit().unwrap();
+            assert_eq!(reply.destination, source);
+        };
+
+        let start = Instant::now();
+        let mut since_start = Duration::ZERO;
+        let mut next_check = Duration::ZERO;
+        let mut nominated_sends = vec![];
+        while since_start < rebind_at + Duration::from_secs(20) {
+            let now = start + since_start;
+            if since_start >= next_check {
+                let source = if since_start < rebind_at {
+                    old_port
+                } else {
+                    new_port
+                };
+                check(&mut agent, now, source);
+                next_check += check_interval;
+            }
+            agent.handle_timeout(now);
+            while let Some(e) = agent.poll_event() {
+                if let IceAgentEvent::NominatedSend { destination, .. } = e {
+                    nominated_sends.push((since_start, destination));
+                }
+            }
+            since_start += Duration::from_millis(50);
+        }
+
+        assert_eq!(
+            nominated_sends,
+            [(Duration::ZERO, old_port), (rebind_at, new_port)],
+            "media must follow the first check from the new port"
+        );
+    }
+
+    #[test]
+    fn ice_lite_switches_to_relay_when_nominated_host_path_dies_one_way() {
+        // The browser nominates a host pair. At 5s a firewall starts
+        // dropping browser-bound traffic on the host path. The browser keeps
+        // pinging that pair, and its checks still reach us, but without
+        // USE-CANDIDATE once the pair is unwritable. At 7s it selects and
+        // nominates a TURN relay pair. Media must follow to the relay.
+        let (mut agent, peer) = ice_lite_agent_with_host_and_relay();
+
+        let start = Instant::now();
+        let host_dies = start + Duration::from_secs(5);
+        let relay_nominated = start + Duration::from_secs(7);
+        let mut now = start;
+        let mut sending_to = None;
+        agent.handle_timeout(now);
+
+        while now < relay_nominated + Duration::from_secs(4) {
+            if (now - start).as_millis().is_multiple_of(2000) {
+                peer.check(&mut agent, now, ipv4_3(), now < host_dies);
+                if now >= relay_nominated {
+                    peer.check(&mut agent, now, ipv4_4(), true);
+                }
+            }
+
+            agent.handle_timeout(now);
+            while agent.poll_transmit().is_some() {}
+            if let Some(&destination) = nominated_sends(&mut agent).last() {
+                sending_to = Some(destination);
+            }
+
+            if now < relay_nominated {
+                assert_eq!(sending_to, Some(ipv4_3()));
+            }
+
+            now += Duration::from_millis(100);
+        }
+
+        assert_eq!(
+            sending_to,
+            Some(ipv4_4()),
+            "must follow the nomination to the relay, state {:?}",
+            agent.state()
+        );
+    }
+
+    #[test]
+    fn ice_lite_stays_on_highest_priority_of_repeatedly_nominated_pairs() {
+        // A controlling agent may set USE-CANDIDATE on every check of every
+        // pair it has nominated. That must not make us alternate between
+        // them.
+        let (mut agent, peer) = ice_lite_agent_with_host_and_relay();
+
+        let start = Instant::now();
+        let mut now = start;
+        let mut sends = vec![];
+        agent.handle_timeout(now);
+
+        while now < start + Duration::from_secs(60) {
+            if (now - start).as_millis().is_multiple_of(2000) {
+                peer.check(&mut agent, now, ipv4_4(), true);
+                peer.check(&mut agent, now, ipv4_3(), true);
+            }
+
+            agent.handle_timeout(now);
+            while agent.poll_transmit().is_some() {}
+            sends.extend(nominated_sends(&mut agent));
+
+            now += Duration::from_millis(100);
+        }
+
+        assert_eq!(sends, vec![ipv4_3()]);
+    }
+
+    /// The browser side of a controlled ice-lite agent with a local host
+    /// candidate on `ipv4_1()`, and remote candidates host on `ipv4_3()`
+    /// and TURN relay on `ipv4_4()`.
+    struct ControllingPeer {
+        creds: IceCreds,
+        host_prio: u32,
+        relay_prio: u32,
+    }
+
+    impl ControllingPeer {
+        fn check(&self, agent: &mut IceAgent, now: Instant, source: SocketAddr, nominate: bool) {
+            let prio = if source == ipv4_3() {
+                self.host_prio
+            } else {
+                self.relay_prio
+            };
+            let username = format!("{}:{}", agent.local_credentials.ufrag, self.creds.ufrag);
+            let req =
+                StunMessage::binding_request(&username, TransId::new(), true, 0, prio, nominate);
+            let req = serialize_stun_msg(req, &agent.local_credentials.pass);
+            assert!(agent.handle_packet(
+                now,
+                StunPacket {
+                    message: StunMessage::parse(&req).unwrap(),
+                    source,
+                    destination: ipv4_1(),
+                    proto: Protocol::Udp,
+                },
+            ));
+        }
+    }
+
+    fn ice_lite_agent_with_host_and_relay() -> (IceAgent, ControllingPeer) {
+        let mut agent = new_test_agent();
+        agent.set_ice_lite(true);
+        agent.set_controlling(false);
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+
+        let creds = IceCreds::new();
+        agent.set_remote_credentials(creds.clone());
+
+        let mut host =
+            Candidate::from_sdp_string("candidate:1 1 udp 2130706431 3.4.5.6 5000 typ host")
+                .unwrap();
+        host.set_ufrag(&creds.ufrag);
+        let mut relay = Candidate::from_sdp_string(
+            "candidate:2 1 udp 41885439 4.5.6.7 5000 typ relay raddr 0.0.0.0 rport 0",
+        )
+        .unwrap();
+        relay.set_ufrag(&creds.ufrag);
+        let peer = ControllingPeer {
+            creds,
+            host_prio: host.prio(),
+            relay_prio: relay.prio(),
+        };
+        agent.add_remote_candidate(host);
+        agent.add_remote_candidate(relay);
+
+        (agent, peer)
+    }
+
+    fn nominated_sends(agent: &mut IceAgent) -> Vec<SocketAddr> {
+        let mut v = vec![];
+        while let Some(e) = agent.poll_event() {
+            if let IceAgentEvent::NominatedSend { destination, .. } = e {
+                v.push(destination);
+            }
+        }
+        v
+    }
+
     fn make_serialized_binding_request(
         local_creds: &IceCreds,
         remote_creds: &IceCreds,
