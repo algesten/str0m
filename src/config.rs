@@ -45,6 +45,7 @@ pub struct RtcConfig {
     pub(crate) intervals: RtcpReportIntervals,
     pub(crate) bwe_config: Option<BweConfig>,
     pub(crate) bwe_smoothing: bool,
+    pub(crate) pacing_factor: f64,
     pub(crate) reordering_size_audio: usize,
     pub(crate) reordering_size_video: usize,
     pub(crate) reordering_timeout_audio: Option<Duration>,
@@ -529,6 +530,37 @@ impl RtcConfig {
         self.bwe_smoothing
     }
 
+    /// Sets the multiplier on the bandwidth estimate that sets the pacing rate.
+    ///
+    /// Higher values drain bursts (keyframes) faster at the cost of short sending peaks above
+    /// the estimate. libwebrtc uses 1.1 with send-side BWE and 2.5 without it.
+    ///
+    /// Only applies when BWE is enabled with [`Self::enable_bwe()`]. Defaults to 1.1.
+    ///
+    /// Panics if the factor is below 1.0 or not finite.
+    pub fn set_pacing_factor(mut self, factor: f64) -> Self {
+        assert!(
+            factor.is_finite() && factor >= 1.0,
+            "pacing factor must be finite and at least 1.0"
+        );
+        self.pacing_factor = factor;
+        self
+    }
+
+    /// Returns the setting of [`Self::set_pacing_factor()`].
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 1.1.
+    /// assert_eq!(config.pacing_factor(), 1.1);
+    /// assert_eq!(config.set_pacing_factor(2.5).pacing_factor(), 2.5);
+    /// ```
+    pub fn pacing_factor(&self) -> f64 {
+        self.pacing_factor
+    }
+
     /// Sets the number of packets held back for reordering audio packets.
     ///
     /// Str0m tries to deliver the frames in order. This number determines how many
@@ -926,6 +958,7 @@ impl Default for RtcConfig {
             },
             bwe_config: None,
             bwe_smoothing: true,
+            pacing_factor: crate::pacer::DEFAULT_PACING_FACTOR,
             reordering_size_audio: 15,
             reordering_size_video: 30,
             reordering_timeout_audio: Some(Duration::from_secs(1)),
@@ -1013,6 +1046,12 @@ mod tests {
     #[should_panic(expected = "mtu target")]
     fn set_mtu_panics_on_target_above_max() {
         let _ = RtcConfig::default().set_mtu((DATAGRAM_MTU_TARGET_MAX + 1)..=usize::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "pacing factor")]
+    fn set_pacing_factor_panics_below_one() {
+        let _ = RtcConfig::default().set_pacing_factor(0.9);
     }
 
     #[test]

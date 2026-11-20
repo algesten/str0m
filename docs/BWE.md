@@ -698,7 +698,8 @@ internal timers or threads.
 (`GetPacingRates`)
 
 Calculates pacing and padding rates based on the BWE estimate. The pacing
-rate is set to 1.1× the estimate (`PACING_FACTOR`), providing a 10%
+rate is set to 1.1× the estimate by default (`DEFAULT_PACING_FACTOR`,
+configurable with `RtcConfig::set_pacing_factor`), providing a 10%
 buffer above the estimated capacity to allow for natural transmission
 variations while still smoothing out bursts. Without this buffer, normal
 encoder bitrate fluctuations would constantly hit the pacing limit, causing
