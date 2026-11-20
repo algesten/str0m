@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Make the pacing factor configurable with `RtcConfig::set_pacing_factor` (default stays 1.1)
+  * Make the pacing factor configurable with `RtcConfig::set_pacing_factor` (default stays 1.1) #1169
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137
