@@ -208,7 +208,7 @@ impl Session {
             bwe_smoothing: config.bwe_smoothing,
             enable_twcc_feedback: false,
             pacer,
-            pacer_control: PacerControl::new(),
+            pacer_control: PacerControl::new(config.pacing_factor),
             poll_packet_buf: vec![0; 2000],
             pending_packet: None,
             media_bytes_rx: 0,

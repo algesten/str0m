@@ -5,6 +5,7 @@ use crate::bwe_::ProbeClusterConfig;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
 
 mod control;
+pub(crate) use control::DEFAULT_PACING_FACTOR;
 pub(crate) use control::PacerControl;
 
 mod null;
