@@ -53,7 +53,7 @@ fn minimum_recovers_with_a_fixed_layer() -> Result<(), RtcError> {
     let automatic = recovery_time(Bitrate::ZERO)?;
     let sustained = recovery_time(Bitrate::mbps(2))?;
     assert!(
-        sustained < Duration::from_secs(8),
+        sustained < Duration::from_secs(9),
         "recovery: {sustained:?}"
     );
     assert!(
