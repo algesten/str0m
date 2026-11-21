@@ -149,6 +149,10 @@ pub struct StreamTx {
     /// Determines retransmitted bytes ratio value to clear queued resends.
     rtx_ratio_cap: Option<f32>,
 
+    /// Whether every packet sent also goes on the RTX stream without a NACK, see
+    /// [`StreamTx::set_proactive_rtx()`].
+    proactive_rtx: bool,
+
     /// Last time we produced a SR.
     last_sender_report: Instant,
 
@@ -382,6 +386,7 @@ impl StreamTx {
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
             rtx_ratio_cap: DEFAULT_RTX_RATIO_CAP,
+            proactive_rtx: false,
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             pending_request_remb: None,
@@ -476,6 +481,27 @@ impl StreamTx {
             self.stats.bytes_retransmitted = None;
         }
         self.rtx_ratio_cap = rtx_ratio_cap;
+    }
+
+    /// Send every packet twice: once as written, and once more on the RTX stream right after
+    /// it, without waiting for a NACK.
+    ///
+    /// A receiver that loses a packet asks for it with a NACK and has it a round trip later.
+    /// Video waits for it meanwhile (libwebrtc hands an H.264 frame to the decoder only once
+    /// every packet before it has arrived), so on a link with a long round trip and some loss
+    /// the picture stalls for a round trip at every lost packet. A copy sent right away repairs
+    /// a lost packet without that wait: the receiver misses it only when both are lost.
+    ///
+    /// Only packets that could answer a NACK are copied: nackable, on a payload type with RTX,
+    /// and kept in the RTX cache (see [`StreamTx::set_rtx_cache()`]).
+    ///
+    /// The copies are paced and seen by the bandwidth estimation like any other packet, so they
+    /// take their part of the estimate: an application that sends at the estimate should leave
+    /// room for them, sending at half of it. They do not count towards the `rtx_ratio_cap` of
+    /// [`StreamTx::set_rtx_cache()`], and a NACK for a copied packet is answered as for any
+    /// other. Off by default.
+    pub fn set_proactive_rtx(&mut self, enabled: bool) {
+        self.proactive_rtx = enabled;
     }
 
     /// Set whether this stream is unpaced or not.
@@ -813,6 +839,7 @@ impl StreamTx {
                 .pop(now)
                 .expect("head of send_queue to be there");
             if pkt.nackable {
+                self.queue_proactive_rtx(&pkt, now);
                 self.rtx_cache.cache_sent_packet(pkt, now);
             }
         }
@@ -865,14 +892,14 @@ impl StreamTx {
         if let Some(ratio_cap) = self.rtx_ratio_cap {
             let ratio = self.rtx_ratio_downsampled(now);
 
-            // If we hit the cap, stop doing resends by clearing those we have queued.
+            // If we hit the cap, stop doing resends by clearing those we have queued. Proactive
+            // copies are not answers to NACKs, and stay.
             if ratio > ratio_cap {
-                self.resends.clear();
-                return None;
+                self.resends.retain(|r| r.proactive);
             }
         }
 
-        let seq_no = loop {
+        let (seq_no, proactive) = loop {
             let resend = self.resends.pop_front()?;
 
             let pkt = self.rtx_cache.get_cached_packet_by_seq_no(resend.seq_no);
@@ -887,17 +914,22 @@ impl StreamTx {
             // entry to the self.rtx_cache.
             assert!(pkt.packet.nackable);
 
-            break pkt.packet.seq_no;
+            break (pkt.packet.seq_no, resend.proactive);
         };
 
-        // Borrow checker gymnastics. Record the time only when the queued resend is polled.
+        // Borrow checker gymnastics. Record the time only when the queued resend is polled, and
+        // only for an answer to a NACK: a NACK after a proactive copy means the copy was lost too.
         let cached = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
-        cached.last_resend = Some(now);
+        if !proactive {
+            cached.last_resend = Some(now);
+        }
         let pkt = &mut cached.packet;
 
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, true);
-        if let Some(h) = &mut self.stats.bytes_retransmitted {
+        if let Some(h) = &mut self.stats.bytes_retransmitted
+            && !proactive
+        {
             h.push(now, len);
         }
 
@@ -1069,8 +1101,10 @@ impl StreamTx {
 
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
-            // Keep a single queued resend even if pacing delays it beyond one RTT.
-            if self.resends.iter().any(|r| r.seq_no == seq_no) {
+            // Keep a single queued resend even if pacing delays it beyond one RTT. A queued
+            // proactive copy becomes the answer to this NACK.
+            if let Some(queued) = self.resends.iter_mut().find(|r| r.seq_no == seq_no) {
+                queued.proactive = false;
                 continue;
             }
             let Some(cached) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
@@ -1086,11 +1120,26 @@ impl StreamTx {
                 seq_no,
                 queued_at: now,
                 payload_size: cached.packet.payload.len(),
+                proactive: false,
             };
             self.resends.push_back(resend);
         }
 
         Some(())
+    }
+
+    /// Queues a copy of `pkt`, just sent, when [`StreamTx::set_proactive_rtx()`] asks for one.
+    fn queue_proactive_rtx(&mut self, pkt: &RtpPacket, now: Instant) {
+        if !self.proactive_rtx || self.rtx.is_none() {
+            return;
+        }
+        // Behind the resends already queued, which all go before the next regular packet.
+        self.resends.push_back(Resend {
+            seq_no: pkt.seq_no,
+            queued_at: now,
+            payload_size: pkt.payload.len(),
+            proactive: true,
+        });
     }
 
     pub(crate) fn need_sr(&self, now: Instant, intervals: RtcpReportIntervals) -> bool {
@@ -1398,6 +1447,8 @@ struct Resend {
     seq_no: SeqNo,
     queued_at: Instant,
     payload_size: usize,
+    /// Queued by [`StreamTx::set_proactive_rtx()`] rather than by a NACK.
+    proactive: bool,
 }
 
 #[cfg(test)]
@@ -1659,6 +1710,7 @@ mod test {
             seq_no: 7.into(),
             queued_at: first_unsent,
             payload_size: 123,
+            proactive: false,
         });
         stream.queue_state(now);
 
@@ -1755,4 +1807,173 @@ mod test {
             "reset must retire the previous packet's resend history"
         );
     }
+
+    /// A video stream with RTX (SSRC 42, RTX 44) and its RTX payload type.
+    fn stream_with_rtx(streams: &mut crate::streams::Streams, codecs: &CodecConfig) -> Pt {
+        let stream =
+            streams.declare_stream_tx(42.into(), Some(44.into()), MidRid("vid".into(), None));
+        stream.set_rtx_cache(100, Duration::from_secs(3), None);
+        codecs
+            .params()
+            .iter()
+            .find(|p| p.resend().is_some())
+            .expect("a default codec with RTX")
+            .pt()
+    }
+
+    /// Writes the packets `seq_nos`, then sends everything the stream has queued at `now`: each
+    /// as (SSRC, original sequence number).
+    fn write_and_send(
+        stream: &mut StreamTx,
+        pt: Pt,
+        seq_nos: std::ops::Range<u64>,
+        now: Instant,
+        codecs: &CodecConfig,
+    ) -> Vec<(u32, u64)> {
+        let exts = ExtensionMap::standard();
+        for i in seq_nos {
+            let write = RtpWrite::new(pt, i.into(), 0, now, vec![i as u8; 1000]).nackable(true);
+            stream.write_rtp(write);
+        }
+        stream.send_queue.handle_timeout(now);
+        let mut buf = vec![];
+        let mut sent = vec![];
+        while let Some(receipt) = stream.poll_packet(now, &exts, None, codecs.params(), &mut buf) {
+            let ssrc = *receipt.header.ssrc;
+            let seq_no = if ssrc == 44 {
+                // A resend's payload starts with the sequence number it repeats.
+                let at = receipt.header.header_len;
+                u16::from_be_bytes([buf[at], buf[at + 1]]) as u64
+            } else {
+                *receipt.seq_no
+            };
+            sent.push((ssrc, seq_no));
+        }
+        sent
+    }
+
+    #[test]
+    fn proactive_rtx_sends_a_copy_right_after_each_packet() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        for (enabled, expected) in [
+            (false, vec![(42, 0), (42, 1), (42, 2)]),
+            (
+                true,
+                vec![(42, 0), (44, 0), (42, 1), (44, 1), (42, 2), (44, 2)],
+            ),
+        ] {
+            let mut streams =
+                crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+            let pt = stream_with_rtx(&mut streams, &codecs);
+            let stream = streams
+                .stream_tx_by_midrid(MidRid("vid".into(), None))
+                .unwrap();
+            stream.set_proactive_rtx(enabled);
+            let sent = write_and_send(stream, pt, 0..3, start, &codecs);
+            assert_eq!(sent, expected, "enabled {enabled}");
+        }
+    }
+
+    #[test]
+    fn proactive_rtx_copies_nothing_without_rtx() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let stream = streams.declare_stream_tx(42.into(), None, MidRid("vid".into(), None));
+        stream.set_proactive_rtx(true);
+        let pt = codecs.params()[0].pt();
+        let sent = write_and_send(stream, pt, 0..3, start, &codecs);
+        assert_eq!(sent, [(42, 0), (42, 1), (42, 2)]);
+    }
+
+    #[test]
+    fn a_nack_after_a_proactive_copy_is_answered() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let pt = stream_with_rtx(&mut streams, &codecs);
+        let stream = streams
+            .stream_tx_by_midrid(MidRid("vid".into(), None))
+            .unwrap();
+        // The RTX ratio cap on: the copies, half of what goes out, must not trip it.
+        stream.set_rtx_cache(100, Duration::from_secs(3), Some(0.15));
+        stream.set_proactive_rtx(true);
+        assert_eq!(write_and_send(stream, pt, 0..10, start, &codecs).len(), 20);
+
+        // Both copies of 3 were lost: the receiver asks for it right after the copy went.
+        let later = start + Duration::from_millis(100);
+        stream.handle_nack([NackEntry { pid: 3, blp: 0 }].into_iter(), later);
+        assert_eq!(
+            write_and_send(stream, pt, 10..10, later, &codecs),
+            [(44, 3)]
+        );
+
+        // That answer, unlike the copy, holds a repeated NACK back for a round trip.
+        let soon = later + Duration::from_millis(5);
+        stream.handle_nack([NackEntry { pid: 3, blp: 0 }].into_iter(), soon);
+        assert!(stream.resends.is_empty());
+    }
+
+    #[test]
+    fn a_nack_for_a_queued_proactive_copy_is_answered_by_it_once() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        let exts = ExtensionMap::standard();
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let pt = stream_with_rtx(&mut streams, &codecs);
+        let stream = streams
+            .stream_tx_by_midrid(MidRid("vid".into(), None))
+            .unwrap();
+        stream.set_proactive_rtx(true);
+        stream.write_rtp(RtpWrite::new(pt, 0.into(), 0, start, vec![0; 1000]).nackable(true));
+        stream.send_queue.handle_timeout(start);
+        let mut buf = vec![];
+        let original = stream.poll_packet(start, &exts, None, codecs.params(), &mut buf);
+        assert_eq!(original.unwrap().header.ssrc, 42.into());
+        assert_eq!(stream.resends.len(), 1, "the copy is queued");
+
+        // The NACK finds the copy still queued (the pacer held it): one resend, now an answer.
+        stream.handle_nack([NackEntry { pid: 0, blp: 0 }].into_iter(), start);
+        assert_eq!(stream.resends.len(), 1);
+        assert!(!stream.resends[0].proactive);
+        assert_eq!(write_and_send(stream, pt, 1..1, start, &codecs), [(44, 0)]);
+        stream.handle_nack([NackEntry { pid: 0, blp: 0 }].into_iter(), start);
+        assert!(stream.resends.is_empty(), "answered within the round trip");
+    }
+
+    #[test]
+    fn the_rtx_ratio_cap_drops_nack_resends_but_keeps_proactive_copies() {
+        let start = Instant::now();
+        let codecs = CodecConfig::new_with_defaults();
+        let mut streams = crate::streams::Streams::new(false, 1200, Duration::from_millis(1500));
+        let pt = stream_with_rtx(&mut streams, &codecs);
+        let stream = streams
+            .stream_tx_by_midrid(MidRid("vid".into(), None))
+            .unwrap();
+        stream.set_rtx_cache(100, Duration::from_secs(3), Some(0.15));
+        write_and_send(stream, pt, 0..3, start, &codecs);
+        stream.handle_nack([NackEntry { pid: 0, blp: 0b11 }].into_iter(), start);
+        assert_eq!(write_and_send(stream, pt, 3..3, start, &codecs).len(), 3);
+
+        // Resends are now past the cap: a NACK resend queued beside a copy is dropped.
+        stream.set_proactive_rtx(true);
+        let later = start + Duration::from_millis(100);
+        let exts = ExtensionMap::standard();
+        let mut buf = vec![];
+        stream.write_rtp(RtpWrite::new(pt, 3.into(), 0, later, vec![3; 1000]).nackable(true));
+        stream.send_queue.handle_timeout(later);
+        let original = stream.poll_packet(later, &exts, None, codecs.params(), &mut buf);
+        assert_eq!(original.unwrap().header.ssrc, 42.into());
+        stream.handle_nack(
+            [NackEntry { pid: 1, blp: 0 }].into_iter(),
+            later + RTT_AFTER,
+        );
+        assert_eq!(stream.resends.len(), 2);
+        let sent = write_and_send(stream, pt, 4..4, later + RTT_AFTER, &codecs);
+        assert_eq!(sent, [(44, 3)]);
+    }
+
+    /// Past any round trip a NACK resend waits for.
+    const RTT_AFTER: Duration = Duration::from_millis(500);
 }
