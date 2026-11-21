@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Add `Rtc::recycle` to reuse the buffers of sent datagrams
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137

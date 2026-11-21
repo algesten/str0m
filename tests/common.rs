@@ -394,6 +394,8 @@ fn rtc_poll_to_timeout(
                     contents: v.contents.to_vec(),
                 };
                 other_netem.handle_input(NetemInput::Packet(time, packet));
+                // Hand the buffer back, so every test runs with reuse.
+                rtc.rtc.recycle(v.contents);
             }
             Output::Event(v) => {
                 rtc.events.push((rtc.last, v));
