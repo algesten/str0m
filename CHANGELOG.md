@@ -1,6 +1,7 @@
 # Unreleased
 
   * Support the Dependency Descriptor RTP header extension in `rtp::dependency_descriptor` #1105
+  * Build `Mid`, `Rid` and the other id types from `&str` without allocating
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137
