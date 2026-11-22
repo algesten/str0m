@@ -3404,6 +3404,29 @@ mod test {
     }
 
     #[test]
+    fn ice_lite_nomination_expiry_respects_timing_advance() {
+        let (mut agent, peer) = ice_lite_agent_with_host_and_relay();
+        let start = Instant::now();
+        let timing_advance = Duration::from_millis(50);
+        agent.set_timing_advance(timing_advance);
+
+        peer.check(&mut agent, start, ipv4_3(), true);
+        agent.handle_timeout(start);
+        assert_eq!(nominated_sends(&mut agent), vec![ipv4_3()]);
+
+        let relay_nominated = start + Duration::from_millis(5990);
+        peer.check(&mut agent, relay_nominated, ipv4_4(), true);
+        agent.handle_timeout(relay_nominated);
+        assert!(nominated_sends(&mut agent).is_empty());
+        while agent.poll_transmit().is_some() {}
+
+        let wake = agent.poll_timeout().unwrap();
+        assert_eq!(wake, relay_nominated + timing_advance);
+        agent.handle_timeout(wake);
+        assert_eq!(nominated_sends(&mut agent), vec![ipv4_4()]);
+    }
+
+    #[test]
     fn ice_lite_stays_on_highest_priority_of_repeatedly_nominated_pairs() {
         // A controlling agent may set USE-CANDIDATE on every check of every
         // pair it has nominated. That must not make us alternate between
