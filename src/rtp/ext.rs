@@ -1101,6 +1101,9 @@ impl UserExtensionValues {
     pub fn remove<T: Send + Sync + 'static>(&mut self) {
         if let Some(map) = &mut self.map {
             map.remove(&TypeId::of::<T>());
+            if map.is_empty() {
+                self.map = None;
+            }
         }
     }
 }

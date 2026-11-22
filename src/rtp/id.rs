@@ -49,19 +49,18 @@ macro_rules! str_id {
 
         impl<'a> From<&'a str> for $id {
             fn from(v: &'a str) -> Self {
-                let v = v
-                    .chars()
-                    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                    .collect::<String>();
-
-                let bytes = v.as_bytes();
-                let bytes = &bytes[0..$num.min(bytes.len())];
-
                 // pad with space.
                 let mut array = [b' '; $num];
 
-                let max = bytes.len().min(array.len());
-                (&mut array[0..max]).copy_from_slice(bytes);
+                // Each char becomes one byte: itself when ASCII alphanumeric,
+                // else '_'. No intermediate String is built.
+                for (slot, c) in array.iter_mut().zip(v.chars()) {
+                    *slot = if c.is_ascii_alphanumeric() {
+                        c as u8
+                    } else {
+                        b'_'
+                    };
+                }
 
                 $id(array)
             }
@@ -370,5 +369,40 @@ impl MidRid {
 
     pub fn special_equals(&self, other: &MidRid) -> bool {
         self.0 == other.0 && (self.1.is_none() || self.1 == other.1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn str_ids_match_the_previous_conversion() {
+        let inputs = [
+            "",
+            "0",
+            "audio",
+            "a-b c",
+            "ünïcödé",
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "mixed_123-ÅÄÖ-end",
+        ];
+        for v in inputs {
+            assert_eq!(&Mid::from(v).0[..], &reference(v, 16)[..], "Mid {v:?}");
+            assert_eq!(&Rid::from(v).0[..], &reference(v, 8)[..], "Rid {v:?}");
+        }
+    }
+
+    /// The conversion before it stopped building a `String`.
+    fn reference(v: &str, num: usize) -> Vec<u8> {
+        let v = v
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>();
+        let bytes = v.as_bytes();
+        let bytes = &bytes[0..num.min(bytes.len())];
+        let mut array = vec![b' '; num];
+        array[..bytes.len()].copy_from_slice(bytes);
+        array
     }
 }

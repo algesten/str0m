@@ -4,6 +4,7 @@ use std::ops::{Range, RangeInclusive};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::rtp::dependency_descriptor::DependencyDescriptor;
 use crate::rtp::vla::VideoLayersAllocation;
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
@@ -109,6 +110,34 @@ impl Depacketized {
             merged.user_values.set_arc(first_val);
         }
 
+        // Each packet of a frame has its own descriptor, and the sample has the first packet's.
+        // That requires the sample to hold the whole frame: its first packet starts the frame,
+        // and is the only one to attach the structure, its last packet ends the frame, and every
+        // packet carries a descriptor of the frame. With one frame per spatial layer, or an H.265
+        // or H.266 sample that ends with a fragmented NAL unit before its frame does, no single
+        // descriptor describes the sample.
+        if let Some(first_val) = first.user_values.get_arc::<DependencyDescriptor>() {
+            let frame_number = first_val.truncated_frame_number();
+            let ends_frame = last
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_some_and(DependencyDescriptor::is_last_packet);
+            let describes_sample = first_val.is_first_packet()
+                && ends_frame
+                && self.meta.iter().all(|meta| {
+                    meta.header
+                        .ext_vals
+                        .user_values
+                        .get::<DependencyDescriptor>()
+                        .is_some_and(|v| v.truncated_frame_number() == frame_number)
+                });
+            if describes_sample {
+                merged.user_values.set_arc(first_val);
+                return merged;
+            }
+        }
+
+        merged.user_values.remove::<DependencyDescriptor>();
         merged
     }
 }
@@ -941,6 +970,13 @@ mod test {
             current_simulcast_stream_index: 1,
             simulcast_streams: vec![],
         });
+        let first_descriptor =
+            DependencyDescriptor::from_bytes([0x80, 0, 1, 0x80, 0, 0xe0]).unwrap();
+        let continuation = DependencyDescriptor::from_bytes([0x40, 0, 1]).unwrap();
+        let mut first_user_values = vla.clone();
+        first_user_values.set(first_descriptor.clone());
+        let mut last_user_values = UserExtensionValues::default();
+        last_user_values.set(continuation.clone());
 
         let first_header = RtpHeader {
             version: 2,
@@ -955,7 +991,7 @@ mod test {
             csrc: [0; 15],
             ext_vals: ExtensionValues {
                 abs_capture_time: Some(abs_capture_time),
-                user_values: vla.clone(),
+                user_values: first_user_values,
                 ..Default::default()
             },
             header_len: 0,
@@ -964,13 +1000,14 @@ mod test {
         let last_header = RtpHeader {
             ext_vals: ExtensionValues {
                 video_orientation: Some(VideoOrientation::Deg90),
+                user_values: last_user_values,
                 ..Default::default()
             },
             ..first_header.clone()
         };
 
         let time_value = 100_u64;
-        let dep = Depacketized {
+        let mut dep = Depacketized {
             time: MediaTime::new(time_value, Frequency::new(90000).unwrap()),
             contiguous: true,
             meta: vec![
@@ -1009,6 +1046,122 @@ mod test {
                 .current_simulcast_stream_index,
         );
         assert_eq!(merged.video_orientation, Some(VideoOrientation::Deg90));
+        assert_eq!(
+            merged.user_values.get::<DependencyDescriptor>(),
+            Some(&first_descriptor)
+        );
+
+        // No single descriptor describes a sample with one frame per spatial layer.
+        let last_user_values = &mut dep.meta[1].header.ext_vals.user_values;
+        last_user_values.set(DependencyDescriptor::from_bytes([0xc0, 0, 2]).unwrap());
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+
+        // A packet without a descriptor may belong to the frame of another spatial layer.
+        dep.meta[1]
+            .header
+            .ext_vals
+            .user_values
+            .remove::<DependencyDescriptor>();
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+
+        // A sample that does not start its frame, as after losing the first packet, lacks the
+        // structure that the first packet attaches.
+        let middle = DependencyDescriptor::from_bytes([0, 0, 1]).unwrap();
+        dep.meta[0].header.ext_vals.user_values.set(middle);
+        dep.meta[1]
+            .header
+            .ext_vals
+            .user_values
+            .set(continuation.clone());
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+
+        // Nor does a sample that ends before its frame does.
+        dep.meta[0]
+            .header
+            .ext_vals
+            .user_values
+            .set(first_descriptor.clone());
+        let middle = DependencyDescriptor::from_bytes([0, 0, 1]).unwrap();
+        dep.meta[1].header.ext_vals.user_values.set(middle);
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+
+        // A continuation descriptor never stands in for a missing first one.
+        dep.meta[1].header.ext_vals.user_values.set(continuation);
+        dep.meta[0]
+            .header
+            .ext_vals
+            .user_values
+            .remove::<DependencyDescriptor>();
+        assert!(
+            dep.ext_vals()
+                .user_values
+                .get::<DependencyDescriptor>()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn h265_sample_ending_mid_frame_has_no_dependency_descriptor() {
+        let packet = |seq: u64, time: u64, marker: bool, descriptor: [u8; 3]| {
+            let mut header = RtpHeader {
+                marker,
+                ..Default::default()
+            };
+            let descriptor = DependencyDescriptor::from_bytes(descriptor).unwrap();
+            header.ext_vals.user_values.set(descriptor);
+            RtpMeta {
+                received: Instant::now(),
+                seq_no: seq.into(),
+                time: MediaTime::from_90khz(time),
+                last_sender_info: None,
+                header,
+            }
+        };
+        let descriptor = |sample: &Depacketized| {
+            let ext_vals = sample.ext_vals();
+            ext_vals.user_values.get::<DependencyDescriptor>().cloned()
+        };
+        let now = Instant::now();
+        let mut buf = DepacketizingBuffer::new(crate::format::Codec::H265.into(), 3);
+
+        // Frame 5 is a slice in two fragmentation units, then a slice in one packet. H.265 ends
+        // a sample with the fragmented NAL unit, before the frame ends.
+        buf.push(packet(1, 3000, false, [0x80, 0, 5]), [0x62, 1, 0x81, 1, 2]);
+        buf.push(packet(2, 3000, false, [0x00, 0, 5]), [0x62, 1, 0x41, 3, 4]);
+        buf.push(packet(3, 3000, true, [0x40, 0, 5]), [0x02, 1, 5, 6]);
+        let fragmented = buf.pop(now, None).unwrap().unwrap();
+        assert_eq!(*fragmented.seq_range().end(), 2.into());
+        assert_eq!(descriptor(&fragmented), None);
+        let rest = buf.pop(now, None).unwrap().unwrap();
+        assert_eq!(*rest.seq_range().start(), 3.into());
+        assert_eq!(descriptor(&rest), None);
+
+        // Frame 6 is a single fragmented NAL unit, so its sample holds the whole frame.
+        buf.push(packet(4, 6000, false, [0x80, 0, 6]), [0x62, 1, 0x81, 1, 2]);
+        buf.push(packet(5, 6000, true, [0x40, 0, 6]), [0x62, 1, 0x41, 3, 4]);
+        let whole = buf.pop(now, None).unwrap().unwrap();
+        let first = DependencyDescriptor::from_bytes([0x80, 0, 6]).unwrap();
+        assert_eq!(descriptor(&whole), Some(first));
     }
 
     #[test]
