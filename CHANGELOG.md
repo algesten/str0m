@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Follow libWebRTC ICE nominations after NAT rebinding or TURN failover in ICE-lite mode #1168
   * Support the Dependency Descriptor RTP header extension in `rtp::dependency_descriptor` #1105
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
