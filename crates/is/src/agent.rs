@@ -1629,11 +1629,12 @@ impl IceAgent {
         let remote_addr = remote.addr();
 
         pair.increase_remote_binding_requests(req.now);
-        if req.use_candidate {
-            pair.record_remote_nomination(req.now);
-        }
 
         if self.ice_lite && !self.controlling {
+            if req.use_candidate {
+                pair.record_remote_nomination(req.now);
+            }
+
             // ice-lite sends no checks of its own, so this pair can never be
             // promoted by a binding response and stays `Waiting` for its
             // whole life. `has_viable_remote_candidate` therefore never
@@ -1951,59 +1952,20 @@ impl IceAgent {
     }
 
     fn evaluate_nomination(&mut self, now: Instant) {
-        // libWebRTC, as the controlling agent, violates RFC 8445 §8.1.1 by
-        // nominating more than one pair. When this agent is ice-lite and
-        // controlled, it violates §8.1.1 too, in following those
-        // re-nominations. The RFC forbids the controlling agent from
-        // nominating a second pair without an ICE restart, and has a
-        // controlled agent that accepts several nominations use the
-        // highest-priority one. libWebRTC nominates again whenever its
-        // selected connection changes: towards an ice-lite peer its default
-        // nomination mode [1] sends USE-CANDIDATE only on its selected,
-        // writable connection [2]. A pair that stopped receiving
-        // USE-CANDIDATE has therefore been abandoned, even if the peer keeps
-        // pinging it, and a lite agent sends no checks of its own to find
-        // that out otherwise. Ranking by priority alone, as the RFC requires,
-        // would keep this agent sending on the abandoned pair.
-        //
-        // As the controlled agent, libWebRTC ranks nominated connections by
-        // when they last received data, ahead of priority [3], and re-ranks
-        // as soon as a connection is nominated [4]. This agent sees no media,
-        // so the latest USE-CANDIDATE stands in for the latest data.
-        //
-        // Recently nominated pairs rank by priority among themselves: a
-        // controlling agent that sets USE-CANDIDATE on every check of every
-        // pair it has nominated keeps them all recent. Among recent pairs of
-        // equal priority the latest nomination wins: a NAT that re-maps the
-        // peer's port yields a new pair with the same priority, and drops
-        // everything sent to the old port. Among the rest the latest
-        // nomination wins, so a pair that goes quiet is not replaced by an
-        // older, higher-priority one.
-        //
-        // [1]: https://webrtc.googlesource.com/src/+/66c2e6ecd8/p2p/base/ice_transport_internal.h#164
-        // [2]: https://webrtc.googlesource.com/src/+/66c2e6ecd8/p2p/base/basic_ice_controller.cc#869
-        // [3]: https://webrtc.googlesource.com/src/+/66c2e6ecd8/p2p/base/basic_ice_controller.cc#738
-        // [4]: https://webrtc.googlesource.com/src/+/66c2e6ecd8/p2p/base/p2p_transport_channel.cc#1156
-        let prefer_recent_nomination = self.ice_lite && !self.controlling;
-        let rank = |p: &CandidatePair| {
-            let last = p
-                .remote_nomination_time()
-                .filter(|_| prefer_recent_nomination);
-            match last {
-                Some(t) if now.saturating_duration_since(t) < RECENT_NOMINATION => {
-                    (true, None, p.prio(), last)
-                }
-                _ => (false, last, p.prio(), None),
-            }
-        };
+        if self.ice_lite && !self.controlling {
+            self.evaluate_ice_lite_nomination(now);
+            return;
+        }
+
+        let nominated_pair_priority = self.nominated_pair_priority();
 
         let best_prio = if self.controlling {
             // For controlling agents, we pick the best candidate pair using
             // this strategy.
             self.candidate_pairs
-                .iter()
+                .iter_mut()
                 .filter(|p| p.state() == CheckState::Succeeded)
-                .max_by_key(|p| rank(p))
+                .max_by_key(|p| p.prio())
         } else {
             // For controlled agents, we pick the best pair from what the controlling
             // agent has indicated with USE-CANDIDATE stun attribute. RFC 8445 §7.3.1.5
@@ -2011,43 +1973,94 @@ impl IceAgent {
             // check on it succeeded, so a pair the peer nominated but we cannot reach
             // never becomes the send path.
             self.candidate_pairs
-                .iter()
+                .iter_mut()
                 .filter(|p| p.is_nominated() && p.state() == CheckState::Succeeded)
-                .max_by_key(|p| rank(p))
+                .max_by_key(|p| p.prio())
         };
 
-        let Some(best) = best_prio else {
-            return;
-        };
-        if self.nominated_pair().is_some_and(|n| rank(n) == rank(best)) {
-            // The best rank is also the current nominated rank. Make
-            // no changes since there can be multiple pairs having the
-            // same best rank.
-            return;
+        if let Some(best_prio) = best_prio {
+            if let Some(nominated) = nominated_pair_priority {
+                if nominated == best_prio.prio() {
+                    // The best prio is also the current nominated prio. Make
+                    // no changes since there can be multiple pairs having the
+                    // same best_prio.
+                    return;
+                }
+            }
+            trace!("Nominating best candidate");
+
+            if !best_prio.is_nominated() && (self.controlling || self.ice_lite) {
+                // ice lite progresses pair to success straight away.
+                best_prio.nominate(self.ice_lite);
+            }
+
+            let local = best_prio.local_candidate(&self.local_candidates);
+            let remote = best_prio.remote_candidate(&self.remote_candidates);
+
+            let id = best_prio.id();
+            let (proto, source, destination) = (local.proto(), local.base(), remote.addr());
+            self.set_nominated_send(id, proto, source, destination);
         }
-        let best_id = best.id();
+    }
 
-        trace!("Nominating best candidate");
-        let best_prio = self
+    fn evaluate_ice_lite_nomination(&mut self, now: Instant) {
+        // libWebRTC sends USE-CANDIDATE on its selected path, including after
+        // switching paths without the ICE restart required by RFC 8445 §8.1.1.
+        // Prefer recent nominations so a new path can take over even while the
+        // peer still probes the old one. Preserve priority among recent pairs
+        // and break ties by recency so a NAT port change can take effect.
+        let rank = |pair: &CandidatePair| {
+            let last = pair.remote_nomination_time();
+            match last {
+                Some(t) if now.saturating_duration_since(t) < RECENT_NOMINATION => {
+                    (true, None, pair.prio(), last)
+                }
+                // Once all nominations are stale, keep favoring the last one.
+                _ => (false, last, pair.prio(), None),
+            }
+        };
+
+        let best = self
             .candidate_pairs
-            .iter_mut()
-            .find(|p| p.id() == best_id)
-            .expect("best pair was just found in candidate_pairs");
-
-        if !best_prio.is_nominated() && (self.controlling || self.ice_lite) {
-            // ice lite progresses pair to success straight away.
-            best_prio.nominate(self.ice_lite);
+            .iter()
+            .filter(|p| p.is_nominated() && p.state() == CheckState::Succeeded)
+            .max_by_key(|p| rank(p));
+        let Some(best) = best else {
+            return;
+        };
+        if self
+            .nominated_pair()
+            .is_some_and(|pair| rank(pair) == rank(best))
+        {
+            return;
         }
 
-        let local = best_prio.local_candidate(&self.local_candidates);
-        let remote = best_prio.remote_candidate(&self.remote_candidates);
+        let local = best.local_candidate(&self.local_candidates);
+        let remote = best.remote_candidate(&self.remote_candidates);
+        self.set_nominated_send(best.id(), local.proto(), local.base(), remote.addr());
+    }
 
-        self.nominated_send = Some(best_id);
+    fn set_nominated_send(
+        &mut self,
+        id: PairId,
+        proto: Protocol,
+        source: SocketAddr,
+        destination: SocketAddr,
+    ) {
+        self.nominated_send = Some(id);
         self.emit_event(IceAgentEvent::NominatedSend {
-            proto: local.proto(),
-            source: local.base(),
-            destination: remote.addr(),
-        })
+            proto,
+            source,
+            destination,
+        });
+    }
+
+    fn nominated_pair_priority(&self) -> Option<u64> {
+        let id = self.nominated_send?;
+
+        self.candidate_pairs
+            .iter()
+            .find_map(|p| (p.id() == id).then_some(p.prio()))
     }
 
     fn nominated_pair(&self) -> Option<&CandidatePair> {
