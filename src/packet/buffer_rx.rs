@@ -116,7 +116,6 @@ impl Depacketized {
         // packet carries a descriptor of the frame. With one frame per spatial layer, or an H.265
         // or H.266 sample that ends with a fragmented NAL unit before its frame does, no single
         // descriptor describes the sample.
-        merged.user_values.remove::<DependencyDescriptor>();
         if let Some(first_val) = first.user_values.get_arc::<DependencyDescriptor>() {
             let frame_number = first_val.truncated_frame_number();
             let ends_frame = last
@@ -134,9 +133,11 @@ impl Depacketized {
                 });
             if describes_sample {
                 merged.user_values.set_arc(first_val);
+                return merged;
             }
         }
 
+        merged.user_values.remove::<DependencyDescriptor>();
         merged
     }
 }
