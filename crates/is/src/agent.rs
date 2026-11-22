@@ -412,7 +412,8 @@ impl IceAgent {
     /// Set a new timing advance (Ta) value.
     ///
     /// Ta specifies the minimum increment of time that has to pass between calls to
-    /// [`IceAgent::handle_timeout`]s (guided via [`IceAgent::poll_timeout`]).
+    /// [`IceAgent::handle_timeout`] when pacing connectivity checks and queued STUN
+    /// work. ICE-lite may wake sooner to handle a nomination expiry.
     ///
     /// Defaults to 50ms.
     pub fn set_timing_advance(&mut self, duration: Duration) {
@@ -3404,7 +3405,7 @@ mod test {
     }
 
     #[test]
-    fn ice_lite_nomination_expiry_respects_timing_advance() {
+    fn ice_lite_nomination_expiry_can_wake_before_timing_advance() {
         let (mut agent, peer) = ice_lite_agent_with_host_and_relay();
         let start = Instant::now();
         let timing_advance = Duration::from_millis(50);
@@ -3421,7 +3422,8 @@ mod test {
         while agent.poll_transmit().is_some() {}
 
         let wake = agent.poll_timeout().unwrap();
-        assert_eq!(wake, relay_nominated + timing_advance);
+        assert_eq!(wake, start + Duration::from_secs(6));
+        assert!(wake < relay_nominated + timing_advance);
         agent.handle_timeout(wake);
         assert_eq!(nominated_sends(&mut agent), vec![ipv4_4()]);
     }
