@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Report RTCP RTTs below 1/65536 s as one unit instead of zero or dropping them, and handle the 16-bit seconds wrap
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137
