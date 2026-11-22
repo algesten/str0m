@@ -1365,7 +1365,34 @@ impl IceAgent {
             last_now + Duration::from_secs(3)
         };
 
+        let next = if self.ice_lite && !self.controlling {
+            self.ice_lite_nomination_timeout(last_now)
+                .map_or(next, |expiry| next.min(expiry))
+        } else {
+            next
+        };
         Some(next)
+    }
+
+    fn ice_lite_nomination_timeout(&self, now: Instant) -> Option<Instant> {
+        let last = self.nominated_pair()?.remote_nomination_time()?;
+        let expiry = last + RECENT_NOMINATION;
+        if expiry <= now {
+            return None;
+        }
+
+        // A newer nomination can take over as soon as the current one expires,
+        // even if neither path receives another check before then.
+        self.candidate_pairs
+            .iter()
+            .any(|pair| {
+                pair.is_nominated()
+                    && pair.state() == CheckState::Succeeded
+                    && pair
+                        .remote_nomination_time()
+                        .is_some_and(|time| time > last)
+            })
+            .then_some(expiry)
     }
 
     fn emit_event(&mut self, event: IceAgentEvent) {
