@@ -2735,6 +2735,9 @@ mod test {
         let frame = FrameDescriptor::take(&mut values, &ExtensionMap::standard());
         assert!(frame.unwrap().is_none());
         assert!(values.user_values.get::<DependencyDescriptor>().is_none());
+        // The payloader clones these values for every fragment. Discard the empty map
+        // so an unnegotiated descriptor leaves no allocation to copy.
+        assert!(values.user_values == ExtensionValues::default().user_values);
     }
 
     #[test]
