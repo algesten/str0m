@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Make the receive stream NACK window configurable through the direct API #1178
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137

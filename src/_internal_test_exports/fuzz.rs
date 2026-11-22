@@ -19,7 +19,7 @@ use crate::net::{Protocol, Receive};
 use crate::packet::{CodecExtra, Depacketizer, DepacketizingBuffer, RtpMeta};
 use crate::rtp::{Extension, ExtensionValues, RtpWrite, Ssrc, Vp8Descriptor};
 use crate::rtp_::{Frequency, MediaTime, Rtcp, RtcpFb, RtcpPacket, RtpHeader, SrtpContext};
-use crate::rtp_::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRegister, extend_u16};
+use crate::rtp_::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRegister};
 use crate::sctp::{ChannelConfig, DcepAck, DcepOpen, SctpInitData};
 use crate::streams::register::ReceiverRegister;
 use crate::streams::rtx_cache_buf::EvictingBuffer;

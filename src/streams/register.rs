@@ -77,6 +77,14 @@ impl ReceiverRegister {
         }
     }
 
+    pub fn set_nack_window(&mut self, packets: usize) {
+        self.nack.set_window(packets);
+    }
+
+    pub fn seed_from_history(&mut self, lookup: impl FnOnce() -> Option<SeqNo>) {
+        self.nack.seed_from_history(lookup);
+    }
+
     pub fn accepts(&self, seq: SeqNo) -> bool {
         self.nack.accepts(seq)
     }
@@ -161,7 +169,7 @@ impl ReceiverRegister {
     }
 
     pub fn clear(&mut self, max_seq_no: Option<SeqNo>) {
-        self.nack = NackRegister::new(max_seq_no);
+        self.nack.clear(max_seq_no);
         self.count = 0;
         self.first = None;
         self.time_point_prior = None;
@@ -301,6 +309,42 @@ mod test {
     use std::time::{Duration, Instant};
 
     use crate::streams::register::{ReceiverRegister, expected, packets_lost};
+
+    #[test]
+    fn resetting_nack_window_preserves_sequence_and_reception_statistics() {
+        let mut reg = ReceiverRegister::new(None);
+        let now = Instant::now();
+        reg.update(65_534.into(), now, 0, 90_000, false);
+        reg.update(65_536.into(), now, 3000, 90_000, false);
+        assert!(reg.has_pending_nacks());
+        let before = reg.reception_report().unwrap();
+
+        reg.set_nack_window(1000);
+
+        assert!(!reg.has_pending_nacks());
+        assert!(!reg.accepts(65_535.into()));
+        assert!(!reg.accepts(65_536.into()));
+        let after = reg.reception_report().unwrap();
+        assert_eq!(after.max_seq, before.max_seq);
+        assert_eq!(after.packets_lost, before.packets_lost);
+        assert_eq!(after.jitter, before.jitter);
+
+        reg.update(65_538.into(), now, 6000, 90_000, false);
+        let nacks: Vec<_> = reg.nack_report(now, None).unwrap().collect();
+        assert_eq!(nacks[0].reports[0].pid, 1);
+    }
+
+    #[test]
+    fn clearing_register_keeps_nack_window() {
+        let mut reg = ReceiverRegister::new(None);
+        reg.set_nack_window(1000);
+        reg.clear(None);
+
+        let now = Instant::now();
+        reg.update(10.into(), now, 0, 90_000, false);
+        reg.update(310.into(), now, 3000, 90_000, false);
+        assert!(reg.accepts(11.into()));
+    }
 
     #[test]
     fn clearing_register_resets_nack_timing() {

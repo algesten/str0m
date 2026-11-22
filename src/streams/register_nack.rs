@@ -3,8 +3,11 @@ use std::time::{Duration, Instant};
 
 use crate::rtp_::{Nack, NackEntry, ReportList, SeqNo};
 
-/// Number of out of order packets we keep track of for reports
+/// Default number of out-of-order packets tracked for NACK.
 const MAX_MISORDER: u64 = 100;
+
+/// Cap per-stream allocation and stay below the 16-bit RTP half-range.
+const MAX_NACK_WINDOW: u64 = 1 << 14;
 
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
@@ -12,13 +15,11 @@ const MAX_NACKS: u8 = 5;
 pub(super) const DEFAULT_RTT: Duration = Duration::from_millis(100);
 const NACK_RETRY_MARGIN: Duration = Duration::from_millis(5);
 
-/// Circular buffer size
-const BUFFER_SIZE: u64 = MAX_MISORDER + 1;
-
 #[derive(Debug)]
 pub struct NackRegister {
-    /// Status of packets indexed by wrapping SeqNo.
+    /// Status of packets indexed by wrapping SeqNo. Allocated on first use.
     packets: Vec<PacketStatus>,
+    window: u64,
 
     /// Range of seq numbers considered NACK reporting.
     active: Option<Range<SeqNo>>,
@@ -105,16 +106,39 @@ impl NackRegister {
     ///
     /// The max_seq_no is to provide a starting point for ROC calculations.
     pub fn new(max_seq_no: Option<SeqNo>) -> Self {
-        let mut n = NackRegister {
-            packets: vec![PacketStatus::default(); BUFFER_SIZE as usize],
+        let mut register = Self {
+            packets: Vec::new(),
+            window: MAX_MISORDER,
             active: None,
         };
+        register.clear(max_seq_no);
+        register
+    }
 
-        if let Some(seq) = max_seq_no {
-            n.init_with_seq(seq);
+    pub(super) fn set_window(&mut self, packets: usize) {
+        let window = (packets as u64).clamp(1, MAX_NACK_WINDOW);
+        if self.window != window {
+            self.window = window;
+            self.clear(self.max_seq());
         }
+    }
 
-        n
+    pub(super) fn clear(&mut self, max_seq_no: Option<SeqNo>) {
+        self.active = None;
+        self.packets = Vec::new();
+        if let Some(seq) = max_seq_no {
+            self.init_with_seq(seq);
+        }
+    }
+
+    pub(super) fn seed_from_history(&mut self, lookup: impl FnOnce() -> Option<SeqNo>) {
+        if self.packets.is_empty() {
+            self.packets
+                .resize(self.window as usize + 1, PacketStatus::default());
+            if let Some(seq) = lookup() {
+                self.init_with_seq(seq);
+            }
+        }
     }
 
     pub fn accepts(&self, seq: SeqNo) -> bool {
@@ -148,7 +172,7 @@ impl NackRegister {
         let end = active.end.max(seq);
 
         let start: SeqNo = {
-            let min = end.saturating_sub(MAX_MISORDER);
+            let min = end.saturating_sub(self.window);
             let mut start = (*active.start).max(min);
             while start < *end {
                 if !self.packet_mut(start.into()).received && start != *seq {
@@ -183,6 +207,8 @@ impl NackRegister {
     }
 
     fn init_with_seq(&mut self, seq: SeqNo) {
+        self.packets
+            .resize(self.window as usize + 1, PacketStatus::default());
         self.active = Some(seq..seq);
         self.packet_mut(seq).mark_received();
     }
@@ -636,6 +662,49 @@ mod test {
         let next = 14;
         assert!(reg.accepts(next.into()));
         assert_update(&mut reg, next, true, false, 15..(13 + MAX_MISORDER));
+    }
+
+    #[test]
+    fn wider_window_accepts_late_packets() {
+        // A retransmission 500 packets behind the newest one.
+        let late = |max_misorder| {
+            let mut reg = NackRegister::new(None);
+            reg.set_window(max_misorder);
+            reg.update(10.into());
+            reg.update(12.into());
+            reg.update(510.into());
+            (reg.accepts(11.into()), reg.update(11.into()))
+        };
+        assert_eq!(late(MAX_MISORDER as usize), (false, false));
+        assert_eq!(late(1000), (true, true));
+    }
+
+    #[test]
+    fn wider_window_nacks_further_back() {
+        // A packet lost 500 packets behind the newest one is still NACKed.
+        let nacked = |max_misorder| {
+            let mut reg = NackRegister::new(None);
+            reg.set_window(max_misorder);
+            reg.update(10.into());
+            reg.update(12.into());
+            reg.update(510.into());
+            reg.nack_reports(Instant::now(), None)
+                .into_iter()
+                .flatten()
+                .flat_map(|nack| nack.reports.into_iter())
+                .any(|entry| entry.pid == 11)
+        };
+        assert!(!nacked(MAX_MISORDER as usize));
+        assert!(nacked(1000));
+    }
+
+    #[test]
+    fn window_is_clamped() {
+        let mut reg = NackRegister::new(None);
+        reg.set_window(0);
+        assert_eq!(reg.window, 1);
+        reg.set_window(usize::MAX);
+        assert_eq!(reg.window, super::MAX_NACK_WINDOW);
     }
 
     #[test]

@@ -73,7 +73,7 @@ pub struct StreamRx {
     /// Register of received packets. For NACK handling.
     ///
     /// Set on first ever packet.
-    register: Option<ReceiverRegister>,
+    register: ReceiverRegister,
 
     /// Sequence and replay tracking for RTX. NACKs and reception reports use the main register.
     ///
@@ -173,7 +173,7 @@ impl StreamRx {
             last_clock_rate: None,
             sender_info: None,
             reset_roc: None,
-            register: None,
+            register: ReceiverRegister::new(None),
             register_rtx: None,
             red_recent: VecDeque::new(),
             last_time: None,
@@ -255,6 +255,18 @@ impl StreamRx {
     /// desirable to manually suppress NACK sending regardless of RTX setting.
     pub fn suppress_nack(&mut self, suppress: bool) {
         self.suppress_nack = suppress;
+    }
+
+    /// Sets how far behind the newest RTP sequence number a missing packet can
+    /// still be requested with NACK and accepted when it arrives.
+    ///
+    /// The default is 100 packets. The value is clamped to 1..=16384. The
+    /// receive register stores one packet status per sequence number in the window.
+    ///
+    /// Changing the window size discards pending NACKs and starts a new window
+    /// at the newest received sequence number. Reception statistics are preserved.
+    pub fn set_nack_window(&mut self, packets: usize) {
+        self.register.set_nack_window(packets);
     }
 
     fn is_audio(&self) -> bool {
@@ -376,9 +388,8 @@ impl StreamRx {
             return header.sequence_number(self.register_rtx.as_ref().map(|r| r.max_seq()));
         }
 
-        let register = self
-            .register
-            .get_or_insert_with(|| ReceiverRegister::new(max_seq_lookup(header.ssrc)));
+        self.register
+            .seed_from_history(|| max_seq_lookup(header.ssrc));
 
         // If the user has called `reset_seq_no`, this is the time to handle it, but only
         // if the incoming packet is for main (not repair).
@@ -391,7 +402,7 @@ impl StreamRx {
         if let Some(reset_seq_no) = reset_seq_no {
             reset_seq_no
         } else {
-            header.sequence_number(register.max_seq())
+            header.sequence_number(self.register.max_seq())
         }
     }
 
@@ -399,8 +410,7 @@ impl StreamRx {
         if is_repair {
             self.register_rtx.as_ref().is_none_or(|r| r.accepts(seq_no))
         } else {
-            // extend_seq() initializes the main register before this check.
-            self.register.as_ref().unwrap().accepts(seq_no)
+            self.register.accepts(seq_no)
         }
     }
 
@@ -434,7 +444,7 @@ impl StreamRx {
     /// were all lost anyway. `carrier` is the packet the block arrived in; recovery is limited
     /// to `MAX_RED_RECOVERY_DEPTH` packets behind it.
     pub(crate) fn red_locate_seq(&self, carrier: SeqNo, block_time: u64) -> Option<SeqNo> {
-        let register = self.register.as_ref()?;
+        let register = &self.register;
 
         // A packet (received or already recovered) at exactly this time: nothing to recover.
         if self.red_recent.iter().any(|(_, t)| *t == block_time) {
@@ -502,9 +512,7 @@ impl StreamRx {
     /// not counted as received (reception reports still show the loss), but it must neither be
     /// NACKed nor recovered again.
     pub(crate) fn mark_red_recovered(&mut self, seq_no: SeqNo, time: u64) {
-        if let Some(register) = &mut self.register {
-            register.mark_recovered(seq_no);
-        }
+        self.register.mark_recovered(seq_no);
         self.remember_recent(seq_no, time);
     }
 
@@ -533,14 +541,8 @@ impl StreamRx {
                 .update(seq_no);
             is_new
         } else {
-            // extend_seq() initializes the main register before this update.
-            self.register.as_mut().unwrap().update(
-                seq_no,
-                now,
-                header.timestamp,
-                clock_rate.get(),
-                is_resend,
-            )
+            self.register
+                .update(seq_no, now, header.timestamp, clock_rate.get(), is_resend)
         };
 
         // Get the previous time for comparison
@@ -747,7 +749,7 @@ impl StreamRx {
     }
 
     fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {
-        let Some(mut report) = self.register.as_mut().and_then(|r| r.reception_report()) else {
+        let Some(mut report) = self.register.reception_report() else {
             return ReceiverReport {
                 sender_ssrc: 0.into(), // set one level up
                 reports: ReportList::new(),
@@ -804,9 +806,9 @@ impl StreamRx {
         received: Instant,
     ) -> Option<Instant> {
         if !self.suppress_nack {
-            if let Some(register) = &self.register {
-                return register.recovery_deadline(range, received, self.stats.rtt);
-            }
+            return self
+                .register
+                .recovery_deadline(range, received, self.stats.rtt);
         }
         let rtt = self.stats.rtt.unwrap_or(super::register_nack::DEFAULT_RTT);
         received.checked_add(rtt.saturating_mul(3))
@@ -826,11 +828,7 @@ impl StreamRx {
             return true;
         }
 
-        let Some(register) = &self.register else {
-            return false;
-        };
-
-        register.has_pending_nacks()
+        self.register.has_pending_nacks()
     }
 
     pub(crate) fn maybe_create_nack(
@@ -843,10 +841,7 @@ impl StreamRx {
             return None;
         }
 
-        let nacks = self
-            .register
-            .as_mut()
-            .and_then(|r| r.nack_report(now, self.stats.rtt))?;
+        let nacks = self.register.nack_report(now, self.stats.rtt)?;
 
         for mut nack in nacks {
             nack.sender_ssrc = sender_ssrc;
@@ -908,8 +903,8 @@ impl StreamRx {
     }
 
     pub(crate) fn reset_buffers(&mut self, max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>) {
-        if let Some(r) = &mut self.register {
-            r.clear(max_seq_lookup(self.ssrc));
+        if self.register.max_seq().is_some() {
+            self.register.clear(max_seq_lookup(self.ssrc));
         }
 
         if self.register_rtx.is_some() {
@@ -939,7 +934,7 @@ impl StreamRx {
         self.ssrc = ssrc;
 
         // Reset all SSRC-specific state
-        self.register = None;
+        self.register.clear(None);
         self.red_recent.clear();
         self.last_time = None;
         self.last_clock_rate = None;
@@ -992,7 +987,7 @@ impl StreamRx {
     /// > initial value is provided by out of band signaling such as key
     /// > management).
     pub fn reset_roc(&mut self, roc: u64) {
-        self.register = None;
+        self.register.clear(None);
         self.register_rtx = None;
         self.red_recent.clear();
         self.reset_roc = Some(roc);
@@ -1278,8 +1273,6 @@ mod tests {
         assert!(!stream.is_new_packet(false, 12.into()));
         let nacked: Vec<SeqNo> = stream
             .register
-            .as_mut()
-            .unwrap()
             .nack_report(now + Duration::from_millis(105), None)
             .into_iter()
             .flatten()
@@ -1342,7 +1335,7 @@ mod tests {
             assert!(!stream.is_new_packet(true, seq.into()));
         }
         assert!(
-            stream.register.is_none(),
+            stream.register.max_seq().is_none(),
             "RTX must not update primary reception reports"
         );
         let mut feedback = VecDeque::new();
