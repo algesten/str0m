@@ -20,6 +20,7 @@ use crate::util::{already_happened, calculate_rtt};
 use super::RtpPacket;
 use super::StreamPaused;
 use super::register::ReceiverRegister;
+use super::register_nack::MAX_MISORDER;
 
 /// How many recent packets to remember for placing RED redundant blocks. Must cover the
 /// recovery depth plus some reordering slack.
@@ -187,7 +188,7 @@ impl StreamRx {
             paused: true,
             need_paused_event: false,
             pause_threshold,
-            nack_window: super::register_nack::MAX_MISORDER,
+            nack_window: MAX_MISORDER,
         }
     }
 
