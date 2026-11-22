@@ -65,9 +65,9 @@ impl TimePoint {
 }
 
 impl ReceiverRegister {
-    pub fn new(max_seq_no: Option<SeqNo>) -> Self {
+    pub fn new(max_seq_no: Option<SeqNo>, max_misorder: u64) -> Self {
         ReceiverRegister {
-            nack: NackRegister::new(max_seq_no),
+            nack: NackRegister::new(max_seq_no, max_misorder),
             first: None,
             count: 0,
             time_point_prior: None,
@@ -161,7 +161,7 @@ impl ReceiverRegister {
     }
 
     pub fn clear(&mut self, max_seq_no: Option<SeqNo>) {
-        self.nack = NackRegister::new(max_seq_no);
+        self.nack = NackRegister::new(max_seq_no, self.nack.max_misorder());
         self.count = 0;
         self.first = None;
         self.time_point_prior = None;
@@ -303,8 +303,15 @@ mod test {
     use crate::streams::register::{ReceiverRegister, expected, packets_lost};
 
     #[test]
+    fn clearing_register_keeps_nack_window() {
+        let mut reg = ReceiverRegister::new(None, 1000);
+        reg.clear(None);
+        assert_eq!(reg.nack.max_misorder(), 1000);
+    }
+
+    #[test]
     fn clearing_register_resets_nack_timing() {
-        let mut reg = ReceiverRegister::new(None);
+        let mut reg = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
         let now = Instant::now();
         reg.update(10.into(), now, 0, 90_000, false);
         reg.update(12.into(), now, 3000, 90_000, false);
@@ -319,7 +326,7 @@ mod test {
 
     #[test]
     fn jitter_at_0() {
-        let mut r = ReceiverRegister::new(None);
+        let mut r = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
 
         // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
         // 1/100 * 1_000_000 = 10_000 microseconds per frame.
@@ -346,7 +353,7 @@ mod test {
 
     #[test]
     fn jitter_at_20() {
-        let mut r = ReceiverRegister::new(None);
+        let mut r = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
 
         // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
         // 1/100 * 1_000_000 = 10_000 microseconds per frame.
@@ -381,7 +388,7 @@ mod test {
 
     #[test]
     fn fraction_lost_is_zero_when_an_interval_receives_more_than_expected() {
-        let mut reg = ReceiverRegister::new(None);
+        let mut reg = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
 
         assert_eq!(reg.fraction_lost(120, 118), 4);
         assert_eq!(reg.fraction_lost(240, 240), 0);
@@ -389,7 +396,7 @@ mod test {
 
     #[test]
     fn fraction_lost_saturates_when_everything_is_lost() {
-        let mut reg = ReceiverRegister::new(None);
+        let mut reg = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
 
         assert_eq!(reg.fraction_lost(100, 0), 255);
     }
@@ -416,7 +423,7 @@ mod test {
 
     #[test]
     fn receiver_report() {
-        let mut r = ReceiverRegister::new(None);
+        let mut r = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
         let now = Instant::now();
         let rtp_time = 0;
 
@@ -443,7 +450,7 @@ mod test {
         const LATE_DELTA_SAMPLES: u32 = LATE_ARRIVAL_DELTA_MS as u32 * CODEC_SAMPLE_RATE / 1_000;
 
         let mut clock = Instant::now();
-        let mut r = ReceiverRegister::new(None);
+        let mut r = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
 
         r.update_time(clock, 0, CODEC_SAMPLE_RATE);
         clock += Duration::from_millis(MS_PER_PACKET + LATE_ARRIVAL_DELTA_MS);
@@ -456,7 +463,7 @@ mod test {
     fn all_packets_have_same_frequency() {
         // AllPacketsHaveSamePayloadTypeFrequency from receive_statistics_unittest.cc
         let mut clock = Instant::now();
-        let mut r = ReceiverRegister::new(None);
+        let mut r = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
 
         r.update_time(clock, 1, 8_000);
         clock += Duration::from_millis(50);
@@ -485,7 +492,7 @@ mod test {
         let rtp_time_3 = rtp_time_2.wrapping_add(160);
 
         let mut clock = Instant::now();
-        let mut r = ReceiverRegister::new(None);
+        let mut r = ReceiverRegister::new(None, crate::streams::register_nack::MAX_MISORDER);
 
         r.update_time(clock, rtp_time_1, 8_000);
         clock += Duration::from_millis(50);

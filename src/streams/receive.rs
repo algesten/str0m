@@ -119,6 +119,7 @@ pub struct StreamRx {
 
     /// The configured threshold before considering the lack of packets as going into paused.
     pause_threshold: Duration,
+    nack_window: u64,
 }
 
 /// The last sender info we recieved.
@@ -186,6 +187,7 @@ impl StreamRx {
             paused: true,
             need_paused_event: false,
             pause_threshold,
+            nack_window: super::register_nack::MAX_MISORDER,
         }
     }
 
@@ -255,6 +257,25 @@ impl StreamRx {
     /// desirable to manually suppress NACK sending regardless of RTX setting.
     pub fn suppress_nack(&mut self, suppress: bool) {
         self.suppress_nack = suppress;
+    }
+
+    /// Sets how far behind the newest RTP sequence number a missing packet can
+    /// still be requested with NACK and accepted when it arrives.
+    ///
+    /// The default is 100 packets. The value is clamped to 1..=16384. The
+    /// receive register stores one packet status per sequence number in the window.
+    ///
+    /// Configure this on the stream returned by
+    /// [`DirectApi::expect_stream_rx`](crate::change::DirectApi::expect_stream_rx)
+    /// before feeding it RTP. Returns `false` if the receive register is already
+    /// initialized and the setting could not be applied.
+    pub fn set_nack_window(&mut self, packets: usize) -> bool {
+        if self.register.is_some() {
+            return false;
+        }
+
+        self.nack_window = packets as u64;
+        true
     }
 
     fn is_audio(&self) -> bool {
@@ -376,9 +397,9 @@ impl StreamRx {
             return header.sequence_number(self.register_rtx.as_ref().map(|r| r.max_seq()));
         }
 
-        let register = self
-            .register
-            .get_or_insert_with(|| ReceiverRegister::new(max_seq_lookup(header.ssrc)));
+        let register = self.register.get_or_insert_with(|| {
+            ReceiverRegister::new(max_seq_lookup(header.ssrc), self.nack_window)
+        });
 
         // If the user has called `reset_seq_no`, this is the time to handle it, but only
         // if the incoming packet is for main (not repair).
