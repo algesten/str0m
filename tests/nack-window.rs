@@ -33,11 +33,7 @@ fn late_retransmission(nack_window: Option<usize>) -> Result<(bool, u64), RtcErr
     l.direct_api().declare_media(mid, MediaKind::Video);
     l.direct_api().declare_stream_tx(ssrc, Some(rtx), mid, None);
     r.direct_api().declare_media(mid, MediaKind::Video);
-    let mut direct = r.direct_api();
-    let stream = direct.expect_stream_rx(ssrc, Some(rtx), mid, None);
-    if let Some(packets) = nack_window {
-        assert!(stream.set_nack_window(packets));
-    }
+    r.direct_api().expect_stream_rx(ssrc, Some(rtx), mid, None);
     let pt = l.params_vp8().pt();
     let max = l.last.max(r.last);
     l.last = max;
@@ -55,10 +51,12 @@ fn late_retransmission(nack_window: Option<usize>) -> Result<(bool, u64), RtcErr
         progress(&mut l, &mut r)?;
     }
 
-    assert!(
-        !r.direct_api().stream_rx(&ssrc).unwrap().set_nack_window(1),
-        "a live receive register cannot be resized"
-    );
+    if let Some(packets) = nack_window {
+        r.direct_api()
+            .stream_rx(&ssrc)
+            .unwrap()
+            .set_nack_window(packets);
+    }
 
     // Lose one packet, and hold the receiver's feedback (its NACK) back long
     // enough for many more packets to arrive first.

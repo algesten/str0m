@@ -20,7 +20,7 @@ use crate::util::{already_happened, calculate_rtt};
 use super::RtpPacket;
 use super::StreamPaused;
 use super::register::ReceiverRegister;
-use super::register_nack::MAX_MISORDER;
+use super::register_nack::{MAX_MISORDER, MAX_NACK_WINDOW};
 
 /// How many recent packets to remember for placing RED redundant blocks. Must cover the
 /// recovery depth plus some reordering slack.
@@ -266,17 +266,18 @@ impl StreamRx {
     /// The default is 100 packets. The value is clamped to 1..=16384. The
     /// receive register stores one packet status per sequence number in the window.
     ///
-    /// Configure this on the stream returned by
-    /// [`DirectApi::expect_stream_rx`](crate::change::DirectApi::expect_stream_rx)
-    /// before feeding it RTP. Returns `false` if the receive register is already
-    /// initialized and the setting could not be applied.
-    pub fn set_nack_window(&mut self, packets: usize) -> bool {
-        if self.register.is_some() {
-            return false;
+    /// Changing the window size discards pending NACKs and starts a new window
+    /// at the newest received sequence number. Reception statistics are preserved.
+    pub fn set_nack_window(&mut self, packets: usize) {
+        let packets = (packets as u64).clamp(1, MAX_NACK_WINDOW);
+        if self.nack_window == packets {
+            return;
         }
 
-        self.nack_window = packets as u64;
-        true
+        self.nack_window = packets;
+        if let Some(register) = &mut self.register {
+            register.reset_nack_window(packets);
+        }
     }
 
     fn is_audio(&self) -> bool {

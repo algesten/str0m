@@ -77,6 +77,10 @@ impl ReceiverRegister {
         }
     }
 
+    pub fn reset_nack_window(&mut self, packets: u64) {
+        self.nack = NackRegister::new(self.nack.max_seq(), packets);
+    }
+
     pub fn accepts(&self, seq: SeqNo) -> bool {
         self.nack.accepts(seq)
     }
@@ -302,6 +306,31 @@ mod test {
 
     use crate::streams::register::{ReceiverRegister, expected, packets_lost};
     use crate::streams::register_nack::MAX_MISORDER;
+
+    #[test]
+    fn resetting_nack_window_preserves_sequence_and_reception_statistics() {
+        let mut reg = ReceiverRegister::new(None, MAX_MISORDER);
+        let now = Instant::now();
+        reg.update(65_534.into(), now, 0, 90_000, false);
+        reg.update(65_536.into(), now, 3000, 90_000, false);
+        assert!(reg.has_pending_nacks());
+        let before = reg.reception_report().unwrap();
+
+        reg.reset_nack_window(1000);
+
+        assert_eq!(reg.nack.max_misorder(), 1000);
+        assert!(!reg.has_pending_nacks());
+        assert!(!reg.accepts(65_535.into()));
+        assert!(!reg.accepts(65_536.into()));
+        let after = reg.reception_report().unwrap();
+        assert_eq!(after.max_seq, before.max_seq);
+        assert_eq!(after.packets_lost, before.packets_lost);
+        assert_eq!(after.jitter, before.jitter);
+
+        reg.update(65_538.into(), now, 6000, 90_000, false);
+        let nacks: Vec<_> = reg.nack_report(now, None).unwrap().collect();
+        assert_eq!(nacks[0].reports[0].pid, 1);
+    }
 
     #[test]
     fn clearing_register_keeps_nack_window() {

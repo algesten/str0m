@@ -7,7 +7,7 @@ use crate::rtp_::{Nack, NackEntry, ReportList, SeqNo};
 pub(crate) const MAX_MISORDER: u64 = 100;
 
 /// Cap per-stream allocation and stay below the 16-bit RTP half-range.
-const MAX_NACK_WINDOW: u64 = 1 << 14;
+pub(super) const MAX_NACK_WINDOW: u64 = 1 << 14;
 
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
