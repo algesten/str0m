@@ -180,7 +180,8 @@ impl Session {
         Session {
             id,
             medias: vec![],
-            streams: Streams::new(enable_stats, *config.mtu.end(), config.pause_threshold),
+            streams: Streams::new(enable_stats, *config.mtu.end(), config.pause_threshold)
+                .with_nack_window(config.nack_window),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,

@@ -156,6 +156,7 @@ pub(crate) struct Streams {
     /// hard cap when selecting RTX cache entries for spurious padding.
     mtu_warn: usize,
     pause_threshold: Duration,
+    nack_window: u64,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -185,7 +186,14 @@ impl Streams {
             enable_stats,
             mtu_warn,
             pause_threshold,
+            nack_window: register_nack::MAX_MISORDER,
         }
+    }
+
+    /// Sets the NACK window of incoming streams created from now on.
+    pub(crate) fn with_nack_window(mut self, packets: usize) -> Self {
+        self.nack_window = packets as u64;
+        self
     }
 
     pub(crate) fn map_dynamic_by_rid(
@@ -306,10 +314,11 @@ impl Streams {
         midrid: MidRid,
         suppress_nack: bool,
     ) -> &mut StreamRx {
-        let stream = self
-            .streams_rx
-            .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc, midrid, suppress_nack, self.pause_threshold));
+        let stream = self.streams_rx.entry(ssrc).or_insert_with(|| {
+            let mut stream = StreamRx::new(ssrc, midrid, suppress_nack, self.pause_threshold);
+            stream.nack_window = self.nack_window;
+            stream
+        });
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);

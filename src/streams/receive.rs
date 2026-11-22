@@ -119,6 +119,9 @@ pub struct StreamRx {
 
     /// The configured threshold before considering the lack of packets as going into paused.
     pause_threshold: Duration,
+
+    /// How many packets behind the newest one the register tracks for NACK.
+    pub(crate) nack_window: u64,
 }
 
 /// The last sender info we recieved.
@@ -186,6 +189,7 @@ impl StreamRx {
             paused: true,
             need_paused_event: false,
             pause_threshold,
+            nack_window: super::register_nack::MAX_MISORDER,
         }
     }
 
@@ -376,9 +380,9 @@ impl StreamRx {
             return header.sequence_number(self.register_rtx.as_ref().map(|r| r.max_seq()));
         }
 
-        let register = self
-            .register
-            .get_or_insert_with(|| ReceiverRegister::new(max_seq_lookup(header.ssrc)));
+        let register = self.register.get_or_insert_with(|| {
+            ReceiverRegister::new(max_seq_lookup(header.ssrc), self.nack_window)
+        });
 
         // If the user has called `reset_seq_no`, this is the time to handle it, but only
         // if the incoming packet is for main (not repair).
