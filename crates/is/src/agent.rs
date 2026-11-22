@@ -411,9 +411,8 @@ impl IceAgent {
 
     /// Set a new timing advance (Ta) value.
     ///
-    /// Ta specifies the minimum increment of time that has to pass between calls to
-    /// [`IceAgent::handle_timeout`] when pacing connectivity checks and queued STUN
-    /// work. ICE-lite may wake sooner to handle a nomination expiry.
+    /// [`IceAgent::poll_timeout`] uses Ta to pace connectivity checks and queued
+    /// STUN work. ICE-lite may wake sooner to handle a nomination expiry.
     ///
     /// Defaults to 50ms.
     pub fn set_timing_advance(&mut self, duration: Duration) {
