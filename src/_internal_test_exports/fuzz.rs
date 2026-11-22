@@ -25,7 +25,7 @@ use crate::rtp::dependency_descriptor::{Resolution, SharedStructure, SharedStruc
 use crate::rtp::{Extension, ExtensionMap, ExtensionSerializer, ExtensionValues};
 use crate::rtp::{RtpWrite, Ssrc, Vp8Descriptor};
 use crate::rtp_::{Frequency, MediaTime, Rtcp, RtcpFb, RtcpPacket, RtpHeader, SrtpContext};
-use crate::rtp_::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRegister, extend_u16};
+use crate::rtp_::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRegister};
 use crate::sctp::{ChannelConfig, DcepAck, DcepOpen, SctpInitData};
 use crate::streams::register::ReceiverRegister;
 use crate::streams::rtx_cache_buf::EvictingBuffer;
