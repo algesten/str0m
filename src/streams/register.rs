@@ -65,9 +65,9 @@ impl TimePoint {
 }
 
 impl ReceiverRegister {
-    pub fn new(max_seq_no: Option<SeqNo>, max_misorder: u64) -> Self {
+    pub fn new(max_seq_no: Option<SeqNo>) -> Self {
         ReceiverRegister {
-            nack: NackRegister::new(max_seq_no, max_misorder),
+            nack: NackRegister::new(max_seq_no),
             first: None,
             count: 0,
             time_point_prior: None,
@@ -77,8 +77,12 @@ impl ReceiverRegister {
         }
     }
 
-    pub fn reset_nack_window(&mut self, packets: u64) {
-        self.nack = NackRegister::new(self.nack.max_seq(), packets);
+    pub fn set_nack_window(&mut self, packets: usize) {
+        self.nack.set_window(packets);
+    }
+
+    pub fn seed_from_history(&mut self, lookup: impl FnOnce() -> Option<SeqNo>) {
+        self.nack.seed_from_history(lookup);
     }
 
     pub fn accepts(&self, seq: SeqNo) -> bool {
@@ -165,7 +169,7 @@ impl ReceiverRegister {
     }
 
     pub fn clear(&mut self, max_seq_no: Option<SeqNo>) {
-        self.nack = NackRegister::new(max_seq_no, self.nack.max_misorder());
+        self.nack.clear(max_seq_no);
         self.count = 0;
         self.first = None;
         self.time_point_prior = None;
@@ -305,20 +309,18 @@ mod test {
     use std::time::{Duration, Instant};
 
     use crate::streams::register::{ReceiverRegister, expected, packets_lost};
-    use crate::streams::register_nack::MAX_MISORDER;
 
     #[test]
     fn resetting_nack_window_preserves_sequence_and_reception_statistics() {
-        let mut reg = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut reg = ReceiverRegister::new(None);
         let now = Instant::now();
         reg.update(65_534.into(), now, 0, 90_000, false);
         reg.update(65_536.into(), now, 3000, 90_000, false);
         assert!(reg.has_pending_nacks());
         let before = reg.reception_report().unwrap();
 
-        reg.reset_nack_window(1000);
+        reg.set_nack_window(1000);
 
-        assert_eq!(reg.nack.max_misorder(), 1000);
         assert!(!reg.has_pending_nacks());
         assert!(!reg.accepts(65_535.into()));
         assert!(!reg.accepts(65_536.into()));
@@ -334,14 +336,19 @@ mod test {
 
     #[test]
     fn clearing_register_keeps_nack_window() {
-        let mut reg = ReceiverRegister::new(None, 1000);
+        let mut reg = ReceiverRegister::new(None);
+        reg.set_nack_window(1000);
         reg.clear(None);
-        assert_eq!(reg.nack.max_misorder(), 1000);
+
+        let now = Instant::now();
+        reg.update(10.into(), now, 0, 90_000, false);
+        reg.update(310.into(), now, 3000, 90_000, false);
+        assert!(reg.accepts(11.into()));
     }
 
     #[test]
     fn clearing_register_resets_nack_timing() {
-        let mut reg = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut reg = ReceiverRegister::new(None);
         let now = Instant::now();
         reg.update(10.into(), now, 0, 90_000, false);
         reg.update(12.into(), now, 3000, 90_000, false);
@@ -356,7 +363,7 @@ mod test {
 
     #[test]
     fn jitter_at_0() {
-        let mut r = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut r = ReceiverRegister::new(None);
 
         // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
         // 1/100 * 1_000_000 = 10_000 microseconds per frame.
@@ -383,7 +390,7 @@ mod test {
 
     #[test]
     fn jitter_at_20() {
-        let mut r = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut r = ReceiverRegister::new(None);
 
         // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
         // 1/100 * 1_000_000 = 10_000 microseconds per frame.
@@ -418,7 +425,7 @@ mod test {
 
     #[test]
     fn fraction_lost_is_zero_when_an_interval_receives_more_than_expected() {
-        let mut reg = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut reg = ReceiverRegister::new(None);
 
         assert_eq!(reg.fraction_lost(120, 118), 4);
         assert_eq!(reg.fraction_lost(240, 240), 0);
@@ -426,7 +433,7 @@ mod test {
 
     #[test]
     fn fraction_lost_saturates_when_everything_is_lost() {
-        let mut reg = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut reg = ReceiverRegister::new(None);
 
         assert_eq!(reg.fraction_lost(100, 0), 255);
     }
@@ -453,7 +460,7 @@ mod test {
 
     #[test]
     fn receiver_report() {
-        let mut r = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut r = ReceiverRegister::new(None);
         let now = Instant::now();
         let rtp_time = 0;
 
@@ -480,7 +487,7 @@ mod test {
         const LATE_DELTA_SAMPLES: u32 = LATE_ARRIVAL_DELTA_MS as u32 * CODEC_SAMPLE_RATE / 1_000;
 
         let mut clock = Instant::now();
-        let mut r = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut r = ReceiverRegister::new(None);
 
         r.update_time(clock, 0, CODEC_SAMPLE_RATE);
         clock += Duration::from_millis(MS_PER_PACKET + LATE_ARRIVAL_DELTA_MS);
@@ -493,7 +500,7 @@ mod test {
     fn all_packets_have_same_frequency() {
         // AllPacketsHaveSamePayloadTypeFrequency from receive_statistics_unittest.cc
         let mut clock = Instant::now();
-        let mut r = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut r = ReceiverRegister::new(None);
 
         r.update_time(clock, 1, 8_000);
         clock += Duration::from_millis(50);
@@ -522,7 +529,7 @@ mod test {
         let rtp_time_3 = rtp_time_2.wrapping_add(160);
 
         let mut clock = Instant::now();
-        let mut r = ReceiverRegister::new(None, MAX_MISORDER);
+        let mut r = ReceiverRegister::new(None);
 
         r.update_time(clock, rtp_time_1, 8_000);
         clock += Duration::from_millis(50);

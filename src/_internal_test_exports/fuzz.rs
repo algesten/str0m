@@ -22,7 +22,6 @@ use crate::rtp_::{Frequency, MediaTime, Rtcp, RtcpFb, RtcpPacket, RtpHeader, Srt
 use crate::rtp_::{Twcc, TwccPacketId, TwccRecvRegister, TwccSendRegister};
 use crate::sctp::{ChannelConfig, DcepAck, DcepOpen, SctpInitData};
 use crate::streams::register::ReceiverRegister;
-use crate::streams::register_nack::MAX_MISORDER;
 use crate::streams::rtx_cache_buf::EvictingBuffer;
 use crate::{Bitrate, Input, Output, Rtc, RtcConfig, SendAddr};
 
@@ -141,7 +140,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
 
 pub fn receive_register(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
-    let mut rr = ReceiverRegister::new(None, MAX_MISORDER);
+    let mut rr = ReceiverRegister::new(None);
     let start = Instant::now();
     loop {
         match rng.u8(2)? {

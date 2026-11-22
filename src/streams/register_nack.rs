@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use crate::rtp_::{Nack, NackEntry, ReportList, SeqNo};
 
 /// Default number of out-of-order packets tracked for NACK.
-pub(crate) const MAX_MISORDER: u64 = 100;
+const MAX_MISORDER: u64 = 100;
 
 /// Cap per-stream allocation and stay below the 16-bit RTP half-range.
-pub(super) const MAX_NACK_WINDOW: u64 = 1 << 14;
+const MAX_NACK_WINDOW: u64 = 1 << 14;
 
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
@@ -17,8 +17,9 @@ const NACK_RETRY_MARGIN: Duration = Duration::from_millis(5);
 
 #[derive(Debug)]
 pub struct NackRegister {
-    /// Status of packets indexed by wrapping SeqNo.
+    /// Status of packets indexed by wrapping SeqNo. Allocated on first use.
     packets: Vec<PacketStatus>,
+    window: u64,
 
     /// Range of seq numbers considered NACK reporting.
     active: Option<Range<SeqNo>>,
@@ -104,21 +105,40 @@ impl NackRegister {
     /// Creates a new register.
     ///
     /// The max_seq_no is to provide a starting point for ROC calculations.
-    /// `max_misorder` is how many packets behind the newest one a missing
-    /// packet is still tracked (NACKed, and accepted when it arrives).
-    pub fn new(max_seq_no: Option<SeqNo>, max_misorder: u64) -> Self {
-        // Circular buffer size
-        let size = max_misorder.clamp(1, MAX_NACK_WINDOW) + 1;
-        let mut n = NackRegister {
-            packets: vec![PacketStatus::default(); size as usize],
+    pub fn new(max_seq_no: Option<SeqNo>) -> Self {
+        let mut register = Self {
+            packets: Vec::new(),
+            window: MAX_MISORDER,
             active: None,
         };
+        register.clear(max_seq_no);
+        register
+    }
 
-        if let Some(seq) = max_seq_no {
-            n.init_with_seq(seq);
+    pub(super) fn set_window(&mut self, packets: usize) {
+        let window = (packets as u64).clamp(1, MAX_NACK_WINDOW);
+        if self.window != window {
+            self.window = window;
+            self.clear(self.max_seq());
         }
+    }
 
-        n
+    pub(super) fn clear(&mut self, max_seq_no: Option<SeqNo>) {
+        self.active = None;
+        self.packets = Vec::new();
+        if let Some(seq) = max_seq_no {
+            self.init_with_seq(seq);
+        }
+    }
+
+    pub(super) fn seed_from_history(&mut self, lookup: impl FnOnce() -> Option<SeqNo>) {
+        if self.packets.is_empty() {
+            self.packets
+                .resize(self.window as usize + 1, PacketStatus::default());
+            if let Some(seq) = lookup() {
+                self.init_with_seq(seq);
+            }
+        }
     }
 
     pub fn accepts(&self, seq: SeqNo) -> bool {
@@ -152,7 +172,7 @@ impl NackRegister {
         let end = active.end.max(seq);
 
         let start: SeqNo = {
-            let min = end.saturating_sub(self.max_misorder());
+            let min = end.saturating_sub(self.window);
             let mut start = (*active.start).max(min);
             while start < *end {
                 if !self.packet_mut(start.into()).received && start != *seq {
@@ -186,12 +206,9 @@ impl NackRegister {
         new
     }
 
-    /// How many packets behind the newest one are tracked.
-    pub fn max_misorder(&self) -> u64 {
-        self.packets.len() as u64 - 1
-    }
-
     fn init_with_seq(&mut self, seq: SeqNo) {
+        self.packets
+            .resize(self.window as usize + 1, PacketStatus::default());
         self.active = Some(seq..seq);
         self.packet_mut(seq).mark_received();
     }
@@ -308,7 +325,7 @@ mod test {
         ] {
             let base = Instant::now();
             let measured = rtt.unwrap_or(Duration::from_millis(100));
-            let mut reg = NackRegister::new(None, MAX_MISORDER);
+            let mut reg = NackRegister::new(None);
             reg.update(10.into());
             reg.update(12.into());
             let mut now = base;
@@ -341,7 +358,7 @@ mod test {
 
     #[test]
     fn pending_nacks_follow_repair_and_retry_exhaustion() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         assert!(!reg.has_pending_nacks());
 
         reg.update(10.into());
@@ -384,7 +401,7 @@ mod test {
             (Some(Duration::from_millis(20)), 25),
             (Some(Duration::from_millis(250)), 255),
         ] {
-            let mut reg = NackRegister::new(None, MAX_MISORDER);
+            let mut reg = NackRegister::new(None);
             reg.update(10.into());
             reg.update(13.into());
             let now = Instant::now();
@@ -413,7 +430,7 @@ mod test {
 
     #[test]
     fn nack_new_losses_and_retries_have_independent_deadlines() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         let now = Instant::now();
         reg.update(10.into());
         reg.update(12.into());
@@ -460,7 +477,7 @@ mod test {
 
     #[test]
     fn nack_retry_uses_updated_rtt() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         reg.update(10.into());
         reg.update(12.into());
         let now = Instant::now();
@@ -484,7 +501,7 @@ mod test {
 
     #[test]
     fn nack_repair_clears_only_recovered_packet_state() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         reg.update(10.into());
         reg.update(14.into());
         let now = Instant::now();
@@ -505,7 +522,7 @@ mod test {
 
     #[test]
     fn nack_window_reuse_clears_retry_state() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         reg.update(10.into());
         reg.update(12.into());
         let now = Instant::now();
@@ -526,7 +543,7 @@ mod test {
 
     #[test]
     fn nack_retry_timing_across_sequence_rollover() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         reg.update(65_534.into());
         reg.update(65_538.into());
         let now = Instant::now();
@@ -599,7 +616,7 @@ mod test {
 
     #[test]
     fn active_window_sliding() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         assert!(reg.accepts(10.into()));
         assert_update(&mut reg, 10, true, true, 10..10);
@@ -651,13 +668,14 @@ mod test {
     fn wider_window_accepts_late_packets() {
         // A retransmission 500 packets behind the newest one.
         let late = |max_misorder| {
-            let mut reg = NackRegister::new(None, max_misorder);
+            let mut reg = NackRegister::new(None);
+            reg.set_window(max_misorder);
             reg.update(10.into());
             reg.update(12.into());
             reg.update(510.into());
             (reg.accepts(11.into()), reg.update(11.into()))
         };
-        assert_eq!(late(MAX_MISORDER), (false, false));
+        assert_eq!(late(MAX_MISORDER as usize), (false, false));
         assert_eq!(late(1000), (true, true));
     }
 
@@ -665,7 +683,8 @@ mod test {
     fn wider_window_nacks_further_back() {
         // A packet lost 500 packets behind the newest one is still NACKed.
         let nacked = |max_misorder| {
-            let mut reg = NackRegister::new(None, max_misorder);
+            let mut reg = NackRegister::new(None);
+            reg.set_window(max_misorder);
             reg.update(10.into());
             reg.update(12.into());
             reg.update(510.into());
@@ -675,22 +694,22 @@ mod test {
                 .flat_map(|nack| nack.reports.into_iter())
                 .any(|entry| entry.pid == 11)
         };
-        assert!(!nacked(MAX_MISORDER));
+        assert!(!nacked(MAX_MISORDER as usize));
         assert!(nacked(1000));
     }
 
     #[test]
     fn window_is_clamped() {
-        assert_eq!(NackRegister::new(None, 0).max_misorder(), 1);
-        assert_eq!(
-            NackRegister::new(None, u64::MAX).max_misorder(),
-            super::MAX_NACK_WINDOW
-        );
+        let mut reg = NackRegister::new(None);
+        reg.set_window(0);
+        assert_eq!(reg.window, 1);
+        reg.set_window(usize::MAX);
+        assert_eq!(reg.window, super::MAX_NACK_WINDOW);
     }
 
     #[test]
     fn nack_report_none() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(110.into());
@@ -702,7 +721,7 @@ mod test {
 
     #[test]
     fn nack_test_huge_seq_gap_no_hang() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         reg.update(0.into());
         reg.update(18446744073709551515.into());
@@ -710,7 +729,7 @@ mod test {
 
     #[test]
     fn nack_report_one() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(110.into());
@@ -729,7 +748,7 @@ mod test {
 
     #[test]
     fn nack_report_two() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         assert!(reg.nack_reports(Instant::now(), None).is_none());
 
         reg.update(110.into());
@@ -748,7 +767,7 @@ mod test {
 
     #[test]
     fn nack_report_with_hole() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         for i in &[100, 101, 103, 105, 106, 107, 108, 109, 110] {
             reg.update((*i).into());
@@ -766,7 +785,7 @@ mod test {
 
     #[test]
     fn nack_report_stop_at_17() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         let seq = &[
             100, 101, 103, 104, 105, 106, 107, 108, 109, 110, //
@@ -790,7 +809,7 @@ mod test {
 
     #[test]
     fn nack_report_hole_at_17() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         let seq = &[
             100, 101, 103, 104, 105, 106, 107, 108, 109, 110, //
@@ -814,7 +833,7 @@ mod test {
 
     #[test]
     fn nack_report_no_stop_all_there() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         let seq = &[
             100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, //
@@ -831,7 +850,7 @@ mod test {
 
     #[test]
     fn nack_report_rtx() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         for i in &[
             100, 101, 102, 103, 104, 105, //
         ] {
@@ -865,7 +884,7 @@ mod test {
     fn nack_report_rollover_rtx() {
         // This test is checking that after rollover nacks are not skipped because of
         // packet position that would remain marked as received from before the rollover
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         for i in &[
             100, 101, 102, 103, 104, 105, 106, 108, 109, 110, 111, 112, 113, 114, 115,
         ] {
@@ -892,7 +911,7 @@ mod test {
 
     #[test]
     fn nack_report_rollover_rtx_with_seq_jump() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         // 2999 is missing
         for i in 0..2999 {
@@ -916,7 +935,7 @@ mod test {
 
     #[test]
     fn out_of_order_and_rollover() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         reg.update(2998.into());
         reg.update(2999.into());
@@ -950,7 +969,7 @@ mod test {
 
         for (missing, expected) in missing.iter().zip(expected.iter()) {
             let mut seqs: Vec<_> = range.clone().collect();
-            let mut reg = NackRegister::new(None, MAX_MISORDER);
+            let mut reg = NackRegister::new(None);
 
             seqs.retain(|x| *x != *missing);
             for i in seqs.as_slice() {
@@ -968,7 +987,7 @@ mod test {
 
     #[test]
     fn nack_check_forward_at_boundary() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         for i in 2996..=3003 {
             reg.update(i.into());
         }
@@ -989,7 +1008,7 @@ mod test {
 
     #[test]
     fn nack_check_forward_at_u16_boundary() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
         for i in 65500..=65534 {
             reg.update(i.into());
         }
@@ -1018,7 +1037,7 @@ mod test {
 
     #[test]
     fn nack_reports_on_boundaries() {
-        let mut reg = NackRegister::new(None, MAX_MISORDER);
+        let mut reg = NackRegister::new(None);
 
         for i in 0..=20 {
             // gap must be at least 17 packets to separate the reports.
