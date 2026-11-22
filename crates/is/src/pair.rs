@@ -50,6 +50,9 @@ pub struct CandidatePair {
     /// Last remote binding request.
     remote_binding_request_time: Option<Instant>,
 
+    /// Last remote binding request carrying USE-CANDIDATE.
+    remote_nomination_time: Option<Instant>,
+
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
 
@@ -160,6 +163,7 @@ impl CandidatePair {
             cached_next_attempt_time: Default::default(),
             remote_binding_requests: Default::default(),
             remote_binding_request_time: Default::default(),
+            remote_nomination_time: Default::default(),
             nomination_state: Default::default(),
             responses_received: 0,
             total_round_trip_time: Duration::ZERO,
@@ -223,6 +227,14 @@ impl CandidatePair {
 
     pub fn remote_binding_request_time(&self) -> Option<Instant> {
         self.remote_binding_request_time
+    }
+
+    pub fn record_remote_nomination(&mut self, now: Instant) {
+        self.remote_nomination_time = Some(now);
+    }
+
+    pub fn remote_nomination_time(&self) -> Option<Instant> {
+        self.remote_nomination_time
     }
 
     pub fn is_ice_lite_alive(&self, now: Instant) -> bool {
@@ -505,6 +517,7 @@ impl CandidatePair {
     pub(crate) fn copy_remote_binding_requests(&mut self, other: &CandidatePair) {
         self.remote_binding_requests = other.remote_binding_requests;
         self.remote_binding_request_time = other.remote_binding_request_time;
+        self.remote_nomination_time = other.remote_nomination_time;
 
         // ICE-lite pairs are validated by incoming requests. Preserve that
         // validation when a higher-priority candidate replaces the pair.
