@@ -419,32 +419,15 @@ impl H265Packetizer {
                 // DON should be N + count. (RFC 7798 §4.4.2)
                 self.increment_donl_by(count as u16);
             } else {
-                // AP exceeds MTU. Fall back to emitting parameter sets as individual
-                // Single NAL Unit packets (RFC 7798 §4.4.1).
+                // AP exceeds MTU. Fall back to emitting the parameter sets one by one, as Single
+                // NAL Unit packets or, if too large, as Fragmentation Units (RFC 7798 §4.4.1,
+                // §4.4.3). Without them, the picture cannot be decoded.
                 let vps = self.vps_nalu.take();
                 let sps = self.sps_nalu.take();
                 let pps = self.pps_nalu.take();
 
                 for nal_unit in [&vps, &sps, &pps].into_iter().flatten() {
-                    if nal_unit.len() <= mtu {
-                        if let Some(ref mut donl_value) = self.donl {
-                            // Single NAL with DONL per RFC 7798 §4.4.1:
-                            // [PayloadHdr(2B)] [DONL(2B)] [NAL_payload_data]
-                            self.pkt_buf.clear();
-                            self.pkt_buf
-                                .extend_from_slice(&nal_unit[..H265NALU_HEADER_SIZE]);
-                            self.pkt_buf.extend_from_slice(&donl_value.to_be_bytes());
-                            self.pkt_buf
-                                .extend_from_slice(&nal_unit[H265NALU_HEADER_SIZE..]);
-                            out.push(self.pkt_buf.clone());
-                            *donl_value = donl_value.wrapping_add(1);
-                        } else {
-                            out.push(nal_unit.clone());
-                        }
-                    }
-                    // If parameter set is larger than MTU, we could fragment it as FU, but in practice
-                    // VPS/SPS/PPS are typically small. Silently dropping oversized parameter sets
-                    // is acceptable as a fallback.
+                    self.emit_single_or_fragmented(nal_unit, mtu, out);
                 }
             }
 
@@ -454,6 +437,14 @@ impl H265Packetizer {
             self.sps_nalu = None;
             self.pps_nalu = None;
         }
+
+        self.emit_single_or_fragmented(nalu, mtu, out);
+    }
+
+    /// Emits a NAL unit as a Single NAL Unit packet, or as Fragmentation Units if it does not fit
+    /// in one.
+    fn emit_single_or_fragmented(&mut self, nalu: &[u8], mtu: usize, out: &mut Vec<Vec<u8>>) {
+        let original_type = H265NALUHeader::new(nalu[0], nalu[1]).nalu_type();
 
         // Single NAL Unit packetization (RFC 7798 §4.4.1).
         // https://datatracker.ietf.org/doc/html/rfc7798#section-4.4.1
@@ -3406,6 +3397,41 @@ mod test {
             assert_eq!(out[1], sps, "Second packet should be SPS");
             assert_eq!(out[2], pps, "Third packet should be PPS");
             assert_eq!(out[3], vcl, "Fourth packet should be VCL");
+
+            Ok(())
+        }
+
+        /// A parameter set that does not fit in a packet goes out as Fragmentation Units, since
+        /// the picture cannot be decoded without it.
+        #[test]
+        fn test_h265_packetizer_fragments_oversized_parameter_set() -> Result<()> {
+            let mut p = H265Packetizer::default();
+            let vps = vec![0x40, 0x01, 0x01, 0x02];
+            let mut sps = vec![0x42, 0x01];
+            sps.extend(0..100);
+            let pps = vec![0x44, 0x01, 0x06];
+            let vcl = vec![0x02, 0x01, 0xaa, 0xbb];
+            for parameter_set in [&vps, &sps, &pps] {
+                assert!(p.packetize(1200, parameter_set)?.is_empty());
+            }
+
+            let mtu = 50;
+            let out = p.packetize(mtu, &vcl)?;
+            assert!(out.iter().all(|packet| packet.len() <= mtu));
+            // VPS, then the SPS in three Fragmentation Units, then PPS and VCL.
+            assert_eq!(out.len(), 6);
+            assert!(out[1..4].iter().all(|packet| packet[0] >> 1 == 49));
+
+            let mut depacketizer = H265Depacketizer::default();
+            let mut output = Vec::new();
+            for packet in &out {
+                depacketizer.depacketize(packet, &mut output, &mut CodecExtra::None)?;
+            }
+            let expected: Vec<u8> = [&vps, &sps, &pps, &vcl]
+                .into_iter()
+                .flat_map(|nal| ANNEXB_NALUSTART_CODE.iter().chain(nal).copied())
+                .collect();
+            assert_eq!(output, expected);
 
             Ok(())
         }

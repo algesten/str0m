@@ -393,23 +393,16 @@ impl H266Packetizer {
                 // One DONL per aggregated NAL unit.
                 self.increment_donl_by(count as u16);
             } else {
-                // Fall back to individual Single NAL packets.
-                let fallback_donl_overhead = if self.donl.is_some() { 2 } else { 0 };
-                for nal_unit in nal_units {
-                    if nal_unit.len() + fallback_donl_overhead <= mtu {
-                        if let Some(ref mut donl_value) = self.donl {
-                            self.pkt_buf.clear();
-                            self.pkt_buf
-                                .extend_from_slice(&nal_unit[..H266NALU_HEADER_SIZE]);
-                            self.pkt_buf.extend_from_slice(&donl_value.to_be_bytes());
-                            self.pkt_buf
-                                .extend_from_slice(&nal_unit[H266NALU_HEADER_SIZE..]);
-                            out.push(self.pkt_buf.clone());
-                            *donl_value = donl_value.wrapping_add(1);
-                        } else {
-                            out.push(nal_unit.to_vec());
-                        }
-                    }
+                // Fall back to a Single NAL packet per parameter set, or to Fragmentation Units
+                // for one that does not fit in a packet. Without them, the picture cannot be
+                // decoded.
+                let parameter_sets = [
+                    self.vps_nalu.take(),
+                    self.sps_nalu.take(),
+                    self.pps_nalu.take(),
+                ];
+                for nal_unit in parameter_sets.iter().flatten() {
+                    self.emit_single_or_fragmented(nal_unit, mtu, out);
                 }
             }
 
@@ -417,6 +410,13 @@ impl H266Packetizer {
             self.sps_nalu = None;
             self.pps_nalu = None;
         }
+
+        self.emit_single_or_fragmented(nalu, mtu, out);
+    }
+
+    /// Emit a NAL unit as a Single NAL unit packet, or as FUs if it does not fit in one.
+    fn emit_single_or_fragmented(&mut self, nalu: &[u8], mtu: usize, out: &mut Vec<Vec<u8>>) {
+        let original_type = H266NALUHeader::new(nalu[0], nalu[1]).nalu_type();
 
         // Single NAL unit packet (RFC 9328 §4.3.1).
         // With DONL enabled, 2 extra bytes follow the NAL header.
@@ -1393,6 +1393,28 @@ mod test {
             assert_eq!(packets[0], sps);
             assert_eq!(packets[1], pps);
             assert_eq!(packets[2], idr);
+            Ok(())
+        }
+
+        /// A parameter set that does not fit in a packet goes out as Fragmentation Units, since
+        /// the picture cannot be decoded without it.
+        #[test]
+        fn test_h266_packetizer_fragments_oversized_parameter_set() -> Result<()> {
+            let mtu = 700;
+            let sps = make_nal(H266NALU_SPS_NALU_TYPE, 600);
+            let pps = make_nal(H266NALU_PPS_NALU_TYPE, 900);
+            let idr = make_nal(H266NALU_IDR_W_RADL, 50);
+            let payload = annexb(&[&sps, &pps, &idr]);
+
+            let mut pck = H266Packetizer::default();
+            let packets = pck.packetize(mtu, &payload)?;
+
+            assert!(packets.iter().all(|packet| packet.len() <= mtu));
+            // SPS, then the PPS in two Fragmentation Units, then IDR.
+            assert_eq!(packets.len(), 4);
+            let (out, keyframe) = depacketize_all(&packets)?;
+            assert_eq!(out, annexb(&[&sps, &pps, &idr]));
+            assert!(keyframe);
             Ok(())
         }
 
