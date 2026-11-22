@@ -1,6 +1,6 @@
 # Unreleased
 
-  * Send H.264, H.265 and H.266 parameter sets that do not fit an aggregation packet instead of dropping them #1163
+  * Send oversized H.264, H.265 and H.266 parameter sets #1163
   * Prefer BUNDLE media transport attributes over SDP session defaults #1158
   * Warn and ignore conflicting SDP mappings without panicking #1159
   * Align loss-based BWE bounds with libwebrtc to prevent pacer panics under sustained loss #1137
