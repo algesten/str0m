@@ -110,6 +110,10 @@ impl DelayController {
     }
 
     pub fn handle_timeout(&mut self, acked_bitrate: Option<Bitrate>, now: Instant) {
+        if now < self.next_timeout {
+            return;
+        }
+
         if !self.trendline_hypothesis_valid(now) {
             // We haven't received a TWCC report in a while. The trendline hypothesis can
             // no longer be considered valid. We need another TWCC report before we can update
@@ -222,5 +226,33 @@ impl DelayController {
                 .map(|rtt| rtt * 2)
                 .unwrap_or(MAX_TWCC_GAP)
                 .min(UPDATE_INTERVAL * 2)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn periodic_updates_respect_their_deadline() {
+        let start = Instant::now();
+        let mut controller = DelayController::new(Bitrate::kbps(300));
+        let throughput = Some(Bitrate::mbps(1));
+        let estimate = controller.update(&[], throughput, None, start);
+        let deadline = controller.poll_timeout();
+        let early = start + Duration::from_millis(1);
+
+        controller.handle_timeout(throughput, early);
+        assert_eq!(controller.poll_timeout(), deadline);
+        assert_eq!(controller.last_estimate(), estimate);
+
+        let probe = Some(Bitrate::kbps(600));
+        assert_eq!(controller.update(&[], throughput, probe, early), probe);
+        let deadline = early + UPDATE_INTERVAL;
+        assert_eq!(controller.poll_timeout(), deadline);
+
+        controller.handle_timeout(throughput, deadline);
+        assert!(controller.last_estimate().unwrap() > probe.unwrap());
+        assert_eq!(controller.poll_timeout(), deadline + UPDATE_INTERVAL);
     }
 }
