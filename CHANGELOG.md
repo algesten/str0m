@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Align ALR detector defaults with GoogCC #1182
+
 # 0.26.0
 
   * Follow libWebRTC ICE nominations after NAT rebinding #1168
