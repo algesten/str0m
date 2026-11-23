@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Reject a disabled `m=application` (port 0, mid out of BUNDLE) instead of answering it accepted and starting SCTP #1160
+  * `RtcConfig::enable_datachannels` to refuse data channels for the life of an `Rtc` #1160
   * Align ALR detector defaults with GoogCC #1182
 
 # 0.26.0

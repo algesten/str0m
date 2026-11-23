@@ -460,7 +460,10 @@ impl<'a> SdpApi<'a> {
         let has_media = self.rtc.session.app().is_some();
         let changes_contains_add_app = self.changes.contains_add_app();
 
-        if !has_media && !changes_contains_add_app {
+        if !has_media
+            && !changes_contains_add_app
+            && self.rtc.session.enable_datachannels
+        {
             let mid = self.new_mid();
             self.changes.0.push(Change::AddApp(mid));
         }
@@ -1172,7 +1175,22 @@ fn add_new_lines(
 
             session.add_media(media);
         } else if m.typ.is_channel() {
-            session.set_app(m.mid(), idx)?;
+            // Same rejection rule as media: port 0 and mid out of BUNDLE.
+            // Config can also refuse data channels regardless of SDP.
+            let is_in_bundle = bundle_mids
+                .map(|mids| mids.contains(&m.mid()))
+                .unwrap_or(false);
+            let is_rejected =
+                (m.disabled && !is_in_bundle) || !session.enable_datachannels;
+            if is_rejected {
+                // Keep the m-line slot so the answer matches the offer's
+                // section count, but do not enable SCTP.
+                let mut media = Media::from_app_tmp(m.mid(), idx);
+                media.mark_stopped();
+                session.add_media(media);
+            } else {
+                session.set_app(m.mid(), idx)?;
+            }
         } else {
             return Err(format!(
                 "New m-line is neither media nor channel: {}",
@@ -1460,7 +1478,9 @@ impl AsSdpMediaLine for Media {
     ) -> MediaLine {
         if self.app_tmp {
             let app = (self.mid(), self.index());
-            return app.as_media_line(attrs, ssrcs_tx, exts, params);
+            let mut line = app.as_media_line(attrs, ssrcs_tx, exts, params);
+            line.disabled = self.disabled();
+            return line;
         }
 
         attrs.push(MediaAttribute::Mid(self.mid()));
