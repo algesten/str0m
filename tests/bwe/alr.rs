@@ -24,7 +24,7 @@ fn bwe_allocation_probe_on_desired_increase_outside_alr() -> Result<(), RtcError
         },
         Step::Media {
             description: "Send enough media to stay outside ALR",
-            desired_bitrate: Bitrate::mbps(3),
+            desired_bitrate: Bitrate::mbps(2),
             media_send_rate: Bitrate::mbps(2),
         },
         Step::Run {
@@ -33,7 +33,7 @@ fn bwe_allocation_probe_on_desired_increase_outside_alr() -> Result<(), RtcError
         },
         Step::Media {
             description: "Keep demand and traffic unchanged after startup",
-            desired_bitrate: Bitrate::mbps(3),
+            desired_bitrate: Bitrate::mbps(2),
             media_send_rate: Bitrate::mbps(2),
         },
         Step::Run {
@@ -57,7 +57,7 @@ fn bwe_allocation_probe_on_desired_increase_outside_alr() -> Result<(), RtcError
             check: Arc::new(|_, probe| !probe.is_alr_probe()),
         },
     ];
-    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(3));
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(2));
     let mut ctx = BweTestContext::new(&mut l, &mut r);
     ctx.run_plan(&mut l, &mut r, &plan)?;
     Ok(())
@@ -198,9 +198,9 @@ fn alr_exit_has_hysteresis() -> Result<(), RtcError> {
             check: Arc::new(|_index, probe| probe.is_alr_probe()),
         },
         // Increase send rate to the hysteresis gap (between entry and exit thresholds)
-        // Entry: ratio > 0.80 (utilization < 20%)
-        // Exit: ratio < 0.50 (utilization > 50%)
-        // Gap: 0.50-0.80 ratio (20-50% utilization) - should STAY in ALR
+        // Entry: ratio > 0.40 (credit > 40%)
+        // Exit: ratio < -0.60 (debt > 60%)
+        // Gap: -0.60-0.40 ratio (60% debt to 40% credit) - should STAY in ALR
         Step::Media {
             description: "Increase to ~35% utilization (in hysteresis gap)",
             desired_bitrate: Bitrate::mbps(5),
@@ -221,9 +221,9 @@ fn alr_exit_has_hysteresis() -> Result<(), RtcError> {
         },
         // Now increase above exit threshold to confirm we eventually exit
         Step::Media {
-            description: "Increase to 60% utilization (above exit threshold)",
+            description: "Increase to 100% utilization (above exit threshold)",
             desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::mbps(2), // ~60% of 3 Mbps estimate
+            media_send_rate: Bitrate::mbps(3), // ~100% of 3 Mbps estimate
         },
         Step::Run {
             description: "Wait for ALR exit",

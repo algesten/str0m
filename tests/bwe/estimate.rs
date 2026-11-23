@@ -58,9 +58,9 @@ fn estimate_recovers_after_capacity_restoration() -> Result<(), RtcError> {
                 .seed(42),
         },
         Step::Media {
-            description: "Send at 2 Mbps",
+            description: "Send at 4.5 Mbps",
             desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::mbps(2),
+            media_send_rate: Bitrate::kbps(4500),
         },
         Step::Run {
             description: "Establish baseline",

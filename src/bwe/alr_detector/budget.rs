@@ -104,8 +104,8 @@ impl IntervalBudget {
     /// - -1.0 = maximum debt (maximum overuse)
     ///
     /// Used by ALR detector for hysteresis thresholds:
-    /// - Enter ALR when ratio > 0.80 (sustained low usage)
-    /// - Exit ALR when ratio < 0.50 (increased usage)
+    /// - Enter ALR when ratio > 0.40 (sustained low usage)
+    /// - Exit ALR when ratio < -0.60 (increased usage)
     pub fn budget_ratio(&self) -> f64 {
         let max = self.max_bytes_in_budget.as_bytes_i64();
         if max == 0 {
@@ -247,25 +247,25 @@ mod tests {
     fn test_alr_hysteresis_thresholds() {
         let mut budget = IntervalBudget::new(Bitrate::kbps(300), true);
 
-        // Simulate ALR entry threshold (80% budget ratio)
+        // Simulate ALR entry threshold (40% budget ratio)
         let target_bytes =
-            (0.8 * (Bitrate::kbps(300) * Duration::from_millis(500)).as_bytes_i64() as f64) as i64;
+            (0.4 * (Bitrate::kbps(300) * Duration::from_millis(500)).as_bytes_i64() as f64) as i64;
 
-        // Accumulate budget to 80% threshold
+        // Accumulate budget to 40% threshold
         while budget.bytes_remaining() < target_bytes {
             budget.increase_budget(Duration::from_millis(50));
         }
 
-        assert!(budget.budget_ratio() >= 0.80);
+        assert!(budget.budget_ratio() >= 0.40);
 
-        // Simulate ALR exit threshold (50% budget ratio)
+        // Simulate ALR exit threshold (-60% budget ratio)
         // Use budget to bring ratio down
         let use_amount =
-            (0.30 * (Bitrate::kbps(300) * Duration::from_millis(500)).as_bytes_i64() as f64) as i64;
+            (1.00 * (Bitrate::kbps(300) * Duration::from_millis(500)).as_bytes_i64() as f64) as i64;
         budget.use_budget(DataSize::bytes(use_amount));
 
-        assert!(budget.budget_ratio() < 0.80);
-        assert!(budget.budget_ratio() > 0.40); // Should be around 50%
+        assert!(budget.budget_ratio() < -0.50);
+        assert!(budget.budget_ratio() > -0.70); // Should be around -60%
     }
 
     #[test]
