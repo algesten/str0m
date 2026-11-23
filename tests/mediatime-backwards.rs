@@ -2,31 +2,26 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
-use str0m::media::{Direction, MediaKind, MediaTime};
-use str0m::rtp::RawPacket;
+use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid, Pt};
 use str0m::{Event, RtcError};
-use tracing::info;
 
 mod common;
 use common::{Peer, TestRtc, init_crypto_default, init_log, progress};
 
+/// A sender resuming more than half the 32-bit timestamp range ahead, while in the first
+/// timestamp cycle, moves media time forward by that jump.
 #[test]
-pub fn mediatime_backwards() -> Result<(), RtcError> {
+pub fn timestamp_jump_past_half_range_after_pause_moves_media_time_forward() -> Result<(), RtcError>
+{
     init_log();
     init_crypto_default();
 
     let mut l = TestRtc::new(Peer::Left);
     let mut r = TestRtc::new(Peer::Right);
 
-    // Enable raw packets to trace the RTP headers
-    r.rtc = str0m::Rtc::builder()
-        .enable_raw_packets(true)
-        .build(Instant::now());
-
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     let (offer, pending) = change.apply().unwrap();
@@ -49,157 +44,72 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
-    let data_a = vec![1_u8; 80];
-
-    // First, send some normal packets with timestamps < 2^31
-    let base_timestamp = 1_000_000_u32; // Well below 2^31
-
-    // Send 10 normal packets
+    const FRAME: u64 = 960;
+    let base = 1_000_000;
     for i in 0..10 {
-        let wallclock = l.start + l.duration();
-        let timestamp = base_timestamp + i * 960; // Standard Opus timestamp increment
-        let time = MediaTime::from_90khz(timestamp as u64);
-
-        l.rtc
-            .writer(mid)
-            .unwrap()
-            .write(pt, wallclock, time, data_a.clone())?;
-
-        progress(&mut l, &mut r)?;
+        write_opus(&mut l, &mut r, mid, pt, base + i * FRAME)?;
     }
 
-    info!("Sent 10 normal packets with regular timestamps");
-
-    // Store the last RTP timestamp we observed before the pause
-    let mut last_ts_before_pause: Option<u32> = None;
-
-    // Get the last timestamp from received packets
-    for (_, event) in &r.events {
-        if let Event::RawPacket(raw_packet) = event {
-            if let RawPacket::RtpRx(header, _) = &**raw_packet {
-                last_ts_before_pause = Some(header.timestamp);
-            }
-        }
-    }
-
-    info!("Last timestamp before pause: {:?}", last_ts_before_pause);
-
-    // Now advance time by more than 1.5 seconds (default pause threshold) without sending any packets
-    // This will trigger the pause condition in the receiver
-    let pause_duration = Duration::from_millis(2000);
-
-    // Advance time using timeouts instead of sleep
-    let pause_end = l.last + pause_duration;
+    // Nothing is sent for longer than the default pause threshold.
+    let pause_end = l.last + Duration::from_millis(2500);
     while l.last < pause_end {
-        // Just handle timeouts without sending any packets
         progress(&mut l, &mut r)?;
     }
-
-    info!(
-        "Advanced time by {} ms to trigger pause",
-        pause_duration.as_millis()
-    );
-
-    // Wait to ensure we get a paused event
-    let mut seen_paused = false;
-    let pause_check_start = l.last;
-    let pause_check_timeout = Duration::from_millis(500);
-
-    while !seen_paused && l.last < pause_check_start + pause_check_timeout {
-        progress(&mut l, &mut r)?;
-
-        // Check for pause event
-        for (_, event) in &r.events {
-            if let Event::StreamPaused(stream_paused) = event {
-                if stream_paused.paused {
-                    seen_paused = true;
-                    info!("Confirmed stream is paused");
-                    break;
-                }
-            }
-        }
-    }
-
     assert!(
-        seen_paused,
-        "Stream did not enter paused state within timeout"
+        r.events
+            .iter()
+            .any(|(_, event)| matches!(event, Event::StreamPaused(p) if p.paused))
     );
+    let before_pause: Vec<u64> = (0..10).map(|i| base + i * FRAME).collect();
+    assert_eq!(media_times(&r.events), before_pause);
 
-    // Now send a packet with a timestamp that will trigger the bug
-    // We need timestamp > 2^31 + previous_timestamp to trigger the backwards condition
-    // Using the threshold from header.rs, HALF = 1 << 31
-    let problematic_timestamp = (1u32 << 31) + base_timestamp + 10 * 960;
-
-    info!(
-        "Sending packet with problematic timestamp: {}",
-        problematic_timestamp
-    );
-
-    let wallclock = l.start + l.duration();
-    let time = MediaTime::from_90khz(problematic_timestamp as u64);
-
-    // Save the timestamp index for comparison BEFORE sending
-    let events_before_problematic = r.events.len();
-
-    l.rtc
-        .writer(mid)
-        .unwrap()
-        .write(pt, wallclock, time, data_a.clone())?;
-
-    // Process the packet and a few more cycles to ensure it's received
+    let events_before_resume = r.events.len();
+    let resumed = 3_500_000_000;
+    for i in 0..3 {
+        write_opus(&mut l, &mut r, mid, pt, resumed + i * FRAME)?;
+    }
     for _ in 0..10 {
         progress(&mut l, &mut r)?;
     }
 
-    // We're looking for evidence that:
-    // 1. The stream unpaused (proving packet was received)
-    // 2. The timestamp value in the received packet
-    let mut problematic_ts: Option<u32> = None;
-    let mut stream_unpaused_after_problematic = false;
-
-    // Only look at events that occurred after sending our problematic packet
-    for (_, (_, event)) in r.events.iter().enumerate().skip(events_before_problematic) {
-        match event {
-            Event::RawPacket(raw_packet) => {
-                if let RawPacket::RtpRx(header, _) = &**raw_packet {
-                    info!("After pause - RTP timestamp: {}", header.timestamp);
-                    problematic_ts = Some(header.timestamp);
-                }
-            }
-            Event::StreamPaused(stream_paused) if !stream_paused.paused => {
-                stream_unpaused_after_problematic = true;
-                info!("Stream unpaused after receiving problematic packet");
-            }
-            _ => {}
-        }
-    }
-
-    // The test succeeds if:
-    // 1. We confirmed the stream was paused
-    // 2. We received the packet with the problematic timestamp
-    // 3. The stream unpaused after receiving the problematic packet
-    // 4. The timestamps continue to move forward after the pause
-
-    assert!(seen_paused, "Stream was never paused");
+    let after_resume = &r.events[events_before_resume..];
     assert!(
-        problematic_ts.is_some(),
-        "Did not receive packet with problematic timestamp"
+        after_resume
+            .iter()
+            .any(|(_, event)| matches!(event, Event::StreamPaused(p) if !p.paused))
     );
-    assert!(
-        stream_unpaused_after_problematic,
-        "Stream did not unpause after receiving problematic packet"
+    assert_eq!(
+        media_times(after_resume),
+        [resumed, resumed + FRAME, resumed + 2 * FRAME]
     );
-
-    // Verify that time moves forward even after a pause with a problematic timestamp
-    // This is the core of the bugfix - ensuring that MediaTime never goes backwards
-    if let (Some(prev_ts), Some(new_ts)) = (last_ts_before_pause, problematic_ts) {
-        assert!(
-            new_ts > prev_ts,
-            "Time went backwards! Previous timestamp: {}, Current timestamp: {}",
-            prev_ts,
-            new_ts
-        );
-    }
 
     Ok(())
+}
+
+/// Write one Opus frame with `timestamp` in the codec's 48 kHz clock, so it reaches the
+/// wire unscaled.
+fn write_opus(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    mid: Mid,
+    pt: Pt,
+    timestamp: u64,
+) -> Result<(), RtcError> {
+    let wallclock = l.start + l.duration();
+    let time = MediaTime::new(timestamp, Frequency::FORTY_EIGHT_KHZ);
+    l.rtc
+        .writer(mid)
+        .unwrap()
+        .write(pt, wallclock, time, vec![1_u8; 80])?;
+    progress(l, r)
+}
+
+fn media_times(events: &[(Instant, Event)]) -> Vec<u64> {
+    events
+        .iter()
+        .filter_map(|(_, event)| match event {
+            Event::MediaData(data) => Some(data.time.numer()),
+            _ => None,
+        })
+        .collect()
 }

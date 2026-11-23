@@ -1060,35 +1060,161 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paused_timestamp_repair_moves_time_forward() {
-        let now = already_happened();
-        let mut stream = StreamRx::new(
-            7.into(),
-            MidRid("mid".into(), None),
-            false,
-            Duration::from_millis(1500),
-        );
-        let previous_time = 1;
-        stream.last_time = Some(MediaTime::new(previous_time, Frequency::NINETY_KHZ));
-        stream.paused = true;
+    fn late_packet_after_arrival_gap_stays_behind() {
+        for gap in [Duration::from_millis(100), Duration::from_secs(10)] {
+            let mut stream = stream_with(&[(10, 1_000_000), (12, 1_001_920)]);
 
-        let header = RtpHeader {
-            payload_type: Pt::new_with_value(96),
-            sequence_number: 42,
-            timestamp: 0,
-            ssrc: 7.into(),
-            ..Default::default()
-        };
+            let now = already_happened() + gap;
+            let late = receive_main_stream_packet(&mut stream, now, 11, 1_000_960);
+            assert_eq!(late.numer(), 1_000_960);
+            let next = receive_main_stream_packet(&mut stream, now, 13, 1_002_880);
+            assert_eq!(next.numer(), 1_002_880);
+        }
+    }
 
-        let seq_no = stream.extend_seq(&header, false, |_| None);
-        let receipt =
-            stream.update_register(now, &header, Frequency::NINETY_KHZ, false, seq_no, false);
+    #[test]
+    fn arrival_gap_with_running_sender_clock_follows_the_clock() {
+        // At 48 kHz, 13 hours is past half the timestamp range and 30 hours is 1.2 times it.
+        for hours in [13, 30] {
+            for start in [1_000_000, 3_000_000_000] {
+                let mut stream = stream_with(&[(10, start)]);
 
-        assert!(
-            receipt.time.numer() > previous_time,
-            "expected repaired media time to move forward"
-        );
-        assert!(!stream.paused);
+                let now = already_happened() + Duration::from_secs(hours * 3600);
+                let resumed = start as u64 + hours * 3600 * 48_000;
+                let first = receive_main_stream_packet(&mut stream, now, 11, resumed as u32);
+                assert_eq!(first.numer(), resumed);
+                let second =
+                    receive_main_stream_packet(&mut stream, now, 12, (resumed + 960) as u32);
+                assert_eq!(second.numer(), resumed + 960);
+            }
+        }
+    }
+
+    #[test]
+    fn arrival_gap_with_stopped_sender_clock_keeps_media_time() {
+        for hours in [13, 30] {
+            for start in [1_000_000, 3_000_000_000] {
+                let mut stream = stream_with(&[(10, start)]);
+
+                let now = already_happened() + Duration::from_secs(hours * 3600);
+                let first = receive_main_stream_packet(&mut stream, now, 11, start + 960);
+                assert_eq!(first.numer(), start as u64 + 960);
+                let second = receive_main_stream_packet(&mut stream, now, 12, start + 1920);
+                assert_eq!(second.numer(), start as u64 + 1920);
+            }
+        }
+    }
+
+    #[test]
+    fn late_packet_after_arrival_gap_with_stopped_sender_clock_stays_behind() {
+        for hours in [13, 30] {
+            let start = 3_000_000_000;
+            let mut stream = stream_with(&[(10, start), (12, start + 1920)]);
+
+            let now = already_happened() + Duration::from_secs(hours * 3600);
+            let late = receive_main_stream_packet(&mut stream, now, 11, start + 960);
+            assert_eq!(late.numer(), start as u64 + 960);
+            let next = receive_main_stream_packet(&mut stream, now, 13, start + 2880);
+            assert_eq!(next.numer(), start as u64 + 2880);
+        }
+    }
+
+    #[test]
+    fn timestamp_jump_past_half_range_stays_in_first_cycle() {
+        let mut stream = stream_with(&[(10, 1_000_000)]);
+
+        let now = already_happened() + Duration::from_millis(20);
+        let jumped = 3_500_000_000;
+        let first = receive_main_stream_packet(&mut stream, now, 11, jumped);
+        assert_eq!(first.numer(), jumped as u64);
+        let second = receive_main_stream_packet(&mut stream, now, 12, jumped + 960);
+        assert_eq!(second.numer(), jumped as u64 + 960);
+    }
+
+    #[test]
+    fn padding_during_arrival_gap_does_not_shorten_the_gap() {
+        // 13 hours at 48 kHz: the sender's clock passed half the timestamp range.
+        for start in [1_000_000, 3_000_000_000] {
+            let mut stream = stream_with(&[(10, start)]);
+
+            // Padding repeats the timestamp of the last media packet.
+            for hour in 1..13 {
+                let now = already_happened() + Duration::from_secs(hour * 3600);
+                let padding = receive_main_stream_packet(&mut stream, now, 10 + hour as u16, start);
+                assert_eq!(padding.numer(), start as u64);
+            }
+
+            let now = already_happened() + Duration::from_secs(13 * 3600);
+            let resumed = start as u64 + 13 * 3600 * 48_000;
+            let media = receive_main_stream_packet(&mut stream, now, 23, resumed as u32);
+            assert_eq!(media.numer(), resumed);
+        }
+    }
+
+    #[test]
+    fn resend_during_arrival_gap_does_not_shorten_the_gap() {
+        // 13 hours at 48 kHz: the sender's clock passed half the timestamp range.
+        for start in [1_000_000, 3_000_000_000] {
+            let mut stream = stream_with(&[(10, start)]);
+
+            let now = already_happened() + Duration::from_secs(13 * 3600 - 60);
+            let resend = resend_main_stream_packet(&mut stream, now, 10, start);
+            assert_eq!(resend.numer(), start as u64);
+
+            let now = already_happened() + Duration::from_secs(13 * 3600);
+            let resumed = start as u64 + 13 * 3600 * 48_000;
+            let media = receive_main_stream_packet(&mut stream, now, 11, resumed as u32);
+            assert_eq!(media.numer(), resumed);
+        }
+    }
+
+    #[test]
+    fn arrival_gap_of_whole_timestamp_cycles_reads_as_stopped_sender_clock() {
+        // Three timestamp cycles at 48 kHz. A clock that ran that long shows the same timestamps
+        // as one that stopped.
+        let gap = Duration::from_micros(268_435_456_000);
+        let start = 1_000_000;
+        let mut stream = stream_with(&[(10, start)]);
+
+        let now = already_happened() + gap;
+        let first = receive_main_stream_packet(&mut stream, now, 11, start + 960);
+        assert_eq!(first.numer(), start as u64 + 960);
+    }
+
+    #[test]
+    fn timestamp_jump_past_half_range_after_first_cycle_takes_the_shorter_step() {
+        let start = 3_000_000_000_u32;
+        let mut stream = stream_with(&[(10, start)]);
+
+        // 2.5e9 ticks ahead is 1_794_967_296 ticks behind.
+        let now = already_happened() + Duration::from_millis(2500);
+        let jumped = start.wrapping_add(2_500_000_000);
+        let first = receive_main_stream_packet(&mut stream, now, 11, jumped);
+        assert_eq!(first.numer(), start as u64 - 1_794_967_296);
+        let second = receive_main_stream_packet(&mut stream, now, 12, jumped + 960);
+        assert_eq!(second.numer(), start as u64 - 1_794_967_296 + 960);
+    }
+
+    #[test]
+    fn sender_report_after_arrival_gap_matches_media_time() {
+        // 13 hours at 48 kHz: the sender's clock passed half the timestamp range.
+        let gap = Duration::from_secs(13 * 3600);
+        let advance = 13 * 3600 * 48_000;
+
+        for start in [1_000_000, 3_000_000_000] {
+            let mut stream = stream_with(&[(10, start)]);
+            stream.last_clock_rate = Some((Pt::new_with_value(111), Frequency::FORTY_EIGHT_KHZ));
+            stream.set_sender_info(already_happened(), sender_info(start));
+
+            let now = already_happened() + gap;
+            let resumed = start as u64 + advance;
+            let media = receive_main_stream_packet(&mut stream, now, 11, resumed as u32);
+            assert_eq!(media.numer(), resumed);
+
+            stream.set_sender_info(now, sender_info((resumed + 960) as u32));
+            let report = stream.sender_info.as_ref().unwrap().info.rtp_time;
+            assert_eq!(report.numer(), resumed + 960);
+        }
     }
 
     /// Feed packets `(seq, rtp_time)` into a fresh stream, as received on the wire.
@@ -1415,6 +1541,63 @@ mod tests {
         assert!(!stream.is_new_packet(true, 65535.into()));
         assert!(stream.is_new_packet(true, seq));
         record_rtx(&mut stream, 65536);
+    }
+
+    /// Receive a packet on the main stream at `now` and return its extended media time.
+    fn receive_main_stream_packet(
+        stream: &mut StreamRx,
+        now: Instant,
+        seq: u16,
+        timestamp: u32,
+    ) -> MediaTime {
+        update_main_stream_register(stream, now, seq, timestamp, false)
+    }
+
+    /// Receive a resend, unwrapped from RTX, at `now` and return its extended media time.
+    fn resend_main_stream_packet(
+        stream: &mut StreamRx,
+        now: Instant,
+        seq: u16,
+        timestamp: u32,
+    ) -> MediaTime {
+        update_main_stream_register(stream, now, seq, timestamp, true)
+    }
+
+    fn update_main_stream_register(
+        stream: &mut StreamRx,
+        now: Instant,
+        seq: u16,
+        timestamp: u32,
+        is_resend: bool,
+    ) -> MediaTime {
+        stream.handle_timeout(now);
+        let header = RtpHeader {
+            payload_type: Pt::new_with_value(111),
+            sequence_number: seq,
+            timestamp,
+            ssrc: 7.into(),
+            ..Default::default()
+        };
+        let seq_no = stream.extend_seq(&header, false, |_| None);
+        let receipt = stream.update_register(
+            now,
+            &header,
+            Frequency::FORTY_EIGHT_KHZ,
+            false,
+            seq_no,
+            is_resend,
+        );
+        receipt.time
+    }
+
+    fn sender_info(rtp_time: u32) -> SenderInfo {
+        SenderInfo {
+            ssrc: 7.into(),
+            ntp_time: std::time::SystemTime::UNIX_EPOCH,
+            rtp_time: MediaTime::from_secs(rtp_time as u64),
+            sender_packet_count: 0,
+            sender_octet_count: 0,
+        }
     }
 
     fn rtx_stream() -> StreamRx {
