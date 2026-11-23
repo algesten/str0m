@@ -66,8 +66,8 @@ const MAX_PLAUSIBLE_RTT: i32 = 60 << COMPACT_NTP_FRACTION_BITS;
 /// can express; the true RTT may be anywhere from zero up to about that value, so treat
 /// sub-resolution RTTs as approximate.
 ///
-/// Returns `None` if no SR has been received by the peer (`delay == 0`), or if the result is
-/// more negative than the rounding tolerance or implausibly large.
+/// Returns `None` if no report has been received by the peer (`last_report == 0`), or if the
+/// result is more negative than the rounding tolerance or implausibly large.
 ///
 /// ## Params
 /// - `ntp_time` the offset since 1900-01-01.
@@ -93,8 +93,9 @@ pub(crate) fn calculate_rtt(ntp_time: Duration, delay: u32, last_report: u32) ->
     // -------------------------------
     // delay 0x0006:2000 (    6.125 s)
 
-    // As per RFC delay is 0 in case no SR packet has been received yet.
-    if delay == 0 {
+    // As per RFC, LSR/LRR is 0 if no report has been received yet. A zero delay is valid when
+    // the peer replies within one compact NTP unit.
+    if last_report == 0 {
         return None;
     }
 
@@ -185,7 +186,15 @@ mod test {
     #[test]
     fn no_sender_report_is_none() {
         let now = ntp_time(0xb44d, 0xb710_8000);
-        assert_eq!(calculate_rtt(now, 0, 0xb705_2000), None);
+        assert_eq!(calculate_rtt(now, 0, 0), None);
+    }
+
+    #[test]
+    fn zero_delay_with_sender_report_is_valid() {
+        // A peer that replies within one compact NTP tick can encode its holding time as zero.
+        // The echoed sender-report timestamp still lets us compute the RTT.
+        let now = ntp_time(0xb44d, 0xb710_8000);
+        assert_eq!(calculate_rtt(now, 0, 0xb710_7fff), Some(ONE_UNIT));
     }
 
     #[test]
