@@ -686,6 +686,7 @@ extern crate tracing;
 use bwe::{Bwe, BweKind};
 use change::{DirectApi, SdpApi};
 use rtp::RawPacket;
+use std::alloc::{Allocator, Global};
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -857,6 +858,9 @@ use crate::poll::Readiness;
 
 mod session;
 use session::Session;
+
+mod allocators;
+use allocators::FromGlobal;
 
 pub mod stats;
 
@@ -1102,14 +1106,15 @@ pub enum Input<'a> {
 }
 
 /// Output produced by [`Rtc::poll_output()`]
+///
+/// `A` is the allocator the contents of an [`Output::Transmit`] are allocated from.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum Output {
+pub enum Output<A: Allocator = Global> {
     /// When the [`Rtc`] instance expects an [`Input::Timeout`].
     Timeout(Instant),
 
     /// Network data that is to be sent.
-    Transmit(net::Transmit),
+    Transmit(net::Transmit<A>),
 
     /// Some event such as media data arriving from the remote peer or connection events.
     Event(Event),
@@ -1585,10 +1590,27 @@ impl Rtc {
     ///
     /// See [`Rtc`] instance documentation for how this is expected to be used in a loop.
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
+        self.poll_output_with(Global)
+    }
+
+    /// Like [`Rtc::poll_output()`], allocating temporaries and the contents of an
+    /// [`Output::Transmit`] from `shortlived`.
+    ///
+    /// The returned [`Output`] borrows `shortlived`. Every other allocation made from it is
+    /// freed before this returns, so once the `Output` is dropped the caller may reclaim all
+    /// of its memory, e.g. by resetting a bump arena.
+    pub fn poll_output_in<'s, S: Allocator>(
+        &mut self,
+        shortlived: &'s S,
+    ) -> Result<Output<&'s S>, RtcError> {
+        self.poll_output_with(shortlived)
+    }
+
+    fn poll_output_with<A: FromGlobal>(&mut self, shortlived: A) -> Result<Output<A>, RtcError> {
         // SCTP packets fed into DTLS require another pass. Loop here so a large
         // batch does not grow the stack with one recursive call per packet.
         let o = loop {
-            if let Some(o) = self.do_poll_output()? {
+            if let Some(o) = self.do_poll_output(shortlived)? {
                 break o;
             }
         };
@@ -1625,7 +1647,10 @@ impl Rtc {
     }
 
     // Returns None when polling must restart after handling an SCTP packet.
-    fn do_poll_output(&mut self) -> Result<Option<Output>, RtcError> {
+    fn do_poll_output<A: FromGlobal>(
+        &mut self,
+        shortlived: A,
+    ) -> Result<Option<Output<A>>, RtcError> {
         if self.state == RtcState::Closed {
             self.last_timeout_reason = Reason::NotHappening;
             return Ok(Some(Output::Timeout(not_happening())));
@@ -1857,7 +1882,10 @@ impl Rtc {
         }
 
         // Some polling needs to bubble up errors.
-        if let Some(ev) = self.session.poll_event_fallible(self.last_now)? {
+        if let Some(ev) = self
+            .session
+            .poll_event_fallible(self.last_now, shortlived)?
+        {
             return Ok(Some(Output::Event(ev)));
         }
 
@@ -1870,21 +1898,26 @@ impl Rtc {
         }
 
         if let Some(v) = self.ice.poll_transmit() {
-            return Ok(Some(Output::Transmit(v)));
+            return Ok(Some(Output::Transmit(net::Transmit {
+                proto: v.proto,
+                source: v.source,
+                destination: v.destination,
+                contents: shortlived.adopt(v.contents.into()).into(),
+            })));
         }
 
         if let Some(send) = &self.send_addr {
             // These can only be sent after we got an ICE connection.
             let datagram = None
-                .or_else(|| self.dtls.poll_packet())
-                .or_else(|| self.session.poll_datagram(self.last_now));
+                .or_else(|| self.dtls.poll_packet().map(|d| shortlived.adopt(d.into())))
+                .or_else(|| self.session.poll_datagram(self.last_now, shortlived));
 
             if let Some(contents) = datagram {
                 let t = net::Transmit {
                     proto: send.proto,
                     source: send.source,
                     destination: send.destination,
-                    contents,
+                    contents: contents.into(),
                 };
                 return Ok(Some(Output::Transmit(t)));
             }
@@ -2025,16 +2058,28 @@ impl Rtc {
     /// }
     /// ```
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
+        self.handle_input_in(input, &Global)
+    }
+
+    /// Like [`Rtc::handle_input()`], allocating temporaries from `shortlived`.
+    ///
+    /// Everything allocated from `shortlived` is freed before this returns, so the caller
+    /// may reclaim all of its memory once it has, e.g. by resetting a bump arena.
+    pub fn handle_input_in<S: Allocator>(
+        &mut self,
+        input: Input,
+        shortlived: &S,
+    ) -> Result<(), RtcError> {
         if self.state == RtcState::Closed {
             return Ok(());
         }
 
         // The handlers below each arm their own `Wake`; nothing to do here.
         match input {
-            Input::Timeout(now) => self.do_handle_timeout(now)?,
+            Input::Timeout(now) => self.do_handle_timeout(now, shortlived)?,
             Input::Receive(recv_time, r) => {
-                self.do_handle_receive(recv_time, r)?;
-                self.do_handle_timeout(recv_time)?;
+                self.do_handle_receive(recv_time, r, shortlived)?;
+                self.do_handle_timeout(recv_time, shortlived)?;
             }
         }
         Ok(())
@@ -2095,7 +2140,11 @@ impl Rtc {
         self.need_init_time = false;
     }
 
-    fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+    fn do_handle_timeout<S: Allocator>(
+        &mut self,
+        now: Instant,
+        shortlived: &S,
+    ) -> Result<(), RtcError> {
         self.init_time(now);
 
         // Prevent time from going backwards.
@@ -2128,7 +2177,7 @@ impl Rtc {
 
         sctp.handle_timeout(now, &mut readiness.wake());
         chan.handle_timeout(now, sctp, &mut readiness.wake());
-        session.handle_timeout(now, &mut readiness.wake())?;
+        session.handle_timeout(now, &mut readiness.wake(), shortlived)?;
 
         if let Some(stats) = stats {
             if stats.wants_timeout(now) {
@@ -2160,7 +2209,12 @@ impl Rtc {
         Ok(())
     }
 
-    fn do_handle_receive(&mut self, recv_time: Instant, r: net::Receive) -> Result<(), RtcError> {
+    fn do_handle_receive<S: Allocator>(
+        &mut self,
+        recv_time: Instant,
+        r: net::Receive,
+        shortlived: &S,
+    ) -> Result<(), RtcError> {
         trace!("IN {:?}", r);
         use DatagramRecvInner::*;
 
@@ -2198,8 +2252,12 @@ impl Rtc {
                 let _wake = readiness.wake();
                 dtls.handle_receive(dtls_packet)?;
             }
-            Rtp(rtp) => session.handle_rtp_receive(recv_time, rtp, &mut readiness.wake()),
-            Rtcp(rtcp) => session.handle_rtcp_receive(recv_time, rtcp, &mut readiness.wake()),
+            Rtp(rtp) => {
+                session.handle_rtp_receive(recv_time, rtp, &mut readiness.wake(), shortlived)
+            }
+            Rtcp(rtcp) => {
+                session.handle_rtcp_receive(recv_time, rtcp, &mut readiness.wake(), shortlived)
+            }
         }
 
         Ok(())
@@ -2276,6 +2334,16 @@ impl PartialEq for Event {
 }
 
 impl Eq for Event {}
+
+impl<A: Allocator> fmt::Debug for Output<A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Timeout(v) => f.debug_tuple("Timeout").field(v).finish(),
+            Self::Transmit(v) => f.debug_tuple("Transmit").field(v).finish(),
+            Self::Event(v) => f.debug_tuple("Event").field(v).finish(),
+        }
+    }
+}
 
 impl fmt::Debug for Rtc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2367,7 +2435,7 @@ pub mod unversioned {
     //! To use this module, enable the `unversioned` feature flag in your Cargo.toml.
 
     pub use super::packet::{
-        Depacketizer, H264Depacketizer, H264Packetizer, OpusPacketizer, Packetizer, TelephoneEvent,
-        Vp8Depacketizer, Vp8Packetizer,
+        Depacketizer, H264Depacketizer, H264Packetizer, OpusPacketizer, PacketBuf, Packetizer,
+        TelephoneEvent, Vp8Depacketizer, Vp8Packetizer,
     };
 }

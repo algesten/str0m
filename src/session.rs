@@ -1,9 +1,12 @@
+use std::alloc::Allocator;
 use std::collections::{HashMap, VecDeque};
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::Event;
+use crate::Reason;
+use crate::allocators::zeroed_in;
 use crate::bwe::BweKind;
 use crate::bwe_::Bwe;
 use crate::config::KeyingMaterial;
@@ -13,7 +16,6 @@ use crate::crypto::dtls::SrtpProfile;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::format::Vp9PacketizerMode;
-use crate::io::DatagramSend;
 use crate::media::AppSpecificFeedback;
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
@@ -40,7 +42,6 @@ use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, StreamTimeoutConfig, Streams};
 use crate::util::{Soonest, SystemTimeExt, already_happened, not_happening};
-use crate::{Reason, net};
 use crate::{RtcConfig, RtcError};
 
 /// Minimum interval between NACK polls. Per-packet retries also wait for RTT.
@@ -278,7 +279,13 @@ impl Session {
         self.srtp_tx = Some(SrtpContext::new(crypto, srtp_profile, &mat, left));
     }
 
-    pub fn handle_timeout(&mut self, now: Instant, wake: &mut Wake) -> Result<(), RtcError> {
+    /// `shortlived` backs allocations that are freed before this returns.
+    pub fn handle_timeout<A: Allocator>(
+        &mut self,
+        now: Instant,
+        wake: &mut Wake,
+        shortlived: A,
+    ) -> Result<(), RtcError> {
         if self.rtp_closing {
             // Closing only drains previously queued BYEs; this timeout changes nothing.
             wake.no_events();
@@ -287,7 +294,7 @@ impl Session {
         }
 
         // Payload ready media.
-        self.do_payload(now)?;
+        self.do_payload(now, &shortlived)?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
@@ -486,7 +493,14 @@ impl Session {
         }));
     }
 
-    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8], wake: &mut Wake) {
+    /// `shortlived` backs allocations that are freed before this returns.
+    pub fn handle_rtp_receive<A: Allocator>(
+        &mut self,
+        now: Instant,
+        message: &[u8],
+        wake: &mut Wake,
+        shortlived: A,
+    ) {
         let Some(header) = RtpHeader::parse(message, &self.exts) else {
             // Parsing has not touched stream state. Later rejection paths can have.
             wake.no_events();
@@ -495,14 +509,21 @@ impl Session {
             return;
         };
 
-        self.handle_rtp(now, header, message);
+        self.handle_rtp(now, header, message, shortlived);
     }
 
-    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8], wake: &mut Wake) {
+    /// `shortlived` backs allocations that are freed before this returns.
+    pub fn handle_rtcp_receive<A: Allocator>(
+        &mut self,
+        now: Instant,
+        message: &[u8],
+        wake: &mut Wake,
+        shortlived: A,
+    ) {
         // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
         // even if it's irrelevant and empty.
         // In practice I'm not sure that is happening, because libWebRTC hates empty packets.
-        if self.handle_rtcp(now, message, wake).is_none() {
+        if self.handle_rtcp(now, message, wake, shortlived).is_none() {
             // Missing keys or failed authentication: no reports reached the session.
             wake.no_events();
             wake.no_timeout();
@@ -613,7 +634,13 @@ impl Session {
         }
     }
 
-    pub(crate) fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
+    pub(crate) fn handle_rtp<A: Allocator>(
+        &mut self,
+        now: Instant,
+        mut header: RtpHeader,
+        buf: &[u8],
+        shortlived: A,
+    ) {
         // Rewrite absolute-send-time (if present) to be relative to now.
         header.ext_vals.update_absolute_send_time(now);
 
@@ -750,7 +777,7 @@ impl Session {
 
         // RED-recovered packets (frame mode) are collected here and delivered after the
         // primary, filling single-packet losses from the next packet's redundancy.
-        let mut red_recovered: Vec<(RtpHeader, Arc<[u8]>, SeqNo, MediaTime)> = Vec::new();
+        let mut red_recovered = Vec::new_in(shortlived);
 
         // Capture the full wire payload length before RED unwrapping narrows `data` to the primary
         // block. The sender counts the whole RED-wrapped payload, so receive stats must too.
@@ -914,9 +941,15 @@ impl Session {
         header.has_padding && header.ext_vals.rid.is_none() && has_rtx && is_expected_rid
     }
 
-    fn handle_rtcp(&mut self, now: Instant, buf: &[u8], wake: &mut Wake) -> Option<()> {
+    fn handle_rtcp<A: Allocator>(
+        &mut self,
+        now: Instant,
+        buf: &[u8],
+        wake: &mut Wake,
+        shortlived: A,
+    ) -> Option<()> {
         let srtp: &mut SrtpContext = self.srtp_rx.as_mut()?;
-        let unprotected = srtp.unprotect_rtcp(buf)?;
+        let unprotected = srtp.unprotect_rtcp(buf, shortlived)?;
 
         Rtcp::read_packet(&unprotected, &mut self.feedback_rx);
         let mut need_configure_pacer = false;
@@ -1121,7 +1154,12 @@ impl Session {
         }
     }
 
-    pub fn poll_event_fallible(&mut self, now: Instant) -> Result<Option<Event>, RtcError> {
+    /// `shortlived` backs allocations that are freed before this returns.
+    pub fn poll_event_fallible<A: Allocator>(
+        &mut self,
+        now: Instant,
+        shortlived: A,
+    ) -> Result<Option<Event>, RtcError> {
         // Not relevant in rtp_mode, where the packets are picked up by poll_event().
         if self.rtp_mode {
             return Ok(None);
@@ -1129,9 +1167,12 @@ impl Session {
 
         self.update_receive_recovery();
         for media in &mut self.medias {
-            if let Some(e) =
-                media.poll_sample(&self.codec_config, now, self.reordering_timeout_audio)?
-            {
+            if let Some(e) = media.poll_sample(
+                &self.codec_config,
+                now,
+                self.reordering_timeout_audio,
+                &shortlived,
+            )? {
                 return Ok(Some(Event::MediaData(e)));
             }
         }
@@ -1143,17 +1184,22 @@ impl Session {
         self.srtp_rx.is_some() && self.srtp_tx.is_some()
     }
 
-    pub fn poll_datagram(&mut self, now: Instant) -> Option<net::DatagramSend> {
+    /// The returned datagram is allocated from `shortlived`.
+    pub fn poll_datagram<A: Allocator + Copy>(
+        &mut self,
+        now: Instant,
+        shortlived: A,
+    ) -> Option<Vec<u8, A>> {
         // Time must have progressed forward from start value.
         if now == already_happened() {
             return None;
         }
 
         let x = if self.rtp_closing {
-            self.poll_feedback()
+            self.poll_feedback(shortlived)
         } else {
-            None.or_else(|| self.poll_feedback())
-                .or_else(|| self.poll_packet(now))
+            None.or_else(|| self.poll_feedback(shortlived))
+                .or_else(|| self.poll_packet(now, shortlived))
         };
 
         if let Some(x) = &x {
@@ -1194,7 +1240,7 @@ impl Session {
         self.rtp_closing && self.feedback_tx.is_empty()
     }
 
-    fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
+    fn poll_feedback<A: Allocator + Copy>(&mut self, shortlived: A) -> Option<Vec<u8, A>> {
         if self.feedback_tx.is_empty() {
             return None;
         }
@@ -1203,7 +1249,7 @@ impl Session {
         let encryptable_mtu: usize = (self.mtu() - SRTCP_OVERHEAD) & !3;
         assert!(encryptable_mtu.is_multiple_of(4));
 
-        let mut data = vec![0_u8; encryptable_mtu];
+        let mut data = zeroed_in(encryptable_mtu, shortlived);
 
         let mut raw_packets = self.raw_packets.as_mut();
         let output = move |fb| {
@@ -1221,17 +1267,17 @@ impl Session {
         data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;
-        let protected = srtp.protect_rtcp(&data);
+        let protected = srtp.protect_rtcp(&data, shortlived);
 
         assert!(
             protected.len() < self.mtu(),
             "Encrypted SRTCP should be less than MTU"
         );
 
-        Some(protected.into())
+        Some(protected)
     }
 
-    fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
+    fn poll_packet<A: Allocator>(&mut self, now: Instant, shortlived: A) -> Option<Vec<u8, A>> {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
@@ -1277,7 +1323,7 @@ impl Session {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
         }
 
-        let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+        let protected = srtp_tx.protect_rtp(buf, &header, *seq_no, shortlived);
 
         if twcc_enabled {
             let packet_id = if let Some(cluster) = cluster_id {
@@ -1298,7 +1344,7 @@ impl Session {
             self.media_bytes_tx += payload_size as u64;
         }
 
-        Some(protected.into())
+        Some(protected)
     }
 
     pub fn poll_timeout(&mut self) -> (Option<Instant>, Reason) {
@@ -1473,7 +1519,7 @@ impl Session {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
-    fn do_payload(&mut self, now: Instant) -> Result<(), RtcError> {
+    fn do_payload(&mut self, now: Instant, shortlived: &dyn Allocator) -> Result<(), RtcError> {
         let mtu = self.mtu();
         for m in &mut self.medias {
             m.do_payload(
@@ -1483,6 +1529,7 @@ impl Session {
                 self.vp9_packetizer_mode,
                 mtu,
                 self.codec_config.red_distances(),
+                shortlived,
             )?;
         }
 
@@ -1612,6 +1659,8 @@ fn update_max_seq(map: &mut HashMap<Ssrc, SeqNoWindow>, ssrc: Ssrc, seq_no: SeqN
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::Global;
+
     use super::*;
     use crate::RtcConfig;
     use crate::io::DATAGRAM_MTU_TARGET;
@@ -1640,12 +1689,14 @@ mod tests {
         let before = session.poll_timeout();
         assert_eq!(before.1, Reason::Feedback);
         let mut readiness = Readiness::idle();
-        session.handle_timeout(now, &mut readiness.wake()).unwrap();
+        session
+            .handle_timeout(now, &mut readiness.wake(), Global)
+            .unwrap();
         assert!(!readiness.wants_events());
         assert!(!readiness.wants_timeout());
         assert_eq!(session.poll_timeout(), before);
         assert!(
-            session.poll_datagram(now).is_some(),
+            session.poll_datagram(now, Global).is_some(),
             "existing BYE must still drain"
         );
     }
@@ -1655,7 +1706,7 @@ mod tests {
         let mut session = keyed_session();
         let before = session.poll_timeout();
         let mut readiness = Readiness::idle();
-        session.handle_rtp_receive(Instant::now(), &[0x80], &mut readiness.wake());
+        session.handle_rtp_receive(Instant::now(), &[0x80], &mut readiness.wake(), Global);
         assert!(!readiness.wants_events());
         assert!(!readiness.wants_timeout());
         assert_eq!(session.poll_timeout(), before);
@@ -1668,7 +1719,7 @@ mod tests {
         let mut readiness = Readiness::idle();
         // SSRC 0 creates a probe receive stream before the missing-key check.
         let packet = [0x80, 96, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0];
-        session.handle_rtp_receive(Instant::now(), &packet, &mut readiness.wake());
+        session.handle_rtp_receive(Instant::now(), &packet, &mut readiness.wake(), Global);
         assert!(session.streams.has_stream_rx(0.into()));
         assert!(readiness.wants_events());
         assert!(readiness.wants_timeout());
@@ -1679,7 +1730,7 @@ mod tests {
         for mut session in [Session::new(&RtcConfig::default()), keyed_session()] {
             let before = session.poll_timeout();
             let mut readiness = Readiness::idle();
-            session.handle_rtcp_receive(Instant::now(), &[0; 32], &mut readiness.wake());
+            session.handle_rtcp_receive(Instant::now(), &[0; 32], &mut readiness.wake(), Global);
             assert!(!readiness.wants_events());
             assert!(!readiness.wants_timeout());
             assert_eq!(session.poll_timeout(), before);
@@ -1712,9 +1763,9 @@ mod tests {
                 buf.extend_from_slice(&packet[..len]);
             }
             // Equal key material lets the local transmit context act as the peer.
-            let packet = session.srtp_tx.as_mut().unwrap().protect_rtcp(&buf);
+            let packet = session.srtp_tx.as_mut().unwrap().protect_rtcp(&buf, Global);
             let mut readiness = Readiness::idle();
-            session.handle_rtcp_receive(now, &packet, &mut readiness.wake());
+            session.handle_rtcp_receive(now, &packet, &mut readiness.wake(), Global);
             assert!(readiness.wants_events());
             assert_eq!(
                 readiness.wants_timeout(),
@@ -1738,9 +1789,9 @@ mod tests {
             .srtp_tx
             .as_mut()
             .unwrap()
-            .protect_rtcp(&[0x80, 201, 0, 1, 0, 0, 0, 1]);
+            .protect_rtcp(&[0x80, 201, 0, 1, 0, 0, 0, 1], Global);
         let mut readiness = Readiness::idle();
-        session.handle_rtcp_receive(Instant::now(), &packet, &mut readiness.wake());
+        session.handle_rtcp_receive(Instant::now(), &packet, &mut readiness.wake(), Global);
         assert!(readiness.wants_events());
         assert!(!readiness.wants_timeout());
         assert!(matches!(session.poll_event(), Some(Event::RawPacket(_))));

@@ -1,4 +1,6 @@
-use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{BitRead, CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer};
 use crate::rtp_::{extend_u7, extend_u8, extend_u15};
 
 use std::fmt;
@@ -210,9 +212,14 @@ impl fmt::Debug for Vp9Packetizer {
 
 impl Packetizer for Vp9Packetizer {
     /// Packetize a VP9 frame into one or more RTP packets.
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() || mtu == 0 {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         if !self.initialized {
@@ -229,8 +236,8 @@ impl Packetizer for Vp9Packetizer {
         }
 
         match self.mode {
-            Vp9PacketizerMode::NonFlexible => self.packetize_non_flexible(mtu, payload),
-            Vp9PacketizerMode::Flexible => self.packetize_flexible(mtu, payload),
+            Vp9PacketizerMode::NonFlexible => self.packetize_non_flexible(mtu, payload, alloc),
+            Vp9PacketizerMode::Flexible => self.packetize_flexible(mtu, payload, alloc),
         }
     }
 
@@ -262,11 +269,12 @@ impl Vp9Packetizer {
     ///       | ..            |
     ///       +-+-+-+-+-+-+-+-+
     /// ```
-    fn packetize_non_flexible(
+    fn packetize_non_flexible<'a>(
         &mut self,
         mtu: usize,
         payload: &[u8],
-    ) -> Result<Vec<Vec<u8>>, PacketError> {
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         // Detect keyframe from VP9 bitstream to set P flag correctly.
         let is_keyframe = detect_vp9_keyframe_bitstream(payload);
 
@@ -277,12 +285,12 @@ impl Vp9Packetizer {
         // VP9_NON_FLEXIBLE_HEADER_SIZE is the max header (8 bytes, accounting for SS
         // on keyframes). This ensures we never exceed MTU even on keyframe first-packets.
         let max_fragment_size = mtu as isize - VP9_NON_FLEXIBLE_HEADER_SIZE as isize;
-        let mut payloads = vec![];
+        let mut payloads = Vec::new_in(alloc);
         let mut payload_data_remaining = payload.len();
         let mut payload_data_index = 0;
 
         if std::cmp::min(max_fragment_size, payload_data_remaining as isize) <= 0 {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         while payload_data_remaining > 0 {
@@ -295,7 +303,7 @@ impl Vp9Packetizer {
             // Keyframe first packet: 6 bytes (+ 1 byte SS data, G=0)
             let ss_size = if is_keyframe && is_first { 1 } else { 0 };
             let header_size = 5 + ss_size;
-            let mut out = Vec::with_capacity(header_size + current_fragment_size);
+            let mut out = Vec::with_capacity_in(header_size + current_fragment_size, alloc);
 
             // Byte 0: I|P|L|F|B|E|V|Z
             let mut flags = 0xA0u8; // I=1, L=1 (F=0 implicit)
@@ -361,18 +369,19 @@ impl Vp9Packetizer {
     ///  M:   | EXTENDED PID  | (RECOMMENDED)
     ///       +-+-+-+-+-+-+-+-+
     /// ```
-    fn packetize_flexible(
+    fn packetize_flexible<'a>(
         &mut self,
         mtu: usize,
         payload: &[u8],
-    ) -> Result<Vec<Vec<u8>>, PacketError> {
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         let max_fragment_size = mtu as isize - VP9_FLEXIBLE_HEADER_SIZE as isize;
-        let mut payloads = vec![];
+        let mut payloads = Vec::new_in(alloc);
         let mut payload_data_remaining = payload.len();
         let mut payload_data_index = 0;
 
         if std::cmp::min(max_fragment_size, payload_data_remaining as isize) <= 0 {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         while payload_data_remaining > 0 {
@@ -381,7 +390,8 @@ impl Vp9Packetizer {
             let is_first = payload_data_index == 0;
             let is_last = payload_data_remaining == current_fragment_size;
 
-            let mut out = Vec::with_capacity(VP9_FLEXIBLE_HEADER_SIZE + current_fragment_size);
+            let mut out =
+                Vec::with_capacity_in(VP9_FLEXIBLE_HEADER_SIZE + current_fragment_size, alloc);
 
             // Byte 0: I|P|L|F|B|E|V|Z — I=1, F=1
             let mut flags = 0x90u8; // I=1, F=1
@@ -487,7 +497,7 @@ impl Depacketizer for Vp9Depacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.is_empty() {
@@ -831,7 +841,10 @@ impl Vp9Depacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     #[test]
     #[allow(clippy::erasing_op, clippy::identity_op)]
@@ -1142,7 +1155,7 @@ mod test {
             let mut p = Vp9Depacketizer::default();
 
             if let Some(expected) = err {
-                let mut payload = Vec::new();
+                let mut payload: PacketBuf = Vec::new_in(&Global);
                 let mut extra = CodecExtra::None;
                 if let Err(actual) = p.depacketize(b, &mut payload, &mut extra) {
                     assert_eq!(
@@ -1153,7 +1166,7 @@ mod test {
                     panic!("{name}: expected error, but got passed");
                 }
             } else {
-                let mut payload = Vec::new();
+                let mut payload: PacketBuf = Vec::new_in(&Global);
                 let mut extra = CodecExtra::None;
                 p.depacketize(b, &mut payload, &mut extra)?;
                 assert_eq!(pkt, p, "{name}: expected {pkt:?}, but got {p:?}");
@@ -1238,7 +1251,7 @@ mod test {
 
             let mut actual = vec![];
             for b in &bs {
-                actual.extend(pck.packetize(mtu, b)?);
+                actual.extend(pck.packetize(mtu, b, &Global)?);
             }
             assert_eq!(expected, actual, "{name}: Payloaded packet");
         }
@@ -1251,9 +1264,9 @@ mod test {
             };
             let mut p_prev = Vp9Depacketizer::default();
             for i in 0..0x8000 {
-                let res = pck.packetize(9, &[0x01])?;
+                let res = pck.packetize(9, &[0x01], &Global)?;
                 let mut p = Vp9Depacketizer::default();
-                let mut payload = Vec::new();
+                let mut payload: PacketBuf = Vec::new_in(&Global);
                 let mut extra = CodecExtra::None;
                 p.depacketize(&res[0], &mut payload, &mut extra)?;
 
@@ -1289,7 +1302,7 @@ mod test {
         // VP9 profile 0 keyframe bitstream: 0x82 = 0b10_00_0_0_10
         // frame_marker=10, profile=00, show_existing=0, frame_type=0 (KEY)
         let keyframe = vec![0x82, 0xAA, 0xBB];
-        let packets = pck.packetize(20, &keyframe)?;
+        let packets = pck.packetize(20, &keyframe, &Global)?;
 
         assert_eq!(packets.len(), 1);
         let pkt = &packets[0];
@@ -1309,7 +1322,7 @@ mod test {
 
         // Parse-side: the emitted SS decodes as a single-layer, no-GOF structure (N_S=0, Y/G false).
         let mut dep = Vp9Depacketizer::default();
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut extra = CodecExtra::None;
         dep.depacketize(pkt, &mut out, &mut extra)?;
         assert!(dep.v && dep.ns == 0 && !dep.y && !dep.g && dep.ng == 0);
@@ -1317,7 +1330,7 @@ mod test {
 
         // Now an inter-frame: 0x84 = 0b10_00_0_1_00 (frame_type=1)
         let inter = vec![0x84, 0xCC];
-        let packets = pck.packetize(20, &inter)?;
+        let packets = pck.packetize(20, &inter, &Global)?;
         assert_eq!(packets.len(), 1);
         let pkt = &packets[0];
         // Flags: I=1,P=1,L=1,F=0,B=1,E=1,V=0,Z=0 = 0xEC
@@ -1343,7 +1356,7 @@ mod test {
         // Second packet: 5-byte header + 4 bytes payload = 9 ≤ MTU
         // Third packet: 5-byte header + 2 bytes payload = 7 ≤ MTU
         let keyframe = vec![0x82, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09];
-        let packets = pck.packetize(12, &keyframe)?;
+        let packets = pck.packetize(12, &keyframe, &Global)?;
 
         assert_eq!(
             packets.len(),
@@ -1383,7 +1396,7 @@ mod test {
         }
 
         // Verify depacketizer round-trip: all 3 packets produce original payload
-        let mut full_payload = Vec::new();
+        let mut full_payload: PacketBuf = Vec::new_in(&Global);
         let mut extra = CodecExtra::None;
         for pkt in &packets {
             let mut depkt = Vp9Depacketizer::default();
@@ -1403,22 +1416,22 @@ mod test {
         };
 
         // Frame 1: tl0picidx wraps 254 → 255
-        let packets = pck.packetize(20, &[0x01])?;
+        let packets = pck.packetize(20, &[0x01], &Global)?;
         assert_eq!(packets[0][4], 255);
 
         // Frame 2: tl0picidx wraps 255 → 0
-        let packets = pck.packetize(20, &[0x01])?;
+        let packets = pck.packetize(20, &[0x01], &Global)?;
         assert_eq!(packets[0][4], 0);
 
         // Frame 3: 0 → 1
-        let packets = pck.packetize(20, &[0x01])?;
+        let packets = pck.packetize(20, &[0x01], &Global)?;
         assert_eq!(packets[0][4], 1);
 
         Ok(())
     }
 
     fn depacketize_one(depack: &mut Vp9Depacketizer, packet: &[u8]) -> Vp9CodecExtra {
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         let mut extra = CodecExtra::None;
         depack
             .depacketize(packet, &mut payload, &mut extra)
@@ -1471,7 +1484,7 @@ mod test {
         assert_eq!(extra.tl0_picture_id, Some(8));
 
         // Picture id on the first packet of the frame only
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         let mut extra = CodecExtra::None;
         depack
             .depacketize(&[0xA8, 0x92, 0x35, 0x00, 9, 0xAA], &mut payload, &mut extra)
@@ -1517,7 +1530,7 @@ mod test {
             }
 
             let dep = buf
-                .pop(now, None)
+                .pop(now, None, &Global)
                 .unwrap_or_else(|| panic!("frame {frame} was not emitted"))
                 .unwrap();
             assert!(dep.contiguous, "frame {frame} is not contiguous");
@@ -1534,7 +1547,11 @@ mod test {
         let frames: Vec<_> = (0..300)
             .map(|frame| {
                 let first_byte = if frame == 0 { 0x80 } else { 0x84 };
-                pck.packetize(10, &[first_byte, 1, 2, 3]).unwrap()
+                pck.packetize(10, &[first_byte, 1, 2, 3], &Global)
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.to_vec())
+                    .collect()
             })
             .collect();
 
@@ -1687,7 +1704,7 @@ mod test {
 
             let mut actual = vec![];
             for b in &bs {
-                actual.extend(pck.packetize(mtu, b)?);
+                actual.extend(pck.packetize(mtu, b, &Global)?);
             }
             assert_eq!(expected, actual, "{name}: Payloaded packet");
         }
@@ -1798,7 +1815,7 @@ mod test {
                 initial_picture_id: 100,
                 ..Default::default()
             };
-            let pkts = pck.packetize(mtu, &payload)?;
+            let pkts = pck.packetize(mtu, &payload, &Global)?;
             assert!(!pkts.is_empty(), "VP9 produced no packets at mtu {mtu}");
             for (i, pkt) in pkts.iter().enumerate() {
                 assert!(

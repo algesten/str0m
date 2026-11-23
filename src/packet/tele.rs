@@ -2,7 +2,10 @@
 //!
 //! A payload is one or more 4-byte event reports and is never split across RTP packets.
 
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer, single_packet};
+use crate::allocators::copied_in;
 use crate::rtp_::Frequency;
 use std::time::Duration;
 
@@ -137,16 +140,21 @@ impl Default for TelephoneEventDepacketizer {
 }
 
 impl Packetizer for TelephoneEventPacketizer {
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         if payload.len() > mtu {
             return Err(PacketError::ErrPayloadTooLarge);
         }
 
-        Ok(vec![payload.to_vec()])
+        Ok(single_packet(copied_in(payload, alloc), alloc))
     }
 
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
@@ -172,7 +180,7 @@ impl Depacketizer for TelephoneEventDepacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         let mut reports = TelephoneEvent::parse_all(packet, self.clock_rate).ok_or(
@@ -200,7 +208,10 @@ impl Depacketizer for TelephoneEventDepacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     // Event 5, end bit set, volume 10, duration 800.
     const REPORT: [u8; 4] = [0x05, 0x8a, 0x03, 0x20];
@@ -305,10 +316,13 @@ mod test {
         let packed = [REPORT, NEXT].concat();
 
         assert_eq!(
-            packetizer.packetize(4, &REPORT).unwrap(),
+            packetizer.packetize(4, &REPORT, &Global).unwrap(),
             vec![REPORT.to_vec()]
         );
-        assert_eq!(packetizer.packetize(1200, &packed).unwrap(), vec![packed]);
+        assert_eq!(
+            packetizer.packetize(1200, &packed, &Global).unwrap(),
+            vec![packed]
+        );
     }
 
     #[test]
@@ -316,7 +330,7 @@ mod test {
         let mut packetizer = TelephoneEventPacketizer;
 
         assert_eq!(
-            packetizer.packetize(3, &REPORT),
+            packetizer.packetize(3, &REPORT, &Global),
             Err(PacketError::ErrPayloadTooLarge)
         );
     }
@@ -325,7 +339,7 @@ mod test {
     fn packetizer_does_not_emit_empty_payload() {
         let mut packetizer = TelephoneEventPacketizer;
 
-        assert!(packetizer.packetize(1200, &[]).unwrap().is_empty());
+        assert!(packetizer.packetize(1200, &[], &Global).unwrap().is_empty());
     }
 
     #[test]
@@ -344,7 +358,7 @@ mod test {
         let packed = [REPORT, NEXT].concat();
 
         for packet in [&REPORT[..], &packed[..]] {
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
             depacketizer
                 .depacketize(packet, &mut out, &mut extra)
@@ -363,7 +377,7 @@ mod test {
         let packed = [REPORT, NEXT].concat();
 
         for len in [0, 1, 3, 5, 7] {
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
             let result = depacketizer.depacketize(&packed[..len], &mut out, &mut extra);
 

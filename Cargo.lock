@@ -2114,6 +2114,7 @@ dependencies = [
  "fastrand",
  "openssl",
  "serde",
+ "serde_json",
  "subtle",
  "time",
 ]

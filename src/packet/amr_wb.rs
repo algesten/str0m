@@ -25,7 +25,9 @@
 //! application frames. Other AMR-WB parameters, such as `max-red` and
 //! `mode-change-capability`, are ignored and left out of answers.
 
-use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{BitRead, CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer, single_packet};
 
 /// Speech bits per frame type (RFC 4867 Table 1a). `None` marks the reserved types.
 const FRAME_BITS: [Option<usize>; 16] = [
@@ -59,9 +61,14 @@ pub struct AmrWbPacketizer {
 }
 
 impl Packetizer for AmrWbPacketizer {
-    fn packetize(&mut self, mtu: usize, frame: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        frame: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         let Some((&header, speech)) = frame.split_first() else {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         };
 
         let frame_type = (header >> 3) & 0x0f;
@@ -72,7 +79,7 @@ impl Packetizer for AmrWbPacketizer {
 
         // RFC 4867 §4.3.2: payloads with only NO_DATA frames should not be sent.
         if frame_type == NO_DATA {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         // A ToC entry F|FT|Q with F=0 (last frame) is the IF header without its P bits.
@@ -80,11 +87,15 @@ impl Packetizer for AmrWbPacketizer {
         let (mut payload, header_bits) = if self.octet_align {
             // CMR and 4 reserved bits, the ToC entry and 2 padding bits, then the
             // speech bits, which are already octet-aligned in the IF frame.
-            ([&[CMR_NO_REQUEST, toc][..], speech].concat(), 16)
+            let mut payload = Vec::with_capacity_in(2 + speech.len(), alloc);
+            payload.extend_from_slice(&[CMR_NO_REQUEST, toc]);
+            payload.extend_from_slice(speech);
+            (payload, 16)
         } else {
             // The 4-bit CMR and 6-bit ToC entry put the speech bits 2 bits to the
             // right of where they are in the IF frame.
-            let mut payload = vec![CMR_NO_REQUEST | (toc >> 4)];
+            let mut payload = Vec::with_capacity_in(speech.len() + 2, alloc);
+            payload.push(CMR_NO_REQUEST | (toc >> 4));
             let mut carry = toc << 4;
             for &byte in speech {
                 payload.push(carry | (byte >> 2));
@@ -104,7 +115,7 @@ impl Packetizer for AmrWbPacketizer {
             return Err(PacketError::ErrPayloadTooLarge);
         }
 
-        Ok(vec![payload])
+        Ok(single_packet(payload, alloc))
     }
 
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
@@ -134,7 +145,7 @@ impl Depacketizer for AmrWbDepacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         _: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.is_empty() {
@@ -145,7 +156,7 @@ impl Depacketizer for AmrWbDepacketizer {
         let mut reader: (&[u8], usize) = (packet, if self.octet_align { 8 } else { 4 });
 
         // Table of contents: an F|FT|Q entry per frame, where F=1 means another follows.
-        let mut headers = Vec::new();
+        let mut headers = Vec::new_in(*out.allocator());
         loop {
             let entry = reader.get_bits(6).ok_or(PacketError::ErrShortPacket)?;
             if self.octet_align {
@@ -195,7 +206,10 @@ impl Depacketizer for AmrWbDepacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     /// An IF frame of `frame_type` (Q=1) whose speech bytes are `fill`, padding cleared.
     fn if_frame(frame_type: u8, fill: u8) -> Vec<u8> {
@@ -210,16 +224,16 @@ mod test {
 
     fn packetize(octet_align: bool, frame: &[u8]) -> Vec<u8> {
         let mut packets = AmrWbPacketizer { octet_align }
-            .packetize(1200, frame)
+            .packetize(1200, frame, &Global)
             .unwrap();
         assert_eq!(packets.len(), 1);
-        packets.remove(0)
+        packets.remove(0).to_vec()
     }
 
     fn depacketize(octet_align: bool, payload: &[u8]) -> Result<Vec<u8>, PacketError> {
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         AmrWbDepacketizer { octet_align }.depacketize(payload, &mut out, &mut CodecExtra::None)?;
-        Ok(out)
+        Ok(out.to_vec())
     }
 
     #[test]
@@ -303,8 +317,8 @@ mod test {
     #[test]
     fn packetizer_skips_empty_and_no_data_frames() {
         let mut pack = AmrWbPacketizer::default();
-        assert!(pack.packetize(1200, &[]).unwrap().is_empty());
-        assert!(pack.packetize(1200, &[0x7c]).unwrap().is_empty());
+        assert!(pack.packetize(1200, &[], &Global).unwrap().is_empty());
+        assert!(pack.packetize(1200, &[0x7c], &Global).unwrap().is_empty());
     }
 
     #[test]
@@ -317,13 +331,13 @@ mod test {
         let concatenated = [frame.clone(), if_frame(9, 0x22)].concat();
         for invalid in [reserved, truncated, concatenated] {
             assert_eq!(
-                pack.packetize(1200, &invalid),
+                pack.packetize(1200, &invalid, &Global),
                 Err(PacketError::ErrAmrWbCorruptedPacket)
             );
         }
 
         assert_eq!(
-            pack.packetize(61, &frame),
+            pack.packetize(61, &frame, &Global),
             Err(PacketError::ErrPayloadTooLarge)
         );
     }

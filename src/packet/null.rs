@@ -1,4 +1,7 @@
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer, single_packet};
+use crate::allocators::copied_in;
 
 #[derive(Debug)]
 pub struct NullPacketizer;
@@ -7,8 +10,13 @@ pub struct NullPacketizer;
 pub struct NullDepacketizer;
 
 impl Packetizer for NullPacketizer {
-    fn packetize(&mut self, _mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
-        Ok(vec![b.to_vec()])
+    fn packetize<'a>(
+        &mut self,
+        _mtu: usize,
+        b: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
+        Ok(single_packet(copied_in(b, alloc), alloc))
     }
 
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
@@ -24,7 +32,7 @@ impl Depacketizer for NullDepacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         _codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         out.extend_from_slice(packet);

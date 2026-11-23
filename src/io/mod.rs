@@ -1,6 +1,7 @@
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::new_without_default)]
 
+use std::alloc::Allocator;
 use std::convert::TryFrom;
 use std::fmt;
 use std::io;
@@ -150,10 +151,10 @@ impl<'a> TryFrom<&'a [u8]> for MultiplexKind {
     }
 }
 
-impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
+impl<'a, A: Allocator> TryFrom<&'a Transmit<A>> for Receive<'a> {
     type Error = NetError;
 
-    fn try_from(t: &'a Transmit) -> Result<Self, Self::Error> {
+    fn try_from(t: &'a Transmit<A>) -> Result<Self, Self::Error> {
         Ok(Receive {
             proto: t.proto,
             source: t.source,

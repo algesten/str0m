@@ -894,6 +894,9 @@ impl PayloadParams {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
+    use crate::packet::PacketBuf;
     use crate::rtp_::Frequency;
 
     use super::*;
@@ -1491,7 +1494,7 @@ mod test {
 
             // Packetize a NAL — should include DONL field (2 extra bytes)
             let nalu = vec![0x02, 0x01, 0xAA, 0xBB];
-            let packets = pack.packetize(1200, &nalu).unwrap();
+            let packets = pack.packetize(1200, &nalu, &Global).unwrap();
             assert_eq!(packets.len(), 1);
             assert_eq!(
                 packets[0].len(),
@@ -1507,7 +1510,7 @@ mod test {
 
             // Depacketize the packet — should correctly strip DONL
             use crate::packet::{CodecExtra, Depacketizer};
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
             if let CodecDepacketizer::H265(ref mut h265) = depack {
                 h265.depacketize(&packets[0], &mut out, &mut extra).unwrap();
@@ -1559,7 +1562,7 @@ mod test {
                 crate::format::Vp9PacketizerMode::default(),
             );
             // Don't call with_donl(true) since donl_enabled is false
-            let packets = pack.packetize(1200, &nalu).unwrap();
+            let packets = pack.packetize(1200, &nalu, &Global).unwrap();
             assert_eq!(
                 packets[0].len(),
                 nalu.len(),
@@ -1961,7 +1964,7 @@ mod test {
 
             // Packetize a NAL — should include DONL field (2 extra bytes)
             let nalu = vec![0x00, 0x09, 0xAA, 0xBB];
-            let packets = pack.packetize(1200, &nalu).unwrap();
+            let packets = pack.packetize(1200, &nalu, &Global).unwrap();
             assert_eq!(packets.len(), 1);
             assert_eq!(
                 packets[0].len(),
@@ -1977,7 +1980,7 @@ mod test {
 
             // Depacketize the packet — should correctly strip DONL
             use crate::packet::{CodecExtra, Depacketizer};
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
             if let CodecDepacketizer::H266(ref mut h266) = depack {
                 h266.depacketize(&packets[0], &mut out, &mut extra).unwrap();
@@ -2062,7 +2065,7 @@ mod test {
                 crate::format::Vp9PacketizerMode::default(),
             );
             // Don't enable DONL since donl_enabled is false
-            let packets = pack.packetize(1200, &nalu).unwrap();
+            let packets = pack.packetize(1200, &nalu, &Global).unwrap();
             assert_eq!(
                 packets[0].len(),
                 nalu.len(),

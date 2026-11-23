@@ -1,4 +1,7 @@
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer};
+use crate::allocators::copied_in;
 
 /// Packetizes Opus RTP packets.
 ///
@@ -10,17 +13,22 @@ use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 pub struct OpusPacketizer;
 
 impl Packetizer for OpusPacketizer {
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() || mtu == 0 {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
-        let mut out = vec![];
+        let mut out = Vec::new_in(alloc);
 
         let mut cur = 0;
         while cur < payload.len() {
             let min = mtu.min(payload.len() - cur);
-            out.push(payload[cur..(cur + min)].to_vec());
+            out.push(copied_in(&payload[cur..(cur + min)], alloc));
             cur += mtu;
         }
 
@@ -58,7 +66,7 @@ impl Depacketizer for OpusDepacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         _: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if !packet.is_empty() {
@@ -79,7 +87,10 @@ impl Depacketizer for OpusDepacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     #[test]
     fn test_opus_unmarshal() -> Result<(), PacketError> {
@@ -88,7 +99,7 @@ mod test {
 
         // Empty packet
         let empty_bytes = &[];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let result = pck.depacketize(empty_bytes, &mut out, &mut extra);
         assert!(
             result.is_ok(),
@@ -97,7 +108,7 @@ mod test {
 
         // Normal packet
         let raw_bytes: &[u8] = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut out, &mut extra)?;
         assert_eq!(raw_bytes, &out, "Payload must be same");
 
@@ -111,15 +122,15 @@ mod test {
         let payload = &[0x90, 0x90, 0x90];
 
         // Positive MTU, empty payload
-        let result = pck.packetize(1, empty)?;
+        let result = pck.packetize(1, empty, &Global)?;
         assert!(result.is_empty(), "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.packetize(1, payload)?;
+        let result = pck.packetize(1, payload, &Global)?;
         assert_eq!(result.len(), 3, "Generated payload should be 3");
 
         // Positive MTU, small payload
-        let result = pck.packetize(2, payload)?;
+        let result = pck.packetize(2, payload, &Global)?;
         assert_eq!(result.len(), 2, "Generated payload should be the 2");
 
         Ok(())
@@ -142,7 +153,7 @@ mod test {
         let payload = vec![0xABu8; 2000];
         for &mtu in &[100usize, 300, 600, 1200] {
             let mut pck = OpusPacketizer;
-            let pkts = pck.packetize(mtu, &payload)?;
+            let pkts = pck.packetize(mtu, &payload, &Global)?;
             assert!(!pkts.is_empty(), "Opus produced no packets at mtu {mtu}");
             for (i, pkt) in pkts.iter().enumerate() {
                 assert!(

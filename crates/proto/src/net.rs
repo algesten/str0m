@@ -1,9 +1,10 @@
+use std::alloc::{Allocator, Global};
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Type of protocol used in [`Transmit`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -116,8 +117,11 @@ impl fmt::Display for Protocol {
 }
 
 /// An instruction to send an outgoing packet.
+///
+/// `A` is the allocator the contents are allocated from.
 #[derive(Serialize, Deserialize)]
-pub struct Transmit {
+#[serde(bound(serialize = "", deserialize = "DatagramSend<A>: Deserialize<'de>"))]
+pub struct Transmit<A: Allocator = Global> {
     /// Protocol the transmission should use.
     pub proto: Protocol,
 
@@ -132,10 +136,10 @@ pub struct Transmit {
     pub destination: SocketAddr,
 
     /// Contents of the datagram.
-    pub contents: DatagramSend,
+    pub contents: DatagramSend<A>,
 }
 
-impl fmt::Debug for Transmit {
+impl<A: Allocator> fmt::Debug for Transmit<A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Transmit")
             .field("proto", &self.proto)
@@ -147,25 +151,75 @@ impl fmt::Debug for Transmit {
 }
 
 /// A wrapper for some payload that is to be sent.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DatagramSend(Vec<u8>);
+///
+/// `A` is the allocator the payload is allocated from.
+pub struct DatagramSend<A: Allocator = Global>(Vec<u8, A>);
 
-impl From<Vec<u8>> for DatagramSend {
-    fn from(value: Vec<u8>) -> Self {
+impl<A: Allocator> From<Vec<u8, A>> for DatagramSend<A> {
+    fn from(value: Vec<u8, A>) -> Self {
         DatagramSend(value)
     }
 }
 
-impl From<DatagramSend> for Vec<u8> {
-    fn from(value: DatagramSend) -> Self {
+impl<A: Allocator> From<DatagramSend<A>> for Vec<u8, A> {
+    fn from(value: DatagramSend<A>) -> Self {
         value.0
     }
 }
 
-impl Deref for DatagramSend {
+impl<A: Allocator> Deref for DatagramSend<A> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl<A: Allocator> fmt::Debug for DatagramSend<A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("DatagramSend").field(&self.0).finish()
+    }
+}
+
+impl<A: Allocator> Serialize for DatagramSend<A> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_newtype_struct("DatagramSend", &self.0[..])
+    }
+}
+
+impl<'de> Deserialize<'de> for DatagramSend {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename = "DatagramSend")]
+        struct Wire(Vec<u8>);
+
+        Wire::deserialize(deserializer).map(|w| DatagramSend(w.0))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    const JSON: &str = r#"{"proto":"Udp","source":"1.1.1.1:1000","destination":"2.2.2.2:2000","contents":[1,2,3]}"#;
+
+    #[test]
+    fn transmit_serde_is_independent_of_the_allocator() {
+        let source: SocketAddr = "1.1.1.1:1000".parse().unwrap();
+        let destination: SocketAddr = "2.2.2.2:2000".parse().unwrap();
+
+        let mut contents = Vec::new_in(&Global);
+        contents.extend_from_slice(&[1, 2, 3]);
+        let other_allocator = Transmit {
+            proto: Protocol::Udp,
+            source,
+            destination,
+            contents: contents.into(),
+        };
+        assert_eq!(serde_json::to_string(&other_allocator).unwrap(), JSON);
+
+        let decoded: Transmit = serde_json::from_str(JSON).unwrap();
+        assert_eq!(&*decoded.contents, [1, 2, 3]);
+        assert_eq!(serde_json::to_string(&decoded).unwrap(), JSON);
     }
 }

@@ -1,5 +1,6 @@
 //! Media (audio/video) related content.
 
+use std::alloc::Allocator;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -352,9 +353,10 @@ impl Media {
         params: &[PayloadParams],
         now: Instant,
         audio_timeout: Option<Duration>,
+        shortlived: &dyn Allocator,
     ) -> Result<Option<MediaData>, RtcError> {
         for ((pt, rid), buf) in &mut self.depayloaders {
-            if let Some(r) = buf.pop(now, audio_timeout) {
+            if let Some(r) = buf.pop(now, audio_timeout, shortlived) {
                 let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
                 let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
                     return Ok(None);
@@ -382,7 +384,7 @@ impl Media {
                     codec_extra: dep.codec_extra,
                     last_sender_info: dep.first_sender_info(),
                     audio_start_of_talk_spurt,
-                    data: dep.data.into(),
+                    data: Arc::from(&dep.data[..]),
                 }));
             }
         }
@@ -584,6 +586,7 @@ impl Media {
             .min()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn do_payload(
         &mut self,
         now: Instant,
@@ -592,6 +595,7 @@ impl Media {
         vp9_mode: Vp9PacketizerMode,
         mtu: usize,
         red_distances: &[u32],
+        shortlived: &dyn Allocator,
     ) -> Result<(), RtcError> {
         let Some(front) = self.to_payload.front() else {
             return Ok(());
@@ -650,11 +654,11 @@ impl Media {
 
             let packetize_mtu = budget.saturating_sub(1);
             let mut sink = RedSink::new(stream, red, budget);
-            payloader.push_sample(to_payload, packetize_mtu, &mut sink)
+            payloader.push_sample(to_payload, packetize_mtu, &mut sink, shortlived)
         } else {
             // Drop any stale sender so its history does not persist across a RED disable.
             *red = None;
-            payloader.push_sample(to_payload, budget, stream)
+            payloader.push_sample(to_payload, budget, stream, shortlived)
         };
 
         result.map_err(|e| RtcError::Packet(self.mid, pt, e))
@@ -831,6 +835,8 @@ impl Media {
 
 #[cfg(test)]
 mod receive_timeout_test {
+    use std::alloc::Global;
+
     use super::*;
     use crate::format::Codec;
     use crate::rtp_::RtpHeader;
@@ -852,7 +858,7 @@ mod receive_timeout_test {
                 [0x10, 0, 0],
             );
             if seq == 1 {
-                buffer.pop(base, None).unwrap().unwrap();
+                buffer.pop(base, None, &Global).unwrap().unwrap();
             }
         }
         buffer

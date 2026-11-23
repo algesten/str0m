@@ -1,5 +1,6 @@
 //! Exported fuzz targets to get them part of the compilation with feature `_internal_test_exports`.
 
+use std::alloc::Global;
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::ops::RangeInclusive;
@@ -17,7 +18,7 @@ use crate::format::Codec;
 use crate::io::{DATAGRAM_MTU_TARGET_MAX, DATAGRAM_MTU_TARGET_MIN, MultiplexKind};
 use crate::media::{Direction, MediaKind, Mid, Pt, Simulcast, SimulcastLayer};
 use crate::net::{Protocol, Receive};
-use crate::packet::{CodecExtra, Depacketizer, DepacketizingBuffer, RtpMeta};
+use crate::packet::{CodecExtra, Depacketizer, DepacketizingBuffer, PacketBuf, RtpMeta};
 use crate::rtp::dependency_descriptor::{self, DecodeTargetIndication, DependencyDescriptor};
 use crate::rtp::dependency_descriptor::{DependencyDescriptorError, DependencyDescriptorReceiver};
 use crate::rtp::dependency_descriptor::{FrameDescriptor, ParsedDependencyDescriptor};
@@ -138,7 +139,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
             let len = rng.usize(1200)?;
             let data = rng.slice(len)?.to_vec();
             depack.push(meta, data);
-        } else if let Some(Ok(sample)) = depack.pop(start, None) {
+        } else if let Some(Ok(sample)) = depack.pop(start, None, &Global) {
             // A sample takes some extension values from particular packets, such as the
             // Dependency Descriptor of the packet that starts its frame.
             sample.ext_vals();
@@ -357,7 +358,7 @@ pub fn srtp(data: &[u8]) -> Option<()> {
 
         match kind {
             0 => {
-                let _ = rx.unprotect_rtcp(buf);
+                let _ = rx.unprotect_rtcp(buf, Global);
             }
             1 => {
                 if let Some(header) = RtpHeader::parse(buf, &exts) {
@@ -368,14 +369,14 @@ pub fn srtp(data: &[u8]) -> Option<()> {
                 if buf.len() < 8 {
                     continue;
                 }
-                let mut protected = tx.protect_rtcp(buf);
-                let plain = rx.unprotect_rtcp(&protected);
+                let mut protected = tx.protect_rtcp(buf, Global);
+                let plain = rx.unprotect_rtcp(&protected, Global);
                 assert_eq!(plain.as_deref(), Some(buf), "SRTCP must round trip");
 
                 let i = rng.usize(protected.len() - 1)?;
                 protected[i] ^= 1 << rng.u8(7)?;
                 assert!(
-                    rx.unprotect_rtcp(&protected).is_none(),
+                    rx.unprotect_rtcp(&protected, Global).is_none(),
                     "SRTCP must authenticate"
                 );
             }
@@ -383,7 +384,7 @@ pub fn srtp(data: &[u8]) -> Option<()> {
                 let Some(header) = RtpHeader::parse(buf, &exts) else {
                     continue;
                 };
-                let mut protected = tx.protect_rtp(buf, &header, index);
+                let mut protected = tx.protect_rtp(buf, &header, index, Global);
                 let payload = rx.unprotect_rtp(&protected, &header, index);
                 assert_eq!(
                     payload,
@@ -1283,7 +1284,7 @@ impl MediaPeer {
             buf[start + 2..start + 4].copy_from_slice(&words.to_be_bytes());
         }
 
-        Some(self.remote.protect_rtcp(&buf))
+        Some(self.remote.protect_rtcp(&buf, Global))
     }
 
     /// An SRTP packet from the remote, on one of its streams or anything else.
@@ -1357,7 +1358,7 @@ impl MediaPeer {
         let end = header.header_len + payload.len();
         buf[header.header_len..end].copy_from_slice(payload);
 
-        Some(self.remote.protect_rtp(&buf[..end], &header, seq))
+        Some(self.remote.protect_rtp(&buf[..end], &header, seq, Global))
     }
 }
 
@@ -2091,7 +2092,7 @@ pub fn depack_direct(data: &[u8]) -> Option<()> {
     };
 
     let mut depack = random_depacketizer(&mut rng, codec)?;
-    let mut out = Vec::new();
+    let mut out: PacketBuf = Vec::new_in(&Global);
     let mut extra = CodecExtra::None;
 
     loop {

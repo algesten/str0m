@@ -1,7 +1,10 @@
 #![allow(clippy::all)]
 #![allow(unused)]
 
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer};
+use crate::allocators::copied_in;
 use arrayvec::ArrayVec;
 use tracing::warn;
 
@@ -354,7 +357,13 @@ impl H265Packetizer {
     ///     ├─ Single NALU  → RTP payload = NAL header + payload
     ///     ├─ Large NALU   → Fragmentation Units (Type 49)
     ///     └─ VPS/SPS/PPS → Aggregation Packet (Type 48)
-    fn emit_nalu(&mut self, nalu: &[u8], mtu: usize, out: &mut Vec<Vec<u8>>) {
+    fn emit_nalu<'a>(
+        &mut self,
+        nalu: &[u8],
+        mtu: usize,
+        out: &mut Vec<PacketBuf<'a>, &'a dyn Allocator>,
+    ) {
+        let alloc = *out.allocator();
         if mtu == 0 || nalu.len() < H265NALU_HEADER_SIZE {
             return;
         }
@@ -411,7 +420,7 @@ impl H265Packetizer {
 
             if ap_built {
                 // AP fits in MTU, emit it.
-                out.push(self.pkt_buf.clone());
+                out.push(copied_in(&self.pkt_buf, alloc));
                 // Increment DONL by the number of NAL units in the AP.
                 // Each NAL unit inside the AP consumes its own DON value:
                 //   DONL = N (first), DOND derives N+1 (second), N+2 (third), etc.
@@ -436,10 +445,10 @@ impl H265Packetizer {
                             self.pkt_buf.extend_from_slice(&donl_value.to_be_bytes());
                             self.pkt_buf
                                 .extend_from_slice(&nal_unit[H265NALU_HEADER_SIZE..]);
-                            out.push(self.pkt_buf.clone());
+                            out.push(copied_in(&self.pkt_buf, alloc));
                             *donl_value = donl_value.wrapping_add(1);
                         } else {
-                            out.push(nal_unit.clone());
+                            out.push(copied_in(nal_unit, alloc));
                         }
                     }
                     // If parameter set is larger than MTU, we could fragment it as FU, but in practice
@@ -467,10 +476,10 @@ impl H265Packetizer {
                 self.pkt_buf.extend_from_slice(&donl_value.to_be_bytes());
                 self.pkt_buf
                     .extend_from_slice(&nalu[H265NALU_HEADER_SIZE..]);
-                out.push(self.pkt_buf.clone());
+                out.push(copied_in(&self.pkt_buf, alloc));
                 self.increment_donl();
             } else {
-                out.push(nalu.to_vec());
+                out.push(copied_in(nalu, alloc));
             }
             return;
         }
@@ -528,7 +537,7 @@ impl H265Packetizer {
             self.pkt_buf
                 .extend_from_slice(&payload[offset..offset + take]);
 
-            out.push(self.pkt_buf.clone());
+            out.push(copied_in(&self.pkt_buf, alloc));
             offset += take;
         }
 
@@ -538,16 +547,21 @@ impl H265Packetizer {
 }
 
 impl Packetizer for H265Packetizer {
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         // Validate and log MTU issues.
         let mtu = match mtu {
             0 => {
                 warn!("MTU is 0, cannot packetize H.265 - this indicates a programming bug");
-                return Ok(vec![]);
+                return Ok(Vec::new_in(alloc));
             }
             mtu if mtu > MAX_PACKET_SIZE => {
                 warn!(
@@ -561,7 +575,7 @@ impl Packetizer for H265Packetizer {
                     "MTU {} too small for H.265 fragmentation (min {}) - cannot fragment",
                     mtu, MIN_MTU
                 );
-                return Ok(vec![]);
+                return Ok(Vec::new_in(alloc));
             }
             mtu => mtu, // Valid MTU, use as-is
         };
@@ -573,7 +587,7 @@ impl Packetizer for H265Packetizer {
             .checked_div(mtu.saturating_sub(3))
             .unwrap_or(1)
             .saturating_add(4);
-        let mut packets = Vec::with_capacity(estimated_packets);
+        let mut packets = Vec::with_capacity_in(estimated_packets, alloc);
 
         // If no Annex-B start codes are present, treat as a single NAL unit.
         let (mut next_start, mut next_len) = Self::next_start_code(payload, 0);
@@ -1435,7 +1449,7 @@ impl Depacketizer for H265Depacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.len() <= H265NALU_HEADER_SIZE {
@@ -1688,13 +1702,16 @@ impl Depacketizer for H265Depacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     type Result<T> = std::result::Result<T, PacketError>;
 
     // ========== Shared Test Utilities ==========
 
-    fn reconstruct_from_fu_packets(packets: &[Vec<u8>]) -> Vec<u8> {
+    fn reconstruct_from_fu_packets(packets: &[PacketBuf]) -> Vec<u8> {
         // Reconstruct the original NAL unit from a sequence of FU packets.
         // Assumes all packets are FU (type 49) and are consecutive.
         //
@@ -3122,7 +3139,7 @@ mod test {
                     pck.with_donl(true);
                 }
 
-                let mut out = Vec::new();
+                let mut out: PacketBuf = Vec::new_in(&Global);
                 let mut extra = CodecExtra::None;
                 let result = pck.depacketize(&cur.raw, &mut out, &mut extra);
 
@@ -3179,7 +3196,7 @@ mod test {
             // Use a non-parameter-set type so the packetizer doesn't cache it.
             let nalu = b"\x02\x01\xaa\xbb\xcc".to_vec();
 
-            let out = p.packetize(1200, &nalu)?;
+            let out = p.packetize(1200, &nalu, &Global)?;
             assert_eq!(out.len(), 1);
             assert_eq!(out[0], nalu);
 
@@ -3203,7 +3220,7 @@ mod test {
             bytestream.extend_from_slice(&[0x00, 0x00, 0x01]);
             bytestream.extend_from_slice(&nalu2);
 
-            let out = p.packetize(1200, &bytestream)?;
+            let out = p.packetize(1200, &bytestream, &Global)?;
             assert_eq!(out.len(), 2);
             assert_eq!(out[0], nalu1);
             assert_eq!(out[1], nalu2);
@@ -3227,7 +3244,7 @@ mod test {
                 bytestream.extend_from_slice(n);
             }
 
-            let out = p.packetize(1200, &bytestream)?;
+            let out = p.packetize(1200, &bytestream, &Global)?;
             assert_eq!(out.len(), 2);
             assert_eq!(out[0], nalu);
             assert_eq!(out[1], fd);
@@ -3248,7 +3265,7 @@ mod test {
 
             // Force fragmentation: FU overhead is 3 bytes, so this yields multiple fragments.
             let mtu = 20;
-            let out = p.packetize(mtu, &nalu)?;
+            let out = p.packetize(mtu, &nalu, &Global)?;
             assert!(out.len() > 1, "expected fragmentation");
 
             // Validate each FU packet and reconstruct the original payload (sans 2-byte NAL header).
@@ -3297,7 +3314,7 @@ mod test {
 
             // A small NALU: 2-byte header + payload.
             let nalu = [0x02, 0x01, 0xaa, 0xbb, 0xcc, 0xdd];
-            let pkts = p.packetize(1200, &nalu)?;
+            let pkts = p.packetize(1200, &nalu, &Global)?;
 
             assert_eq!(pkts.len(), 1);
             assert_eq!(pkts[0], nalu);
@@ -3320,7 +3337,7 @@ mod test {
             annexb.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
             annexb.extend_from_slice(&nalu2);
 
-            let pkts = p.packetize(1200, &annexb)?;
+            let pkts = p.packetize(1200, &annexb, &Global)?;
 
             assert_eq!(pkts.len(), 2);
             assert_eq!(pkts[0], nalu1);
@@ -3341,12 +3358,12 @@ mod test {
             let vcl = vec![0x02, 0x01, 0xaa, 0xbb, 0xcc, 0xdd];
 
             // Cache parameter sets (no output yet).
-            assert!(p.packetize(1200, &vps)?.is_empty());
-            assert!(p.packetize(1200, &sps)?.is_empty());
-            assert!(p.packetize(1200, &pps)?.is_empty());
+            assert!(p.packetize(1200, &vps, &Global)?.is_empty());
+            assert!(p.packetize(1200, &sps, &Global)?.is_empty());
+            assert!(p.packetize(1200, &pps, &Global)?.is_empty());
 
             // First non-parameter-set NALU should trigger AP emission.
-            let out = p.packetize(1200, &vcl)?;
+            let out = p.packetize(1200, &vcl, &Global)?;
             assert_eq!(out.len(), 2);
 
             // Validate AP packet structure.
@@ -3382,16 +3399,16 @@ mod test {
             let vcl = vec![0x02, 0x01, 0xaa, 0xbb];
 
             // Cache parameter sets (no output yet).
-            assert!(p.packetize(1200, &vps)?.is_empty());
-            assert!(p.packetize(1200, &sps)?.is_empty());
-            assert!(p.packetize(1200, &pps)?.is_empty());
+            assert!(p.packetize(1200, &vps, &Global)?.is_empty());
+            assert!(p.packetize(1200, &sps, &Global)?.is_empty());
+            assert!(p.packetize(1200, &pps, &Global)?.is_empty());
 
             // Set MTU to a value smaller than the AP size would be.
             // AP overhead: 2 (AP header) + 2 (VPS size) + 4 (VPS) + 2 (SPS size)
             //              + 5 (SPS) + 2 (PPS size) + 3 (PPS) = 20 bytes
             // So MTU=15 will be too small for the AP.
             let small_mtu = 15;
-            let out = p.packetize(small_mtu, &vcl)?;
+            let out = p.packetize(small_mtu, &vcl, &Global)?;
 
             // Should emit parameter sets as individual Single NAL packets, then the VCL NALU.
             // Expected: VPS, SPS, PPS, VCL = 4 packets
@@ -3424,7 +3441,7 @@ mod test {
 
             // Force fragmentation with small MTU
             let mtu = 50;
-            let packets = packetizer.packetize(mtu, &original_nalu)?;
+            let packets = packetizer.packetize(mtu, &original_nalu, &Global)?;
 
             // Verify fragmentation occurred
             assert!(packets.len() > 1, "Expected multiple FU packets");
@@ -3434,7 +3451,7 @@ mod test {
             );
 
             // Depacketize each FU packet - they should accumulate in the depacketizer
-            let mut output = Vec::new();
+            let mut output: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
 
             for (i, packet) in packets.iter().enumerate() {
@@ -3487,16 +3504,16 @@ mod test {
             let vcl = vec![0x26, 0x01, 0x55, 0x66, 0x77, 0x88]; // IDR_W_RADL
 
             // Cache parameter sets (no output yet)
-            assert!(packetizer.packetize(1200, &vps)?.is_empty());
-            assert!(packetizer.packetize(1200, &sps)?.is_empty());
-            assert!(packetizer.packetize(1200, &pps)?.is_empty());
+            assert!(packetizer.packetize(1200, &vps, &Global)?.is_empty());
+            assert!(packetizer.packetize(1200, &sps, &Global)?.is_empty());
+            assert!(packetizer.packetize(1200, &pps, &Global)?.is_empty());
 
             // Emit AP + VCL
-            let packets = packetizer.packetize(1200, &vcl)?;
+            let packets = packetizer.packetize(1200, &vcl, &Global)?;
             assert_eq!(packets.len(), 2, "Expected AP packet + VCL packet");
 
             // Depacketize the AP packet
-            let mut output = Vec::new();
+            let mut output: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
 
             depacketizer.depacketize(&packets[0], &mut output, &mut extra)?;
@@ -3564,7 +3581,7 @@ mod test {
             let original_nalu = vec![0x02, 0x01, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
 
             // Packetize with large MTU (no fragmentation)
-            let packets = packetizer.packetize(1200, &original_nalu)?;
+            let packets = packetizer.packetize(1200, &original_nalu, &Global)?;
             assert_eq!(packets.len(), 1, "Expected single packet");
             assert_eq!(
                 packets[0], original_nalu,
@@ -3572,7 +3589,7 @@ mod test {
             );
 
             // Depacketize (output will have Annex-B start code)
-            let mut output = Vec::new();
+            let mut output: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
             depacketizer.depacketize(&packets[0], &mut output, &mut extra)?;
 
@@ -3607,16 +3624,16 @@ mod test {
             large_vcl.extend((0..150).map(|i| (i % 256) as u8));
 
             // Cache parameter sets
-            assert!(packetizer.packetize(1200, &vps)?.is_empty());
-            assert!(packetizer.packetize(1200, &sps)?.is_empty());
-            assert!(packetizer.packetize(1200, &pps)?.is_empty());
+            assert!(packetizer.packetize(1200, &vps, &Global)?.is_empty());
+            assert!(packetizer.packetize(1200, &sps, &Global)?.is_empty());
+            assert!(packetizer.packetize(1200, &pps, &Global)?.is_empty());
 
             // First VCL triggers AP emission
-            let packets1 = packetizer.packetize(1200, &small_vcl)?;
+            let packets1 = packetizer.packetize(1200, &small_vcl, &Global)?;
             assert_eq!(packets1.len(), 2, "Expected AP + small VCL");
 
             // Verify AP depacketization (Annex-B format with start codes)
-            let mut output = Vec::new();
+            let mut output: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
             depacketizer.depacketize(&packets1[0], &mut output, &mut extra)?;
 
@@ -3647,7 +3664,7 @@ mod test {
             assert_eq!(output, expected_small_vcl);
 
             // Large VCL should be fragmented
-            let packets2 = packetizer.packetize(60, &large_vcl)?;
+            let packets2 = packetizer.packetize(60, &large_vcl, &Global)?;
             assert!(packets2.len() > 1, "Large VCL should be fragmented");
 
             // Depacketize FU packets
@@ -3702,13 +3719,13 @@ mod test {
             annexb.extend_from_slice(&nalu4);
 
             // Packetize the Annex-B stream
-            let packets = packetizer.packetize(1200, &annexb)?;
+            let packets = packetizer.packetize(1200, &annexb, &Global)?;
 
             // Should get AP (with VPS/SPS/PPS) + VCL
             assert_eq!(packets.len(), 2, "Expected AP + VCL from Annex-B stream");
 
             // Depacketize and verify (output is Annex-B format)
-            let mut output = Vec::new();
+            let mut output: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
 
             // AP packet produces start code before each NAL
@@ -3759,7 +3776,7 @@ mod test {
             let mtu_sizes = [100, 200, 500, 1000, MAX_PACKET_SIZE];
 
             for mtu in mtu_sizes {
-                let packets = packetizer.packetize(mtu, &large_nalu)?;
+                let packets = packetizer.packetize(mtu, &large_nalu, &Global)?;
 
                 // Verify all packets fit within MTU
                 for packet in &packets {
@@ -3804,7 +3821,7 @@ mod test {
             let mut large_nalu = vec![0x26, 0x01]; // IDR NAL header
             large_nalu.extend(vec![0xff; 200]); // 202 bytes total
 
-            let packets = packetizer.packetize(100, &large_nalu)?;
+            let packets = packetizer.packetize(100, &large_nalu, &Global)?;
 
             assert!(
                 packets.len() >= 2,
@@ -4029,7 +4046,7 @@ mod test {
 
             // Depacketize and verify
             let mut depacketizer = H265Depacketizer::default();
-            let mut output = Vec::new();
+            let mut output: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
 
             depacketizer.depacketize(&ap_packet, &mut output, &mut extra)?;
@@ -4069,7 +4086,7 @@ mod test {
             annexb.extend_from_slice(ANNEXB_NALUSTART_CODE);
             annexb.extend_from_slice(&pps);
 
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &annexb)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &annexb, &Global)?;
 
             // Should produce 0 packets (just caching parameter sets)
             assert_eq!(
@@ -4083,7 +4100,7 @@ mod test {
             vcl_annexb.extend_from_slice(ANNEXB_NALUSTART_CODE);
             vcl_annexb.extend_from_slice(&[0x02, 0x01, 0x11, 0x22]);
 
-            let vcl_packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl_annexb)?;
+            let vcl_packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl_annexb, &Global)?;
 
             // Should get AP + VCL
             assert_eq!(
@@ -4139,7 +4156,7 @@ mod test {
             let mut packetizer = H265Packetizer::default();
 
             // Packetize
-            let packets = packetizer.packetize(mtu, &nalu)?;
+            let packets = packetizer.packetize(mtu, &nalu, &Global)?;
 
             // Must produce exactly two FU packets
             assert_eq!(
@@ -4202,7 +4219,7 @@ mod test {
             // Create a single NAL unit (type 1, VCL)
             let nalu = vec![0x02, 0x01, 0xDE, 0xAD, 0xBE, 0xEF];
 
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &nalu)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &nalu, &Global)?;
             assert_eq!(packets.len(), 1, "Should produce 1 packet");
 
             let packet = &packets[0];
@@ -4227,7 +4244,7 @@ mod test {
             assert_eq!(packet[5], 0xAD);
 
             // Depacketize and verify output (Annex-B format without DONL)
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut codec_extra = CodecExtra::None;
             depacketizer.depacketize(packet, &mut out, &mut codec_extra)?;
 
@@ -4267,7 +4284,7 @@ mod test {
             let mut nalu = vec![0x02, 0x01]; // NAL header (type 1)
             nalu.extend(vec![0xAA; 3000]); // Large payload
 
-            let packets = packetizer.packetize(1200, &nalu)?;
+            let packets = packetizer.packetize(1200, &nalu, &Global)?;
 
             // Should produce multiple FU packets
             assert!(
@@ -4309,7 +4326,7 @@ mod test {
             assert!(last_fu_hdr.e(), "Last FU should have E flag set");
 
             // Depacketize all fragments
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut codec_extra = CodecExtra::None;
 
             for packet in &packets {
@@ -4363,7 +4380,7 @@ mod test {
             annexb.extend_from_slice(ANNEXB_NALUSTART_CODE);
             annexb.extend_from_slice(&[0x44, 0x01, 0xC0, 0xF3, 0xC0, 0x02]);
 
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &annexb)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &annexb, &Global)?;
             assert_eq!(packets.len(), 0, "Parameter sets should be cached");
 
             // Send VCL NAL to trigger AP emission
@@ -4371,7 +4388,7 @@ mod test {
             vcl_annexb.extend_from_slice(ANNEXB_NALUSTART_CODE);
             vcl_annexb.extend_from_slice(&[0x02, 0x01, 0x11, 0x22, 0x33]);
 
-            let vcl_packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl_annexb)?;
+            let vcl_packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl_annexb, &Global)?;
             assert_eq!(vcl_packets.len(), 2, "Should produce AP + VCL");
 
             let ap_packet = &vcl_packets[0];
@@ -4395,7 +4412,7 @@ mod test {
             assert_eq!(dond1, 0, "DOND should be 0 (same decoding order)");
 
             // Depacketize AP
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut codec_extra = CodecExtra::None;
             depacketizer.depacketize(ap_packet, &mut out, &mut codec_extra)?;
 
@@ -4427,9 +4444,9 @@ mod test {
             let nalu2 = vec![0x02, 0x01, 0xBB];
             let nalu3 = vec![0x02, 0x01, 0xCC];
 
-            let packets1 = packetizer.packetize(MAX_PACKET_SIZE, &nalu1)?;
-            let packets2 = packetizer.packetize(MAX_PACKET_SIZE, &nalu2)?;
-            let packets3 = packetizer.packetize(MAX_PACKET_SIZE, &nalu3)?;
+            let packets1 = packetizer.packetize(MAX_PACKET_SIZE, &nalu1, &Global)?;
+            let packets2 = packetizer.packetize(MAX_PACKET_SIZE, &nalu2, &Global)?;
+            let packets3 = packetizer.packetize(MAX_PACKET_SIZE, &nalu3, &Global)?;
 
             // Check DONL values
             let donl1 = u16::from_be_bytes([packets1[0][2], packets1[0][3]]);
@@ -4452,7 +4469,7 @@ mod test {
             // Don't call with_donl(true) - DONL should be disabled by default
 
             let nalu = vec![0x02, 0x01, 0xDE, 0xAD, 0xBE, 0xEF];
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &nalu)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &nalu, &Global)?;
 
             assert_eq!(packets.len(), 1);
             let packet = &packets[0];
@@ -4491,7 +4508,7 @@ mod test {
 
             // --- Test 1: Single NAL Unit with DONL ---
             let single_nalu = vec![0x02, 0x01, 0xDE, 0xAD, 0xBE, 0xEF]; // Type 1 (TRAIL_R)
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &single_nalu)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &single_nalu, &Global)?;
             assert_eq!(packets.len(), 1, "Single NAL should produce 1 packet");
 
             // Verify DONL=0 is present on wire: [NAL_HDR(2)] [DONL(2)] [payload]
@@ -4505,7 +4522,7 @@ mod test {
             assert_eq!(donl, 0, "First NAL should have DONL=0");
 
             // Depacketize and verify Annex-B output matches original
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
             depacketizer.depacketize(pkt, &mut out, &mut extra)?;
             assert_eq!(&out[0..4], ANNEXB_NALUSTART_CODE);
@@ -4522,12 +4539,24 @@ mod test {
             let vcl = vec![0x26, 0x01, 0x44, 0x55, 0x66]; // IDR_W_RADL
 
             // Cache parameter sets (no output)
-            assert!(packetizer.packetize(MAX_PACKET_SIZE, &vps)?.is_empty());
-            assert!(packetizer.packetize(MAX_PACKET_SIZE, &sps)?.is_empty());
-            assert!(packetizer.packetize(MAX_PACKET_SIZE, &pps)?.is_empty());
+            assert!(
+                packetizer
+                    .packetize(MAX_PACKET_SIZE, &vps, &Global)?
+                    .is_empty()
+            );
+            assert!(
+                packetizer
+                    .packetize(MAX_PACKET_SIZE, &sps, &Global)?
+                    .is_empty()
+            );
+            assert!(
+                packetizer
+                    .packetize(MAX_PACKET_SIZE, &pps, &Global)?
+                    .is_empty()
+            );
 
             // Trigger AP + VCL emission
-            let ap_packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl)?;
+            let ap_packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl, &Global)?;
             assert_eq!(ap_packets.len(), 2, "Should produce AP + VCL");
 
             // Verify AP wire format: [AP_HDR(2)] [DONL(2)] [Size(2)] [NAL] [DOND(1)] [Size(2)] [NAL] ...
@@ -4577,7 +4606,7 @@ mod test {
             let mut large_nalu = vec![0x02, 0x01]; // Type 1
             large_nalu.extend(vec![0xAA; 200]);
 
-            let fu_packets = packetizer.packetize(100, &large_nalu)?;
+            let fu_packets = packetizer.packetize(100, &large_nalu, &Global)?;
             assert!(fu_packets.len() > 1, "Large NAL should be fragmented");
 
             // Verify DONL=5 is present only in first FU fragment (S=1)
@@ -4612,7 +4641,7 @@ mod test {
             // --- Verify DONL counter progression ---
             // After all operations: DON 0 (single), 1-3 (AP with 3 NALs), 4 (VCL), 5 (FU) → next = 6
             let next_nalu = vec![0x02, 0x01, 0x77];
-            let next_packets = packetizer.packetize(MAX_PACKET_SIZE, &next_nalu)?;
+            let next_packets = packetizer.packetize(MAX_PACKET_SIZE, &next_nalu, &Global)?;
             let next_donl = u16::from_be_bytes([next_packets[0][2], next_packets[0][3]]);
             assert_eq!(next_donl, 6, "Next DONL should be 6 after full sequence");
 
@@ -4637,7 +4666,7 @@ mod test {
 
             // Test 1: Single NAL with DONL
             let single_nalu = vec![0x02, 0x01, 0xff, 0xff, 0xff];
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &single_nalu)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &single_nalu, &Global)?;
 
             assert_eq!(packets.len(), 1, "Single NAL should produce 1 packet");
 
@@ -4646,7 +4675,7 @@ mod test {
             assert_eq!(donl, 0, "First DONL should be 0");
 
             // Depacketize and verify
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut codec_extra = CodecExtra::None;
             depacketizer.depacketize(&packets[0], &mut out, &mut codec_extra)?;
             assert!(!out.is_empty(), "Should depacketize successfully");
@@ -4657,7 +4686,7 @@ mod test {
                 large_nalu.push((i % 256) as u8);
             }
 
-            let fu_packets = packetizer.packetize(100, &large_nalu)?;
+            let fu_packets = packetizer.packetize(100, &large_nalu, &Global)?;
             assert!(fu_packets.len() > 1, "Large NAL should fragment");
 
             // First fragment should have DONL
@@ -4693,13 +4722,13 @@ mod test {
             let sps = vec![0x42, 0x01, 0x00, 0x01, 0x02, 0x03];
             let pps = vec![0x44, 0x01, 0x00, 0x01, 0x02, 0x03];
 
-            packetizer.packetize(MAX_PACKET_SIZE, &vps)?;
-            packetizer.packetize(MAX_PACKET_SIZE, &sps)?;
-            packetizer.packetize(MAX_PACKET_SIZE, &pps)?;
+            packetizer.packetize(MAX_PACKET_SIZE, &vps, &Global)?;
+            packetizer.packetize(MAX_PACKET_SIZE, &sps, &Global)?;
+            packetizer.packetize(MAX_PACKET_SIZE, &pps, &Global)?;
 
             // Trigger with VCL NAL
             let vcl = vec![0x02, 0x01, 0xAA, 0xBB];
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &vcl, &Global)?;
 
             // Should emit AP + VCL or individual packets with DONL
             assert!(!packets.is_empty(), "Should produce packets");
@@ -4725,7 +4754,7 @@ mod test {
             let mut packetizer = H265Packetizer::default();
             let nalu = vec![0x02, 0x01, 0xAA, 0xBB, 0xCC];
 
-            let packets = packetizer.packetize(0, &nalu)?;
+            let packets = packetizer.packetize(0, &nalu, &Global)?;
 
             // Zero MTU should result in no packets being created
             assert!(packets.is_empty(), "Zero MTU should produce no packets");
@@ -4740,7 +4769,7 @@ mod test {
             let mut packetizer = H265Packetizer::default();
             let nalu = vec![];
 
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &nalu)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &nalu, &Global)?;
 
             // Empty NAL unit should result in no packets
             assert!(
@@ -4763,7 +4792,7 @@ mod test {
 
             // FU overhead is 3 bytes (2 FU indicator + 1 FU header)
             // MTU = 2 is smaller than overhead, should produce no packets
-            let packets = packetizer.packetize(2, &large_nalu)?;
+            let packets = packetizer.packetize(2, &large_nalu, &Global)?;
 
             assert!(
                 packets.is_empty(),
@@ -4784,7 +4813,7 @@ mod test {
             large_nalu.extend(vec![0xBB; 200]);
 
             // FU overhead is 3 bytes, no room for payload
-            let packets = packetizer.packetize(3, &large_nalu)?;
+            let packets = packetizer.packetize(3, &large_nalu, &Global)?;
 
             assert!(
                 packets.is_empty(),
@@ -4806,7 +4835,7 @@ mod test {
             large_nalu.extend(vec![0xCC; 200]);
 
             // FU overhead (3) + DONL (2) = 5 bytes, no room for payload
-            let packets = packetizer.packetize(5, &large_nalu)?;
+            let packets = packetizer.packetize(5, &large_nalu, &Global)?;
 
             assert!(
                 packets.is_empty(),
@@ -4827,7 +4856,7 @@ mod test {
             large_nalu.extend(vec![0xDD; 3000]);
 
             // Request MTU=2000, but should be clamped to MAX_PACKET_SIZE=1200
-            let packets = packetizer.packetize(2000, &large_nalu)?;
+            let packets = packetizer.packetize(2000, &large_nalu, &Global)?;
 
             assert!(!packets.is_empty(), "Should produce FU packets");
 
@@ -4855,7 +4884,7 @@ mod test {
             let mut large_nalu = vec![0x02, 0x01];
             large_nalu.extend(vec![0xEE; 1197]); // Total 1199 bytes
 
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &large_nalu)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &large_nalu, &Global)?;
 
             // With Vec buffer, large packets within MTU are produced successfully
             assert_eq!(packets.len(), 1);
@@ -4884,14 +4913,14 @@ mod test {
             let vcl = vec![0x02, 0x01, 0xDD];
 
             // Cache parameter sets
-            assert!(packetizer.packetize(1200, &vps)?.is_empty());
-            assert!(packetizer.packetize(1200, &sps)?.is_empty());
-            assert!(packetizer.packetize(1200, &pps)?.is_empty());
+            assert!(packetizer.packetize(1200, &vps, &Global)?.is_empty());
+            assert!(packetizer.packetize(1200, &sps, &Global)?.is_empty());
+            assert!(packetizer.packetize(1200, &pps, &Global)?.is_empty());
 
             // Trigger emission with MTU that's too small for AP
             // AP overhead: 2 (header) + 3×2 (size fields) + 102+102+102 = 314 bytes
             let small_mtu = 200;
-            let packets = packetizer.packetize(small_mtu, &vcl)?;
+            let packets = packetizer.packetize(small_mtu, &vcl, &Global)?;
 
             // Should emit as individual packets (VPS, SPS, PPS, VCL)
             assert_eq!(packets.len(), 4, "Should fall back to 4 individual packets");
@@ -4920,7 +4949,7 @@ mod test {
 
             // FU overhead = 3 bytes, MTU = 4 allows 1 byte payload per packet
             let mtu = 4;
-            let packets = packetizer.packetize(mtu, &nalu)?;
+            let packets = packetizer.packetize(mtu, &nalu, &Global)?;
 
             // Should create multiple packets, each with 1 byte of payload
             assert!(
@@ -4945,7 +4974,7 @@ mod test {
             // NAL unit with only 1 byte (invalid, needs at least 2 for header)
             let invalid_nalu = vec![0x02];
 
-            let packets = packetizer.packetize(MAX_PACKET_SIZE, &invalid_nalu)?;
+            let packets = packetizer.packetize(MAX_PACKET_SIZE, &invalid_nalu, &Global)?;
 
             // Should drop malformed NAL (< H265NALU_HEADER_SIZE)
             assert!(
@@ -5088,7 +5117,7 @@ mod test {
 
             for cur in tests {
                 let mut pck = H265Depacketizer::default();
-                let mut out = Vec::new();
+                let mut out: PacketBuf = Vec::new_in(&Global);
                 let mut extra = CodecExtra::None;
                 let _ = pck.depacketize(&cur, &mut out, &mut extra)?;
             }
@@ -5113,11 +5142,11 @@ mod test {
             let vps = vec![0x40, 0x01, 0xAA];
             let sps = vec![0x42, 0x01, 0xBB];
 
-            packetizer.packetize(100, &vps)?;
-            packetizer.packetize(100, &sps)?;
+            packetizer.packetize(100, &vps, &Global)?;
+            packetizer.packetize(100, &sps, &Global)?;
 
             // Trigger aggregation
-            let packets = packetizer.packetize(100, &nalu)?;
+            let packets = packetizer.packetize(100, &nalu, &Global)?;
 
             if packets.len() == 1 {
                 // If AP was created, verify structure
@@ -5146,7 +5175,7 @@ mod test {
             ];
 
             let mut depacketizer = H265Depacketizer::default();
-            let mut out = Vec::new();
+            let mut out: PacketBuf = Vec::new_in(&Global);
             let mut extra = CodecExtra::None;
 
             // This should NOT panic - the fix checks payload.len() >= H265NALU_HEADER_SIZE
@@ -5235,7 +5264,7 @@ mod test {
         nalu.extend(std::iter::repeat(0xABu8).take(2000));
         for &mtu in &[100usize, 300, 600, 1200] {
             let mut p = H265Packetizer::default();
-            let pkts = p.packetize(mtu, &nalu)?;
+            let pkts = p.packetize(mtu, &nalu, &Global)?;
             assert!(!pkts.is_empty(), "H265 produced no packets at mtu {mtu}");
             for (i, pkt) in pkts.iter().enumerate() {
                 assert!(

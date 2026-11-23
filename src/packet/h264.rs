@@ -1,6 +1,9 @@
 #![allow(clippy::all)]
 
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer};
+use crate::allocators::copied_in;
 
 /// H264 information describing the depacketized / packetized data
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +128,13 @@ impl H264Packetizer {
         (-1, -1)
     }
 
-    fn emit(&mut self, nalu: &[u8], mtu: usize, payloads: &mut Vec<Vec<u8>>) {
+    fn emit<'a>(
+        &mut self,
+        nalu: &[u8],
+        mtu: usize,
+        payloads: &mut Vec<PacketBuf<'a>, &'a dyn Allocator>,
+    ) {
+        let alloc = *payloads.allocator();
         if nalu.is_empty() {
             return;
         }
@@ -146,7 +155,8 @@ impl H264Packetizer {
             let sps_len = (sps_nalu.len() as u16).to_be_bytes();
             let pps_len = (pps_nalu.len() as u16).to_be_bytes();
 
-            let mut stap_a_nalu = Vec::with_capacity(1 + 2 + sps_nalu.len() + 2 + pps_nalu.len());
+            let mut stap_a_nalu =
+                Vec::with_capacity_in(1 + 2 + sps_nalu.len() + 2 + pps_nalu.len(), alloc);
             stap_a_nalu.push(OUTPUT_STAP_AHEADER);
             stap_a_nalu.extend(sps_len);
             stap_a_nalu.extend_from_slice(sps_nalu);
@@ -164,7 +174,7 @@ impl H264Packetizer {
 
         // Single NALU
         if nalu.len() <= mtu {
-            payloads.push(nalu.to_vec());
+            payloads.push(copied_in(nalu, alloc));
             return;
         }
 
@@ -195,7 +205,8 @@ impl H264Packetizer {
         while nalu_data_remaining > 0 {
             let current_fragment_size = std::cmp::min(max_fragment_size, nalu_data_remaining);
             //out: = make([]byte, fuaHeaderSize + currentFragmentSize)
-            let mut out = Vec::with_capacity(FUA_HEADER_SIZE + current_fragment_size as usize);
+            let mut out =
+                Vec::with_capacity_in(FUA_HEADER_SIZE + current_fragment_size as usize, alloc);
             // +---------------+
             // |0|1|2|3|4|5|6|7|
             // +-+-+-+-+-+-+-+-+
@@ -234,12 +245,17 @@ impl H264Packetizer {
 
 impl Packetizer for H264Packetizer {
     /// Payload fragments a H264 packet across one or more byte arrays
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() || mtu == 0 {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
-        let mut payloads = vec![];
+        let mut payloads = Vec::new_in(alloc);
 
         let (mut next_ind_start, mut next_ind_len) = H264Packetizer::next_ind(payload, 0);
         if next_ind_start == -1 {
@@ -297,7 +313,7 @@ impl Depacketizer for H264Depacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.len() == 0 {
@@ -428,7 +444,10 @@ impl Depacketizer for H264Depacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     #[test]
     fn test_h264_payload() -> Result<(), PacketError> {
@@ -450,19 +469,19 @@ mod test {
         let mut pck = H264Packetizer::default();
 
         // Positive MTU, empty payload
-        let result = pck.packetize(1, empty)?;
+        let result = pck.packetize(1, empty, &Global)?;
         assert!(result.is_empty(), "Generated payload should be empty");
 
         // 0 MTU, small payload
-        let result = pck.packetize(0, small_payload)?;
+        let result = pck.packetize(0, small_payload, &Global)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.packetize(1, small_payload)?;
+        let result = pck.packetize(1, small_payload, &Global)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.packetize(5, small_payload)?;
+        let result = pck.packetize(5, small_payload, &Global)?;
         assert_eq!(result.len(), 1, "Generated payload should be the 1");
         assert_eq!(
             result[0].len(),
@@ -471,7 +490,7 @@ mod test {
         );
 
         // Multiple NALU in a single payload
-        let result = pck.packetize(5, multiple_payload)?;
+        let result = pck.packetize(5, multiple_payload, &Global)?;
         assert_eq!(result.len(), 2, "2 nal units should be broken out");
         for i in 0..2 {
             assert_eq!(
@@ -483,7 +502,7 @@ mod test {
         }
 
         // Large Payload split across multiple RTP Packets
-        let result = pck.packetize(5, large_payload)?;
+        let result = pck.packetize(5, large_payload, &Global)?;
         assert_eq!(
             result, large_payload_packetized,
             "FU-A packetization failed"
@@ -491,12 +510,12 @@ mod test {
 
         // Nalu type 9
         let small_payload2 = &[0x09, 0x00, 0x00];
-        let result = pck.packetize(5, small_payload2)?;
+        let result = pck.packetize(5, small_payload2, &Global)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Nalu type 12
         let filler_payload = &[FILLER_NALU_TYPE, 0xff, 0x80];
-        let result = pck.packetize(5, filler_payload)?;
+        let result = pck.packetize(5, filler_payload, &Global)?;
         assert_eq!(result, vec![filler_payload], "Filler NALU should be kept");
 
         Ok(())
@@ -509,7 +528,7 @@ mod test {
                 let mut pkt = H264Depacketizer::default();
                 pkt.is_avc = $is_avc;
                 let mut extra = CodecExtra::None;
-                let mut out: Vec<u8> = Vec::new();
+                let mut out: PacketBuf = Vec::new_in(&Global);
                 let result = pkt.depacketize($payload, &mut out, &mut extra);
                 if $is_ok {
                     assert!(result.is_ok(), $err);
@@ -564,7 +583,7 @@ mod test {
     fn single_payload() -> Result<(), PacketError> {
         let mut pkt = H264Depacketizer::default();
         let mut extra = CodecExtra::None;
-        let mut out: Vec<u8> = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let single_payload = &[0x90, 0x90, 0x90];
         let _ = pkt.depacketize(single_payload, &mut out, &mut extra);
         let single_payload_unmarshaled = &[0x00, 0x00, 0x00, 0x01, 0x90, 0x90, 0x90];
@@ -580,7 +599,7 @@ mod test {
         let mut pkt = H264Depacketizer::default();
         pkt.is_avc = true;
         let mut extra = CodecExtra::None;
-        let mut out: Vec<u8> = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let single_payload = &[0x90, 0x90, 0x90];
         let _ = pkt.depacketize(single_payload, &mut out, &mut extra);
         let single_payload_unmarshaled_avc = &[0x00, 0x00, 0x00, 0x03, 0x90, 0x90, 0x90];
@@ -609,7 +628,7 @@ mod test {
         let mut pkt = H264Depacketizer::default();
         let mut extra = CodecExtra::None;
 
-        let mut large_out = Vec::new();
+        let mut large_out: PacketBuf = Vec::new_in(&Global);
         for p in &large_payload_packetized {
             pkt.depacketize(*p, &mut large_out, &mut extra)?;
         }
@@ -643,7 +662,7 @@ mod test {
 
         let mut extra = CodecExtra::None;
 
-        let mut large_out_avc = Vec::new();
+        let mut large_out_avc: PacketBuf = Vec::new_in(&Global);
         for p in &large_payload_packetized {
             avc_pkt.depacketize(*p, &mut large_out_avc, &mut extra)?;
         }
@@ -670,7 +689,7 @@ mod test {
 
         let mut extra = CodecExtra::None;
 
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_multi_nalu_unmarshaled,
@@ -696,7 +715,7 @@ mod test {
 
         let mut extra = CodecExtra::None;
 
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         avc_pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_multi_nalu_unmarshaled_avc,
@@ -765,13 +784,13 @@ mod test {
         ];
 
         // When packetizing SPS and PPS are emitted with following NALU
-        let res = pck.packetize(1500, &[0x07, 0x00, 0x01])?;
+        let res = pck.packetize(1500, &[0x07, 0x00, 0x01], &Global)?;
         assert!(res.is_empty(), "Generated payload should be empty");
 
-        let res = pck.packetize(1500, &[0x08, 0x02, 0x03])?;
+        let res = pck.packetize(1500, &[0x08, 0x02, 0x03], &Global)?;
         assert!(res.is_empty(), "Generated payload should be empty");
 
-        let actual = pck.packetize(1500, &[0x05, 0x04, 0x05])?;
+        let actual = pck.packetize(1500, &[0x05, 0x04, 0x05], &Global)?;
         assert_eq!(actual, expected, "SPS and PPS aren't packed together");
 
         Ok(())
@@ -781,7 +800,7 @@ mod test {
     fn test_h264_depacketizer_idr_handling() -> Result<(), PacketError> {
         let mut pck = H264Depacketizer::default();
         let mut extra = CodecExtra::None;
-        let mut out = vec![];
+        let mut out: PacketBuf = Vec::new_in(&Global);
 
         // First byte is NALU type
         let packet = [0x85];
@@ -839,7 +858,7 @@ mod test {
 
         let mut pck = H264Depacketizer::default();
         let mut extra = CodecExtra::None;
-        let mut out = vec![];
+        let mut out: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(PACKET, &mut out, &mut extra).unwrap();
     }
 
@@ -849,7 +868,7 @@ mod test {
 
         let mut pck = H264Depacketizer::default();
         let mut extra = CodecExtra::None;
-        let mut out = vec![];
+        let mut out: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(PACKET, &mut out, &mut extra).unwrap();
     }
 
@@ -958,7 +977,7 @@ mod test {
         payload.extend(std::iter::repeat(0xABu8).take(2000));
         for &mtu in &[100usize, 300, 600, 1200] {
             let mut pck = H264Packetizer::default();
-            let pkts = pck.packetize(mtu, &payload)?;
+            let pkts = pck.packetize(mtu, &payload, &Global)?;
             assert!(!pkts.is_empty(), "H264 produced no packets at mtu {mtu}");
             for (i, pkt) in pkts.iter().enumerate() {
                 assert!(

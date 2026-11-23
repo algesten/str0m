@@ -9,7 +9,7 @@ readme = "README.md"
 edition = "2024"
 
 # MSRV
-rust-version = "1.89.0"
+rust-version = "1.100.0"
 
 [features]
 default = ["dtls"]
@@ -32,3 +32,6 @@ serde.workspace = true
 
 # For openssl errors
 openssl = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true

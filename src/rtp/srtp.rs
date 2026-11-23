@@ -1,6 +1,8 @@
+use std::alloc::Allocator;
 use std::fmt;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 
+use crate::allocators::{copied_in, zeroed_in};
 use crate::crypto::Aes128CmSha1_80Cipher;
 use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
 use crate::crypto::{AeadAes128Gcm, AeadAes256Gcm, Aes128CmSha1_80};
@@ -248,12 +250,13 @@ impl DecryptWarnings {
 }
 
 impl SrtpContext {
-    pub fn protect_rtp(
+    pub fn protect_rtp<A: Allocator>(
         &mut self,
         buf: &[u8],
         header: &RtpHeader,
         srtp_index: u64, // same as ext_seq
-    ) -> Vec<u8> {
+        alloc: A,
+    ) -> Vec<u8, A> {
         // SRTP layout
         // [header, [rtp, (padding + pad_count)], tag]
 
@@ -295,8 +298,10 @@ impl SrtpContext {
                 // HMAC_TAG_LEN is 10, CTR_BUFFER_PADDING is 15, so we need 5 extra bytes
                 let padding_needed =
                     CTR_BUFFER_PADDING.saturating_sub(Aes128CmSha1_80::HMAC_TAG_LEN);
-                let mut output =
-                    vec![0_u8; buf.len() + Aes128CmSha1_80::HMAC_TAG_LEN + padding_needed];
+                let mut output = zeroed_in(
+                    buf.len() + Aes128CmSha1_80::HMAC_TAG_LEN + padding_needed,
+                    alloc,
+                );
 
                 enc.encrypt(&iv, input, &mut output[hlen..])
                     .expect("rtp encrypt");
@@ -318,7 +323,7 @@ impl SrtpContext {
 
                 // Input and output lengths for encryption:
                 // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
-                let mut output = vec![0_u8; buf.len() + AeadAes128Gcm::TAG_LEN];
+                let mut output = zeroed_in(buf.len() + AeadAes128Gcm::TAG_LEN, alloc);
                 enc.encrypt(&iv, aad, input, &mut output[hlen..])
                     .expect("rtp encrypt");
 
@@ -334,7 +339,7 @@ impl SrtpContext {
 
                 // Input and output lengths for encryption:
                 // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
-                let mut output = vec![0_u8; buf.len() + AeadAes256Gcm::TAG_LEN];
+                let mut output = zeroed_in(buf.len() + AeadAes256Gcm::TAG_LEN, alloc);
                 enc.encrypt(&iv, aad, input, &mut output[hlen..])
                     .expect("rtp encrypt");
 
@@ -461,7 +466,7 @@ impl SrtpContext {
         }
     }
 
-    pub fn protect_rtcp(&mut self, buf: &[u8]) -> Vec<u8> {
+    pub fn protect_rtcp<A: Allocator>(&mut self, buf: &[u8], alloc: A) -> Vec<u8, A> {
         let srtcp_index = self.srtcp_index;
 
         // https://tools.ietf.org/html/rfc3711#page-15
@@ -487,7 +492,7 @@ impl SrtpContext {
                 // SRTCP_INDEX_LEN + HMAC_TAG_LEN is 14, CTR_BUFFER_PADDING is 15, so we need 1 extra byte
                 let padding_needed = CTR_BUFFER_PADDING
                     .saturating_sub(SRTCP_INDEX_LEN + Aes128CmSha1_80::HMAC_TAG_LEN);
-                let mut output = vec![0_u8; final_size + padding_needed];
+                let mut output = zeroed_in(final_size + padding_needed, alloc);
 
                 output[0..8].copy_from_slice(&buf[0..8]);
                 let input = &buf[8..];
@@ -511,7 +516,8 @@ impl SrtpContext {
                 aad[..8].copy_from_slice(&buf[..8]);
                 aad[8..12].copy_from_slice(&e_and_si.to_be_bytes());
 
-                let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + AeadAes128Gcm::TAG_LEN];
+                let mut output =
+                    zeroed_in(buf.len() + SRTCP_INDEX_LEN + AeadAes128Gcm::TAG_LEN, alloc);
                 output[0..8].copy_from_slice(&buf[0..8]);
                 let input = &buf[8..];
 
@@ -533,7 +539,8 @@ impl SrtpContext {
                 aad[..8].copy_from_slice(&buf[..8]);
                 aad[8..12].copy_from_slice(&e_and_si.to_be_bytes());
 
-                let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + AeadAes256Gcm::TAG_LEN];
+                let mut output =
+                    zeroed_in(buf.len() + SRTCP_INDEX_LEN + AeadAes256Gcm::TAG_LEN, alloc);
                 output[0..8].copy_from_slice(&buf[0..8]);
                 let input = &buf[8..];
 
@@ -559,7 +566,7 @@ impl SrtpContext {
     //
     //                  |--------------------------------------|
     //                              encrypted (aes)
-    pub fn unprotect_rtcp(&mut self, buf: &[u8]) -> Option<Vec<u8>> {
+    pub fn unprotect_rtcp<A: Allocator>(&mut self, buf: &[u8], alloc: A) -> Option<Vec<u8, A>> {
         match &mut self.rtcp {
             Derived::Aes128CmSha1_80 { key, salt, dec, .. } => {
                 if buf.len() < SRTCP_HEADER_LEN + SRTCP_INDEX_LEN + Aes128CmSha1_80::HMAC_TAG_LEN {
@@ -595,7 +602,7 @@ impl SrtpContext {
 
                 if !is_encrypted {
                     // Non-encrypted we can just return
-                    return Some(buf[0..idx_start].to_vec());
+                    return Some(copied_in(&buf[0..idx_start], alloc));
                 }
 
                 // The SRTCP index is a 31-bit counter for the SRTCP packet.
@@ -610,7 +617,7 @@ impl SrtpContext {
                 // compound packet.
                 let input = &buf[8..idx_start];
                 // Allocate buffer with CTR padding (aws-lc-rs requirement)
-                let mut output = vec![0_u8; input.len() + 8 + CTR_BUFFER_PADDING];
+                let mut output = zeroed_in(input.len() + 8 + CTR_BUFFER_PADDING, alloc);
                 output[0..8].copy_from_slice(&buf[0..8]);
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output[8..]) {
@@ -672,7 +679,8 @@ impl SrtpContext {
                     aads[1] = &buf[idx_start..];
                 };
 
-                let mut output = vec![0_u8; buf.len() - AeadAes128Gcm::TAG_LEN - SRTCP_INDEX_LEN];
+                let mut output =
+                    zeroed_in(buf.len() - AeadAes128Gcm::TAG_LEN - SRTCP_INDEX_LEN, alloc);
                 output[0..8].copy_from_slice(&buf[0..8]);
 
                 let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
@@ -745,7 +753,8 @@ impl SrtpContext {
                     aads[1] = &buf[idx_start..];
                 };
 
-                let mut output = vec![0_u8; buf.len() - AeadAes256Gcm::TAG_LEN - SRTCP_INDEX_LEN];
+                let mut output =
+                    zeroed_in(buf.len() - AeadAes256Gcm::TAG_LEN - SRTCP_INDEX_LEN, alloc);
                 output[0..8].copy_from_slice(&buf[0..8]);
 
                 let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
@@ -1019,6 +1028,7 @@ fn error_details(header: &RtpHeader, srtp_index: u64) -> String {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
     use std::io::Write;
     use std::sync::{Arc, Mutex};
 
@@ -1078,15 +1088,18 @@ mod test {
             let plaintext_rtp = [0x80, 111, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 42];
             let header =
                 RtpHeader::parse(&plaintext_rtp, &crate::rtp_::ExtensionMap::empty()).unwrap();
-            let valid_rtp = context.protect_rtp(&plaintext_rtp, &header, 1);
+            let valid_rtp = context.protect_rtp(&plaintext_rtp, &header, 1, Global);
             let plaintext_rtcp = [0x80, 201, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0];
-            let valid_rtcp = context.protect_rtcp(&plaintext_rtcp);
+            let valid_rtcp = context.protect_rtcp(&plaintext_rtcp, Global);
 
             assert_eq!(
                 context.unprotect_rtp(&valid_rtp, &header, 1).unwrap(),
                 &[42]
             );
-            assert_eq!(context.unprotect_rtcp(&valid_rtcp).unwrap(), plaintext_rtcp);
+            assert_eq!(
+                context.unprotect_rtcp(&valid_rtcp, Global).unwrap(),
+                plaintext_rtcp
+            );
             assert!(logs.lines().is_empty());
 
             // Corrupt both authentication tags.
@@ -1096,7 +1109,7 @@ mod test {
             let rtcp_tag_end = rtcp.len() - SRTCP_INDEX_LEN - 1;
             rtcp[rtcp_tag_end] ^= 1;
             if rtcp_first {
-                assert!(context.unprotect_rtcp(&rtcp).is_none());
+                assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
             } else {
                 assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
             }
@@ -1109,16 +1122,16 @@ mod test {
                 rtcp[4..8].copy_from_slice(&ssrc.to_be_bytes());
                 let header = RtpHeader::parse(&rtp, &crate::rtp_::ExtensionMap::empty()).unwrap();
                 assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
-                assert!(context.unprotect_rtcp(&rtcp).is_none());
+                assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
             }
             rtp[8..12].copy_from_slice(&plaintext_rtp[8..12]);
             rtcp[4..8].copy_from_slice(&plaintext_rtcp[4..8]);
 
             // Successful packets do not reset the warning budget or failure counts.
             assert!(context.unprotect_rtp(&valid_rtp, &header, 1).is_some());
-            assert!(context.unprotect_rtcp(&valid_rtcp).is_some());
+            assert!(context.unprotect_rtcp(&valid_rtcp, Global).is_some());
             assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
-            assert!(context.unprotect_rtcp(&rtcp).is_none());
+            assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
             assert_eq!(
                 logs.lines().len(),
                 1,
@@ -1129,7 +1142,7 @@ mod test {
             if rtcp_first {
                 assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
             } else {
-                assert!(context.unprotect_rtcp(&rtcp).is_none());
+                assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
             }
             let lines = logs.lines();
             assert_eq!(lines.len(), 2);
@@ -1139,7 +1152,7 @@ mod test {
                 if failure % 2 == 0 {
                     assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
                 } else {
-                    assert!(context.unprotect_rtcp(&rtcp).is_none());
+                    assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
                 }
             }
             assert_eq!(
@@ -1147,7 +1160,7 @@ mod test {
                 2,
                 "the next report waits until failure 8,192"
             );
-            assert!(context.unprotect_rtcp(&rtcp).is_none());
+            assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
             let lines = logs.lines();
             assert_eq!(lines.len(), 3);
             assert!(lines[2].contains("suppressed_srtp=2048 suppressed_srtcp=2047"));
@@ -1156,7 +1169,7 @@ mod test {
                 if failure % 2 == 0 {
                     assert!(context.unprotect_rtp(&rtp, &header, 1).is_none());
                 } else {
-                    assert!(context.unprotect_rtcp(&rtcp).is_none());
+                    assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
                 }
                 if failure == 4_095 {
                     assert_eq!(logs.lines().len(), 3, "the reporting gap doubles");
@@ -1167,13 +1180,13 @@ mod test {
                 3,
                 "16,383 failures yield three warnings"
             );
-            assert!(context.unprotect_rtcp(&rtcp).is_none());
+            assert!(context.unprotect_rtcp(&rtcp, Global).is_none());
             let lines = logs.lines();
             assert_eq!(lines.len(), 4);
             assert!(lines[3].contains("suppressed_srtp=4096 suppressed_srtcp=4095"));
 
             let mut independent = SrtpContext::new(crypto, profile, &mat, true);
-            assert!(independent.unprotect_rtcp(&rtcp).is_none());
+            assert!(independent.unprotect_rtcp(&rtcp, Global).is_none());
             let lines = logs.lines();
             assert_eq!(lines.len(), 5, "independent contexts warn immediately");
             assert!(lines[4].contains("suppressed_srtp=0 suppressed_srtcp=0"));
@@ -1286,7 +1299,7 @@ mod test {
                 SrtpContext::new(crypto, SrtpProfile::AES128_CM_SHA1_80, &key_mat, true);
             ctx_rx.srtcp_index = 1;
 
-            let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
+            let decrypted = ctx_rx.unprotect_rtcp(SRTCP, Global).unwrap();
 
             assert_eq!(ctx_rx.srtcp_index, 1);
             // check srtcp_index in incoming was indeed 1
@@ -1296,7 +1309,7 @@ mod test {
             assert_eq!(decrypted, DECRYPTED_PAYLOAD);
 
             // Take us back to where we started.
-            let encrypted = ctx_rx.protect_rtcp(&decrypted);
+            let encrypted = ctx_rx.protect_rtcp(&decrypted, Global);
             assert_eq!(encrypted, SRTCP);
         }
     }
@@ -1380,7 +1393,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Global);
 
             assert_eq!(
                 out,
@@ -1419,7 +1432,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let encrypted = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let encrypted = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Global);
 
             // Then we decrypt the resulting cipher text
             let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
@@ -1483,7 +1496,7 @@ mod test {
         fn protect_rtcp_rfc_7714_test() {
             let mut context = make_rtcp_context();
 
-            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET);
+            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET, Global);
 
             assert!(
                 out == rfc7714::PROTECTED_RTCP_PACKET,
@@ -1498,7 +1511,7 @@ mod test {
             let mut context = make_rtcp_context();
 
             let out = context
-                .unprotect_rtcp(rfc7714::TAGGED_RTCP_PACKET)
+                .unprotect_rtcp(rfc7714::TAGGED_RTCP_PACKET, Global)
                 .expect("Unprotect RTCP");
 
             assert_eq!(out, rfc7714::PLAINTEXT_RTCP_PACKET);
@@ -1608,7 +1621,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Global);
 
             assert_eq!(
                 out,
@@ -1647,7 +1660,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let encrypted = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let encrypted = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Global);
 
             // Then we decrypt the resulting cipher text
             let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
@@ -1711,7 +1724,7 @@ mod test {
         fn protect_rtcp_rfc_7714_test() {
             let mut context = make_rtcp_context();
 
-            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET);
+            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET, Global);
 
             assert!(
                 out == rfc7714::PROTECTED_RTCP_PACKET,
@@ -1726,7 +1739,7 @@ mod test {
             let mut context = make_rtcp_context();
 
             let out = context
-                .unprotect_rtcp(rfc7714::TAGGED_RTCP_PACKET)
+                .unprotect_rtcp(rfc7714::TAGGED_RTCP_PACKET, Global)
                 .expect("Unprotect RTCP");
 
             assert_eq!(out, rfc7714::PLAINTEXT_RTCP_PACKET);

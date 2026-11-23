@@ -1,4 +1,7 @@
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use std::alloc::Allocator;
+
+use super::{CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer, single_packet};
+use crate::allocators::copied_in;
 
 #[derive(Debug)]
 pub struct ComfortNoisePacketizer;
@@ -7,16 +10,21 @@ pub struct ComfortNoisePacketizer;
 pub struct ComfortNoiseDepacketizer;
 
 impl Packetizer for ComfortNoisePacketizer {
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         if payload.len() > mtu {
             return Err(PacketError::ErrPayloadTooLarge);
         }
 
-        Ok(vec![payload.to_vec()])
+        Ok(single_packet(copied_in(payload, alloc), alloc))
     }
 
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
@@ -39,7 +47,7 @@ impl Depacketizer for ComfortNoiseDepacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         _codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.is_empty() {
@@ -61,13 +69,16 @@ impl Depacketizer for ComfortNoiseDepacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     #[test]
     fn packetizer_rejects_payload_larger_than_mtu() {
         let mut packetizer = ComfortNoisePacketizer;
 
-        let result = packetizer.packetize(8, &[0; 9]);
+        let result = packetizer.packetize(8, &[0; 9], &Global);
 
         assert!(
             result.is_err(),
@@ -79,7 +90,7 @@ mod test {
     fn packetizer_does_not_emit_empty_cn_payload() {
         let mut packetizer = ComfortNoisePacketizer;
 
-        let packets = packetizer.packetize(1200, &[]).unwrap();
+        let packets = packetizer.packetize(1200, &[], &Global).unwrap();
 
         assert!(packets.is_empty(), "an empty input is not a CN payload");
     }
@@ -87,7 +98,7 @@ mod test {
     #[test]
     fn depacketizer_rejects_empty_cn_payload() {
         let mut depacketizer = ComfortNoiseDepacketizer;
-        let mut output = Vec::new();
+        let mut output: PacketBuf = Vec::new_in(&Global);
 
         let result = depacketizer.depacketize(&[], &mut output, &mut CodecExtra::None);
 

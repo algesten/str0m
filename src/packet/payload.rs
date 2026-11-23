@@ -1,3 +1,4 @@
+use std::alloc::Allocator;
 use std::time::Instant;
 
 use crate::format::{CodecSpec, Vp9PacketizerMode};
@@ -8,7 +9,7 @@ use crate::streams::{RtpWrite, StreamTx};
 
 use super::PacketError;
 use super::red::RedSender;
-use super::{CodecPacketizer, Packetizer};
+use super::{CodecPacketizer, PacketBuf, Packetizer};
 
 /// Turns frames into RTP packets.
 ///
@@ -22,10 +23,10 @@ pub struct Payloader {
     clock_rate: Frequency,
 }
 
-/// A packet ready to hand to a [`PacketSink`]: the RTP fields plus the primary payload as an owned
-/// `Vec`. The payload is only wrapped into an `Arc` once, when the sink builds the [`RtpWrite`], so
-/// a RED sink can transform the bytes first without an extra allocation.
-pub(crate) struct OutgoingPacket {
+/// A packet ready to hand to a [`PacketSink`]: the RTP fields plus the primary payload, allocated
+/// from the short-lived allocator. The sink copies the payload into the `Arc` of the
+/// [`RtpWrite`] it builds.
+pub(crate) struct OutgoingPacket<'a> {
     pub pt: Pt,
     pub seq_no: SeqNo,
     pub rtp_time: u32,
@@ -33,7 +34,7 @@ pub(crate) struct OutgoingPacket {
     pub marker: bool,
     pub nackable: bool,
     pub ext_vals: ExtensionValues,
-    pub payload: Vec<u8>,
+    pub payload: PacketBuf<'a>,
 }
 
 /// Where a [`Payloader`] sends its packetized output. Implemented by [`StreamTx`] (plain) and
@@ -46,7 +47,7 @@ pub(crate) trait PacketSink {
     /// The most recently written packet payload on the underlying stream, for marker decisions.
     fn last_packet(&self) -> Option<&[u8]>;
     /// Emit a packet.
-    fn send(&mut self, packet: OutgoingPacket);
+    fn send(&mut self, packet: OutgoingPacket<'_>);
 }
 
 impl Payloader {
@@ -67,6 +68,7 @@ impl Payloader {
         to_payload: ToPayload,
         mtu: usize,
         sink: &mut S,
+        shortlived: &dyn Allocator,
     ) -> Result<(), PacketError> {
         let ToPayload {
             pt,
@@ -79,7 +81,7 @@ impl Payloader {
             ..
         } = to_payload;
 
-        let chunks = self.pack.packetize(mtu, data.as_ref())?;
+        let chunks = self.pack.packetize(mtu, data.as_ref(), shortlived)?;
         let len = chunks.len();
         let mut descriptors = dependency_descriptor
             .as_ref()
@@ -142,14 +144,14 @@ impl PacketSink for StreamTx {
         StreamTx::last_packet(self)
     }
 
-    fn send(&mut self, packet: OutgoingPacket) {
+    fn send(&mut self, packet: OutgoingPacket<'_>) {
         self.write_rtp(
             RtpWrite::new(
                 packet.pt,
                 packet.seq_no,
                 packet.rtp_time,
                 packet.wallclock,
-                packet.payload,
+                &packet.payload[..],
             )
             .marker(packet.marker)
             .ext_vals(packet.ext_vals)
@@ -187,10 +189,11 @@ impl PacketSink for RedSink<'_> {
         StreamTx::last_packet(self.stream)
     }
 
-    fn send(&mut self, packet: OutgoingPacket) {
-        // Wrap the primary Vec before it becomes an Arc, so RED adds no extra allocation. Swap to
-        // the RED payload type; everything else on the packet is preserved.
-        let payload = self.red.wrap(packet.payload, packet.rtp_time, self.budget);
+    fn send(&mut self, packet: OutgoingPacket<'_>) {
+        // Swap to the RED payload type; everything else on the packet is preserved.
+        let payload = self
+            .red
+            .wrap(packet.payload.to_vec(), packet.rtp_time, self.budget);
         self.stream.write_rtp(
             RtpWrite::new(
                 self.red.red_pt(),

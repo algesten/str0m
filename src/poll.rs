@@ -234,6 +234,8 @@ impl Readiness {
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::Global;
+
     use super::*;
 
     use crate::bwe::Bitrate;
@@ -300,7 +302,7 @@ mod tests {
         assert!(!rtc.readiness.wants_timeout());
         assert_eq!(rtc.session.poll_timeout(), before);
         assert!(
-            rtc.session.poll_datagram(rtc.last_now).is_some(),
+            rtc.session.poll_datagram(rtc.last_now, Global).is_some(),
             "queued feedback must be sendable without a timeout"
         );
     }

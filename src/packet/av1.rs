@@ -1,4 +1,9 @@
-use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer, encode_leb_u63};
+use std::alloc::Allocator;
+
+use super::{
+    BitRead, CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer, encode_leb_u63,
+};
+use crate::allocators::zeroed_in;
 
 const OBU_EXTENSION_PRESENT_MASK: u8 = 0b0000_0100;
 const OBU_SIZE_PRESENT_MASK: u8 = 0b0000_0010;
@@ -40,7 +45,7 @@ pub struct Av1Packetizer {
 }
 
 impl Av1Packetizer {
-    fn emit(&mut self, mtu: usize, payloads: &mut Vec<Vec<u8>>) {
+    fn emit<'a>(&mut self, mtu: usize, payloads: &mut Vec<PacketBuf<'a>, &'a dyn Allocator>) {
         if self.obus.is_empty() {
             return;
         }
@@ -135,10 +140,11 @@ impl Av1Packetizer {
         self.write_rtp_payloads(payloads)
     }
 
-    fn write_rtp_payloads(&self, payloads: &mut Vec<Vec<u8>>) {
+    fn write_rtp_payloads<'a>(&self, payloads: &mut Vec<PacketBuf<'a>, &'a dyn Allocator>) {
+        let alloc = *payloads.allocator();
         for (i, packet) in self.packets.iter().enumerate() {
             let is_first_packet = i == 0;
-            let mut rtp_payload: Vec<u8> = vec![0u8; AGGREGATION_HEADER_SIZE + packet.packet_size];
+            let mut rtp_payload = zeroed_in(AGGREGATION_HEADER_SIZE + packet.packet_size, alloc);
             let mut pos = 0;
 
             let header = self.aggregation_header(packet, &self.obus, is_first_packet);
@@ -274,12 +280,17 @@ impl Av1Packetizer {
 }
 
 impl Packetizer for Av1Packetizer {
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() || mtu <= AGGREGATION_HEADER_SIZE {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
-        let mut payloads = vec![];
+        let mut payloads = Vec::new_in(alloc);
         parse_obus(payload, &mut self.obus)?;
         self.emit(mtu, &mut payloads);
 
@@ -334,7 +345,7 @@ impl Depacketizer for Av1Depacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         codec_extra: &mut super::CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.is_empty() {
@@ -640,7 +651,10 @@ fn parse_obus(payload: &[u8], parsed_obus: &mut Vec<Obu>) -> Result<(), PacketEr
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     /// AV1 Packetizer tets
     #[test]
@@ -648,7 +662,7 @@ mod test {
         let payload = &[0x30, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(1200, payload);
+        let result = packetizer.packetize(1200, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -662,7 +676,7 @@ mod test {
         let payload = &[0x34, 0x28, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(1200, payload);
+        let result = packetizer.packetize(1200, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -676,7 +690,7 @@ mod test {
         let payload = &[0x32, 0x07, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(1200, payload);
+        let result = packetizer.packetize(1200, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -690,7 +704,7 @@ mod test {
         let payload = &[0x36, 0x28, 0x07, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(1200, payload);
+        let result = packetizer.packetize(1200, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -708,7 +722,7 @@ mod test {
         ];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(1200, payload);
+        let result = packetizer.packetize(1200, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -730,7 +744,7 @@ mod test {
         ];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(1200, payload);
+        let result = packetizer.packetize(1200, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -753,7 +767,7 @@ mod test {
         ];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(1200, payload);
+        let result = packetizer.packetize(1200, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -773,7 +787,7 @@ mod test {
         ];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(6, payload);
+        let result = packetizer.packetize(6, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -795,7 +809,7 @@ mod test {
         ];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(8, payload);
+        let result = packetizer.packetize(8, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -814,7 +828,7 @@ mod test {
 
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(100, &payload);
+        let result = packetizer.packetize(100, &payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 13);
@@ -828,7 +842,7 @@ mod test {
         ];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(8, payload);
+        let result = packetizer.packetize(8, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -847,7 +861,7 @@ mod test {
         ];
         let mut packetizer = Av1Packetizer::default();
 
-        let result = packetizer.packetize(10, payload);
+        let result = packetizer.packetize(10, payload, &Global);
 
         assert!(result.is_ok());
         assert_eq!(
@@ -863,7 +877,7 @@ mod test {
     #[test]
     fn obu_payload_size_set_when_absent() {
         let paylod = &[0x10, 0x30, 0x14, 0x1e, 0x28];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -876,7 +890,7 @@ mod test {
     #[test]
     fn obu_payload_size_set_when_present() {
         let paylod = &[0x10, 0x32, 0x03, 0x14, 0x1e, 0x28];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -889,7 +903,7 @@ mod test {
     #[test]
     fn obu_payload_size_set_after_extension_when_absent() {
         let paylod = &[0x10, 0x34, 0x48, 0x14, 0x1e, 0x28];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -902,7 +916,7 @@ mod test {
     #[test]
     fn obu_payload_size_set_after_extension_when_present() {
         let paylod = &[0x10, 0x36, 0x48, 0x03, 0x14, 0x1e, 0x28];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -915,7 +929,7 @@ mod test {
     #[test]
     fn one_packet_with_two_obus() {
         let paylod = &[0x20, 0x02, 0x08, 0x0a, 0x30, 0x14];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -929,7 +943,7 @@ mod test {
     fn one_obu_from_two_packets() {
         let payload1 = &[0x50, 0x30, 0x14, 0x1e];
         let payload2 = &[0x90, 0x28];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -945,7 +959,7 @@ mod test {
     fn two_packets_with_three_obus() {
         let payload1 = &[0x60, 0x02, 0x08, 0x0a, 0x30, 0x14, 0x1e];
         let payload2 = &[0x90, 0x28];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -964,7 +978,7 @@ mod test {
             0x30, 0x28, 0x32, 0x3c,
         ];
         let payload2 = &[0x90, 0x46, 0x50, 0x5a];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -988,7 +1002,7 @@ mod test {
         let payload2 = &[0xd0, 0x0d, 0x0e];
         let payload3 = &[0xd0, 0x0f, 0x10, 0x11];
         let payload4 = &[0x90, 0x12];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -1012,7 +1026,7 @@ mod test {
         let payload2 = &[0x90, 0x18, 0x19, 0x1a, 0x1b];
         let payload3 = &[0x60, 0x03, 0x38, 0x0b, 0x0c, 0x20, 0x1f, 0x20];
         let payload4 = &[0x90, 0x21, 0x22, 0x23, 0x24];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -1036,7 +1050,7 @@ mod test {
     #[test]
     fn one_packet_one_obu_with_payload_size_127_bytes() {
         let mut payload = [0; 131];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -1057,7 +1071,7 @@ mod test {
     fn two_packets_one_obu_with_payload_size_128_bytes() {
         let mut payload1 = [0; 35];
         let mut payload2 = [0; 98];
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
 
@@ -1127,7 +1141,7 @@ mod test {
         payload.extend(vec![0xAB; 128]); // 128 bytes of payload
 
         let mut packetizer = Av1Packetizer::default();
-        let result = packetizer.packetize(1200, &payload);
+        let result = packetizer.packetize(1200, &payload, &Global);
         assert!(result.is_ok());
         let packets = result.unwrap();
         assert!(!packets.is_empty());
@@ -1150,7 +1164,7 @@ mod test {
 
         let mut packetizer = Av1Packetizer::default();
         // MTU of 50 forces fragmentation into multiple packets
-        let result = packetizer.packetize(50, &payload);
+        let result = packetizer.packetize(50, &payload, &Global);
         assert!(result.is_ok());
         let packets = result.unwrap();
         assert!(
@@ -1159,7 +1173,7 @@ mod test {
         );
 
         // Verify round-trip: depacketize all packets and check payload integrity
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
         for pkt in &packets {
@@ -1203,7 +1217,7 @@ mod test {
         }
 
         let mut packetizer = Av1Packetizer::default();
-        let result = packetizer.packetize(40, &raw);
+        let result = packetizer.packetize(40, &raw, &Global);
         assert!(result.is_ok());
         let packets = result.unwrap();
         assert!(
@@ -1212,7 +1226,7 @@ mod test {
         );
 
         // Round-trip through depacketizer
-        let mut out = Vec::new();
+        let mut out: PacketBuf = Vec::new_in(&Global);
         let mut codec_extra = CodecExtra::None;
         let mut depacketizer = Av1Depacketizer::default();
         for pkt in &packets {
@@ -1263,7 +1277,7 @@ mod test {
         for &mtu in &[100usize, 300, 600, 1200] {
             let mut packetizer = Av1Packetizer::default();
             let pkts = packetizer
-                .packetize(mtu, &payload)
+                .packetize(mtu, &payload, &Global)
                 .expect("AV1 packetize ok");
             assert!(!pkts.is_empty(), "AV1 produced no packets at mtu {mtu}");
             for (i, pkt) in pkts.iter().enumerate() {

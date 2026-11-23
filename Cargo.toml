@@ -12,7 +12,7 @@ edition = "2024"
 exclude = ["/cargo_deny.sh", "/deny.toml", "/run-fuzz.sh"]
 
 # MSRV
-rust-version = "1.89.0"
+rust-version = "1.100.0"
 
 # Notes on OpenSSL
 # - Vendored (static link source build) ensures version consistency and easier

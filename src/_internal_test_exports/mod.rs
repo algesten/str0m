@@ -1,5 +1,7 @@
 //! Exported things with feature `_internal_test_exports`.
 
+use std::alloc::Global;
+
 use crate::Rtc;
 use crate::crypto::CryptoProvider;
 use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
@@ -77,6 +79,6 @@ impl TestSrtp {
         buf[header_len..header_len + payload.len()].copy_from_slice(payload);
         header.header_len = header_len;
         let packet = &buf[..header_len + payload.len()];
-        self.0.protect_rtp(packet, &header, seq)
+        self.0.protect_rtp(packet, &header, seq, Global)
     }
 }

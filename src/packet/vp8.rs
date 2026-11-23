@@ -1,9 +1,10 @@
+use std::alloc::Allocator;
 use std::error::Error;
 use std::fmt;
 
 use crate::rtp_::{extend_u7, extend_u8, extend_u15};
 
-use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
+use super::{BitRead, CodecExtra, Depacketizer, PacketBuf, PacketError, Packetizer};
 
 pub const VP8_HEADER_SIZE: usize = 1;
 
@@ -462,9 +463,14 @@ pub struct Vp8Packetizer {
 
 impl Packetizer for Vp8Packetizer {
     /// Payload fragments a VP8 packet across one or more byte arrays
-    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        payload: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         if payload.is_empty() || mtu == 0 {
-            return Ok(vec![]);
+            return Ok(Vec::new_in(alloc));
         }
 
         /*
@@ -500,7 +506,7 @@ impl Packetizer for Vp8Packetizer {
         let max_fragment_size = mtu as isize - using_header_size as isize;
         let mut payload_data_remaining = payload.len() as isize;
         let mut payload_data_index: usize = 0;
-        let mut payloads = vec![];
+        let mut payloads = Vec::new_in(alloc);
 
         // Make sure the fragment/payload size is correct
         if std::cmp::min(max_fragment_size, payload_data_remaining) <= 0 {
@@ -511,7 +517,7 @@ impl Packetizer for Vp8Packetizer {
         while payload_data_remaining > 0 {
             let current_fragment_size =
                 std::cmp::min(max_fragment_size, payload_data_remaining) as usize;
-            let mut out = Vec::with_capacity(using_header_size + current_fragment_size);
+            let mut out = Vec::with_capacity_in(using_header_size + current_fragment_size, alloc);
             let mut buf = [0u8; 4];
             if first {
                 buf[0] = 0x10;
@@ -615,7 +621,7 @@ impl Depacketizer for Vp8Depacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         let payload_len = packet.len();
@@ -798,7 +804,10 @@ impl Depacketizer for Vp8Depacketizer {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
+    use crate::packet::PacketBuf;
 
     #[test]
     fn test_vp8_unmarshal() -> Result<(), PacketError> {
@@ -807,33 +816,33 @@ mod test {
 
         // Empty packet
         let empty_bytes = &[];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         let result = pck.depacketize(empty_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
         // Small Payload with single octet header
         let small_bytes = &[0x00, 0x11, 0x22];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(small_bytes, &mut payload, &mut extra)
             .expect("Small packet");
         assert_eq!(payload, [0x11, 0x22]);
 
         // Payload is header only
         let small_bytes = &[0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         let result = pck.depacketize(small_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
         // Normal packet
         let raw_bytes = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("Normal packet");
         assert!(!payload.is_empty(), "Payload must be not empty");
 
         // Header size, only X
         let raw_bytes = &[0x80, 0x00, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("Only X");
         assert!(!payload.is_empty(), "Payload must be not empty");
@@ -846,7 +855,7 @@ mod test {
 
         // Header size, X and I, PID 16bits
         let raw_bytes = &[0x80, 0x80, 0x81, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("X and I, PID 16bits");
         assert!(!payload.is_empty(), "Payload must be not empty");
@@ -859,21 +868,21 @@ mod test {
 
         // Header size, X and L without T
         let raw_bytes = &[0x80, 0x40, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         assert_eq!(
             pck.depacketize(raw_bytes, &mut payload, &mut extra),
             Err(PacketError::ErrVP8CorruptedPacket)
         );
 
         let raw_bytes = &[0x00, 0x11, 0x22];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("valid packet after malformed descriptor");
         assert_eq!(payload, [0x11, 0x22]);
 
         // Header size, X and T
         let raw_bytes = &[0x80, 0x20, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("X and T");
         assert!(!payload.is_empty(), "Payload must be not empty");
@@ -886,7 +895,7 @@ mod test {
 
         // Header size, X and K
         let raw_bytes = &[0x80, 0x10, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("X and K");
         assert!(!payload.is_empty(), "Payload must be not empty");
@@ -899,7 +908,7 @@ mod test {
 
         // Header size, all flags and 8bit picture_id
         let raw_bytes = &[0xff, 0xff, 0x00, 0x00, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("all flags and 8bit picture_id");
         assert!(!payload.is_empty(), "Payload must be not empty");
@@ -912,7 +921,7 @@ mod test {
 
         // Header size, all flags and 16bit picture_id
         let raw_bytes = &[0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("all flags and 16bit picture_id");
         assert!(!payload.is_empty(), "Payload must be not empty");
@@ -925,7 +934,7 @@ mod test {
 
         // Header size, X, I and P
         let raw_bytes = &[0x90, 0x80, 0x11, 0x10, 0x00, 0x00, 0x00];
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("all flags and 16bit picture_id");
         assert!(!payload.is_empty(), "Payload must be not empty");
@@ -985,7 +994,7 @@ mod test {
 
         for (name, mut pck, mtu, payloads, expected) in tests {
             for (i, payload) in payloads.iter().enumerate() {
-                let actual = pck.packetize(mtu, payload)?;
+                let actual = pck.packetize(mtu, payload, &Global)?;
                 assert_eq!(expected[i], actual, "{name}: Generated packet[{i}] differs");
             }
         }
@@ -1000,15 +1009,15 @@ mod test {
         let payload = &[0x90, 0x90, 0x90];
 
         // Positive MTU, empty payload
-        let result = pck.packetize(1, empty)?;
+        let result = pck.packetize(1, empty, &Global)?;
         assert!(result.is_empty(), "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.packetize(1, payload)?;
+        let result = pck.packetize(1, payload, &Global)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.packetize(2, payload)?;
+        let result = pck.packetize(2, payload, &Global)?;
         assert_eq!(
             result.len(),
             payload.len(),
@@ -1259,7 +1268,7 @@ mod test {
         let payload = vec![0xABu8; 2000];
         for &mtu in &[100usize, 300, 600, 1200] {
             let mut pck = Vp8Packetizer::default();
-            let pkts = pck.packetize(mtu, &payload)?;
+            let pkts = pck.packetize(mtu, &payload, &Global)?;
             assert!(!pkts.is_empty(), "VP8 produced no packets at mtu {mtu}");
             for (i, pkt) in pkts.iter().enumerate() {
                 assert!(
@@ -1277,7 +1286,7 @@ mod test {
         let mut packet = vec![0x90, 0x80];
         packet.extend_from_slice(picture_id);
         packet.push(0x01);
-        let mut payload = Vec::new();
+        let mut payload: PacketBuf = Vec::new_in(&Global);
         let mut extra = CodecExtra::None;
         depack
             .depacketize(&packet, &mut payload, &mut extra)
@@ -1328,7 +1337,7 @@ mod test {
             }
 
             let dep = buf
-                .pop(now, None)
+                .pop(now, None, &Global)
                 .unwrap_or_else(|| panic!("frame {frame} was not emitted"))
                 .unwrap();
             assert!(dep.contiguous, "frame {frame} is not contiguous");

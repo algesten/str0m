@@ -1,5 +1,6 @@
 #![allow(clippy::type_complexity)]
 
+use std::alloc::Allocator;
 use std::fmt;
 use std::panic::UnwindSafe;
 
@@ -121,8 +122,16 @@ impl MediaKind {
 /// This trait is not currently versioned according to semver rules.
 /// Breaking changes may be made in minor or patch releases.
 pub trait Packetizer: fmt::Debug {
-    /// Chunk the data up into RTP packets.
-    fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
+    /// Chunk the data up into RTP packets, allocated from `alloc`.
+    ///
+    /// The returned packets are dropped before the call into [`Rtc`][crate::Rtc] that
+    /// packetizes returns.
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        b: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError>;
 
     /// Tell if this is the last packet of a frame.
     fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool;
@@ -138,6 +147,20 @@ pub trait Packetizer: fmt::Debug {
     fn nackable(&self) -> bool {
         true
     }
+}
+
+/// Bytes allocated from the allocator handed to a [`Packetizer`] or [`Depacketizer`].
+pub type PacketBuf<'a> = Vec<u8, &'a dyn Allocator>;
+
+/// `packet` as the only packet of a [`Packetizer::packetize`] result.
+/// Needed because `vec![a]` doesn't allow specifying an allocator
+pub(crate) fn single_packet<'a>(
+    packet: PacketBuf<'a>,
+    alloc: &'a dyn Allocator,
+) -> Vec<PacketBuf<'a>, &'a dyn Allocator> {
+    let mut packets = Vec::with_capacity_in(1, alloc);
+    packets.push(packet);
+    packets
 }
 
 /// Codec specific information
@@ -181,11 +204,11 @@ pub trait Depacketizer: fmt::Debug {
     /// Return [`None`] if it cannot be determined.
     fn out_size_hint(&self, packets_size: usize) -> Option<usize>;
 
-    /// Unpack the RTP packet into a provided `Vec<u8>`.
+    /// Unpack the RTP packet into `out`.
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError>;
 
@@ -435,23 +458,28 @@ impl From<Codec> for CodecDepacketizer {
 }
 
 impl Packetizer for CodecPacketizer {
-    fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize<'a>(
+        &mut self,
+        mtu: usize,
+        b: &[u8],
+        alloc: &'a dyn Allocator,
+    ) -> Result<Vec<PacketBuf<'a>, &'a dyn Allocator>, PacketError> {
         use CodecPacketizer::*;
         match self {
-            G711(v) => v.packetize(mtu, b),
-            G722(v) => v.packetize(mtu, b),
-            H264(v) => v.packetize(mtu, b),
-            H265(v) => v.packetize(mtu, b),
-            H266(v) => v.packetize(mtu, b),
-            Opus(v) => v.packetize(mtu, b),
-            ComfortNoise(v) => v.packetize(mtu, b),
-            Tele(v) => v.packetize(mtu, b),
-            Vp8(v) => v.packetize(mtu, b),
-            Vp9(v) => v.packetize(mtu, b),
-            Av1(v) => v.packetize(mtu, b),
-            AmrWb(v) => v.packetize(mtu, b),
-            Null(v) => v.packetize(mtu, b),
-            Boxed(v) => v.packetize(mtu, b),
+            G711(v) => v.packetize(mtu, b, alloc),
+            G722(v) => v.packetize(mtu, b, alloc),
+            H264(v) => v.packetize(mtu, b, alloc),
+            H265(v) => v.packetize(mtu, b, alloc),
+            H266(v) => v.packetize(mtu, b, alloc),
+            Opus(v) => v.packetize(mtu, b, alloc),
+            ComfortNoise(v) => v.packetize(mtu, b, alloc),
+            Tele(v) => v.packetize(mtu, b, alloc),
+            Vp8(v) => v.packetize(mtu, b, alloc),
+            Vp9(v) => v.packetize(mtu, b, alloc),
+            Av1(v) => v.packetize(mtu, b, alloc),
+            AmrWb(v) => v.packetize(mtu, b, alloc),
+            Null(v) => v.packetize(mtu, b, alloc),
+            Boxed(v) => v.packetize(mtu, b, alloc),
         }
     }
 
@@ -538,7 +566,7 @@ impl Depacketizer for CodecDepacketizer {
     fn depacketize(
         &mut self,
         packet: &[u8],
-        out: &mut Vec<u8>,
+        out: &mut PacketBuf<'_>,
         extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         use CodecDepacketizer::*;
@@ -619,6 +647,8 @@ impl fmt::Display for MediaKind {
 
 #[cfg(test)]
 mod test {
+    use std::alloc::Global;
+
     use super::*;
 
     #[test]
@@ -638,13 +668,13 @@ mod test {
         let mut packetizer = CodecPacketizer::from(Codec::CN);
 
         assert_eq!(
-            packetizer.packetize(1200, &payload).unwrap(),
+            packetizer.packetize(1200, &payload, &Global).unwrap(),
             vec![payload.to_vec()]
         );
         assert!(!packetizer.is_marker(&payload, None, true));
 
         let mut depacketizer = CodecDepacketizer::from(Codec::CN);
-        let mut output = Vec::new();
+        let mut output: PacketBuf = Vec::new_in(&Global);
         depacketizer
             .depacketize(&payload, &mut output, &mut CodecExtra::None)
             .unwrap();
@@ -658,7 +688,7 @@ mod test {
         let payload = [5, 0x80, 0, 160];
         let mut packetizer = CodecPacketizer::from(Codec::Tele);
         assert_eq!(
-            packetizer.packetize(1200, &payload).unwrap(),
+            packetizer.packetize(1200, &payload, &Global).unwrap(),
             vec![payload.to_vec()]
         );
         assert!(!packetizer.is_marker(&payload, None, true));
@@ -666,7 +696,7 @@ mod test {
         assert!(!packetizer.nackable());
 
         let mut depacketizer = CodecDepacketizer::from(Codec::Tele);
-        let mut output = Vec::new();
+        let mut output: PacketBuf = Vec::new_in(&Global);
         let mut extra = CodecExtra::None;
         depacketizer
             .depacketize(&payload, &mut output, &mut extra)
