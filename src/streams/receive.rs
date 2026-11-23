@@ -7,7 +7,7 @@ use crate::media::KeyframeRequestKind;
 use crate::packet::MAX_RED_RECOVERY_DEPTH;
 use crate::rtp_::MidRid;
 use crate::rtp_::SeqNoWindow;
-use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport, extend_u32};
+use crate::rtp_::{Bitrate, DlrrItem, ExtendedReport};
 use crate::rtp_::{Fir, FirEntry, Frequency, MediaTime, Remb};
 use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
 use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp};
@@ -19,6 +19,7 @@ use crate::util::{already_happened, calculate_rtt};
 
 use super::RtpPacket;
 use super::StreamPaused;
+use super::media_time_extender::MediaTimeExtender;
 use super::register::ReceiverRegister;
 
 /// How many recent packets to remember for placing RED redundant blocks. Must cover the
@@ -87,6 +88,9 @@ pub struct StreamRx {
 
     /// Last observed media time in an RTP packet.
     last_time: Option<MediaTime>,
+
+    /// Extends RTP timestamps against the newest received media packet.
+    media_time: MediaTimeExtender,
 
     /// If we have a pending keyframe request to send.
     pending_request_keyframe: Option<KeyframeRequestKind>,
@@ -177,6 +181,7 @@ impl StreamRx {
             register_rtx: None,
             red_recent: VecDeque::new(),
             last_time: None,
+            media_time: MediaTimeExtender::default(),
             pending_request_keyframe: None,
             pending_request_remb: None,
             fir_seq_no: 0,
@@ -302,16 +307,6 @@ impl StreamRx {
     }
 
     fn set_sender_info(&mut self, now: Instant, mut info: SenderInfo) {
-        // Extend the incoming time given our knowledge of last time.
-        let extended = {
-            let prev = self
-                .sender_info
-                .as_ref()
-                .map(|last| last.info.rtp_time.numer());
-            let r_u32 = info.rtp_time.numer() as u32;
-            extend_u32(prev, r_u32)
-        };
-
         // The MediaTime has a base 1 after being parsed. At this point
         // we know whether it's audio or video and set the base accordingly.
         let clock_rate = self
@@ -319,8 +314,10 @@ impl StreamRx {
             .map(|(_, r)| r)
             .unwrap_or(Frequency::SECONDS);
 
+        let rtp_time = info.rtp_time.numer() as u32;
+
         // Clock rate is that of the last received packet.
-        info.rtp_time = MediaTime::new(extended, clock_rate);
+        info.rtp_time = self.media_time.extend(now, rtp_time, clock_rate);
 
         self.sender_info = Some(LastSenderInfo {
             received_at: now,
@@ -519,8 +516,7 @@ impl StreamRx {
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
-        let was_paused = self.paused;
-        if was_paused {
+        if self.paused {
             self.paused = false;
             self.need_paused_event = true;
         }
@@ -543,34 +539,11 @@ impl StreamRx {
             )
         };
 
-        // Get the previous time for comparison
-        let previous_time = self.last_time.map(|t| t.numer());
-
-        // Calculate the extended timestamp
-        let mut time_u32 = extend_u32(previous_time, header.timestamp);
-
-        if was_paused && Some(time_u32) < previous_time {
-            // In 32-bit RTP timestamps, adding 2^31 (MAX/2) flips to the other half of timestamp space
-            // This forces extend_u32 to produce a value in the next cycle
-            const HALF_CYCLE: u32 = 1u32 << 31;
-            let adjusted_ts = header.timestamp.wrapping_add(HALF_CYCLE);
-
-            // Recalculate extended timestamp with adjusted value
-            let adjusted_time_u32 = extend_u32(previous_time, adjusted_ts);
-
-            // If this adjusted timestamp moves time forward, use it
-            if adjusted_time_u32 > previous_time.unwrap() {
-                time_u32 = adjusted_time_u32;
-            } else {
-                // Fallback
-                time_u32 = header.timestamp as u64;
-            }
-        }
-
-        let time = MediaTime::new(time_u32, clock_rate);
+        let time = self.media_time.extend(now, header.timestamp, clock_rate);
 
         if !is_repair {
             self.last_time = Some(time);
+            self.media_time.observe(now, header.timestamp, clock_rate);
             if is_new_packet {
                 self.remember_recent(seq_no, time.numer());
             }
@@ -942,6 +915,7 @@ impl StreamRx {
         self.register = None;
         self.red_recent.clear();
         self.last_time = None;
+        self.media_time = MediaTimeExtender::default();
         self.last_clock_rate = None;
         self.sender_info = None;
         self.last_receiver_report = already_happened();

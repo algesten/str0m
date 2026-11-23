@@ -21,6 +21,7 @@ use crate::util::already_happened;
 pub use self::receive::StreamRx;
 pub use self::send::{RtpWrite, StreamTx, StreamTxQueueInfo};
 
+mod media_time_extender;
 mod receive;
 pub(crate) mod register;
 pub(crate) mod register_nack;
