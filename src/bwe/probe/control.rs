@@ -416,10 +416,10 @@ impl ProbeControl {
     /// 3. Network recovers to 5 Mbps
     /// 4. AIMD tries to increase but is capped at 1.5× observed throughput:
     ///    500 kbps × 1.5 = 750 kbps maximum
-    /// 5. Sending at 500 kbps = 71% of estimate, which is above ALR threshold (65%)
+    /// 5. Sending at 500 kbps = 83% of estimate, which is above ALR threshold (80%)
     /// 6. ALR never triggers → no periodic probing
     /// 7. Large-drop probe requires ALR or recent ALR exit (see `maybe_large_drop`)
-    /// 8. System is stuck: estimate ~700 kbps on a 5 Mbps network
+    /// 8. System is stuck: estimate ~600 kbps on a 5 Mbps network
     ///
     /// **AIMD's 1.5× Cap (line 191 in rate_control.rs):**
     /// `observed_bitrate * 1.5 + Bitrate::kbps(10)`
@@ -428,9 +428,9 @@ impl ProbeControl {
     /// sending anything.
     ///
     /// **ALR Detection Threshold:**
-    /// ALR triggers when sending < 65% of estimate consistently for 500ms with budget
-    /// accumulation > 80%. At 60-70% send rate, you're in the deadlock zone: too high
-    /// to trigger ALR, too low for AIMD to help much.
+    /// Sending below 80% of the estimate builds budget credit. ALR starts when the
+    /// budget ratio exceeds 0.40. Sending at or above the budget target cannot build
+    /// the credit needed to enter ALR.
     ///
     /// **Loss Controller's 1.5× Cap:**
     /// The loss controller also applies a 1.5× cap during recovery (line 303 in

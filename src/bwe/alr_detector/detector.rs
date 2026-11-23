@@ -14,9 +14,9 @@ use crate::rtp_::{Bitrate, DataSize};
 ///
 /// ## ALR State Transitions
 ///
-/// - **Enter ALR**: When budget ratio > 0.80 (sustained low usage for 500ms)
-/// - **Exit ALR**: When budget ratio < 0.50 (increased usage)
-/// - The 30% hysteresis gap prevents rapid state flapping
+/// - **Enter ALR**: When budget ratio > 0.40 (accumulated credit)
+/// - **Exit ALR**: When budget ratio < -0.60 (accumulated debt)
+/// - The 100 percentage point hysteresis gap prevents rapid state flapping
 #[derive(Debug)]
 pub struct AlrDetector {
     /// Budget tracker with 500ms window
@@ -27,11 +27,11 @@ pub struct AlrDetector {
     last_send_time: Option<Instant>,
 
     // Configuration matching libWebRTC defaults
-    /// Target send rate as fraction of estimate (0.65 = 65%)
+    /// Target send rate as fraction of estimate (0.80 = 80%)
     bandwidth_usage_ratio: f64,
-    /// Budget ratio threshold to enter ALR (0.80 = 80%)
+    /// Budget ratio threshold to enter ALR (0.40 = 40%)
     start_budget_level_ratio: f64,
-    /// Budget ratio threshold to exit ALR (0.50 = 50%)
+    /// Budget ratio threshold to exit ALR (-0.60 = -60%)
     stop_budget_level_ratio: f64,
 }
 
@@ -63,10 +63,11 @@ impl AlrDetector {
             state: AlrState::NotInAlr,
             last_send_time: None,
 
-            // libWebRTC defaults from alr_detector.cc:30-49
-            bandwidth_usage_ratio: 0.65,
-            start_budget_level_ratio: 0.80,
-            stop_budget_level_ratio: 0.50,
+            // WebRTC-ProbingScreenshareBwe has been default-on in GoogCC since 2019.
+            // See the ALR Detector section in docs/BWE.md.
+            bandwidth_usage_ratio: 0.80,
+            start_budget_level_ratio: 0.40,
+            stop_budget_level_ratio: -0.60,
         }
     }
 
@@ -131,7 +132,7 @@ impl AlrDetector {
 
     /// Update the BWE estimate.
     ///
-    /// This adjusts the IntervalBudget's target rate to 65% of the estimate.
+    /// This adjusts the IntervalBudget's target rate to 80% of the estimate.
     /// Should be called whenever the bandwidth estimate changes.
     pub fn set_estimated_bitrate(&mut self, estimate: Bitrate) {
         let target = estimate * self.bandwidth_usage_ratio;
@@ -202,20 +203,20 @@ mod tests {
         let mut alr = AlrDetector::new();
         let now = Instant::now();
 
-        // Set estimate to 1 Mbps (target will be 650 kbps)
+        // Set estimate to 1 Mbps (target will be 800 kbps)
         alr.set_estimated_bitrate(Bitrate::mbps(1));
 
         // Send very little data (way below target)
         // Over 500ms, we should accumulate budget
         for i in 0..50 {
             let t = now + Duration::from_millis(i * 10);
-            // Send 100 bytes every 10ms = 80 kbps (way below 650 kbps target)
+            // Send 100 bytes every 10ms = 80 kbps (way below 800 kbps target)
             alr.on_bytes_sent(DataSize::bytes(100), t);
         }
 
         // Should enter ALR
         assert!(alr.alr_start_time().is_some());
-        assert!(alr.budget_ratio() > 0.80);
+        assert!(alr.budget_ratio() > 0.40);
     }
 
     #[test]
@@ -236,13 +237,13 @@ mod tests {
         let start_exit = now + Duration::from_millis(500);
         for i in 0..50 {
             let t = start_exit + Duration::from_millis(i * 10);
-            // Send 10,000 bytes every 10ms = 8 Mbps (way above 650 kbps target)
+            // Send 10,000 bytes every 10ms = 8 Mbps (way above 800 kbps target)
             alr.on_bytes_sent(DataSize::bytes(10_000), t);
         }
 
         // Should exit ALR
         assert!(alr.alr_start_time().is_none());
-        assert!(alr.budget_ratio() < 0.50);
+        assert!(alr.budget_ratio() < -0.60);
     }
 
     #[test]
@@ -252,18 +253,43 @@ mod tests {
 
         alr.set_estimated_bitrate(Bitrate::mbps(1));
 
-        // Send at exactly 65% (the target) - should not enter ALR
+        // Send at exactly 80% (the target) - should not enter ALR
         for i in 0..100 {
             let t = now + Duration::from_millis(i * 10);
-            // 65% of 1 Mbps = 650 kbps = 812.5 bytes per 10ms
-            alr.on_bytes_sent(DataSize::bytes(812), t);
+            // 80% of 1 Mbps = 800 kbps = 1000 bytes per 10ms
+            alr.on_bytes_sent(DataSize::bytes(1000), t);
         }
 
-        // Budget ratio should be near 0, not trigger ALR entry (needs > 0.80)
+        // Budget ratio should be near 0, not trigger ALR entry (needs > 0.40)
         assert!(alr.alr_start_time().is_none());
         let ratio = alr.budget_ratio();
-        assert!(ratio < 0.80, "ratio={}", ratio);
+        assert!(ratio < 0.40, "ratio={}", ratio);
         assert!(ratio > -0.20, "ratio={}", ratio); // Some tolerance
+    }
+
+    #[test]
+    fn test_alr_threshold_boundaries() {
+        let mut alr = AlrDetector::new();
+        let now = Instant::now();
+
+        alr.set_estimated_bitrate(Bitrate::mbps(1));
+
+        alr.on_bytes_sent(DataSize::ZERO, now);
+        let threshold = now + Duration::from_millis(200);
+        alr.on_bytes_sent(DataSize::ZERO, threshold);
+        assert_eq!(alr.budget_ratio(), 0.40);
+        assert_eq!(alr.alr_start_time(), None);
+
+        let entered = threshold + Duration::from_millis(10);
+        alr.on_bytes_sent(DataSize::ZERO, entered);
+        assert_eq!(alr.alr_start_time(), Some(entered));
+
+        alr.on_bytes_sent(DataSize::bytes(51_000), entered);
+        assert_eq!(alr.budget_ratio(), -0.60);
+        assert_eq!(alr.alr_start_time(), Some(entered));
+
+        alr.on_bytes_sent(DataSize::bytes(1), entered);
+        assert_eq!(alr.alr_start_time(), None);
     }
 
     #[test]
@@ -288,7 +314,7 @@ mod tests {
         }
 
         // Average is about 9.5 KB per frame = 285 KB/s = 2.28 Mbps
-        // This is above the 650 kbps target, so should NOT be in ALR
+        // This is above the 800 kbps target, so should NOT be in ALR
         // The IntervalBudget's 500ms window should smooth out the bursts
         assert!(alr.alr_start_time().is_none());
     }
@@ -298,10 +324,10 @@ mod tests {
         let mut alr = AlrDetector::new();
         let now = Instant::now();
 
-        // Start with 1 Mbps estimate (target = 650 kbps)
+        // Start with 1 Mbps estimate (target = 800 kbps)
         alr.set_estimated_bitrate(Bitrate::mbps(1));
 
-        // Send at 200 kbps (way below 650 kbps target) to accumulate budget quickly
+        // Send at 200 kbps (way below 800 kbps target) to accumulate budget quickly
         for i in 0..100 {
             let t = now + Duration::from_millis(i * 10);
             alr.on_bytes_sent(DataSize::bytes(250), t); // 200 kbps
@@ -310,14 +336,14 @@ mod tests {
         // Should enter ALR after sending well below target
         assert!(alr.alr_start_time().is_some());
 
-        // Now BWE drops to 300 kbps (target becomes 195 kbps)
+        // Now BWE drops to 300 kbps (target becomes 240 kbps)
         alr.set_estimated_bitrate(Bitrate::kbps(300));
 
-        // Continue sending at 250 kbps - now above target (195 kbps)
+        // Continue sending at 480 kbps - now above target (240 kbps)
         let continue_time = now + Duration::from_millis(1000);
         for i in 0..100 {
             let t = continue_time + Duration::from_millis(i * 10);
-            alr.on_bytes_sent(DataSize::bytes(312), t); // 250 kbps
+            alr.on_bytes_sent(DataSize::bytes(600), t); // 480 kbps
         }
 
         // Should exit ALR (now sending above target)
@@ -331,7 +357,7 @@ mod tests {
         let mut alr = AlrDetector::new();
         let now = Instant::now();
 
-        // Set estimate to 8.25 Mbps (target will be 5.36 Mbps at 65%)
+        // Set estimate to 8.25 Mbps (target will be 6.6 Mbps at 80%)
         let estimate = Bitrate::kbps(8250);
         alr.set_estimated_bitrate(estimate);
 
@@ -348,7 +374,7 @@ mod tests {
         }
 
         // Should NOT be in ALR - we're sending at 8.25 Mbps, which is above
-        // the target threshold of 5.36 Mbps (65% of estimate)
+        // the target threshold of 6.6 Mbps (80% of estimate)
         assert!(
             alr.alr_start_time().is_none(),
             "ALR should not trigger when sending at target rate. Budget ratio: {:.3}",
