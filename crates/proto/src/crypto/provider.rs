@@ -44,6 +44,11 @@ pub struct CryptoProvider {
     pub sha256_provider: &'static dyn Sha256Provider,
     /// DTLS provider for creating DTLS instances.
     pub dtls_provider: &'static dyn DtlsProvider,
+    /// Cryptographically secure random source.
+    ///
+    /// SCTP draws its verification tags, initial TSNs and state cookies from this. With `None`,
+    /// those draws fall back to sctp-proto's own RNG (the `sctp-rand` feature of str0m).
+    pub secure_random: Option<&'static dyn SecureRandom>,
 }
 
 /// CryptoProvider contains only static references to thread-safe traits,
@@ -121,6 +126,12 @@ pub trait Sha1Provider: CryptoSafe {
 pub trait Sha256Provider: CryptoSafe {
     /// Compute SHA-256 hash of the input data.
     fn sha256(&self, data: &[u8]) -> [u8; 32];
+}
+
+/// Cryptographically secure random source.
+pub trait SecureRandom: CryptoSafe {
+    /// Fill the whole of `buf` with cryptographically secure random bytes.
+    fn fill(&self, buf: &mut [u8]) -> Result<(), CryptoError>;
 }
 
 /// Which DTLS version(s) to use for the handshake.

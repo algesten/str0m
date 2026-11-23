@@ -49,6 +49,7 @@ pub fn default_provider() -> CryptoProvider {
         sha1_provider: &SHA1,
         sha256_provider: &SHA256,
         dtls_provider: &DTLS,
+        secure_random: Some(&dimpl_provider::SECURE_RANDOM),
     }
 }
 

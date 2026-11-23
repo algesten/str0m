@@ -13,7 +13,7 @@ use dtls::AwsLcRsDtlsProvider;
 use sha1::{AwsLcRsSha1HmacProvider, AwsLcRsSha1Provider};
 use sha256::AwsLcRsSha256Provider;
 use srtp::AwsLcRsSrtpProvider;
-use str0m_proto::crypto::CryptoProvider;
+use str0m_proto::crypto::{CryptoError, CryptoProvider, SecureRandom};
 
 /// Create the default AWS-LC-RS crypto provider.
 ///
@@ -34,6 +34,7 @@ pub fn default_provider() -> CryptoProvider {
     static SHA1: AwsLcRsSha1Provider = AwsLcRsSha1Provider;
     static SHA256: AwsLcRsSha256Provider = AwsLcRsSha256Provider;
     static DTLS: AwsLcRsDtlsProvider = AwsLcRsDtlsProvider;
+    static RANDOM: AwsLcRsSecureRandom = AwsLcRsSecureRandom;
 
     CryptoProvider {
         srtp_provider: &SRTP,
@@ -41,6 +42,18 @@ pub fn default_provider() -> CryptoProvider {
         sha1_provider: &SHA1,
         sha256_provider: &SHA256,
         dtls_provider: &DTLS,
+        secure_random: Some(&RANDOM),
+    }
+}
+
+/// Random bytes from AWS-LC's DRBG.
+#[derive(Debug)]
+struct AwsLcRsSecureRandom;
+
+impl SecureRandom for AwsLcRsSecureRandom {
+    fn fill(&self, buf: &mut [u8]) -> Result<(), CryptoError> {
+        aws_lc_rs::rand::fill(buf)
+            .map_err(|_| CryptoError::Other("AWS-LC random fill failed".into()))
     }
 }
 

@@ -100,6 +100,7 @@ impl SctpInitData {
         if let Some(init) = &self.local_init {
             return Ok(init.clone());
         }
+        super::random::install_default();
         let init = generate_snap_token(&self.transport)?.to_vec();
         self.local_init = Some(init.clone());
         Ok(init)

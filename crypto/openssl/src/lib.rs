@@ -18,7 +18,7 @@ use dtls::OsslDtlsProvider;
 use sha1::{OsslSha1HmacProvider, OsslSha1Provider};
 use sha256::OsslSha256Provider;
 use srtp::OsslSrtpProvider;
-use str0m_proto::crypto::CryptoProvider;
+use str0m_proto::crypto::{CryptoError, CryptoProvider, SecureRandom};
 
 #[cfg(not(feature = "dimpl"))]
 #[macro_use]
@@ -43,6 +43,7 @@ pub fn default_provider() -> CryptoProvider {
     static SHA1: OsslSha1Provider = OsslSha1Provider;
     static SHA256: OsslSha256Provider = OsslSha256Provider;
     static DTLS: OsslDtlsProvider = OsslDtlsProvider;
+    static RANDOM: OsslSecureRandom = OsslSecureRandom;
 
     CryptoProvider {
         srtp_provider: &SRTP,
@@ -50,5 +51,16 @@ pub fn default_provider() -> CryptoProvider {
         sha1_provider: &SHA1,
         sha256_provider: &SHA256,
         dtls_provider: &DTLS,
+        secure_random: Some(&RANDOM),
+    }
+}
+
+/// Random bytes from OpenSSL's DRBG.
+#[derive(Debug)]
+struct OsslSecureRandom;
+
+impl SecureRandom for OsslSecureRandom {
+    fn fill(&self, buf: &mut [u8]) -> Result<(), CryptoError> {
+        openssl::rand::rand_bytes(buf).map_err(CryptoError::from)
     }
 }
