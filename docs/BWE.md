@@ -389,7 +389,7 @@ concepts are unified into this single value.
    Only active outside ALR (periodic ALR handles capacity discovery when
    application-limited). This addresses a deadlock scenario where AIMD
    recovery stalls: after network capacity is restored, AIMD is capped at
-   1.5× observed throughput while the application sends at 80% or more of the
+   1.5× observed throughput while the application sends at 80% or more of
    estimate—too high to build ALR budget credit but too low for AIMD
    to make meaningful progress. The stagnation probe provides an escape
    mechanism by detecting prolonged lack of progress and actively testing
@@ -552,14 +552,15 @@ ranges from -1.0 (maximum overuse) through 0.0 (exactly at target) to 1.0
 
 State transitions use hysteresis thresholds to prevent rapid flapping. The
 detector enters ALR when the budget ratio exceeds 0.40
-(`start_budget_level_ratio`). It exits ALR when the ratio drops below -0.60
-(`stop_budget_level_ratio`). The 100 percentage point gap
+(`start_budget_level_ratio`), indicating accumulated credit in the
+500ms budget. It exits ALR when the ratio drops below -0.60
+(`stop_budget_level_ratio`), indicating increased utilization. The 100 percentage point gap
 between these thresholds provides stability against oscillation—without
 hysteresis, small fluctuations near the boundary would cause rapid ALR
 entry/exit, disrupting probe scheduling and loss estimation.
 
-These values come from the `WebRTC-ProbingScreenshareBwe` field trial,
-which has been enabled by default in libwebrtc since 2019.
+These defaults come from libwebrtc’s `WebRTC-ProbingScreenshareBwe` field trial,
+enabled by default since 2019.
 
 The SendSideBandwidthEstimator calls `on_media_sent()` for each media
 packet (excluding padding and probes), passing the packet size and
