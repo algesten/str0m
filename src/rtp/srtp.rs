@@ -248,11 +248,14 @@ impl DecryptWarnings {
 }
 
 impl SrtpContext {
+    /// Protects `buf` into `output`, which may be a recycled buffer. Any
+    /// previous contents of `output` are discarded.
     pub fn protect_rtp(
         &mut self,
         buf: &[u8],
         header: &RtpHeader,
         srtp_index: u64, // same as ext_seq
+        mut output: Vec<u8>,
     ) -> Vec<u8> {
         // SRTP layout
         // [header, [rtp, (padding + pad_count)], tag]
@@ -295,8 +298,11 @@ impl SrtpContext {
                 // HMAC_TAG_LEN is 10, CTR_BUFFER_PADDING is 15, so we need 5 extra bytes
                 let padding_needed =
                     CTR_BUFFER_PADDING.saturating_sub(Aes128CmSha1_80::HMAC_TAG_LEN);
-                let mut output =
-                    vec![0_u8; buf.len() + Aes128CmSha1_80::HMAC_TAG_LEN + padding_needed];
+                output.clear();
+                output.resize(
+                    buf.len() + Aes128CmSha1_80::HMAC_TAG_LEN + padding_needed,
+                    0,
+                );
 
                 enc.encrypt(&iv, input, &mut output[hlen..])
                     .expect("rtp encrypt");
@@ -318,7 +324,8 @@ impl SrtpContext {
 
                 // Input and output lengths for encryption:
                 // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
-                let mut output = vec![0_u8; buf.len() + AeadAes128Gcm::TAG_LEN];
+                output.clear();
+                output.resize(buf.len() + AeadAes128Gcm::TAG_LEN, 0);
                 enc.encrypt(&iv, aad, input, &mut output[hlen..])
                     .expect("rtp encrypt");
 
@@ -334,7 +341,8 @@ impl SrtpContext {
 
                 // Input and output lengths for encryption:
                 // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
-                let mut output = vec![0_u8; buf.len() + AeadAes256Gcm::TAG_LEN];
+                output.clear();
+                output.resize(buf.len() + AeadAes256Gcm::TAG_LEN, 0);
                 enc.encrypt(&iv, aad, input, &mut output[hlen..])
                     .expect("rtp encrypt");
 
@@ -461,7 +469,9 @@ impl SrtpContext {
         }
     }
 
-    pub fn protect_rtcp(&mut self, buf: &[u8]) -> Vec<u8> {
+    /// Protects `buf` into `output`, which may be a recycled buffer. Any
+    /// previous contents of `output` are discarded.
+    pub fn protect_rtcp(&mut self, buf: &[u8], mut output: Vec<u8>) -> Vec<u8> {
         let srtcp_index = self.srtcp_index;
 
         // https://tools.ietf.org/html/rfc3711#page-15
@@ -487,7 +497,8 @@ impl SrtpContext {
                 // SRTCP_INDEX_LEN + HMAC_TAG_LEN is 14, CTR_BUFFER_PADDING is 15, so we need 1 extra byte
                 let padding_needed = CTR_BUFFER_PADDING
                     .saturating_sub(SRTCP_INDEX_LEN + Aes128CmSha1_80::HMAC_TAG_LEN);
-                let mut output = vec![0_u8; final_size + padding_needed];
+                output.clear();
+                output.resize(final_size + padding_needed, 0);
 
                 output[0..8].copy_from_slice(&buf[0..8]);
                 let input = &buf[8..];
@@ -511,7 +522,8 @@ impl SrtpContext {
                 aad[..8].copy_from_slice(&buf[..8]);
                 aad[8..12].copy_from_slice(&e_and_si.to_be_bytes());
 
-                let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + AeadAes128Gcm::TAG_LEN];
+                output.clear();
+                output.resize(buf.len() + SRTCP_INDEX_LEN + AeadAes128Gcm::TAG_LEN, 0);
                 output[0..8].copy_from_slice(&buf[0..8]);
                 let input = &buf[8..];
 
@@ -533,7 +545,8 @@ impl SrtpContext {
                 aad[..8].copy_from_slice(&buf[..8]);
                 aad[8..12].copy_from_slice(&e_and_si.to_be_bytes());
 
-                let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + AeadAes256Gcm::TAG_LEN];
+                output.clear();
+                output.resize(buf.len() + SRTCP_INDEX_LEN + AeadAes256Gcm::TAG_LEN, 0);
                 output[0..8].copy_from_slice(&buf[0..8]);
                 let input = &buf[8..];
 
@@ -1078,9 +1091,9 @@ mod test {
             let plaintext_rtp = [0x80, 111, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 42];
             let header =
                 RtpHeader::parse(&plaintext_rtp, &crate::rtp_::ExtensionMap::empty()).unwrap();
-            let valid_rtp = context.protect_rtp(&plaintext_rtp, &header, 1);
+            let valid_rtp = context.protect_rtp(&plaintext_rtp, &header, 1, Vec::new());
             let plaintext_rtcp = [0x80, 201, 0, 2, 0, 0, 0, 1, 0, 0, 0, 0];
-            let valid_rtcp = context.protect_rtcp(&plaintext_rtcp);
+            let valid_rtcp = context.protect_rtcp(&plaintext_rtcp, Vec::new());
 
             assert_eq!(
                 context.unprotect_rtp(&valid_rtp, &header, 1).unwrap(),
@@ -1296,7 +1309,7 @@ mod test {
             assert_eq!(decrypted, DECRYPTED_PAYLOAD);
 
             // Take us back to where we started.
-            let encrypted = ctx_rx.protect_rtcp(&decrypted);
+            let encrypted = ctx_rx.protect_rtcp(&decrypted, Vec::new());
             assert_eq!(encrypted, SRTCP);
         }
     }
@@ -1380,7 +1393,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Vec::new());
 
             assert_eq!(
                 out,
@@ -1419,7 +1432,8 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let encrypted = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let encrypted =
+                context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Vec::new());
 
             // Then we decrypt the resulting cipher text
             let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
@@ -1480,10 +1494,27 @@ mod test {
         }
 
         #[test]
+        fn protect_into_a_recycled_buffer_rfc_7714_test() {
+            // A recycled buffer holds old bytes and may be longer than needed.
+            let dirty = || vec![0xaa_u8; 3000];
+
+            let mut context = make_rtp_context();
+            let header =
+                RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
+                    .expect("header to parse");
+            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, dirty());
+            assert_eq!(out, rfc7714::PROTECTED_RTP_PACKET);
+
+            let mut context = make_rtcp_context();
+            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET, dirty());
+            assert_eq!(out, rfc7714::PROTECTED_RTCP_PACKET);
+        }
+
+        #[test]
         fn protect_rtcp_rfc_7714_test() {
             let mut context = make_rtcp_context();
 
-            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET);
+            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET, Vec::new());
 
             assert!(
                 out == rfc7714::PROTECTED_RTCP_PACKET,
@@ -1608,7 +1639,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Vec::new());
 
             assert_eq!(
                 out,
@@ -1647,7 +1678,8 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let encrypted = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let encrypted =
+                context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, Vec::new());
 
             // Then we decrypt the resulting cipher text
             let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
@@ -1708,10 +1740,27 @@ mod test {
         }
 
         #[test]
+        fn protect_into_a_recycled_buffer_rfc_7714_test() {
+            // A recycled buffer holds old bytes and may be longer than needed.
+            let dirty = || vec![0xaa_u8; 3000];
+
+            let mut context = make_rtp_context();
+            let header =
+                RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
+                    .expect("header to parse");
+            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0, dirty());
+            assert_eq!(out, rfc7714::PROTECTED_RTP_PACKET);
+
+            let mut context = make_rtcp_context();
+            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET, dirty());
+            assert_eq!(out, rfc7714::PROTECTED_RTCP_PACKET);
+        }
+
+        #[test]
         fn protect_rtcp_rfc_7714_test() {
             let mut context = make_rtcp_context();
 
-            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET);
+            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET, Vec::new());
 
             assert!(
                 out == rfc7714::PROTECTED_RTCP_PACKET,

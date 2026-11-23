@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Add `Rtc::recycle` to reuse the buffers of sent datagrams #1173
+
 # 0.26.0
 
   * Follow libWebRTC ICE nominations after NAT rebinding #1168

@@ -53,6 +53,10 @@ const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 /// Maximum number of pending RRTR entries before oldest are dropped.
 const MAX_PENDING_RRTRS: usize = 300;
 
+/// The most recycled buffers a session keeps. A caller that hands back more
+/// than it sends between polls only frees the rest.
+const RECYCLED_MAX: usize = 32;
+
 /// Maximum number of DLRR items to include in a single ExtendedReport.
 const MAX_DLRR_PER_REPORT: usize = 50;
 
@@ -109,6 +113,10 @@ pub(crate) struct Session {
 
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
+
+    // Buffers of sent datagrams handed back with `Rtc::recycle`. SRTP and
+    // SRTCP protection writes into them before it allocates a new one.
+    recycled: Vec<Vec<u8>>,
 
     // Next packet for RtpPacket event.
     pending_packet: Option<RtpPacket>,
@@ -210,6 +218,7 @@ impl Session {
             pacer,
             pacer_control: PacerControl::new(),
             poll_packet_buf: vec![0; 2000],
+            recycled: Vec::new(),
             pending_packet: None,
             media_bytes_rx: 0,
             media_bytes_tx: 0,
@@ -1221,7 +1230,8 @@ impl Session {
         data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;
-        let protected = srtp.protect_rtcp(&data);
+        let out = self.recycled.pop().unwrap_or_default();
+        let protected = srtp.protect_rtcp(&data, out);
 
         assert!(
             protected.len() < self.mtu(),
@@ -1229,6 +1239,13 @@ impl Session {
         );
 
         Some(protected.into())
+    }
+
+    /// Keeps the buffer of a sent datagram for a later protect to reuse.
+    pub fn recycle(&mut self, buf: Vec<u8>) {
+        if self.recycled.len() < RECYCLED_MAX {
+            self.recycled.push(buf);
+        }
     }
 
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
@@ -1277,7 +1294,8 @@ impl Session {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
         }
 
-        let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+        let out = self.recycled.pop().unwrap_or_default();
+        let protected = srtp_tx.protect_rtp(buf, &header, *seq_no, out);
 
         if twcc_enabled {
             let packet_id = if let Some(cluster) = cluster_id {
@@ -1712,7 +1730,11 @@ mod tests {
                 buf.extend_from_slice(&packet[..len]);
             }
             // Equal key material lets the local transmit context act as the peer.
-            let packet = session.srtp_tx.as_mut().unwrap().protect_rtcp(&buf);
+            let packet = session
+                .srtp_tx
+                .as_mut()
+                .unwrap()
+                .protect_rtcp(&buf, Vec::new());
             let mut readiness = Readiness::idle();
             session.handle_rtcp_receive(now, &packet, &mut readiness.wake());
             assert!(readiness.wants_events());
@@ -1738,7 +1760,7 @@ mod tests {
             .srtp_tx
             .as_mut()
             .unwrap()
-            .protect_rtcp(&[0x80, 201, 0, 1, 0, 0, 0, 1]);
+            .protect_rtcp(&[0x80, 201, 0, 1, 0, 0, 0, 1], Vec::new());
         let mut readiness = Readiness::idle();
         session.handle_rtcp_receive(Instant::now(), &packet, &mut readiness.wake());
         assert!(readiness.wants_events());

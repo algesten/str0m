@@ -1364,6 +1364,35 @@ impl Rtc {
         self.state = RtcState::Closed;
     }
 
+    /// Hand back the buffer of a sent datagram for reuse.
+    ///
+    /// SRTP and SRTCP protection writes each outgoing packet into a new buffer.
+    /// After a [`Output::Transmit`] has been sent, its contents can be passed here,
+    /// and the protection of a later packet reuses the buffer instead of allocating.
+    ///
+    /// This is optional. A datagram that is never handed back is dropped as usual.
+    /// It changes no output and no timeout.
+    ///
+    /// ```
+    /// # use std::time::Instant;
+    /// # use str0m::{Rtc, Output};
+    /// let mut rtc = Rtc::new(Instant::now());
+    ///
+    /// while let Ok(output) = rtc.poll_output() {
+    ///     match output {
+    ///         Output::Transmit(t) => {
+    ///             // send t.contents on the socket, then
+    ///             rtc.recycle(t.contents);
+    ///         }
+    ///         Output::Timeout(_) => break,
+    ///         Output::Event(_) => {}
+    ///     }
+    /// }
+    /// ```
+    pub fn recycle(&mut self, datagram: net::DatagramSend) {
+        self.session.recycle(datagram.into());
+    }
+
     /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
     /// use for communicating with the peer.
     ///

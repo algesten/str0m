@@ -368,7 +368,7 @@ pub fn srtp(data: &[u8]) -> Option<()> {
                 if buf.len() < 8 {
                     continue;
                 }
-                let mut protected = tx.protect_rtcp(buf);
+                let mut protected = tx.protect_rtcp(buf, Vec::new());
                 let plain = rx.unprotect_rtcp(&protected);
                 assert_eq!(plain.as_deref(), Some(buf), "SRTCP must round trip");
 
@@ -383,7 +383,7 @@ pub fn srtp(data: &[u8]) -> Option<()> {
                 let Some(header) = RtpHeader::parse(buf, &exts) else {
                     continue;
                 };
-                let mut protected = tx.protect_rtp(buf, &header, index);
+                let mut protected = tx.protect_rtp(buf, &header, index, Vec::new());
                 let payload = rx.unprotect_rtp(&protected, &header, index);
                 assert_eq!(
                     payload,
@@ -1283,7 +1283,7 @@ impl MediaPeer {
             buf[start + 2..start + 4].copy_from_slice(&words.to_be_bytes());
         }
 
-        Some(self.remote.protect_rtcp(&buf))
+        Some(self.remote.protect_rtcp(&buf, Vec::new()))
     }
 
     /// An SRTP packet from the remote, on one of its streams or anything else.
@@ -1357,7 +1357,10 @@ impl MediaPeer {
         let end = header.header_len + payload.len();
         buf[header.header_len..end].copy_from_slice(payload);
 
-        Some(self.remote.protect_rtp(&buf[..end], &header, seq))
+        Some(
+            self.remote
+                .protect_rtp(&buf[..end], &header, seq, Vec::new()),
+        )
     }
 }
 
