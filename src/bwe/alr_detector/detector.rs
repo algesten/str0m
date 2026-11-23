@@ -14,9 +14,9 @@ use crate::rtp_::{Bitrate, DataSize};
 ///
 /// ## ALR State Transitions
 ///
-/// - **Enter ALR**: When budget ratio > 0.40 (sustained low usage for 500ms)
-/// - **Exit ALR**: When budget ratio < -0.60 (increased usage)
-/// - The 100% hysteresis gap prevents rapid state flapping
+/// - **Enter ALR**: When budget ratio > 0.40 (accumulated credit)
+/// - **Exit ALR**: When budget ratio < -0.60 (accumulated debt)
+/// - The 100 percentage point hysteresis gap prevents rapid state flapping
 #[derive(Debug)]
 pub struct AlrDetector {
     /// Budget tracker with 500ms window
@@ -63,7 +63,8 @@ impl AlrDetector {
             state: AlrState::NotInAlr,
             last_send_time: None,
 
-            // See: https://webrtc.googlesource.com/src/+/a9a462f4232b49f63ed3b22b0ff57725c82625ec/rtc_base/experiments/alr_experiment.cc#26
+            // WebRTC-ProbingScreenshareBwe has been default-on in GoogCC since 2019.
+            // See the ALR Detector section in docs/BWE.md.
             bandwidth_usage_ratio: 0.80,
             start_budget_level_ratio: 0.40,
             stop_budget_level_ratio: -0.60,

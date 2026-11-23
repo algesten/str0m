@@ -428,9 +428,9 @@ impl ProbeControl {
     /// sending anything.
     ///
     /// **ALR Detection Threshold:**
-    /// ALR triggers when sending < 80% of estimate consistently for 500ms with budget
-    /// accumulation > 40%. At 80-90% send rate, you're in the deadlock zone: too high
-    /// to trigger ALR, too low for AIMD to help much.
+    /// Sending below 80% of the estimate builds budget credit. ALR starts when the
+    /// budget ratio exceeds 0.40. Sending at or above the budget target cannot build
+    /// the credit needed to enter ALR.
     ///
     /// **Loss Controller's 1.5× Cap:**
     /// The loss controller also applies a 1.5× cap during recovery (line 303 in

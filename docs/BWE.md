@@ -53,9 +53,9 @@ connections with only audio negotiated.
 
 ### Application Limited Region (ALR)
 
-ALR occurs when your application sends **less than 65% of available
-capacity** – for example, during silence suppression in audio, or when
-video is paused. This is important because:
+The ALR detector tracks whether the application sends below **80% of the
+estimated bitrate** long enough to build up budget credit. This can happen
+during audio silence suppression or when video is paused. ALR matters because:
 
 1. **Loss patterns differ**: During normal operation, loss indicates
    congestion. During ALR, loss could be unrelated to your sending rate
@@ -389,10 +389,10 @@ concepts are unified into this single value.
    Only active outside ALR (periodic ALR handles capacity discovery when
    application-limited). This addresses a deadlock scenario where AIMD
    recovery stalls: after network capacity is restored, AIMD is capped at
-   1.5× observed throughput while the application sends at 60-70% of
-   estimate—too high to trigger ALR (65% threshold) but too low for AIMD
-   to make meaningful progress. The stagnation probe provides an escape
-   mechanism by detecting prolonged lack of progress and actively testing
+   1.5× observed throughput while the application sends above the ALR
+   budget target of 80% of the estimate. The budget cannot build credit
+   at that send rate, so periodic ALR probing cannot help while outside ALR.
+   The stagnation probe detects prolonged lack of progress and actively tests
    for higher capacity. See the function documentation in `probe/control.rs`
    for detailed analysis of the deadlock scenario.
 
@@ -528,36 +528,24 @@ takes the maximum), while the DelayController uses only the latest result.
 **Location:** `src/bwe/alr_detector/detector.rs`
 **WebRTC:** `modules/congestion_controller/goog_cc/alr_detector.cc`
 
-Detects when the application is sending significantly less than network
-capacity, operating in what's called the Application Limited Region. This
-state occurs when the application sends less than 65%
-(`bandwidth_usage_ratio`) of the estimated capacity, indicating the
-application rather than the network is the bottleneck.
+The detector tracks whether the application is sending below its budget
+target of 80% of the estimated bitrate (`bandwidth_usage_ratio`). Its
+`IntervalBudget` accrues credit at that target rate and debits each media
+packet. The budget is bounded in either direction by the amount of data
+that would be sent at the target rate over 500 ms. The ratio of the
+balance to that limit ranges from -1.0 (full debt) to 1.0 (full credit).
 
-The detector uses an `IntervalBudget` to handle bursty encoder traffic over
-500ms windows. Real-world encoders produce highly bursty traffic—keyframes
-are orders of magnitude larger than P-frames, scene changes cause sudden
-spikes, and temporal layers create complex patterns. The IntervalBudget
-implements a leaky bucket algorithm that smooths these bursts across the
-window, preventing temporary spikes from falsely indicating high
-utilization.
+The detector enters ALR when the budget ratio exceeds 0.40
+(`start_budget_level_ratio`) and exits when it drops below -0.60
+(`stop_budget_level_ratio`). This hysteresis keeps bursts of encoder
+traffic from rapidly toggling the state. The time to enter or exit depends
+on the starting balance and the rate at which the balance changes.
 
-The budget operates as a balance sheet: it increases over time at 65% of
-the estimated bitrate (the target rate) and decreases when media packets
-are sent. When the application sends less than this target rate, budget
-accumulates (positive balance); when sending more, it depletes (negative
-balance, or "debt"). The budget ratio (bytes_remaining / max_bytes_in_budget)
-ranges from -1.0 (maximum overuse) through 0.0 (exactly at target) to 1.0
-(maximum underuse).
-
-State transitions use hysteresis thresholds to prevent rapid flapping. The
-detector enters ALR when the budget ratio exceeds 0.80
-(`start_budget_level_ratio`), indicating sustained low usage over the
-500ms window. It exits ALR when the ratio drops below 0.50
-(`stop_budget_level_ratio`), indicating increased utilization. The 30% gap
-between these thresholds provides stability against oscillation—without
-hysteresis, small fluctuations near the boundary would cause rapid ALR
-entry/exit, disrupting probe scheduling and loss estimation.
+These values come from libwebrtc's `WebRTC-ProbingScreenshareBwe` field
+trial, which has been enabled by default since 2019. At the pinned
+revision, the shared GoogCC ALR detector loads that profile by default
+for webcam and screen-share traffic alike. str0m uses the three detector
+values as fixed defaults. [Upstream change][alr-default-on]
 
 The SendSideBandwidthEstimator calls `on_media_sent()` for each media
 packet (excluding padding and probes), passing the packet size and
@@ -565,12 +553,14 @@ timestamp. While probing is available, application-supplied timeout inputs
 advance the same budget with zero media bytes after a 500ms idle interval, so
 complete silence can enter ALR without changing packet-driven updates during media.
 It also calls `set_estimated_bitrate()` whenever the bandwidth
-estimate changes, which adjusts the target rate to 65% of the new
+estimate changes, which adjusts the target rate to 80% of the new
 estimate. The ALR start time flows to both ProbeControl and LossController
 via `alr_start_time()`, providing context for probe gating decisions and
 loss-based estimation during application-limited operation.
 
 The `IntervalBudget` is located in `src/bwe/alr_detector/budget.rs`.
+
+[alr-default-on]: https://webrtc.googlesource.com/src/+/1c1b1ea137cef7b40e569eb79ff21849ddbdc3c5
 
 ### Link Capacity Estimator
 
