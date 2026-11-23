@@ -1,6 +1,7 @@
 # Unreleased
 
   * Align ALR detector defaults with GoogCC #1182
+  * Fix media time jumping ahead for late packets after an arrival gap, and keep media and sender report time in the right timestamp cycle #1164
 
 # 0.26.0
 
