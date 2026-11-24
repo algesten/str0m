@@ -1278,7 +1278,11 @@ impl Rtc {
              crypto provider that supports certificate generation.",
             );
 
+        // Before any SCTP draw, so this provider's random source is the one sctp-proto uses.
+        sctp::install_random(crypto_provider.secure_random);
+
         let mut sctp = RtcSctp::new(*mtu.start(), config.sctp_max_message_size);
+        sctp.set_secure_random(crypto_provider.secure_random);
         if config.snap_enabled {
             sctp.enable_snap();
         }

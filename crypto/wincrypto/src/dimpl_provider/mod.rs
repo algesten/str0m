@@ -33,7 +33,7 @@ pub fn default_provider() -> CryptoProvider {
 }
 
 #[derive(Debug)]
-struct WinCngSecureRandom;
+pub(crate) struct WinCngSecureRandom;
 
 impl SecureRandom for WinCngSecureRandom {
     fn fill(&self, buf: &mut [u8]) -> Result<(), CryptoError> {
@@ -55,4 +55,12 @@ impl SecureRandom for WinCngSecureRandom {
     }
 }
 
-static SECURE_RANDOM: WinCngSecureRandom = WinCngSecureRandom;
+impl str0m_proto::crypto::SecureRandom for WinCngSecureRandom {
+    fn fill(&self, buf: &mut [u8]) -> Result<(), str0m_proto::crypto::CryptoError> {
+        SecureRandom::fill(self, buf).map_err(|e| {
+            str0m_proto::crypto::CryptoError::Other(format!("random fill failed: {e}"))
+        })
+    }
+}
+
+pub(crate) static SECURE_RANDOM: WinCngSecureRandom = WinCngSecureRandom;

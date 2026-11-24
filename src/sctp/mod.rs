@@ -13,6 +13,7 @@ use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
 
 use snap::{b64_encode, webrtc_transport_config};
 
+use crate::crypto::SecureRandom;
 use crate::poll::Wake;
 
 pub use sctp_proto::Error as ProtoError;
@@ -26,6 +27,9 @@ pub(crate) use dcep::{DcepAck, DcepOpen};
 
 mod error;
 pub use error::SctpError;
+
+mod random;
+pub(crate) use random::install as install_random;
 
 /// Default bytes that can be buffered inside str0m across all streams.
 ///
@@ -62,6 +66,8 @@ pub(crate) struct RtcSctp {
     snap_init: Option<SctpInitData>,
     /// Bytes that can be buffered across all streams before `available()` is 0.
     max_buffered_amount: usize,
+    /// Random source of the crypto provider, checked before the association is set up.
+    secure_random: Option<&'static dyn SecureRandom>,
     #[cfg(test)]
     max_payload_size: usize,
 }
@@ -292,6 +298,8 @@ const _: () = assert!(
 
 impl RtcSctp {
     pub fn new(mtu: usize, local_max_message_size: u32) -> Self {
+        random::install_default();
+
         let mut config = EndpointConfig::default();
         let max_payload = mtu
             .saturating_sub(crate::io::MAX_DTLS_OVERHEAD)
@@ -321,6 +329,7 @@ impl RtcSctp {
             snap_enabled: false,
             snap_init: None,
             max_buffered_amount: DEFAULT_MAX_BUFFERED_AMOUNT,
+            secure_random: None,
             #[cfg(test)]
             max_payload_size,
         }
@@ -356,6 +365,10 @@ impl RtcSctp {
             )));
         }
 
+        random::check(self.secure_random).map_err(|e| {
+            SctpError::Proto(ProtoError::Other(format!("SCTP random source failed: {e}")))
+        })?;
+
         self.client = client;
         self.last_now = now;
 
@@ -378,7 +391,7 @@ impl RtcSctp {
             );
             let (handle, mut assoc) = self
                 .endpoint
-                .connect(config, self.fake_addr)
+                .connect(now, config, self.fake_addr)
                 .map_err(|e| SctpError::Proto(ProtoError::Other(e.to_string())))?;
             assoc.set_max_send_message_size(self.remote_max_message_size);
             self.handle = handle;
@@ -399,7 +412,7 @@ impl RtcSctp {
             debug!("New local association (out-of-band: false)");
             let (handle, mut assoc) = self
                 .endpoint
-                .connect(config, self.fake_addr)
+                .connect(now, config, self.fake_addr)
                 .map_err(|e| SctpError::Proto(ProtoError::Other(e.to_string())))?;
             assoc.set_max_send_message_size(self.remote_max_message_size);
             self.handle = handle;
@@ -429,6 +442,11 @@ impl RtcSctp {
 
     pub fn set_max_buffered_amount(&mut self, max_buffered_amount: usize) {
         self.max_buffered_amount = max_buffered_amount;
+    }
+
+    /// Set the random source checked before the association is set up.
+    pub fn set_secure_random(&mut self, secure_random: Option<&'static dyn SecureRandom>) {
+        self.secure_random = secure_random;
     }
 
     /// Whether local offers should opt in to SNAP.
@@ -1400,7 +1418,32 @@ impl From<(ReliabilityType, u32)> for Reliability {
 mod tests {
     use super::*;
 
+    use crate::crypto::CryptoError;
     use crate::poll::Readiness;
+
+    #[derive(Debug)]
+    struct FailingRandom;
+
+    impl SecureRandom for FailingRandom {
+        fn fill(&self, _buf: &mut [u8]) -> Result<(), CryptoError> {
+            Err(CryptoError::Other("no entropy".into()))
+        }
+    }
+
+    static FAILING_RANDOM: FailingRandom = FailingRandom;
+
+    #[test]
+    fn failing_random_source_refuses_association() {
+        for client in [true, false] {
+            let mut sctp = RtcSctp::new(DATAGRAM_MTU_TARGET, LOCAL_MAX_MESSAGE_SIZE);
+            sctp.set_secure_random(Some(&FAILING_RANDOM));
+
+            let err = sctp.init(client, Instant::now(), None, None).unwrap_err();
+            assert!(err.to_string().contains("no entropy"));
+            assert!(!sctp.is_inited());
+            assert!(sctp.assoc.is_none());
+        }
+    }
 
     #[test]
     fn readiness_uninitialized_sctp_timeout_does_not_wake() {

@@ -13,7 +13,7 @@ use dtls::RustCryptoDtlsProvider;
 use sha1::{RustCryptoSha1HmacProvider, RustCryptoSha1Provider};
 use sha256::RustCryptoSha256Provider;
 use srtp::RustCryptoSrtpProvider;
-use str0m_proto::crypto::CryptoProvider;
+use str0m_proto::crypto::{CryptoError, CryptoProvider, SecureRandom};
 
 /// Create the default RustCrypto crypto provider.
 ///
@@ -34,6 +34,7 @@ pub fn default_provider() -> CryptoProvider {
     static SHA1: RustCryptoSha1Provider = RustCryptoSha1Provider;
     static SHA256: RustCryptoSha256Provider = RustCryptoSha256Provider;
     static DTLS: RustCryptoDtlsProvider = RustCryptoDtlsProvider;
+    static RANDOM: RustCryptoSecureRandom = RustCryptoSecureRandom;
 
     CryptoProvider {
         srtp_provider: &SRTP,
@@ -41,5 +42,19 @@ pub fn default_provider() -> CryptoProvider {
         sha1_provider: &SHA1,
         sha256_provider: &SHA256,
         dtls_provider: &DTLS,
+        secure_random: Some(&RANDOM),
+    }
+}
+
+/// Random bytes from the operating system, through dimpl's RustCrypto provider.
+#[derive(Debug)]
+struct RustCryptoSecureRandom;
+
+impl SecureRandom for RustCryptoSecureRandom {
+    fn fill(&self, buf: &mut [u8]) -> Result<(), CryptoError> {
+        dimpl::crypto::rust_crypto::default_provider()
+            .secure_random
+            .fill(buf)
+            .map_err(|e| CryptoError::Other(format!("random fill failed: {e}")))
     }
 }
