@@ -1,7 +1,7 @@
 # Unreleased
 
   * Align ALR detector defaults with GoogCC #1182
-  * Draw SCTP random values from the crypto provider's new `secure_random` (breaking) #1170
+  * Draw SCTP random values from the crypto provider `secure_random` (breaking) #1170
 
 # 0.26.0
 
