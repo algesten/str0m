@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Put local ICE candidates on the first BUNDLE m-line when the first m-line is rejected #1161
   * Align ALR detector defaults with GoogCC #1182
 
 # 0.26.0

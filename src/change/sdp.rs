@@ -821,10 +821,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
         let mut lines = v
             .iter()
             .map(|m| {
-                // Candidates should only be in the first BUNDLE mid
-                let include_candidates = m.index() == 0;
-
-                let attrs = params.media_attributes(include_candidates);
+                let attrs = params.media_attributes();
 
                 // Already made send stream SSRCs
                 let mut ssrcs = session.streams.ssrcs_tx(m.mid());
@@ -859,6 +856,13 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 
         if let Some(pending) = params.pending {
             pending.apply_to(&mut lines);
+        }
+
+        // Candidates go only in the first m-line of the BUNDLE group. A rejected
+        // (disabled) m-line is left out of the group, so it can't carry them.
+        let first_bundled = lines.iter().position(|l| !l.disabled).unwrap_or(0);
+        if let Some(line) = lines.get_mut(first_bundled) {
+            line.attrs.splice(0..0, params.candidate_attributes());
         }
 
         // Mids go into the session part of the SDP.
@@ -1637,25 +1641,23 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
         }
     }
 
-    fn media_attributes(&self, include_candidates: bool) -> Vec<MediaAttribute> {
+    fn candidate_attributes(&self) -> Vec<MediaAttribute> {
+        self.candidates
+            .iter()
+            .map(|c| MediaAttribute::Candidate(c.clone()))
+            .collect()
+    }
+
+    fn media_attributes(&self) -> Vec<MediaAttribute> {
         use MediaAttribute::*;
 
-        let mut v = if include_candidates {
-            self.candidates
-                .iter()
-                .map(|c| Candidate(c.clone()))
-                .collect()
-        } else {
-            vec![]
-        };
-
-        v.push(IceUfrag(self.creds.ufrag.clone()));
-        v.push(IcePwd(self.creds.pass.clone()));
-        v.push(IceOptions("trickle".into()));
-        v.push(Fingerprint(self.fingerprint.clone()));
-        v.push(Setup(self.setup));
-
-        v
+        vec![
+            IceUfrag(self.creds.ufrag.clone()),
+            IcePwd(self.creds.pass.clone()),
+            IceOptions("trickle".into()),
+            Fingerprint(self.fingerprint.clone()),
+            Setup(self.setup),
+        ]
     }
 }
 

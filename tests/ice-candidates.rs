@@ -3,9 +3,9 @@
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use str0m::RtcConfig;
-use str0m::RtcError;
 use str0m::ice::IceCreds;
+use str0m::media::{Direction, MediaKind};
+use str0m::{Candidate, Rtc, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -573,4 +573,35 @@ fn ice_lite_mode() -> Result<(), RtcError> {
     }
 
     Ok(())
+}
+
+/// Test that an answer whose first m-line is rejected puts the local
+/// candidates on the first m-line of the BUNDLE group instead.
+#[test]
+fn ice_candidates_skip_rejected_first_mline() {
+    init_crypto_default();
+    let now = Instant::now();
+
+    let mut l = Rtc::new(now);
+    l.add_local_candidate(
+        Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap(),
+    );
+    let mut change = l.sdp_api();
+    change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
+    change.add_media(MediaKind::Video, Direction::RecvOnly, None, None, None);
+    let (offer, _pending) = change.apply().unwrap();
+
+    // Video-only answerer: the audio m-line has no codec match and is rejected.
+    let mut r = RtcConfig::new().clear_codecs().enable_vp8(true).build(now);
+    r.add_local_candidate(
+        Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap(),
+    );
+    let answer = r.sdp_api().accept_offer(offer).unwrap().to_sdp_string();
+
+    let (audio, video) = answer
+        .split_once("m=video")
+        .expect("answer has a video m-line");
+    assert!(audio.contains("m=audio 0 "), "audio is rejected: {answer}");
+    assert!(!audio.contains("a=candidate"), "{answer}");
+    assert!(video.contains("a=candidate"), "{answer}");
 }
