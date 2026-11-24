@@ -70,6 +70,10 @@ pub(crate) struct Session {
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
 
+    /// Whether data channels are accepted. Fixed at construction from
+    /// [`RtcConfig::enable_datachannels`][crate::RtcConfig::enable_datachannels].
+    pub enable_datachannels: bool,
+
     reordering_size_audio: usize,
     reordering_size_video: usize,
     reordering_timeout_audio: Option<Duration>,
@@ -182,6 +186,7 @@ impl Session {
             medias: vec![],
             streams: Streams::new(enable_stats, *config.mtu.end(), config.pause_threshold),
             app: None,
+            enable_datachannels: config.enable_datachannels,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
             reordering_timeout_audio: config.reordering_timeout_audio,

@@ -58,6 +58,7 @@ pub struct RtcConfig {
     pub(crate) dtls_version: DtlsVersion,
     pub(crate) vp9_packetizer_mode: Vp9PacketizerMode,
     pub(crate) snap_enabled: bool,
+    pub(crate) enable_datachannels: bool,
     pub(crate) mtu: RangeInclusive<usize>,
 }
 
@@ -789,6 +790,28 @@ impl RtcConfig {
         self
     }
 
+    /// Whether WebRTC data channels (`m=application`) are accepted.
+    ///
+    /// Defaults to `true`. When `false`, an offered data channel is answered
+    /// rejected (port 0, out of BUNDLE), SCTP is not started, and
+    /// [`DirectApi::start_sctp`][crate::change::DirectApi::start_sctp] is a
+    /// no-op. The setting is fixed for the life of the [`Rtc`][crate::Rtc].
+    pub fn enable_datachannels(mut self, enabled: bool) -> Self {
+        self.enable_datachannels = enabled;
+        self
+    }
+
+    /// Returns whether data channels are enabled.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    /// assert!(config.datachannels_enabled());
+    /// ```
+    pub fn datachannels_enabled(&self) -> bool {
+        self.enable_datachannels
+    }
+
     /// Enable SNAP (SCTP Negotiation Acceleration Protocol).
     ///
     /// When enabled, the `a=sctp-init` attribute is included in outgoing SDP
@@ -939,6 +962,7 @@ impl Default for RtcConfig {
             dtls_version: DtlsVersion::Dtls12,
             vp9_packetizer_mode: Vp9PacketizerMode::default(),
             snap_enabled: false,
+            enable_datachannels: true,
             mtu: DATAGRAM_MTU_TARGET..=DATAGRAM_MTU_WARN,
         }
     }

@@ -1544,6 +1544,12 @@ impl Rtc {
         sctp_init_data: Option<SctpInitData>,
         remote_max_message_size: Option<u32>,
     ) -> Result<(), RtcError> {
+        // Config can refuse data channels for the life of this Rtc.
+        // DirectApi::start_sctp does not override that.
+        if !self.session.enable_datachannels {
+            return Ok(());
+        }
+
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
         if self.sctp.is_inited() {
