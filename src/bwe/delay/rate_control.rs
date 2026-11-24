@@ -243,7 +243,12 @@ impl RateControl {
 
     fn decrease(&mut self, observed_bitrate: Bitrate, now: Instant) {
         log_rate_control_applied_change!("decrease");
-        let mut new_estimate = observed_bitrate * BETA;
+        let mut new_estimate = (observed_bitrate * BETA).round();
+        // Leave extra room to drain queues at low throughput, as in libWebRTC.
+        let additional_backoff = Bitrate::kbps(5);
+        if new_estimate > additional_backoff {
+            new_estimate = new_estimate - additional_backoff;
+        }
 
         if self.estimated_bitrate < new_estimate {
             // Avoid increasing the bitrate on overuse
@@ -473,10 +478,20 @@ mod test {
             rate_controller.update(Signal::Overuse, 90_000.into(), None, now + duration_ms(500));
             assert_eq!(
                 rate_controller.estimated_bitrate().as_u64(),
-                76_500,
+                71_500,
                 "When overuse is detected we should reduce the estimate to \
-                85% of the obeserved rate immediately"
+                85% of the observed rate minus 5 kbit/s immediately"
             );
+        }
+
+        #[test]
+        fn additional_backoff_threshold() {
+            let now = Instant::now();
+            for (observed, expected) in [(5_881u64, 4_999), (5_882, 5_000), (5_883, 1)] {
+                let mut control = RateControl::new(100_000.into(), 0.into(), 100_000.into());
+                control.update(Signal::Overuse, observed.into(), None, now);
+                assert_eq!(control.estimated_bitrate().as_u64(), expected);
+            }
         }
 
         #[test]
@@ -487,7 +502,7 @@ mod test {
             rate_controller.update(Signal::Normal, 85_000.into(), Some(duration_ms(80)), now);
 
             rate_controller.update(Signal::Overuse, 90_000.into(), None, now + duration_ms(500));
-            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 76_500);
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 71_500);
 
             rate_controller.update(
                 Signal::Overuse,
@@ -495,22 +510,22 @@ mod test {
                 None,
                 now + duration_ms(1000),
             );
-            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 63_750);
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 58_750);
 
             rate_controller.update(Signal::Normal, 60_000.into(), None, now + duration_ms(1500));
             // NB: This matches libWebRTC but diverges from the spec
             assert_eq!(
                 rate_controller.estimated_bitrate().as_u64(),
-                66_251,
+                61_055,
                 "After adjusting on overuse we immediately return to increase on the next normal signal"
             );
 
             rate_controller.update(Signal::Normal, 60_000.into(), None, now + duration_ms(2500));
-            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 71_552,);
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 65_940);
 
             // NB: Additive increase because we are nearing convergence
             rate_controller.update(Signal::Normal, 70_000.into(), None, now + duration_ms(3500));
-            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 72552);
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 66_940);
         }
     }
 

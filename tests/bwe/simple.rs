@@ -70,10 +70,10 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
         config: NetemConfig::cellular().seed(42),
     };
     // Burst loss and jitter make ramp-up sensitive to feedback timing.
-    // Allow time to reach the mid layer with quantized TWCC receive times.
+    // Allow the smoothed estimate to reflect the probe before checking the mid layer.
     plan[2] = Step::Run {
         description: "Wait for mid",
-        duration: Duration::from_secs(75),
+        duration: Duration::from_secs(76),
     };
     // RTT-paced NACK retries can delay feedback after burst loss; let the
     // estimator reach the existing 1 Mbps checkpoint.

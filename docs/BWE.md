@@ -211,11 +211,10 @@ operates in three states: Increase (estimate is growing), Hold (waiting
 after a decrease before increasing again), and Decrease (actively reducing
 due to overuse).
 
-When overuse is detected, the controller immediately drops the estimate to
-85% (`BETA` = 0.85) of the currently observed bitrate and transitions to
-Hold state. This multiplicative decrease provides rapid backoff from
-congestion—the 15% reduction is aggressive enough to quickly relieve queue
-buildup while conservative enough to avoid unnecessary underutilization.
+On a decrease, the controller takes 85% of the observed throughput and
+rounds to the nearest bit/s. If the result exceeds 5 kbit/s, it subtracts
+another 5 kbit/s to help drain queues at low rates. It caps the result at
+the current estimate, applies the configured bitrate bounds, and enters Hold.
 The controller remains in Hold state for a period before allowing increases
 again, implementing a guard time called TimeToReduceFurther (1 RTT clamped
 between 10-200ms). This waiting period ensures the network has time to
@@ -236,30 +235,24 @@ The resulting estimated bitrate flows back to the DelayController, which
 forwards it to the SendSideBandwidthEstimator for final bandwidth
 determination.
 
-### Acked Bitrate Estimator
+### Robust Throughput Estimator
 
-**Location:** `src/bwe/acked_bitrate_estimator.rs`
-**WebRTC:** `modules/congestion_controller/goog_cc/acknowledged_bitrate_estimator.cc`
+**Location:** `src/bwe/robust_throughput_estimator.rs`
+**WebRTC:** `modules/congestion_controller/goog_cc/robust_throughput_estimator.cc`
 
-Calculates the observed throughput by tracking acknowledged packets from
-TWCC reports within a sliding time window. The estimator uses different
-window sizes depending on initialization state: a 500ms window
-(`INITIAL_BITRATE_WINDOW`) for the first estimate to establish a stable
-baseline and avoid overreacting to startup transients, then switches to a
-150ms window (`BITRATE_WINDOW`) for subsequent estimates to provide faster
-response to changing network conditions.
+The estimator supplies acknowledged throughput to the delay and loss
+controllers. It keeps acknowledged TWCC packets in receive-time order and
+produces an estimate once it has 10 packets. After each report, it trims the
+oldest packets while the window exceeds 500 packets or 5 seconds, or while
+it exceeds both 20 packets and 1 second.
 
-The calculation employs Bayesian estimation to smooth results and handle
-variability, with special handling for small samples (less than 2000 bytes,
-`SMALL_SAMPLE_THRESHOLD`) where statistical noise could skew the
-estimate—small samples receive extra smoothing to prevent erratic jumps. To
-prevent unrealistic low values during sparse feedback periods (like
-silence suppression), it enforces a minimum estimate floor of 40 kbps
-(`ESTIMATE_FLOOR`).
-
-This instantaneous bitrate measurement serves as ground truth for both
-the DelayController and LossController, providing the "observed average"
-that rate control uses to calibrate its estimates and detect convergence.
+The receive rate excludes the first packet's bytes and replaces the largest
+interarrival gap with the second largest to reduce the impact of a delay
+spike. The send rate excludes the last sent packet's bytes and ignores send
+times older than the latest discarded send time. With at least 10 eligible
+send times, the estimator returns the lower of the send and receive rates.
+Otherwise it uses the receive rate alone. A receive timestamp more than
+1 second behind the newest in the window resets the estimator.
 
 ### Loss Controller
 
@@ -828,7 +821,7 @@ transmission smoothing and padding generation respectively.
 - Arrival group formation rules
 - Probe bitrate estimation (send/recv rate calculation and ratio
   validation)
-- Acked bitrate estimation (Bayesian smoothing)
+- Robust throughput estimation from TWCC send and receive times
 - Loss-based estimation with ALR integration and link capacity tracking
 - ALR detection for probe scheduling and loss controller bounds
 
