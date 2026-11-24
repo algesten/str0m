@@ -1,7 +1,7 @@
 # Unreleased
 
   * Align ALR detector defaults with GoogCC #1182
-  * `Rtc::set_ice_local_preference` to configure local ICE candidate preference #1180
+  * Add `Rtc::set_ice_local_preference` to set local ICE candidate preference #1180
 
 # 0.26.0
 
