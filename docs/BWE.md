@@ -104,6 +104,17 @@ bandwidth estimate. This estimate is emitted to the application as an
 `Event::EgressBitrateEstimate` event and flows to the pacer control to
 adjust pacing and padding rates.
 
+A high RTT can indicate that packets are queuing at a bottleneck. If the
+current send rate keeps that queue full, lowering the target gives it a
+chance to drain.
+
+If corrected RTT exceeds 3 seconds, `RttBasedBackoff` reduces the send
+target by 20% at most once per second, subject to the bitrate limits. It
+subtracts time spent waiting at the receiver from each packet’s feedback
+RTT and uses the lowest value in the report. Between reports, only time
+up to the last packet sent contributes to corrected RTT. Normal delay-
+and loss-based control resumes when corrected RTT falls to 3 seconds or less.
+
 The estimator also manages the probe lifecycle, creating probe cluster
 configurations via `maybe_create_probe()` when bandwidth discovery is
 needed, and tracking when probes complete. It monitors for overuse
