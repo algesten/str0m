@@ -537,6 +537,8 @@ impl RtcConfig {
     ///
     /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
     /// packets can arrive out of order.
+    ///
+    /// Default: 15
     pub fn set_reordering_size_audio(mut self, size: usize) -> Self {
         self.reordering_size_audio = size;
 
