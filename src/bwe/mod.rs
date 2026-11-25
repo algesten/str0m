@@ -198,6 +198,13 @@ impl SendSideBandwidthEstimator {
         // Feed records to probe estimator for analysis and process any new probe results
         let mut latest_probe_result = None;
         for (config, bitrate) in self.probe_estimator.update(send_records.iter().copied()) {
+            // A cluster whose target the desired-bitrate cap brought below the estimate cannot
+            // show that the link carries that estimate: a result below it is no evidence of a
+            // lower capacity and is not applied. Delay- and loss-based decreases still lower
+            // the estimate as before.
+            if config.capped_below().is_some_and(|e| bitrate < e) {
+                continue;
+            }
             latest_probe_result = Some(bitrate);
 
             // Update link capacity estimator for every successful ALR probe, not just the latest.
