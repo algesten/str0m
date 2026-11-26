@@ -2,6 +2,7 @@
 
   * Use robust TWCC throughput estimates and align AIMD backoff with libwebrtc #1188
   * Align ALR detector defaults with GoogCC #1182
+  * Add `Rtc::set_ice_local_preference` to set local ICE candidate preference #1180
 
 # 0.26.0
 

@@ -1364,6 +1364,31 @@ impl Rtc {
         self.state = RtcState::Closed;
     }
 
+    /// Set how the local preference of local ICE candidates is calculated.
+    ///
+    /// The local preference is the middle part of a candidate's priority
+    /// ([RFC 8445 5.1.2][1]). Without this, str0m uses its built-in default.
+    ///
+    /// This must be used before adding any local candidates. Candidates that
+    /// are already added keep their priority. The returned value must be in
+    /// `0..=65535`.
+    ///
+    /// ```
+    /// # use std::time::Instant;
+    /// # use str0m::{Rtc, Candidate};
+    /// let mut rtc = Rtc::new(Instant::now());
+    ///
+    /// // Prefer the first candidate of each kind and IP version.
+    /// rtc.set_ice_local_preference(|_: &Candidate, same_kind: usize| {
+    ///     65535_u32.saturating_sub(same_kind as u32)
+    /// });
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8445#section-5.1.2
+    pub fn set_ice_local_preference(&mut self, p: impl ice::LocalPreference) {
+        self.ice.set_local_preference(p);
+    }
+
     /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
     /// use for communicating with the peer.
     ///
@@ -2338,6 +2363,22 @@ mod test {
         fn is_sync<T: Sync>(_t: T) {}
         is_send(Rtc::new(Instant::now()));
         is_sync(Rtc::new(Instant::now()));
+    }
+
+    #[test]
+    fn ice_local_preference() {
+        let mut rtc = Rtc::new(Instant::now());
+        rtc.set_ice_local_preference(|_: &Candidate, same_kind: usize| 1000 - same_kind as u32);
+
+        let a = Candidate::host("1.2.3.4:5000".parse().unwrap(), "udp").unwrap();
+        let b = Candidate::host("1.2.3.5:5000".parse().unwrap(), "udp").unwrap();
+
+        // type preference 126 (host), component 1
+        let prio_a = rtc.add_local_candidate(a).unwrap().prio();
+        assert_eq!(prio_a, (126 << 24) | (1000 << 8) | 255);
+
+        let prio_b = rtc.add_local_candidate(b).unwrap().prio();
+        assert_eq!(prio_b, (126 << 24) | (999 << 8) | 255);
     }
 
     #[test]
