@@ -207,6 +207,7 @@ pub(crate) mod test {
         }
 
         a1.drop_sent_packets = true;
+        let dropped_at = a1.time - a1.start_time;
 
         loop {
             if !a1.state().is_connected() && !a2.state().is_connected() {
@@ -218,19 +219,25 @@ pub(crate) mod test {
         println!("{:?}", a1.events);
         println!("{:?}", a2.events);
 
-        fn assert_last_event(d: &Duration, e: &IceAgentEvent, a: &IceAgent) {
+        fn assert_last_event(d: &Duration, dropped_at: Duration, e: &IceAgentEvent, a: &IceAgent) {
             assert_eq!(
                 *e,
                 IceAgentEvent::IceConnectionStateChange(IceConnectionState::Disconnected)
             );
-            assert!(*d > a.ice_timeout());
+            // The last answer comes up to one keepalive interval before the drop, so the
+            // disconnect lands within max_rto of ice_timeout after it.
+            let max_rto = stun::StunTiming::default().max_rto();
+            let after_drop = *d - dropped_at;
+            let earliest = a.ice_timeout() - max_rto;
+            let latest = a.ice_timeout() + max_rto;
+            assert!(after_drop > earliest && after_drop < latest);
         }
 
         let (d, e) = a1.events.last().unwrap();
-        assert_last_event(d, e, &a1);
+        assert_last_event(d, dropped_at, e, &a1);
 
         let (d, e) = a2.events.last().unwrap();
-        assert_last_event(d, e, &a2);
+        assert_last_event(d, dropped_at, e, &a2);
 
         assert_eq!(
             a1.stats(),

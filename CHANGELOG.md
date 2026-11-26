@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Send the ICE nomination at once on a pair that is being kept alive #1192
   * Align ALR detector defaults with GoogCC #1182
 
 # 0.26.0
