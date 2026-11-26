@@ -213,7 +213,7 @@ where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
-    // Reference: https://datatracker.ietf.org/doc/html/rfc5245#section-15.1
+    // Reference: https://datatracker.ietf.org/doc/html/rfc8839#section-5.1
     let port = || {
         not_sp::<Input>().and_then(|s| {
             s.parse::<u16>()
@@ -269,16 +269,30 @@ where
             string(" rport "),
             port(),
         )),
-        optional((
-            attempt(string(" tcptype ")),
-            not_sp().and_then(|s| {
-                TcpType::from_str(s.as_str()).map_err(StreamErrorFor::<Input>::message_format)
-            }),
-        )),
-        optional((attempt(string(" generation ")), not_sp())),
-        optional((attempt(string(" network-id ")), not_sp())),
-        optional((attempt(string(" ufrag ")), not_sp())),
-        optional((attempt(string(" network-cost ")), not_sp())),
+        // *(SP cand-extension), where cand-extension = extension-att-name SP extension-att-value.
+        // RFC 8839 §5.1 allows any number of extensions in any order. We pick out the ones
+        // we use (tcptype, ufrag) and ignore the rest (generation, network-id, network-cost,
+        // and any unknown extension).
+        many::<Vec<(String, String)>, _, _>(attempt(
+            (token(' '), not_sp(), token(' '), not_sp()).map(|(_, name, _, value)| (name, value)),
+        ))
+        .and_then(|exts| {
+            let mut tcptype = None;
+            let mut ufrag = None;
+            for (name, value) in exts {
+                match name.as_str() {
+                    "tcptype" => {
+                        tcptype = Some(
+                            TcpType::from_str(value.as_str())
+                                .map_err(StreamErrorFor::<Input>::message_format)?,
+                        );
+                    }
+                    "ufrag" => ufrag = Some(value),
+                    _ => {}
+                }
+            }
+            Ok::<_, StreamErrorFor<Input>>((tcptype, ufrag))
+        }),
     )
         .map(
             |(
@@ -296,12 +310,8 @@ where
                 port,
                 _,
                 kind,
-                raddr,   // (" raddr ", addr, " rport ", port)
-                tcptype, // (" tcptype ", tcptype)
-                _,       // (" generation ", generation)
-                _,       // (" network-id ", network_id)
-                ufrag,   // (" ufrag ", ufrag)
-                _,       // ("network-cost", network_cost)
+                raddr,            // (" raddr ", addr, " rport ", port)
+                (tcptype, ufrag), // from the cand-extension list
             )| {
                 Candidate::from_parts(
                     found,
@@ -311,8 +321,8 @@ where
                     SocketAddr::from((addr, port)),
                     kind,
                     raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
-                    tcptype.map(|(_, tcptype)| tcptype),
-                    ufrag.map(|(_, u)| u),
+                    tcptype,
+                    ufrag,
                 )
             },
         )
@@ -1610,6 +1620,44 @@ mod test {
         assert_eq!(c.addr(), "142.250.82.252:443".parse().unwrap());
         assert_eq!(c.proto(), Protocol::SslTcp);
         assert_eq!(c.tcptype(), None);
+    }
+
+    #[test]
+    fn parse_candidate_extensions_any_order() {
+        // ufrag before generation (RFC 8839 §5.1 allows extensions in any order).
+        let a = "a=candidate:1722980356 2 udp 2130585855 2600:f0f0:5510:e432:5f3c:7042:deaa:821e 3478 \
+            typ host ufrag chJHOvWZDdWVmdOT generation 0\r\n";
+        let (c, rest) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(
+            c.addr(),
+            "[2600:f0f0:5510:e432:5f3c:7042:deaa:821e]:3478"
+                .parse()
+                .unwrap()
+        );
+        assert_eq!(c.ufrag(), Some("chJHOvWZDdWVmdOT"));
+
+        // network-cost before network-id, tcptype last.
+        let a = "a=candidate:2501718406 1 tcp 1518280447 10.217.229.219 9 typ host \
+            network-cost 900 network-id 1 generation 0 tcptype passive\r\n";
+        let (c, rest) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(c.tcptype(), Some(TcpType::Passive));
+
+        // Unknown extension is ignored.
+        let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 \
+            rport 10100 x-unknown foo ufrag abc\r\n";
+        let (c, rest) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(rest, "");
+        assert_eq!(c.ufrag(), Some("abc"));
+
+        // Invalid tcptype value is still rejected.
+        let a = "a=candidate:1 1 tcp 1518280447 10.217.229.219 9 typ host tcptype bogus\r\n";
+        assert!(candidate_attribute().parse(a).is_err());
+
+        // An extension name without a value is malformed.
+        let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ host generation\r\n";
+        assert!(candidate_attribute().parse(a).is_err());
     }
 
     #[test]
