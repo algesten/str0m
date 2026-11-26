@@ -250,6 +250,9 @@ impl CandidatePair {
 
     pub fn nominate(&mut self, force_success: bool) {
         assert!(self.nomination_state == NominationState::None);
+        // A pair that is being kept alive has its next attempt cached up to max_rto ahead,
+        // which would keep the nomination from skipping the queue in next_binding_attempt.
+        self.cached_next_attempt_time = None;
         if force_success {
             self.nomination_state = NominationState::Success;
             debug!("Force success nominated pair {:?}", Pii(&self));
@@ -604,6 +607,26 @@ impl fmt::Debug for CandidatePair {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nominating_a_kept_alive_pair_skips_the_queue() {
+        let stun_timing = StunTiming::default();
+
+        let mut pair = CandidatePair::new(0, CandidateKind::Host, 0, CandidateKind::Host, 0);
+
+        let mut now = Instant::now();
+
+        let id = pair.new_attempt(now, &stun_timing, true);
+        now += Duration::from_millis(20);
+        pair.record_binding_response(now, id, 0);
+
+        let keepalive = pair.next_binding_attempt(now, &stun_timing);
+        assert!(keepalive > now);
+
+        pair.nominate(false);
+
+        assert!(pair.next_binding_attempt(now, &stun_timing) <= now);
+    }
 
     #[test]
     fn ice_timeout_after_established() {
