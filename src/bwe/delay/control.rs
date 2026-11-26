@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use super::super::macros::{log_bitrate_estimate, log_delay_variation};
-use super::super::{AckedPacket, BandwidthUsage};
+use super::super::{AckedPacket, BandwidthUsage, MIN_BITRATE};
 use super::arrival_group::ArrivalGroupAccumulator;
 use super::rate_control::RateControl;
 use super::trendline::TrendlineEstimator;
@@ -44,7 +44,7 @@ impl DelayController {
         Self {
             arrival_group_accumulator: ArrivalGroupAccumulator::default(),
             trendline_estimator: TrendlineEstimator::new(20),
-            rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
+            rate_control: RateControl::new(initial_bitrate, MIN_BITRATE, Bitrate::gbps(10)),
             last_estimate: Some(initial_bitrate),
             smoothed_rtt: MovingAverage::new(RTT_SMOOTHING_FACTOR),
             max_rtt_history: VecDeque::default(),

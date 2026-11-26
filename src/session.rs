@@ -1291,6 +1291,9 @@ impl Session {
 
         // Update BWE subsystem
         if let Some(bwe) = self.bwe.as_mut() {
+            if twcc_enabled {
+                bwe.on_twcc_packet_sent(now);
+            }
             bwe.on_media_sent(payload_size.into(), is_padding, now);
         }
 
