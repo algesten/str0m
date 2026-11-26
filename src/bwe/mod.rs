@@ -21,7 +21,6 @@ use crate::Reason;
 use crate::rtp_::{Bitrate, DataSize, TwccClusterId, TwccSendRecord, TwccSeq};
 use crate::util::Soonest;
 
-mod acked_bitrate_estimator;
 mod alr_detector;
 pub(crate) mod api;
 mod delay;
@@ -29,15 +28,16 @@ mod link_capacity_estimator;
 mod loss_controller;
 mod macros;
 mod probe;
+mod robust_throughput_estimator;
 mod smoother;
 mod time;
 
-use acked_bitrate_estimator::AckedBitrateEstimator;
 use alr_detector::AlrDetector;
 use delay::DelayController;
 use link_capacity_estimator::LinkCapacityEstimator;
 use loss_controller::{LossController, LossControllerState};
 use macros::log_loss;
+use robust_throughput_estimator::RobustThroughputEstimator;
 use smoother::EstimateSmoother;
 
 pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
@@ -51,8 +51,6 @@ pub use probe::ProbeClusterConfig;
 #[cfg(not(feature = "_internal_test_exports"))]
 pub(crate) use probe::ProbeClusterConfig;
 
-const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
-const BITRATE_WINDOW: Duration = Duration::from_millis(150);
 const STARTUP_PHASE: Duration = Duration::from_secs(2);
 
 pub struct Bwe {
@@ -137,7 +135,7 @@ impl Bwe {
 struct SendSideBandwidthEstimator {
     delay_controller: DelayController,
     loss_controller: LossController,
-    acked_bitrate_estimator: AckedBitrateEstimator,
+    acked_bitrate_estimator: RobustThroughputEstimator,
     probe_control: ProbeControl,
     probe_estimator: ProbeEstimator,
     // First nonempty transport feedback; starts loss estimation and enables ALR probing.
@@ -158,10 +156,7 @@ impl SendSideBandwidthEstimator {
         Self {
             delay_controller: DelayController::new(initial_bitrate),
             loss_controller,
-            acked_bitrate_estimator: AckedBitrateEstimator::new(
-                INITIAL_BITRATE_WINDOW,
-                BITRATE_WINDOW,
-            ),
+            acked_bitrate_estimator: RobustThroughputEstimator::default(),
             probe_control: ProbeControl::new(),
             probe_estimator: ProbeEstimator::new(),
             started_at: None,
@@ -225,11 +220,7 @@ impl SendSideBandwidthEstimator {
         }
         acked_packets.sort_by(AckedPacket::order_by_receive_time);
 
-        for acked_packet in acked_packets.iter() {
-            self.acked_bitrate_estimator
-                .update(acked_packet.remote_recv_time, acked_packet.size);
-        }
-
+        self.acked_bitrate_estimator.update(&acked_packets);
         let acked_bitrate = self.acked_bitrate_estimator.current_estimate();
 
         // Use the latest probe result from this update, if any

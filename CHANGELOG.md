@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Use robust TWCC throughput estimates and align AIMD backoff with libwebrtc #1188
   * Align ALR detector defaults with GoogCC #1182
 
 # 0.26.0
