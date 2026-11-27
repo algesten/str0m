@@ -90,6 +90,12 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
         at_least: Bitrate::mbps(1),
     };
 
+    // Allow the estimate to recover from the initial drop after switching to the top layer.
+    plan[8] = Step::Run {
+        description: "Ensure top stabilizes",
+        duration: Duration::from_secs(30),
+    };
+
     let (mut l, mut r) = connect_with_bwe(LAYER_LOW, LAYER_MID);
 
     let mut ctx = BweTestContext::new(&mut l, &mut r);

@@ -993,7 +993,17 @@ impl Session {
                 let Some(stream) = self.streams.stream_tx(&fb.ssrc()) else {
                     continue;
                 };
+                let is_report = matches!(fb, RtcpFb::ReceptionReport(_));
                 stream.handle_rtcp(now, fb);
+                if !is_report {
+                    continue;
+                }
+                let (Some(bwe), Some(rtt)) = (&mut self.bwe, stream.reported_rtt()) else {
+                    continue;
+                };
+                if !rtt.is_zero() {
+                    bwe.update_rtt(rtt);
+                }
             }
         }
 

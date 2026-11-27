@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Update delay-based AIMD when TWCC feedback acknowledges packets #1194
   * Reduce the bandwidth estimate when corrected RTT exceeds three seconds #1190
   * Use robust TWCC throughput estimates and align AIMD backoff with libwebrtc #1188
   * Align ALR detector defaults with GoogCC #1182

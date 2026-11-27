@@ -211,10 +211,10 @@ impl TrendlineEstimator {
                 "Trendline Estimator: Maybe overusing"
             );
 
-            if overuse.time_overusing > OVER_USE_TIME_THRESHOLD
+            let sustained_overuse = overuse.time_overusing > OVER_USE_TIME_THRESHOLD
                 && overuse.count > 1
-                && trend > self.previous_trend
-            {
+                && trend >= self.previous_trend;
+            if sustained_overuse {
                 self.overuse = None;
 
                 self.update_hypothesis(BandwidthUsage::Overuse);

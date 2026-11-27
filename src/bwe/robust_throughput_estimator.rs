@@ -166,7 +166,6 @@ mod tests {
                 size: DataSize::bytes(1000),
                 local_send_time: start + Duration::from_millis(i * send_ms),
                 remote_recv_time: start + Duration::from_millis((i + 1) * recv_ms),
-                local_recv_time: start + Duration::from_secs(5),
             })
             .collect()
     }
