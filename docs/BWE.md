@@ -135,13 +135,9 @@ time variations. This is the primary congestion detection mechanism.
 1. Groups packets into arrival groups (via `ArrivalGroupAccumulator`)
 2. Calculates inter-group delay variations
 3. Feeds delay variations to trendline estimator
-4. Maintains smoothed RTT using EWMA with α = 1/8 (RFC 6298), matching
-   WebRTC's approach where each controller calculates its own smoothed RTT
-   rather than relying on externally-provided values
-5. Uses rate control (AIMD) to adjust bandwidth estimate at regular
-   intervals (`UPDATE_INTERVAL` = 25ms)
-6. Invalidates the trendline hypothesis if no TWCC feedback received for
-   more than 2× smoothed RTT (capped at `MAX_TWCC_GAP` = 500ms)
+4. Uses RTT from RTCP receiver reports, initially 200ms
+5. Uses rate control (AIMD) to adjust bandwidth estimate when TWCC feedback
+   acknowledges packets. Overuse takes precedence over a probe result.
 
 The controller produces a delay-based bandwidth estimate along with an
 overuse state signal, both of which flow to the SendSideBandwidthEstimator
@@ -226,10 +222,11 @@ On a decrease, the controller takes 85% of the observed throughput and
 rounds to the nearest bit/s. If the result exceeds 5 kbit/s, it subtracts
 another 5 kbit/s to help drain queues at low rates. It caps the result at
 the current estimate, applies the configured bitrate bounds, and enters Hold.
-The controller remains in Hold state for a period before allowing increases
-again, implementing a guard time called TimeToReduceFurther (1 RTT clamped
-between 10-200ms). This waiting period ensures the network has time to
-drain queues and stabilize before we attempt to grow again.
+The controller waits for a period before allowing repeated reductions,
+implementing a guard time called TimeToReduceFurther (1 RTT clamped
+between 10-200ms). This waiting period gives the network time to drain
+queues and stabilize before another reduction, unless throughput falls
+below half the current estimate.
 
 During the Increase state, the controller's behavior depends on
 convergence proximity. When the estimate is within 3 standard deviations
@@ -289,7 +286,7 @@ network has recovered before growing again.
 
 During the startup phase (first 2 seconds) when no loss has occurred, the
 controller defers entirely to the delay-based estimate since we don't have
-enough data for loss statistics. After a successful probe completes, it
+enough data for loss statistics. If a probe succeeds without overuse, it
 adopts the probe result immediately, trusting the active measurement over
 passive observation—probes provide ground truth about what the network can
 handle. The controller only ever reduces estimates, acting as a safety cap

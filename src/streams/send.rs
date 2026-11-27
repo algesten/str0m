@@ -1018,6 +1018,10 @@ impl StreamTx {
         self.pending_request_remb.take()
     }
 
+    pub(crate) fn reported_rtt(&self) -> Option<Duration> {
+        self.stats.rtt()
+    }
+
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
         use RtcpFb::*;
         match fb {

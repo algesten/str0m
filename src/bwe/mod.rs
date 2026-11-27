@@ -111,6 +111,10 @@ impl Bwe {
         self.bwe.last_estimate()
     }
 
+    pub fn update_rtt(&mut self, rtt: Duration) {
+        self.bwe.delay_controller.update_rtt(rtt);
+    }
+
     pub fn on_media_sent(&mut self, payload_size: DataSize, is_padding: bool, now: Instant) {
         if !is_padding {
             // Update ALR detector with media bytes sent
@@ -302,13 +306,12 @@ impl SendSideBandwidthEstimator {
         // Use the latest probe result from this update, if any
         let probe_result = latest_probe_result;
 
-        let is_probe_result = probe_result.is_some();
-
         // Update delay controller with the latest probe result
         let maybe_estimate =
             self.delay_controller
                 .update(&acked_packets, acked_bitrate, probe_result, now);
 
+        let is_probe_result = probe_result.is_some() && !self.delay_controller.is_overusing();
         let Some(delay_estimate) = maybe_estimate else {
             return;
         };
@@ -353,11 +356,9 @@ impl SendSideBandwidthEstimator {
     }
 
     pub fn poll_timeout(&self) -> (Option<Instant>, Reason) {
-        let delay_timeout = Some(self.delay_controller.poll_timeout());
         let probe_timeout = Some(self.probe_control.poll_timeout());
         let probe_estimator_timeout = Some(self.probe_estimator.poll_timeout());
-        (delay_timeout, Reason::BweDelayControl)
-            .soonest((probe_timeout, Reason::BweProbeControl))
+        (probe_timeout, Reason::BweProbeControl)
             .soonest((probe_estimator_timeout, Reason::BweProbeEstimator))
     }
 
@@ -369,12 +370,11 @@ impl SendSideBandwidthEstimator {
         now: Instant,
     ) -> Option<ProbeClusterConfig> {
         let current_target = self.last_estimate();
-        self.delay_controller
-            .handle_timeout(self.acked_bitrate_estimator.current_estimate(), now);
 
         self.rtt_backoff
             .update(now, current_target, self.delay_controller.last_estimate());
 
+        self.delay_controller.start_clock(now);
         // Update probe control with desired bitrate.
         self.probe_control.set_desired_bitrate(desired_bitrate);
 
@@ -512,16 +512,9 @@ pub struct AckedPacket {
     /// instants of the same type i.e. those that represent a TWCC reported receive time for this
     /// session.
     remote_recv_time: Instant,
-    /// The local time when received confirmation that the other side received the seq i.e. when we
-    /// received the TWCC report for this packet.
-    local_recv_time: Instant,
 }
 
 impl AckedPacket {
-    fn rtt(&self) -> Duration {
-        self.local_recv_time - self.local_send_time
-    }
-
     fn order_by_receive_time(lhs: &Self, rhs: &Self) -> Ordering {
         if lhs.remote_recv_time != rhs.remote_recv_time {
             lhs.remote_recv_time.cmp(&rhs.remote_recv_time)
@@ -547,16 +540,11 @@ impl TryFrom<&TwccSendRecord> for AckedPacket {
         let Some(remote_recv_time) = value.remote_recv_time() else {
             return Err(());
         };
-        let Some(local_recv_time) = value.local_recv_time() else {
-            return Err(());
-        };
-
         Ok(Self {
             seq_no: value.seq(),
             size: value.size().into(),
             local_send_time: value.local_send_time(),
             remote_recv_time,
-            local_recv_time,
         })
     }
 }
