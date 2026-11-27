@@ -3,7 +3,7 @@
   * Reduce the bandwidth estimate when corrected RTT exceeds three seconds #1190
   * Use robust TWCC throughput estimates and align AIMD backoff with libwebrtc #1188
   * Align ALR detector defaults with GoogCC #1182
-  * Put local ICE candidates on the first BUNDLE m-line when the first m-line is rejected #1161
+  * Keep ICE candidates in the video section when an audio-then-video answer rejects audio #1161
 
 # 0.26.0
 
