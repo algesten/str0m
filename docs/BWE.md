@@ -484,10 +484,11 @@ arrives rather than waiting for a fixed period.
 The estimator lifecycle works as follows: `probe_start()` begins watching
 for the cluster_id in TWCC feedback, `update()` accumulates received
 packets while ignoring lost ones (lost probe packets indicate congestion,
-making the probe result invalid) and immediately yields any new probe
-results, `end_probe()` is called when the Pacer finishes sending and marks
-the probe for cleanup, and finally `handle_timeout()` removes stale probe
-state after the cluster history period expires.
+making the probe result invalid) and immediately yields the last valid
+probe result per cluster in each report, `end_probe()` is called when the
+Pacer finishes sending and marks the probe for cleanup, and finally
+`handle_timeout()` removes stale probe state after the cluster history
+period expires.
 
 WebRTC uses `kMaxClusterHistory` (1 second) as "the maximum time period
 beyond which a probing burst is not expected to last." This is not a "wait

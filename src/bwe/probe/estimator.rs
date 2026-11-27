@@ -51,8 +51,8 @@ pub struct ProbeEstimator {
     /// Active probe states (VecDeque for efficient front removal).
     states: VecDeque<ProbeEstimatorState>,
 
-    /// Clusters that were updated in the last call to `update`.
-    did_update: VecDeque<TwccClusterId>,
+    /// Last valid measurement per cluster, in measurement order.
+    results: VecDeque<(ProbeClusterConfig, Bitrate)>,
 }
 
 #[derive(Debug)]
@@ -90,7 +90,7 @@ impl ProbeEstimator {
     pub fn new() -> Self {
         Self {
             states: VecDeque::new(),
-            did_update: VecDeque::with_capacity(10),
+            results: VecDeque::with_capacity(10),
         }
     }
 
@@ -142,8 +142,7 @@ impl ProbeEstimator {
         &mut self,
         records: impl Iterator<Item = &'t TwccSendRecord>,
     ) -> impl Iterator<Item = (ProbeClusterConfig, Bitrate)> + '_ {
-        // Keep track of which clusters were updated in this call.
-        self.did_update.clear();
+        self.results.clear();
 
         for record in records {
             let Some(cluster) = record.cluster() else {
@@ -160,21 +159,23 @@ impl ProbeEstimator {
                 continue;
             };
 
-            let did_update = state.update(record);
-
-            if did_update {
-                // The correct behavior is that the _last updated_
-                // is emitted last, so that the consumer of the returned
-                // iterator gets the latest probe result last.
-                self.did_update.retain(|c| *c != cluster);
-                self.did_update.push_back(cluster);
+            if !state.update(record) {
+                continue;
             }
+
+            let Some(result) = state.calculate_bitrate() else {
+                continue;
+            };
+
+            // The correct behavior is that the _last valid measurement_
+            // is emitted last, so that the consumer of the returned
+            // iterator gets the latest probe result last.
+            self.results
+                .retain(|(config, _)| config.cluster() != cluster);
+            self.results.push_back(result);
         }
 
-        self.did_update
-            .iter()
-            .filter_map(|cluster| self.states.iter().find(|s| s.config.cluster() == *cluster))
-            .filter_map(|s| s.calculate_bitrate())
+        self.results.iter().copied()
     }
 
     /// Mark the probe as ended.
@@ -593,6 +594,34 @@ mod test {
             "probe should be rejected by ratio validation, got: {:?}",
             results
         );
+    }
+
+    #[test]
+    fn invalid_final_packet_preserves_the_last_valid_measurement() {
+        let mut estimator = ProbeEstimator::new();
+        let cluster = 7.into();
+        let config = ProbeClusterConfig::new(cluster, Bitrate::kbps(870), ProbeKind::Initial);
+        let base = Instant::now();
+        let samples = [
+            (0, 0, 1150),
+            (10579, 3750, 1150),
+            (21159, 7500, 240),
+            (23367, 8500, 240),
+            (25575, 9500, 1150),
+        ];
+        let records = samples.map(|(send, recv, size)| {
+            crate::rtp_::TwccSendRecord::test_new(
+                TwccPacketId::with_cluster(send, cluster),
+                base + Duration::from_micros(send),
+                size,
+                base + Duration::from_millis(100),
+                Some(base + Duration::from_micros(recv)),
+            )
+        });
+
+        estimator.probe_start(config, base);
+        let (_, rate) = estimator.update(records.iter()).last().unwrap();
+        assert!((rate.as_f64() - 869602.0).abs() < 1.0);
     }
 
     #[test]
