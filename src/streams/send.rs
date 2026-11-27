@@ -1,4 +1,5 @@
-use std::collections::VecDeque;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -134,7 +135,7 @@ pub struct StreamTx {
     unpaced: Option<bool>,
 
     /// Scheduled resends due to NACK or spurious padding.
-    resends: VecDeque<Resend>,
+    resends: Resends,
 
     /// Requested padding, that has not been turned into packets yet.
     padding: usize,
@@ -377,7 +378,7 @@ impl StreamTx {
             send_queue: SendQueue::new(),
             queue_info: None,
             unpaced: None,
-            resends: VecDeque::new(),
+            resends: Resends::default(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
@@ -1070,7 +1071,7 @@ impl StreamTx {
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
             // Keep a single queued resend even if pacing delays it beyond one RTT.
-            if self.resends.iter().any(|r| r.seq_no == seq_no) {
+            if self.resends.contains(seq_no) {
                 continue;
             }
             let Some(cached) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
@@ -1400,11 +1401,105 @@ struct Resend {
     payload_size: usize,
 }
 
+/// The queue of scheduled resends, with a count of queued resends per sequence number.
+///
+/// `handle_nack` checks, for every sequence number a NACK asks for, whether a resend of it is
+/// queued already. Walking the queue for that made one RTCP datagram full of NACKs cost
+/// quadratic time in the number of requested packets when the RTX cache is large.
+#[derive(Debug, Default)]
+struct Resends {
+    queue: VecDeque<Resend>,
+    queued: HashMap<SeqNo, usize>,
+}
+
+impl Resends {
+    fn contains(&self, seq_no: SeqNo) -> bool {
+        self.queued.contains_key(&seq_no)
+    }
+
+    fn push_back(&mut self, resend: Resend) {
+        *self.queued.entry(resend.seq_no).or_insert(0) += 1;
+        self.queue.push_back(resend);
+    }
+
+    fn pop_front(&mut self) -> Option<Resend> {
+        let resend = self.queue.pop_front()?;
+        if let Entry::Occupied(mut count) = self.queued.entry(resend.seq_no) {
+            *count.get_mut() -= 1;
+            if *count.get() == 0 {
+                count.remove();
+            }
+        }
+        Some(resend)
+    }
+
+    fn clear(&mut self) {
+        self.queue.clear();
+        self.queued.clear();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    fn iter(&self) -> std::collections::vec_deque::Iter<'_, Resend> {
+        self.queue.iter()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.queue.len()
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Index<usize> for Resends {
+    type Output = Resend;
+
+    fn index(&self, index: usize) -> &Resend {
+        &self.queue[index]
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::util::SystemTimeExt;
 
     use super::*;
+
+    #[test]
+    fn resends_lookup_follows_the_queue() {
+        let now = Instant::now();
+        let resend = |seq_no: u64| Resend {
+            seq_no: seq_no.into(),
+            queued_at: now,
+            payload_size: 100,
+        };
+        let mut resends = Resends::default();
+        assert!(!resends.contains(1.into()));
+
+        resends.push_back(resend(1));
+        resends.push_back(resend(2));
+        resends.push_back(resend(1));
+        assert!(resends.contains(1.into()));
+        assert!(resends.contains(2.into()));
+        assert!(!resends.contains(3.into()));
+
+        // The first resend of 1 leaves, the second one keeps 1 queued.
+        assert_eq!(resends.pop_front().map(|r| r.seq_no), Some(1.into()));
+        assert!(resends.contains(1.into()));
+        assert_eq!(resends.pop_front().map(|r| r.seq_no), Some(2.into()));
+        assert!(!resends.contains(2.into()));
+        assert_eq!(resends.pop_front().map(|r| r.seq_no), Some(1.into()));
+        assert!(!resends.contains(1.into()));
+        assert!(resends.pop_front().is_none());
+        assert!(resends.is_empty());
+
+        resends.push_back(resend(5));
+        resends.clear();
+        assert!(!resends.contains(5.into()));
+        assert!(resends.is_empty());
+    }
 
     #[test]
     fn regular_padding_does_not_search_probe_negotiation() {
