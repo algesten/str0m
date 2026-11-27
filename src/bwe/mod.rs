@@ -21,7 +21,6 @@ use crate::Reason;
 use crate::rtp_::{Bitrate, DataSize, TwccClusterId, TwccSendRecord, TwccSeq};
 use crate::util::Soonest;
 
-mod acked_bitrate_estimator;
 mod alr_detector;
 pub(crate) mod api;
 mod delay;
@@ -29,15 +28,16 @@ mod link_capacity_estimator;
 mod loss_controller;
 mod macros;
 mod probe;
+mod robust_throughput_estimator;
 mod smoother;
 mod time;
 
-use acked_bitrate_estimator::AckedBitrateEstimator;
 use alr_detector::AlrDetector;
 use delay::DelayController;
 use link_capacity_estimator::LinkCapacityEstimator;
 use loss_controller::{LossController, LossControllerState};
 use macros::log_loss;
+use robust_throughput_estimator::RobustThroughputEstimator;
 use smoother::EstimateSmoother;
 
 pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
@@ -51,8 +51,6 @@ pub use probe::ProbeClusterConfig;
 #[cfg(not(feature = "_internal_test_exports"))]
 pub(crate) use probe::ProbeClusterConfig;
 
-const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
-const BITRATE_WINDOW: Duration = Duration::from_millis(150);
 const STARTUP_PHASE: Duration = Duration::from_secs(2);
 
 pub struct Bwe {
@@ -120,6 +118,10 @@ impl Bwe {
         }
     }
 
+    pub fn on_twcc_packet_sent(&mut self, now: Instant) {
+        self.bwe.rtt_backoff.on_packet_sent(now);
+    }
+
     pub fn is_overusing(&self) -> bool {
         self.bwe.is_overusing()
     }
@@ -135,9 +137,10 @@ impl Bwe {
 }
 
 struct SendSideBandwidthEstimator {
+    rtt_backoff: RttBasedBackoff,
     delay_controller: DelayController,
     loss_controller: LossController,
-    acked_bitrate_estimator: AckedBitrateEstimator,
+    acked_bitrate_estimator: RobustThroughputEstimator,
     probe_control: ProbeControl,
     probe_estimator: ProbeEstimator,
     // First nonempty transport feedback; starts loss estimation and enables ALR probing.
@@ -146,6 +149,76 @@ struct SendSideBandwidthEstimator {
     link_capacity_estimator: LinkCapacityEstimator,
     last_updated_estimate: Option<Bitrate>,
 }
+
+#[derive(Default)]
+struct RttBasedBackoff {
+    // For each acknowledged packet, send time plus time pending at the receiver.
+    // The latest such instant gives the minimum propagation RTT in the report.
+    propagation_origin: Option<Instant>,
+    last_feedback: Option<Instant>,
+    last_sent: Option<Instant>,
+    last_decrease: Option<Instant>,
+    target: Option<Bitrate>,
+}
+
+impl RttBasedBackoff {
+    fn on_packet_sent(&mut self, now: Instant) {
+        self.propagation_origin.get_or_insert(now);
+        self.last_sent = Some(now);
+    }
+
+    fn on_feedback(&mut self, sorted_packets: &[AckedPacket], now: Instant) {
+        let Some(last) = sorted_packets.last() else {
+            return;
+        };
+
+        self.propagation_origin = sorted_packets
+            .iter()
+            .map(|packet| {
+                let pending = last.remote_recv_time - packet.remote_recv_time;
+                packet.local_send_time + pending
+            })
+            .max();
+        self.last_feedback = Some(now);
+    }
+
+    fn update(
+        &mut self,
+        now: Instant,
+        current_target: Option<Bitrate>,
+        delay_limit: Option<Bitrate>,
+    ) {
+        // Feedback silence contributes only through the time of the last send.
+        let corrected_rtt = self
+            .last_feedback
+            .max(self.last_sent)
+            .zip(self.propagation_origin)
+            .map(|(end, origin)| end.saturating_duration_since(origin));
+        if corrected_rtt.unwrap_or_default() <= Duration::from_secs(3) {
+            self.target = None;
+            return;
+        }
+
+        let Some(mut target) = current_target else {
+            return;
+        };
+        let floor = Bitrate::kbps(5);
+        let interval_elapsed = self
+            .last_decrease
+            .is_none_or(|last| now - last >= Duration::from_secs(1));
+        if target > floor && interval_elapsed {
+            target = (target * 0.8).max(floor);
+            self.last_decrease = Some(now);
+        }
+        self.target = Some(
+            delay_limit
+                .map_or(target, |limit| target.min(limit))
+                .max(MIN_BITRATE),
+        );
+    }
+}
+
+const MIN_BITRATE: Bitrate = Bitrate::kbps(40);
 
 impl SendSideBandwidthEstimator {
     pub fn new(initial_bitrate: Bitrate) -> Self {
@@ -156,12 +229,10 @@ impl SendSideBandwidthEstimator {
         loss_controller.set_bandwidth_estimate(initial_bitrate);
 
         Self {
+            rtt_backoff: RttBasedBackoff::default(),
             delay_controller: DelayController::new(initial_bitrate),
             loss_controller,
-            acked_bitrate_estimator: AckedBitrateEstimator::new(
-                INITIAL_BITRATE_WINDOW,
-                BITRATE_WINDOW,
-            ),
+            acked_bitrate_estimator: RobustThroughputEstimator::default(),
             probe_control: ProbeControl::new(),
             probe_estimator: ProbeEstimator::new(),
             started_at: None,
@@ -193,6 +264,7 @@ impl SendSideBandwidthEstimator {
         if send_records.is_empty() {
             return;
         }
+        let current_target = self.last_estimate();
         let _ = self.started_at.get_or_insert(now);
 
         // Feed records to probe estimator for analysis and process any new probe results
@@ -211,7 +283,6 @@ impl SendSideBandwidthEstimator {
 
         let mut acked_packets = vec![];
 
-        let mut max_rtt = None;
         let mut count = 0;
         let mut lost = 0;
         for record in send_records.iter() {
@@ -221,15 +292,11 @@ impl SendSideBandwidthEstimator {
                 continue;
             };
             acked_packets.push(acked_packet);
-            max_rtt = max_rtt.max(record.rtt());
         }
         acked_packets.sort_by(AckedPacket::order_by_receive_time);
 
-        for acked_packet in acked_packets.iter() {
-            self.acked_bitrate_estimator
-                .update(acked_packet.remote_recv_time, acked_packet.size);
-        }
-
+        self.rtt_backoff.on_feedback(&acked_packets, now);
+        self.acked_bitrate_estimator.update(&acked_packets);
         let acked_bitrate = self.acked_bitrate_estimator.current_estimate();
 
         // Use the latest probe result from this update, if any
@@ -245,6 +312,15 @@ impl SendSideBandwidthEstimator {
         let Some(delay_estimate) = maybe_estimate else {
             return;
         };
+
+        // Apply the new delay limit (or probe target) before the RTT decrease.
+        let current_target = if is_probe_result {
+            Some(delay_estimate)
+        } else {
+            current_target.map(|rate| rate.min(delay_estimate))
+        };
+        self.rtt_backoff
+            .update(now, current_target, Some(delay_estimate));
 
         let loss = if count == 0 {
             0.0
@@ -292,8 +368,12 @@ impl SendSideBandwidthEstimator {
         do_probe: bool,
         now: Instant,
     ) -> Option<ProbeClusterConfig> {
+        let current_target = self.last_estimate();
         self.delay_controller
             .handle_timeout(self.acked_bitrate_estimator.current_estimate(), now);
+
+        self.rtt_backoff
+            .update(now, current_target, self.delay_controller.last_estimate());
 
         // Update probe control with desired bitrate.
         self.probe_control.set_desired_bitrate(desired_bitrate);
@@ -370,6 +450,10 @@ impl SendSideBandwidthEstimator {
 
     /// Get the latest estimate.
     pub fn last_estimate(&self) -> Option<Bitrate> {
+        if let Some(target) = self.rtt_backoff.target {
+            return Some(target);
+        }
+
         let delay_estimate = self.delay_controller.last_estimate();
 
         let loss_result = self.loss_controller.loss_based_result();
@@ -498,6 +582,68 @@ impl fmt::Display for BandwidthUsage {
 mod test {
     use super::*;
     use crate::rtp_::TwccPacketId;
+
+    #[test]
+    fn rtt_backoff_tracks_sends_during_feedback_silence_and_recovers() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut bwe = Bwe::new(Bitrate::kbps(100));
+        bwe.on_twcc_packet_sent(start);
+        bwe.on_twcc_packet_sent(at(3000));
+        bwe.handle_timeout(at(3500), false);
+        assert_eq!(bwe.last_estimate(), Some(Bitrate::kbps(100)));
+
+        bwe.on_twcc_packet_sent(at(3501));
+        bwe.handle_timeout(at(3501), false);
+        assert_eq!(bwe.last_estimate(), Some(Bitrate::kbps(80)));
+        let lost = TwccSendRecord::test_new(TwccPacketId::new(1u64), start, 240, at(4500), None);
+        bwe.update([&lost].into_iter(), at(4500));
+        bwe.handle_timeout(at(4500), false);
+        assert_eq!(bwe.last_estimate(), Some(Bitrate::kbps(80)));
+        bwe.handle_timeout(at(4501), false);
+        assert_eq!(bwe.last_estimate(), Some(Bitrate::kbps(64)));
+
+        bwe.on_twcc_packet_sent(at(4502));
+        let ack = TwccSendRecord::test_new(
+            TwccPacketId::new(2u64),
+            at(4502),
+            240,
+            at(4550),
+            Some(at(4510)),
+        );
+        bwe.update([&ack].into_iter(), at(4550));
+        assert!(bwe.last_estimate().unwrap() > Bitrate::kbps(64));
+    }
+
+    #[test]
+    fn rtt_backoff_subtracts_receiver_wait_and_applies_target_limits() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut bwe = Bwe::new(Bitrate::kbps(100));
+        let ack = |id, sent, received| {
+            TwccSendRecord::test_new(
+                TwccPacketId::new(id),
+                at(sent),
+                240,
+                at(5000),
+                Some(at(received)),
+            )
+        };
+        // The reordered packet waits 2 s at the receiver. Its corrected RTT is 2.9 s.
+        let early = ack(2u64, 100, 1000);
+        let late = ack(1u64, 0, 3000);
+        bwe.update([&late, &early].into_iter(), at(5000));
+        assert!(bwe.bwe.rtt_backoff.target.is_none());
+
+        let backoff = &mut bwe.bwe.rtt_backoff;
+        backoff.on_packet_sent(at(5101));
+        backoff.update(at(5101), Some(Bitrate::kbps(100)), Some(Bitrate::kbps(70)));
+        assert_eq!(backoff.target, Some(Bitrate::kbps(70)));
+        backoff.update(at(5102), backoff.target, Some(Bitrate::kbps(6)));
+        assert_eq!(backoff.target, Some(MIN_BITRATE));
+        backoff.update(at(6101), backoff.target, None);
+        assert_eq!(backoff.target, Some(MIN_BITRATE));
+    }
 
     #[test]
     fn alr_probing_waits_for_nonempty_transport_feedback() {

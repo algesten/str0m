@@ -50,6 +50,11 @@ impl Bitrate {
         self.0.ceil() as u64
     }
 
+    /// Round to the nearest whole bit per second, with ties away from zero.
+    pub fn round(&self) -> Self {
+        Self(self.0.round())
+    }
+
     /// Clamp the value between a min and a max.
     pub fn clamp(&self, min: Self, max: Self) -> Self {
         Self(self.0.clamp(min.0, max.0))
